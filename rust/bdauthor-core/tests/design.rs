@@ -82,3 +82,34 @@ fn free_pages_json_swap_remove_validate() {
     let a: Vec<Option<usize>> = y.free[0].items.iter().filter_map(|i| if let Kind::Slot { assign, .. } = i.kind { Some(assign) } else { None }).collect();
     assert_eq!(a, vec![Some(1)]);
 }
+
+#[test]
+fn goto_buttons_json_remap_and_check() {
+    let mut ds = Designs::default();
+    let mut p = PageDesign::default_main(2, 0, 2).unwrap();
+    p.items.push(Item::nav(NavAction::Goto, 100, 900, 300, 80)); // cible par defaut : page 1 du menu principal
+    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "Chapitres".into(), target: Some(Target::Chapters(2, 1)) } });
+    ds.main.insert(0, p);
+    let text = ds.to_value().to_pretty();
+    assert!(text.contains("aller_a") && text.contains("\"cible\""));
+    let back = Designs::from_value(&parse(&text).unwrap()).unwrap();
+    assert_eq!(back, ds);
+    let targets = |d: &Designs| -> Vec<Option<Target>> { d.main[&0].items.iter().filter_map(|i| if let Kind::Nav { action: NavAction::Goto, target, .. } = i.kind { Some(target) } else { None }).collect() };
+    assert_eq!(targets(&ds), vec![Some(Target::Main(0)), Some(Target::Chapters(2, 1))]);
+    // echange des videos 0 et 2 : la cible de chapitres suit ; retrait de la video 2 : la cible disparait
+    let mut x = ds.clone();
+    x.swap_videos(0, 2);
+    assert_eq!(targets(&x)[1], Some(Target::Chapters(0, 1)));
+    let mut y = ds.clone();
+    y.remove_video(2);
+    assert_eq!(targets(&y)[1], None);
+    assert!(y.main[&0].validate(2, MenuType::Main, 0, 2).iter().any(|p| p.error && p.msg.contains("cible")));
+    // suppression de la page 1 : le bouton qui y menait perd sa cible, les pages suivantes sont decalees
+    let mut z = ds.clone();
+    z.main.get_mut(&0).unwrap().items.push(Item { x: 900, y: 900, w: 200, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "p3".into(), target: Some(Target::Main(2)) } });
+    z.page_removed(0);
+    assert_eq!(targets(&z), vec![None, Some(Target::Chapters(2, 1)), Some(Target::Main(1))]);
+    // verification des cibles
+    let ok = |t: Target| matches!(t, Target::Main(0..=1));
+    assert!(ds.main[&0].check_targets(&ok).iter().any(|p| p.error), "chapitres inexistants");
+}

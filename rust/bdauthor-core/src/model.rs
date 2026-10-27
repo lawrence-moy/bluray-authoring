@@ -198,6 +198,19 @@ impl ProjectModel {
                 }
             }
         }
+        if !self.videos.is_empty() {
+            use crate::design::{Kind, NavAction, Target};
+            let total = crate::project::paginate(self.videos.len(), self.par_page).map(|g| g.len()).unwrap_or(1) + self.designs.free.len();
+            let d = &self.designs;
+            for pg in d.main.values().chain(d.chapters.values()).chain(d.free.iter()) {
+                for it in &pg.items {
+                    if let Kind::Nav { action: NavAction::Goto, text, target } = &it.kind {
+                        let bad = match target { None => true, Some(Target::Main(q)) => *q >= total, Some(Target::Chapters(v, _)) => *v >= self.videos.len() };
+                        if bad { p.push(format!("Bouton « {text} » : page cible invalide ou non choisie.")); }
+                    }
+                }
+            }
+        }
         if !self.bg.is_empty() && !abs(&self.bg).is_file() { p.push(format!("Image de fond introuvable ({}).", self.bg)); }
         p
     }

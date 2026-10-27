@@ -9,20 +9,29 @@ use std::collections::BTreeMap;
 
 pub const PLANE: (i32, i32) = (1920, 1080);
 
+/// Page vers laquelle un bouton « Aller a » mene.
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum NavAction { Prev, Next, PlayAll, Back }
+pub enum Target {
+    /// Page du menu principal (0-based, pages automatiques puis pages libres).
+    Main(usize),
+    /// Page de chapitres : (video, page), 0-based.
+    Chapters(usize, usize),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum NavAction { Prev, Next, PlayAll, Back, Goto }
 
 impl NavAction {
-    pub const ALL: [NavAction; 4] = [NavAction::Prev, NavAction::Next, NavAction::PlayAll, NavAction::Back];
+    pub const ALL: [NavAction; 5] = [NavAction::Prev, NavAction::Next, NavAction::PlayAll, NavAction::Back, NavAction::Goto];
     pub fn name(self) -> &'static str {
-        match self { NavAction::Prev => "precedent", NavAction::Next => "suivant", NavAction::PlayAll => "tout_lire", NavAction::Back => "retour" }
+        match self { NavAction::Prev => "precedent", NavAction::Next => "suivant", NavAction::PlayAll => "tout_lire", NavAction::Back => "retour", NavAction::Goto => "aller_a" }
     }
     pub fn from_name(s: &str) -> Option<Self> { Self::ALL.into_iter().find(|a| a.name() == s) }
     pub fn default_text(self) -> &'static str {
-        match self { NavAction::Prev => "< Précédent", NavAction::Next => "Suivant >", NavAction::PlayAll => "Tout lire", NavAction::Back => "Retour" }
+        match self { NavAction::Prev => "< Précédent", NavAction::Next => "Suivant >", NavAction::PlayAll => "Tout lire", NavAction::Back => "Retour", NavAction::Goto => "Aller à…" }
     }
     pub fn label(self) -> &'static str {
-        match self { NavAction::Prev => "Page précédente", NavAction::Next => "Page suivante", NavAction::PlayAll => "Tout lire", NavAction::Back => "Retour" }
+        match self { NavAction::Prev => "Page précédente", NavAction::Next => "Page suivante", NavAction::PlayAll => "Tout lire", NavAction::Back => "Retour", NavAction::Goto => "Aller à une page" }
     }
 }
 
@@ -38,7 +47,8 @@ pub enum Kind {
     /// Vignette cliquable + libelle ; `thumb_h` = hauteur de la vignette (le reste de `h` porte le libelle). Les vignettes se remplissent dans l'ordre de la liste.
     /// `assign` : element de la page montre par cette vignette (0-based) ; `None` = automatique (voir `PageDesign::slot_assignment`).
     Slot { thumb_h: i32, assign: Option<usize> },
-    Nav { action: NavAction, text: String },
+    /// `target` : page visee par une action `Goto` (ignore pour les autres actions).
+    Nav { action: NavAction, text: String, target: Option<Target> },
     /// `font` : vide = police par defaut ; sinon fichier .ttf/.otf (chemin absolu ou relatif au projet) ou nom d'un fichier de police installe.
     Text { text: String, size: i32, color: [u8; 3], align: Align, font: String },
     Image { path: String },
@@ -59,7 +69,7 @@ impl Item {
         Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new() } }
     }
     pub fn nav(action: NavAction, x: i32, y: i32, w: i32, h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into() } }
+        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } } }
     }
 }
 
@@ -78,6 +88,7 @@ pub fn nav_applicable(action: NavAction, menu: MenuType, page: usize, pages: usi
         NavAction::Prev => page > 0,
         NavAction::Next => page + 1 < pages,
         NavAction::PlayAll | NavAction::Back => menu == MenuType::Chapters,
+        NavAction::Goto => true,
     }
 }
 
@@ -178,6 +189,9 @@ impl PageDesign {
             if let Kind::Slot { thumb_h, .. } = it.kind {
                 if thumb_h < 8 || thumb_h > it.h { p.push(err(format!("Élément {} : hauteur de vignette incohérente.", k + 1))); }
             }
+            if let Kind::Nav { action: NavAction::Goto, target: None, .. } = it.kind {
+                p.push(err(format!("Élément {} : choisissez la page cible du bouton.", k + 1)));
+            }
             if let Kind::Nav { action, .. } = it.kind {
                 if !nav_applicable(action, menu, page, pages) { p.push(warn(format!("« {} » n'apparaîtra pas sur cette page.", action.label()))); }
             }
@@ -218,6 +232,17 @@ impl PageDesign {
         p
     }
 
+    /// Verifie les pages visees par les boutons « Aller a » ; `exists` dit si une page existe dans le projet.
+    pub fn check_targets(&self, exists: &dyn Fn(Target) -> bool) -> Vec<Problem> {
+        let mut p = Vec::new();
+        for (k, it) in self.items.iter().enumerate() {
+            if let Kind::Nav { action: NavAction::Goto, target: Some(t), .. } = it.kind {
+                if !exists(t) { p.push(Problem { error: true, msg: format!("Élément {} : la page visée n'existe pas.", k + 1) }); }
+            }
+        }
+        p
+    }
+
     /// Page libre vierge : seulement le bouton « Précédent ».
     pub fn blank_free(page: usize) -> Self {
         let mut items = Vec::new();
@@ -236,7 +261,16 @@ impl PageDesign {
                     put("type", Value::Str("vignette".into())); put("vignette_h", num(*thumb_h));
                     if let Some(a) = assign { put("element", num(*a as i32 + 1)); }
                 }
-                Kind::Nav { action, text } => { put("type", Value::Str("navigation".into())); put("action", Value::Str(action.name().into())); put("texte", Value::Str(text.clone())); }
+                Kind::Nav { action, text, target } => {
+                    put("type", Value::Str("navigation".into())); put("action", Value::Str(action.name().into())); put("texte", Value::Str(text.clone()));
+                    if let (NavAction::Goto, Some(t)) = (action, target) {
+                        let o = match t {
+                            Target::Main(p) => vec![("menu".to_string(), Value::Str("principal".into())), ("page".to_string(), num(*p as i32 + 1))],
+                            Target::Chapters(v, p) => vec![("menu".to_string(), Value::Str("chapitres".into())), ("video".to_string(), num(*v as i32 + 1)), ("page".to_string(), num(*p as i32 + 1))],
+                        };
+                        put("cible", Value::Obj(o));
+                    }
+                }
                 Kind::Text { text, size, color, align, font } => {
                     if !font.is_empty() { put("police", Value::Str(font.clone())); }
                     put("type", Value::Str("texte".into())); put("texte", Value::Str(text.clone())); put("taille", num(*size));
@@ -259,7 +293,16 @@ impl PageDesign {
                 "vignette" => Kind::Slot { thumb_h: at("vignette_h")?, assign: e.get("element").and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize) },
                 "navigation" => {
                     let action = st("action").and_then(NavAction::from_name).ok_or_else(|| format!("élément {} : action inconnue", k + 1))?;
-                    Kind::Nav { action, text: st("texte").unwrap_or(action.default_text()).to_string() }
+                    let n = |c: &Value, key: &str| c.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
+                    let target = match e.get("cible") {
+                        Some(c) if action == NavAction::Goto => match c.get("menu").and_then(Value::as_str) {
+                            Some("principal") => n(c, "page").map(Target::Main),
+                            Some("chapitres") => n(c, "video").zip(n(c, "page")).map(|(v, p)| Target::Chapters(v, p)),
+                            _ => return Err(format!("élément {} : cible invalide", k + 1)),
+                        },
+                        _ => None,
+                    };
+                    Kind::Nav { action, text: st("texte").unwrap_or(action.default_text()).to_string(), target }
                 }
                 "texte" => {
                     let c = st("couleur").unwrap_or("#ffffff").trim_start_matches('#');
@@ -300,6 +343,31 @@ impl Designs {
                 if let Kind::Slot { assign: Some(v), .. } = &mut it.kind { *v = if *v == a { b } else if *v == b { a } else { *v }; }
             }
         }
+        for d in self.all_mut() {
+            for it in &mut d.items {
+                if let Kind::Nav { target: Some(Target::Chapters(v, _)), .. } = &mut it.kind { *v = if *v == a { b } else if *v == b { a } else { *v }; }
+            }
+        }
+    }
+
+    fn all_mut(&mut self) -> impl Iterator<Item = &mut PageDesign> {
+        self.main.values_mut().chain(self.chapters.values_mut()).chain(self.free.iter_mut())
+    }
+
+    /// La page `page` (rang dans le menu principal, pages automatiques puis libres) vient d'etre supprimee : les boutons qui y
+    /// menaient perdent leur cible, les suivants sont decales.
+    pub fn page_removed(&mut self, page: usize) {
+        for d in self.all_mut() {
+            for it in &mut d.items {
+                if let Kind::Nav { action: NavAction::Goto, target, .. } = &mut it.kind {
+                    match *target {
+                        Some(Target::Main(p)) if p == page => *target = None,
+                        Some(Target::Main(p)) if p > page => *target = Some(Target::Main(p - 1)),
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     /// Retire une video : ses menus de chapitres disparaissent, les suivants sont renumerotes.
@@ -307,6 +375,17 @@ impl Designs {
         let old = std::mem::take(&mut self.chapters);
         self.chapters = old.into_iter().filter(|((v, _), _)| *v != i).map(|((v, p), d)| ((if v > i { v - 1 } else { v }, p), d)).collect();
         // pages libres : les vignettes de cette video disparaissent, les suivantes sont renumerotees
+        for d in self.all_mut() {
+            for it in &mut d.items {
+                if let Kind::Nav { action: NavAction::Goto, target, .. } = &mut it.kind {
+                    match *target {
+                        Some(Target::Chapters(v, _)) if v == i => *target = None,
+                        Some(Target::Chapters(v, q)) if v > i => *target = Some(Target::Chapters(v - 1, q)),
+                        _ => {}
+                    }
+                }
+            }
+        }
         for page in &mut self.free {
             page.items.retain(|it| !matches!(it.kind, Kind::Slot { assign: Some(v), .. } if v == i));
             for it in &mut page.items {

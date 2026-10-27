@@ -48,7 +48,7 @@ impl PageInfo {
         match self.r {
             PageRef::Main(p) => { d.main.remove(&p); }
             PageRef::Chapters(v, p) => { d.chapters.remove(&(v, p)); }
-            PageRef::Free(f) => { if f < d.free.len() { d.free.remove(f); } }
+            PageRef::Free(f) => { if f < d.free.len() { d.free.remove(f); d.page_removed(self.page); } }
         }
     }
     /// Mise en page de depart (grille automatique + titre) pour cette page.

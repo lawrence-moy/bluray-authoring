@@ -1,7 +1,7 @@
 //! Editeur visuel de mise en page (onglet « Mise en page ») : apercu fidele, glisser/redimensionner, inspecteur.
 use crate::App;
-use bdauthor_core::design::{Align, Item, Kind, MenuType, NavAction, PageDesign};
-use bdauthor_core::editor::{copy_decor, dragged_rect, hit_test, list_pages, move_in_list, set_rect, to_back, to_front, video_title, Handle, PageInfo};
+use bdauthor_core::design::{Align, Item, Kind, MenuType, NavAction, PageDesign, Target};
+use bdauthor_core::editor::{copy_decor, dragged_rect, hit_test, list_pages, move_in_list, set_rect, to_back, to_front, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -91,6 +91,14 @@ fn kind_name(k: &Kind) -> &'static str {
 impl App {
     pub(crate) fn pages(&self) -> Vec<PageInfo> {
         list_pages(&self.model, &self.durations)
+    }
+
+    /// Pages visables par un bouton « Aller a » : (cible, libelle).
+    fn page_targets(&self) -> Vec<(Target, String)> {
+        self.pages().into_iter().map(|p| {
+            let t = match p.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(p.page) };
+            (t, p.label(&self.model))
+        }).collect()
     }
 
     fn current_info(&self) -> Option<PageInfo> {
@@ -447,7 +455,9 @@ impl App {
         // vérifications
         if custom {
             if let Some(d) = info.design(&self.model.designs) {
-                let probs = if info.is_free() { d.validate_free(info.page, info.pages, self.model.videos.len()) } else { d.validate(info.count(), info.menu, info.page, info.pages) };
+                let targets = self.page_targets();
+                let mut probs = if info.is_free() { d.validate_free(info.page, info.pages, self.model.videos.len()) } else { d.validate(info.count(), info.menu, info.page, info.pages) };
+                probs.extend(d.check_targets(&|t| targets.iter().any(|(x, _)| *x == t)));
                 for p in probs {
                     let (c, t) = if p.error { (Color32::from_rgb(230, 100, 90), "Erreur") } else { (Color32::from_rgb(230, 190, 80), "Attention") };
                     ui.colored_label(c, format!("{t} : {}", p.msg));
@@ -509,6 +519,7 @@ impl App {
         let count = info.count();
         let labels: Vec<String> = self.preview_slots(&info).into_iter().map(|s| s.label).collect();
         let is_free = info.is_free();
+        let page_targets = self.page_targets();
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
         {
             let Some(d) = info.design_mut(&mut self.model.designs) else { return };
@@ -556,12 +567,23 @@ impl App {
                         ui.label(egui::RichText::new("Choisir un contenu déjà utilisé par une autre vignette échange les deux.").weak());
                     }
                 }
-                Kind::Nav { action, text } => {
+                Kind::Nav { action, text, target } => {
                     egui::ComboBox::from_label("Action").selected_text(action.label()).show_ui(ui, |ui| {
                         for a in NavAction::ALL {
-                            if ui.selectable_value(action, a, a.label()).changed() { changed = true; }
+                            if ui.selectable_value(action, a, a.label()).changed() {
+                                changed = true;
+                                if a == NavAction::Goto && target.is_none() { *target = Some(Target::Main(0)); }
+                            }
                         }
                     });
+                    if *action == NavAction::Goto {
+                        let shown = target.and_then(|t| page_targets.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| "(page introuvable : à choisir)".to_string());
+                        egui::ComboBox::from_label("Page cible").selected_text(shown).show_ui(ui, |ui| {
+                            for (t, label) in &page_targets {
+                                if ui.selectable_label(*target == Some(*t), label).clicked() { *target = Some(*t); changed = true; }
+                            }
+                        });
+                    }
                     ui.horizontal(|ui| { ui.label("Texte :"); changed |= ui.text_edit_singleline(text).changed(); });
                 }
                 Kind::Text { text, size, color, align, font } => {
@@ -668,7 +690,7 @@ impl App {
             let what = match &it.kind {
                 Kind::Text { text, .. } => format!("Texte « {} »", text.lines().next().unwrap_or("").chars().take(24).collect::<String>()),
                 Kind::Image { path } => format!("Image {}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
-                Kind::Nav { action, .. } => format!("Bouton {}", action.label()),
+                Kind::Nav { action, text, .. } => if *action == NavAction::Goto { format!("Bouton « {text} »") } else { format!("Bouton {}", action.label()) },
                 Kind::Slot { .. } => "Vignette".to_string(),
             };
             let text = egui::RichText::new(what).color(kind_color(&it.kind));

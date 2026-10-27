@@ -129,7 +129,8 @@ fn custom_layout_project() {
           {"type":"texte","texte":"Mes favoris","x":100,"y":60,"w":1700,"h":120,"taille":80,"couleur":"#ffffff","alignement":"centre"},
           {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"element":3},
           {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"element":1},
-          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90} ] } ],
+          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90},
+          {"type":"navigation","action":"aller_a","texte":"Chapitres de a","cible":{"menu":"chapitres","video":1,"page":1},"x":1200,"y":900,"w":400,"h":90} ] } ],
         "chapitres": { "1": { "1": { "elements": [
           {"type":"vignette","vignette_h":200,"x":100,"y":300,"w":400,"h":250},
           {"type":"vignette","vignette_h":200,"x":600,"y":300,"w":400,"h":250},

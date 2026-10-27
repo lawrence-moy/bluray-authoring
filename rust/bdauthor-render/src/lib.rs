@@ -539,7 +539,7 @@ impl FontRenderer {
                     blit(&mut im, &n, x, y, 1.0);
                     k += 1;
                 }
-                Kind::Nav { action, text } => {
+                Kind::Nav { action, text, .. } => {
                     let n = self.cached_sprite(hkey(|hh| ("bouton", text, w, h).hash(hh)), || {
                         let [n, _] = self.text_button(text, w as u32, h as u32);
                         n.as_ref().clone()

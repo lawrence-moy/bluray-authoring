@@ -275,3 +275,12 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   personnalisee ou libre et n'en a pas ; une page automatique non personnalisee l'obtient de la grille.
 - `swap_videos` / `remove_video` remappent (ou retirent) les vignettes des pages libres. `ProjectModel::validate` refuse les pages libres invalides.
 - GUI : bouton « + Page libre » (liste des pages), « Supprimer cette page », menu « Vidéo » par vignette. Non compile (eframe hors ligne).
+
+## Boutons « Aller à une page »
+- `NavAction::Goto` + `Kind::Nav.target: Option<Target>` ; `Target::Main(p)` (pages automatiques puis libres, 0-based) ou
+  `Target::Chapters(video, page)`. JSON : `"action": "aller_a", "cible": {"menu":"principal","page":2}` ou
+  `{"menu":"chapitres","video":1,"page":1}` (1-based). Toujours applicable (meme sur la page visee).
+- Construction : titre vise = `plan.main_titles[p]` ou `plan.chapters[v].pages[q]` ; cible absente/inexistante => erreur avant encodage
+  des menus (message avec le texte du bouton). `ProjectModel::validate` fait une verification partielle (hors chapitres automatiques).
+- Coherence : echange/retrait de video et suppression d'une page libre remappent ou annulent les cibles (`Designs::page_removed`).
+- GUI : action « Aller à une page » + menu « Page cible » (toutes les pages), avertissement si la page n'existe plus.

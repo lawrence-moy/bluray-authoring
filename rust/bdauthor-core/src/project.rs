@@ -5,7 +5,7 @@
 //! pagination au-dela de 12 elements (voir `paginate`), menus de chapitres, cache d'encodage.
 //! Le dessin (vignettes, libelles, fond) est delegue a un `Renderer` : le crate `bdauthor-render` en fournit un complet.
 use crate::check::{check_bdmv, Report};
-use crate::design::{nav_applicable, Align, Designs, Kind, MenuType, NavAction, PageDesign};
+use crate::design::{nav_applicable, Align, Designs, Kind, MenuType, NavAction, PageDesign, Target};
 use crate::disc::write_bdmv;
 use crate::ffmpeg::{self, EncodeOpts, Error, Tools};
 use crate::film::{make_film_m2ts, make_still_m2ts};
@@ -92,7 +92,7 @@ fn resolve_design(ov: Option<&PageDesign>, expected: usize, menu: MenuType, page
 
 /// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page ; `s` = echelle du plan 1920 vers le menu.
 #[allow(clippy::too_many_arguments)]
-fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
     let (mut buttons, mut pix, mut k) = (Vec::new(), Vec::new(), 0usize);
     for (idx, it) in design.items.iter().enumerate() {
         let (x, y, w, h) = it.scaled(s);
@@ -111,9 +111,9 @@ fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, ass
                 buttons.push(b);
                 pix.push(2 * w as u64 * h as u64);
             }
-            Kind::Nav { action, text } if nav_applicable(*action, menu, page, pages) => {
+            Kind::Nav { action, text, target: tg } if nav_applicable(*action, menu, page, pages) => {
                 let [nrm, sel] = over(renderer.text_button(text, w as u32, h as u32));
-                buttons.push(MenuButton::new("", target(*action), x, y, vec![nrm, sel.clone(), sel]));
+                buttons.push(MenuButton::new("", target(*action, *tg), x, y, vec![nrm, sel.clone(), sel]));
                 pix.push(2 * w as u64 * h as u64);
             }
             _ => {}
@@ -443,6 +443,21 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     }
     let ch_counts: BTreeMap<usize, usize> = ch_pg.iter().map(|(&i, g)| (i, g.len())).collect();
     let plan = plan_navigation(n, total_main, &ch_counts);
+    // titre visé par un bouton « Aller a » ; None si la page n'existe pas
+    let goto = |t: Target| -> Option<u32> {
+        match t {
+            Target::Main(p) => plan.main_titles.get(p).copied(),
+            Target::Chapters(v, q) => plan.chapters.get(&v).and_then(|c| c.pages.get(q).copied()),
+        }
+        .map(|x| x as u32)
+    };
+    for d in designs.main.values().chain(designs.chapters.values()).chain(designs.free.iter()) {
+        for it in &d.items {
+            if let Kind::Nav { action: NavAction::Goto, text, target } = &it.kind {
+                if target.and_then(&goto).is_none() { return bad(format!("bouton « {text} » : page cible inexistante ou non choisie")); }
+            }
+        }
+    }
     let first = &scans[0];
     let fmt = (first.width, first.height, first.fps);
     for (i, sc) in scans.iter().enumerate().skip(1) {
@@ -520,9 +535,10 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 go: plan.chapters.get(&i).map_or(i as u32 + 1, |c| c.pages[0] as u32), // video a chapitres : le bouton ouvre le menu de chapitres
             });
         }
-        let target = |a: NavAction| match a {
+        let target = |a: NavAction, t: Option<Target>| match a {
             NavAction::Prev => plan.main_titles[pg.saturating_sub(1)] as u32,
             NavAction::Next => plan.main_titles[(pg + 1).min(total_main - 1)] as u32,
+            NavAction::Goto => t.and_then(&goto).unwrap_or(0),
             _ => 0,
         };
         let decor_r = scale_decor(&design);
@@ -554,9 +570,10 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 });
             }
         }
-        let target = |a: NavAction| match a {
+        let target = |a: NavAction, t: Option<Target>| match a {
             NavAction::Prev => plan.main_titles[pg.saturating_sub(1)] as u32,
             NavAction::Next => plan.main_titles[(pg + 1).min(total_main - 1)] as u32,
+            NavAction::Goto => t.and_then(&goto).unwrap_or(0),
             _ => 0,
         };
         let decor_r = scale_decor(design);
@@ -603,11 +620,12 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                     commands: vec![Command::new(MOVE_RI_INSN, 0, j as u32), Command::new(JUMP_TITLE_INSN, titles.play as u32, 0)], go: 0,
                 });
             }
-            let target = |a: NavAction| match a {
+            let target = |a: NavAction, t: Option<Target>| match a {
                 NavAction::Prev => titles.pages[q.saturating_sub(1)] as u32,
                 NavAction::Next => titles.pages[(q + 1).min(npg - 1)] as u32,
                 NavAction::PlayAll => i as u32 + 1,
                 NavAction::Back => retour_t,
+                NavAction::Goto => t.and_then(&goto).unwrap_or(0),
             };
             let decor_r = scale_decor(&design);
             let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Chapters, q, npg, &slots, &target, sc_)?;
