@@ -1,0 +1,35 @@
+{
+  "titre": "Mes vidéos",
+  "langue": "fra",
+  "videos": [
+    {
+      "fichier": "C:/Users/moyla/Videos/GSC_0037.MP4",
+      "titre": "Première vidéo",
+      "chapitres": [
+        0,
+        120,
+        {
+          "t": 300,
+          "titre": "Le pont"
+        }
+      ]
+    },
+    {
+      "fichier": "C:/Users/moyla/Videos/GSC_0038.MP4",
+      "titre": "Deuxième vidéo",
+      "vignette_s": 3,
+      "chapitres_auto_s": 60
+    }
+  ],
+  "encodage": {
+    "crf": 18,
+    "preset": "medium"
+  },
+  "menu": {
+    "fond": "mon_fond.png",
+    "fond_secondes": 5,
+    "boucle": false,
+    "retour": "chapitres",
+    "cache": true
+  }
+}

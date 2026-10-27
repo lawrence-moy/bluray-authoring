@@ -1,0 +1,5 @@
+version 0100
+PlayItem 0: clip 00014.M2TS  in=600.000s out=602.986s duree=2.986s connexion=1 (60 octets bruts : UO/STN)
+SubPath 0: type 3 = menu IG (presentation), repeat=0
+  SubPlayItem: clip 80002.M2TS in=0.477s out=0.511s duree=0.033s
+Mark 0: chapitre (entry mark) playitem=0 t=600.000s

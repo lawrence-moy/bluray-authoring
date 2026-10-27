@@ -1,0 +1,139 @@
+//! Construction complete d'un disque avec un vrai ffmpeg (ignore si ffmpeg est absent) et un moteur de dessin minimal.
+use bdauthor_core::ffmpeg::Tools;
+use bdauthor_core::palette::RgbaImage;
+use bdauthor_core::project::*;
+use std::path::PathBuf;
+use std::process::Command;
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+struct Flat;
+fn fill(w: u32, h: u32, c: [u8; 3]) -> Arc<RgbaImage> {
+    let mut im = RgbaImage::new(w, h);
+    for y in 0..h { for x in 0..w { im.set(x, y, [c[0], c[1], c[2], 255]); } }
+    Arc::new(im)
+}
+impl Renderer for Flat {
+    fn thumb_button(&self, thumb: &RgbaImage, _label: &str, w: u32, h_total: u32, h_thumb: u32) -> [Arc<RgbaImage>; 2] {
+        let mk = |bg: [u8; 3]| {
+            let mut im = RgbaImage::new(w, h_total);
+            for y in 0..h_total { for x in 0..w { im.set(x, y, if y < h_thumb { thumb.pixel(x, y) } else { [bg[0], bg[1], bg[2], 255] }); } }
+            Arc::new(im)
+        };
+        [mk([24, 32, 58]), mk([60, 100, 190])]
+    }
+    fn text_button(&self, _label: &str, w: u32, h: u32) -> [Arc<RgbaImage>; 2] { [fill(w, h, [24, 32, 58]), fill(w, h, [60, 100, 190])] }
+    fn background(&self, _t: &str, size: (u32, u32)) -> RgbaImage { (*fill(size.0, size.1, [20, 30, 80])).clone() }
+    fn compose_background(&self, _base: Option<&std::path::Path>, size: (u32, u32), decor: &[Decor]) -> Result<RgbaImage, String> {
+        let mut im = (*fill(size.0, size.1, [40, 20, 80])).clone();
+        // un carre blanc par element pose, pour que le fond change reellement
+        for (k, d) in decor.iter().enumerate() {
+            let (x, y, w, h) = match d { Decor::Text { x, y, w, h, .. } | Decor::Image { x, y, w, h, .. } => (*x, *y, *w, *h) };
+            for yy in y.max(0)..(y + h).min(size.1 as i32) { for xx in x.max(0)..(x + w).min(size.0 as i32) { im.set(xx as u32, yy as u32, [255, 255, 255, 255]); } }
+            let _ = k;
+        }
+        Ok(im)
+    }
+}
+
+#[test]
+fn layout_and_pagination() {
+    assert_eq!(paginate(12, None).unwrap().len(), 1);
+    let p = paginate(13, None).unwrap();
+    assert_eq!(p.iter().map(|g| g.len()).collect::<Vec<_>>(), vec![7, 6]);
+    let p = paginate(20, Some(5)).unwrap();
+    assert_eq!(p.iter().map(|g| g.len()).collect::<Vec<_>>(), vec![5, 5, 5, 5]);
+    assert!(paginate(3, Some(13)).is_err());
+    // valeurs de reference Python (project.layout)
+    let t = |c: &[Cell]| c.iter().map(|c| (c.x, c.y, c.w, c.th, c.h)).collect::<Vec<_>>();
+    assert_eq!(t(&layout(1, (1920, 1080), 0).unwrap()), vec![(720, 472, 480, 270, 326)]);
+    assert_eq!(t(&layout(5, (1280, 720), 140).unwrap()), vec![(120, 200, 240, 135, 167), (387, 200, 240, 135, 167), (653, 200, 240, 135, 167), (920, 200, 240, 135, 167), (520, 387, 240, 135, 167)]);
+    assert_eq!(t(&layout(7, (1280, 720), 140).unwrap()), vec![(120, 200, 240, 135, 167), (387, 200, 240, 135, 167), (653, 200, 240, 135, 167), (920, 200, 240, 135, 167), (253, 387, 240, 135, 167), (520, 387, 240, 135, 167), (787, 387, 240, 135, 167)]);
+    let l12 = layout(12, (1920, 1080), 0).unwrap();
+    assert_eq!((l12[0].x, l12[0].y, l12[11].x, l12[11].y, l12[0].w, l12[0].h), (340, 315, 1300, 757, 280, 197));
+    assert!(layout(13, (1920, 1080), 0).is_err());
+}
+
+#[test]
+fn full_project() {
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir: PathBuf = std::env::var_os("BDAUTHOR_TEST_OUT").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join(format!("bdauthor_proj_{}", std::process::id())));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("videos")).unwrap();
+    for (i, f) in ["a", "b", "c"].iter().enumerate() {
+        let ok = Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", &format!("testsrc=size=640x360:rate=25:duration=4"),
+            "-f", "lavfi", "-i", &format!("sine=frequency={}:duration=4", 300 + 200 * i), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
+            .arg(dir.join(format!("videos/{f}.mp4"))).status().unwrap().success();
+        assert!(ok);
+    }
+    let proj = r#"{ "titre": "Test", "langue": "fra",
+      "videos": [ {"fichier": "videos/a.mp4", "titre": "Alpha", "chapitres": [0, 2.5, {"t": 3, "titre": "Fin"}]}, {"fichier": "videos/b.mp4"}, {"fichier": "videos/c.mp4", "titre": "Gamma"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"par_page": 2, "fond_secondes": 2} }"#;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let mut logs = Vec::new();
+    let mut last = 0.0;
+    let info = {
+        let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |f: f64| last = f);
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
+    };
+    assert_eq!(last, 1.0);
+    println!("{info:#?}");
+    assert!(info.report.ok(), "{}", info.report.render());
+    assert_eq!(info.main_pages, 2);
+    assert!(info.chapters.contains_key(&1));
+    // second passage : tout vient du cache
+    let mut logs2 = Vec::new();
+    {
+        let (mut log, mut prog) = (|m: &str| logs2.push(m.to_string()), |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out2"), &mut env).unwrap();
+    }
+    assert_eq!(logs2.iter().filter(|l| l.contains("cache")).count(), 3, "{logs2:?}");
+    assert_eq!(std::fs::read(dir.join("out/BDMV/MovieObject.bdmv")).unwrap(), std::fs::read(dir.join("out2/BDMV/MovieObject.bdmv")).unwrap());
+    if std::env::var_os("BDAUTHOR_TEST_OUT").is_none() { let _ = std::fs::remove_dir_all(&dir); }
+}
+
+#[test]
+fn custom_layout_project() {
+    let Ok(tools) = Tools::locate() else { return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_design_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (i, f) in ["a", "b", "c"].iter().enumerate() {
+        assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=4",
+            "-f", "lavfi", "-i", &format!("sine=frequency={}:duration=4", 300 + 200 * i), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
+            .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
+    }
+    // page 1 du menu principal personnalisee (2 vignettes + titre + logo + 'Suivant' deplace), page 2 automatique ;
+    // menu de chapitres de la video 1 : page 1 personnalisee avec une vignette de trop (doit retomber sur la grille automatique)
+    let proj = r##"{ "titre": "Test", "langue": "fra",
+      "videos": [ {"fichier": "a.mp4", "chapitres": [0, 2.5, 3.2]}, {"fichier": "b.mp4"}, {"fichier": "c.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"par_page": 2, "fond_secondes": 2},
+      "mise_en_page": { "principal": { "1": { "elements": [
+          {"type":"texte","texte":"Mon titre","x":100,"y":60,"w":1700,"h":120,"taille":90,"couleur":"#ffcc00","alignement":"gauche"},
+          {"type":"image","fichier":"b.mp4","x":1500,"y":800,"w":300,"h":200},
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356},
+          {"type":"navigation","action":"suivant","texte":"Page 2","x":800,"y":900,"w":300,"h":90} ] } },
+        "chapitres": { "1": { "1": { "elements": [
+          {"type":"vignette","vignette_h":200,"x":100,"y":300,"w":400,"h":250},
+          {"type":"vignette","vignette_h":200,"x":600,"y":300,"w":400,"h":250},
+          {"type":"vignette","vignette_h":200,"x":1100,"y":300,"w":400,"h":250} ] } } } } }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let mut logs = Vec::new();
+    let info = {
+        let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
+    };
+    assert!(info.report.ok(), "{}", info.report.render());
+    assert!(logs.iter().any(|l| l.contains("ignoree")), "la page de chapitres invalide doit etre signalee : {logs:?}");
+    // la page 1 personnalisee a son propre fond : un clip de fond de plus que sans personnalisation
+    let bgs = std::fs::read_dir(dir.join("out/BDMV/STREAM")).unwrap().filter(|e| { let n = e.as_ref().unwrap().file_name().into_string().unwrap(); n.starts_with("0000") || n.starts_with("0001") }).count();
+    assert!(bgs >= 5, "{bgs}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

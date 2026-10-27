@@ -1,0 +1,6 @@
+version 0100
+ClipInfo : type d'application 5 = sous-TS menu interactif, 896 paquets (172032 octets), debit 5388536 o/s
+Sequence : PCR PID 0x1001, 0.477s -> 0.511s
+Programme : PMT PID 0x0100
+  flux PID 0x1400 : IG (menu) langue eng
+EP_map : aucune

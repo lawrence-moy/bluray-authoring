@@ -1,0 +1,27 @@
+version        : 0100
+video_format   : 0  frame_rate: 0
+user_data      : bdauthor
+First Playback : HDMV playback_type=1 object=0
+Top Menu       : HDMV playback_type=1 object=0
+titres         : 21
+  titre 1: HDMV playback_type=0 object=1 access_type=0
+  titre 2: HDMV playback_type=0 object=2 access_type=0
+  titre 3: HDMV playback_type=0 object=3 access_type=0
+  titre 4: HDMV playback_type=0 object=4 access_type=0
+  titre 5: HDMV playback_type=0 object=5 access_type=0
+  titre 6: HDMV playback_type=0 object=6 access_type=0
+  titre 7: HDMV playback_type=0 object=7 access_type=0
+  titre 8: HDMV playback_type=0 object=8 access_type=0
+  titre 9: HDMV playback_type=0 object=9 access_type=0
+  titre 10: HDMV playback_type=0 object=10 access_type=0
+  titre 11: HDMV playback_type=0 object=11 access_type=0
+  titre 12: HDMV playback_type=0 object=12 access_type=0
+  titre 13: HDMV playback_type=0 object=13 access_type=0
+  titre 14: HDMV playback_type=0 object=14 access_type=0
+  titre 15: HDMV playback_type=0 object=15 access_type=0
+  titre 16: HDMV playback_type=0 object=16 access_type=0
+  titre 17: HDMV playback_type=0 object=17 access_type=0
+  titre 18: HDMV playback_type=0 object=18 access_type=0
+  titre 19: HDMV playback_type=0 object=19 access_type=0
+  titre 20: HDMV playback_type=0 object=20 access_type=0
+  titre 21: HDMV playback_type=0 object=21 access_type=0

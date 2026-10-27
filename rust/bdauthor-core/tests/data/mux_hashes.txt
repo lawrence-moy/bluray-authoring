@@ -1,0 +1,8 @@
+synth 2138112 0ab4ebb282010b56 0.483000
+synth_grand 4521984 6f9cecc00a2d22c3 0.581413
+ref_film 17774592 24176dacb857501d 0.483000
+ref_film_clpi 436 1d6e47bcc63125f9
+ref_clpi_sur_ref 436 f6bbb7efdfce597a
+ig_defaut 172032 0c1e0e8bb37a9a44
+enc_court_m2ts 1511424 272f936238daed16
+enc_court_clpi 360 ec9ab7749933fd1c

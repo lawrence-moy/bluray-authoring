@@ -1,0 +1,67 @@
+{
+  "titre": "Mes vidéos",
+  "langue": "fra",
+  "videos": [
+    {
+      "fichier": "videos/GSC_0013.MP4",
+      "titre": "Vidéo 1"
+    },
+    {
+      "fichier": "videos/GSC_0020.MP4",
+      "titre": "Vidéo 2"
+    },
+    {
+      "fichier": "videos/GSC_0022.MP4",
+      "titre": "Vidéo 3",
+      "chapitres_auto_s": 5
+    },
+    {
+      "fichier": "videos/GSC_0025.MP4",
+      "titre": "Vidéo 4"
+    },
+    {
+      "fichier": "videos/GSC_0028.MP4",
+      "titre": "Vidéo 5"
+    },
+    {
+      "fichier": "videos/GSC_0029.MP4",
+      "titre": "Vidéo 6"
+    },
+    {
+      "fichier": "videos/GSC_0033.MP4",
+      "titre": "Vidéo 7"
+    },
+    {
+      "fichier": "videos/GSC_0039.MP4",
+      "titre": "Vidéo 8"
+    },
+    {
+      "fichier": "videos/GSC_0055.MP4",
+      "titre": "Vidéo 9"
+    },
+    {
+      "fichier": "videos/GSC_0056.MP4",
+      "titre": "Vidéo 10"
+    },
+    {
+      "fichier": "videos/GSC_0057.MP4",
+      "titre": "Vidéo 11",
+      "chapitres_auto_s": 15
+    },
+    {
+      "fichier": "videos/GSC_0080.MP4",
+      "titre": "Vidéo 12"
+    }
+  ],
+  "encodage": {
+    "crf": 18,
+    "preset": "ultrafast"
+  },
+  "menu": {
+    "fond_secondes": 5,
+    "par_page": 5,
+    "boucle": false,
+    "retour": "chapitres",
+    "cache": true
+  }
+}

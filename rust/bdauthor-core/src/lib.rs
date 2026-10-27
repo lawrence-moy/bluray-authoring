@@ -1,0 +1,24 @@
+//! Coeur de bdauthor : pilotage de ffmpeg, puis (en cours de portage depuis Python) fichiers de navigation, muxage et menus.
+pub mod check;
+pub mod clpi;
+pub mod ffmpeg;
+pub mod design;
+pub mod disc;
+pub mod editor;
+pub mod film;
+pub mod ig;
+pub mod index;
+pub mod json;
+pub mod m2ts;
+pub mod mobj;
+pub mod model;
+pub mod mpls;
+pub mod menu;
+pub mod mux;
+pub mod nav;
+pub mod palette;
+pub mod project;
+pub mod png;
+pub mod reader;
+pub mod tsclip;
+pub mod vmux;

@@ -1,0 +1,24 @@
+[package]
+name = "bdauthor-core"
+version = "0.1.0"
+edition = "2021"
+description = "Coeur de l'outil d'authoring Blu-ray HDMV (pilotage de ffmpeg, puis muxage et menus)"
+
+[lib]
+name = "bdauthor_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "bdauthor-ffmpeg"
+path = "src/bin/bdauthor-ffmpeg.rs"
+
+[[bin]]
+name = "bdinspect"
+path = "src/bin/bdinspect.rs"
+
+[[bin]]
+name = "bdcheck"
+path = "src/bin/bdcheck.rs"
+
+# Aucune dependance externe : le crate se compile hors ligne.
+[dependencies]

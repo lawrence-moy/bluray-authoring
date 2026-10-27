@@ -1,0 +1,7 @@
+version        : 0100
+video_format   : 0  frame_rate: 0
+user_data      : multiAVCHD v4.1.771
+First Playback : HDMV playback_type=1 object=255
+Top Menu       : HDMV playback_type=1 object=259
+titres         : 1
+  titre 1: HDMV playback_type=0 object=1 access_type=0

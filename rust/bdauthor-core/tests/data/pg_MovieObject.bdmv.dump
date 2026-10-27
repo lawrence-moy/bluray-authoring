@@ -1,0 +1,89 @@
+version 0100, 22 objets
+objet 0: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 14
+    1: NOP
+    2: NOP
+    3: NOP
+    4: GOTO 0
+objet 1: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 0
+    1: JUMP_TITLE 0
+objet 2: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 1
+    1: JUMP_TITLE 0
+objet 3: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 2
+    1: JUMP_TITLE 16
+objet 4: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 3
+    1: JUMP_TITLE 0
+objet 5: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 4
+    1: JUMP_TITLE 0
+objet 6: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 5
+    1: JUMP_TITLE 0
+objet 7: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 6
+    1: JUMP_TITLE 0
+objet 8: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 7
+    1: JUMP_TITLE 15
+objet 9: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 8
+    1: JUMP_TITLE 15
+objet 10: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 9
+    1: JUMP_TITLE 20
+objet 11: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 10
+    1: JUMP_TITLE 15
+objet 12: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 11
+    1: JUMP_TITLE 15
+objet 13: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 12
+    1: JUMP_TITLE 15
+objet 14: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 13
+    1: JUMP_TITLE 15
+objet 15: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 15
+    1: NOP
+    2: NOP
+    3: NOP
+    4: GOTO 0
+objet 16: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 16
+    1: NOP
+    2: NOP
+    3: NOP
+    4: GOTO 0
+objet 17: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 17
+    1: NOP
+    2: NOP
+    3: NOP
+    4: GOTO 0
+objet 18: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 18
+    1: NOP
+    2: NOP
+    3: NOP
+    4: GOTO 0
+objet 19: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r10, r0
+    1: MOVE r0, 0
+    2: PLAY_PL_PM 2, r10
+    3: JUMP_TITLE 16
+objet 20: resume=1 menu_mask=0 title_mask=0
+    0: PLAY_PL 19
+    1: NOP
+    2: NOP
+    3: NOP
+    4: GOTO 0
+objet 21: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r10, r0
+    1: MOVE r0, 0
+    2: PLAY_PL_PM 9, r10
+    3: JUMP_TITLE 20

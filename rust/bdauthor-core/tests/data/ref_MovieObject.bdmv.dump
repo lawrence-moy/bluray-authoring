@@ -1,0 +1,2137 @@
+version 0100, 264 objets
+objet 0: resume=1 menu_mask=0 title_mask=0
+    0: NOP
+    1: NOP
+    2: NOP
+    3: NOP
+    4: JUMP_TITLE 1
+objet 1: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 0, r10
+    6: BREAK
+objet 2: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 1, r10
+    6: JUMP_TITLE 3
+objet 3: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 2, r10
+    6: JUMP_TITLE 4
+objet 4: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 3, r10
+    6: JUMP_TITLE 5
+objet 5: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 4, r10
+    6: JUMP_TITLE 6
+objet 6: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 5, r10
+    6: JUMP_TITLE 7
+objet 7: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 6, r10
+    6: JUMP_TITLE 8
+objet 8: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 7, r10
+    6: JUMP_TITLE 9
+objet 9: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 8, r10
+    6: JUMP_TITLE 10
+objet 10: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 9, r10
+    6: JUMP_TITLE 11
+objet 11: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 10, r10
+    6: JUMP_TITLE 12
+objet 12: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 11, r10
+    6: JUMP_TITLE 13
+objet 13: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 12, r10
+    6: JUMP_TITLE 14
+objet 14: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 13, r10
+    6: JUMP_TITLE 15
+objet 15: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 14, r10
+    6: JUMP_TITLE 16
+objet 16: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 15, r10
+    6: JUMP_TITLE 17
+objet 17: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 16, r10
+    6: JUMP_TITLE 18
+objet 18: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 17, r10
+    6: JUMP_TITLE 19
+objet 19: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 18, r10
+    6: JUMP_TITLE 20
+objet 20: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 19, r10
+    6: JUMP_TITLE 21
+objet 21: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 20, r10
+    6: JUMP_TITLE 22
+objet 22: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 21, r10
+    6: JUMP_TITLE 23
+objet 23: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 22, r10
+    6: JUMP_TITLE 24
+objet 24: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 23, r10
+    6: JUMP_TITLE 25
+objet 25: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 24, r10
+    6: JUMP_TITLE 26
+objet 26: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 25, r10
+    6: JUMP_TITLE 27
+objet 27: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 26, r10
+    6: JUMP_TITLE 28
+objet 28: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 27, r10
+    6: JUMP_TITLE 29
+objet 29: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 28, r10
+    6: JUMP_TITLE 30
+objet 30: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 29, r10
+    6: JUMP_TITLE 31
+objet 31: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 30, r10
+    6: JUMP_TITLE 32
+objet 32: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 31, r10
+    6: JUMP_TITLE 33
+objet 33: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 32, r10
+    6: JUMP_TITLE 34
+objet 34: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 33, r10
+    6: JUMP_TITLE 35
+objet 35: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 34, r10
+    6: JUMP_TITLE 36
+objet 36: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 35, r10
+    6: JUMP_TITLE 37
+objet 37: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 36, r10
+    6: JUMP_TITLE 38
+objet 38: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 37, r10
+    6: JUMP_TITLE 39
+objet 39: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 38, r10
+    6: JUMP_TITLE 40
+objet 40: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 39, r10
+    6: JUMP_TITLE 41
+objet 41: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 40, r10
+    6: JUMP_TITLE 42
+objet 42: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 41, r10
+    6: JUMP_TITLE 43
+objet 43: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 42, r10
+    6: JUMP_TITLE 44
+objet 44: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 43, r10
+    6: JUMP_TITLE 45
+objet 45: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 44, r10
+    6: JUMP_TITLE 46
+objet 46: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 45, r10
+    6: JUMP_TITLE 47
+objet 47: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 46, r10
+    6: JUMP_TITLE 48
+objet 48: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 47, r10
+    6: JUMP_TITLE 49
+objet 49: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 48, r10
+    6: JUMP_TITLE 50
+objet 50: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 49, r10
+    6: JUMP_TITLE 51
+objet 51: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 50, r10
+    6: JUMP_TITLE 52
+objet 52: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 51, r10
+    6: JUMP_TITLE 53
+objet 53: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 52, r10
+    6: JUMP_TITLE 54
+objet 54: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 53, r10
+    6: JUMP_TITLE 55
+objet 55: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 54, r10
+    6: JUMP_TITLE 56
+objet 56: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 55, r10
+    6: JUMP_TITLE 57
+objet 57: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 56, r10
+    6: JUMP_TITLE 58
+objet 58: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 57, r10
+    6: JUMP_TITLE 59
+objet 59: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 58, r10
+    6: JUMP_TITLE 60
+objet 60: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 59, r10
+    6: JUMP_TITLE 61
+objet 61: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 60, r10
+    6: JUMP_TITLE 62
+objet 62: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 61, r10
+    6: JUMP_TITLE 63
+objet 63: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 62, r10
+    6: JUMP_TITLE 64
+objet 64: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 63, r10
+    6: JUMP_TITLE 65
+objet 65: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 64, r10
+    6: JUMP_TITLE 66
+objet 66: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 65, r10
+    6: JUMP_TITLE 67
+objet 67: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 66, r10
+    6: JUMP_TITLE 68
+objet 68: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 67, r10
+    6: JUMP_TITLE 69
+objet 69: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 68, r10
+    6: JUMP_TITLE 70
+objet 70: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 69, r10
+    6: JUMP_TITLE 71
+objet 71: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 70, r10
+    6: JUMP_TITLE 72
+objet 72: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 71, r10
+    6: JUMP_TITLE 73
+objet 73: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 72, r10
+    6: JUMP_TITLE 74
+objet 74: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 73, r10
+    6: JUMP_TITLE 75
+objet 75: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 74, r10
+    6: JUMP_TITLE 76
+objet 76: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 75, r10
+    6: JUMP_TITLE 77
+objet 77: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 76, r10
+    6: JUMP_TITLE 78
+objet 78: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 77, r10
+    6: JUMP_TITLE 79
+objet 79: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 78, r10
+    6: JUMP_TITLE 80
+objet 80: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 79, r10
+    6: JUMP_TITLE 81
+objet 81: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 80, r10
+    6: JUMP_TITLE 82
+objet 82: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 81, r10
+    6: JUMP_TITLE 83
+objet 83: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 82, r10
+    6: JUMP_TITLE 84
+objet 84: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 83, r10
+    6: JUMP_TITLE 85
+objet 85: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 84, r10
+    6: JUMP_TITLE 86
+objet 86: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 85, r10
+    6: JUMP_TITLE 87
+objet 87: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 86, r10
+    6: JUMP_TITLE 88
+objet 88: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 87, r10
+    6: JUMP_TITLE 89
+objet 89: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 88, r10
+    6: JUMP_TITLE 90
+objet 90: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 89, r10
+    6: JUMP_TITLE 91
+objet 91: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 90, r10
+    6: JUMP_TITLE 92
+objet 92: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 91, r10
+    6: JUMP_TITLE 93
+objet 93: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 92, r10
+    6: JUMP_TITLE 94
+objet 94: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 93, r10
+    6: JUMP_TITLE 95
+objet 95: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 94, r10
+    6: JUMP_TITLE 96
+objet 96: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 95, r10
+    6: JUMP_TITLE 97
+objet 97: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 96, r10
+    6: JUMP_TITLE 98
+objet 98: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 97, r10
+    6: JUMP_TITLE 99
+objet 99: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 98, r10
+    6: JUMP_TITLE 100
+objet 100: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 99, r10
+    6: JUMP_TITLE 101
+objet 101: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 100, r10
+    6: JUMP_TITLE 102
+objet 102: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 101, r10
+    6: JUMP_TITLE 103
+objet 103: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 102, r10
+    6: JUMP_TITLE 104
+objet 104: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 103, r10
+    6: JUMP_TITLE 105
+objet 105: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 104, r10
+    6: JUMP_TITLE 106
+objet 106: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 105, r10
+    6: JUMP_TITLE 107
+objet 107: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 106, r10
+    6: JUMP_TITLE 108
+objet 108: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 107, r10
+    6: JUMP_TITLE 109
+objet 109: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 108, r10
+    6: JUMP_TITLE 110
+objet 110: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 109, r10
+    6: JUMP_TITLE 111
+objet 111: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 110, r10
+    6: JUMP_TITLE 112
+objet 112: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 111, r10
+    6: JUMP_TITLE 113
+objet 113: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 112, r10
+    6: JUMP_TITLE 114
+objet 114: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 113, r10
+    6: JUMP_TITLE 115
+objet 115: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 114, r10
+    6: JUMP_TITLE 116
+objet 116: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 115, r10
+    6: JUMP_TITLE 117
+objet 117: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 116, r10
+    6: JUMP_TITLE 118
+objet 118: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 117, r10
+    6: JUMP_TITLE 119
+objet 119: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 118, r10
+    6: JUMP_TITLE 120
+objet 120: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 119, r10
+    6: JUMP_TITLE 121
+objet 121: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 120, r10
+    6: JUMP_TITLE 122
+objet 122: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 121, r10
+    6: JUMP_TITLE 123
+objet 123: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 122, r10
+    6: JUMP_TITLE 124
+objet 124: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 123, r10
+    6: JUMP_TITLE 125
+objet 125: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 124, r10
+    6: JUMP_TITLE 126
+objet 126: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 125, r10
+    6: JUMP_TITLE 127
+objet 127: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 126, r10
+    6: JUMP_TITLE 128
+objet 128: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 127, r10
+    6: JUMP_TITLE 129
+objet 129: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 128, r10
+    6: JUMP_TITLE 130
+objet 130: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 129, r10
+    6: JUMP_TITLE 131
+objet 131: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 130, r10
+    6: JUMP_TITLE 132
+objet 132: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 131, r10
+    6: JUMP_TITLE 133
+objet 133: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 132, r10
+    6: JUMP_TITLE 134
+objet 134: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 133, r10
+    6: JUMP_TITLE 135
+objet 135: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 134, r10
+    6: JUMP_TITLE 136
+objet 136: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 135, r10
+    6: JUMP_TITLE 137
+objet 137: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 136, r10
+    6: JUMP_TITLE 138
+objet 138: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 137, r10
+    6: JUMP_TITLE 139
+objet 139: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 138, r10
+    6: JUMP_TITLE 140
+objet 140: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 139, r10
+    6: JUMP_TITLE 141
+objet 141: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 140, r10
+    6: JUMP_TITLE 142
+objet 142: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 141, r10
+    6: JUMP_TITLE 143
+objet 143: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 142, r10
+    6: JUMP_TITLE 144
+objet 144: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 143, r10
+    6: JUMP_TITLE 145
+objet 145: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 144, r10
+    6: JUMP_TITLE 146
+objet 146: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 145, r10
+    6: JUMP_TITLE 147
+objet 147: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 146, r10
+    6: JUMP_TITLE 148
+objet 148: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 147, r10
+    6: JUMP_TITLE 149
+objet 149: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 148, r10
+    6: JUMP_TITLE 150
+objet 150: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 149, r10
+    6: JUMP_TITLE 151
+objet 151: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 150, r10
+    6: JUMP_TITLE 152
+objet 152: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 151, r10
+    6: JUMP_TITLE 153
+objet 153: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 152, r10
+    6: JUMP_TITLE 154
+objet 154: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 153, r10
+    6: JUMP_TITLE 155
+objet 155: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 154, r10
+    6: JUMP_TITLE 156
+objet 156: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 155, r10
+    6: JUMP_TITLE 157
+objet 157: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 156, r10
+    6: JUMP_TITLE 158
+objet 158: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 157, r10
+    6: JUMP_TITLE 159
+objet 159: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 158, r10
+    6: JUMP_TITLE 160
+objet 160: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 159, r10
+    6: JUMP_TITLE 161
+objet 161: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 160, r10
+    6: JUMP_TITLE 162
+objet 162: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 161, r10
+    6: JUMP_TITLE 163
+objet 163: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 162, r10
+    6: JUMP_TITLE 164
+objet 164: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 163, r10
+    6: JUMP_TITLE 165
+objet 165: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 164, r10
+    6: JUMP_TITLE 166
+objet 166: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 165, r10
+    6: JUMP_TITLE 167
+objet 167: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 166, r10
+    6: JUMP_TITLE 168
+objet 168: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 167, r10
+    6: JUMP_TITLE 169
+objet 169: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 168, r10
+    6: JUMP_TITLE 170
+objet 170: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 169, r10
+    6: JUMP_TITLE 171
+objet 171: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 170, r10
+    6: JUMP_TITLE 172
+objet 172: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 171, r10
+    6: JUMP_TITLE 173
+objet 173: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 172, r10
+    6: JUMP_TITLE 174
+objet 174: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 173, r10
+    6: JUMP_TITLE 175
+objet 175: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 174, r10
+    6: JUMP_TITLE 176
+objet 176: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 175, r10
+    6: JUMP_TITLE 177
+objet 177: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 176, r10
+    6: JUMP_TITLE 178
+objet 178: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 177, r10
+    6: JUMP_TITLE 179
+objet 179: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 178, r10
+    6: JUMP_TITLE 180
+objet 180: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 179, r10
+    6: JUMP_TITLE 181
+objet 181: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 180, r10
+    6: JUMP_TITLE 182
+objet 182: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 181, r10
+    6: JUMP_TITLE 183
+objet 183: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 182, r10
+    6: JUMP_TITLE 184
+objet 184: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 183, r10
+    6: JUMP_TITLE 185
+objet 185: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 184, r10
+    6: JUMP_TITLE 186
+objet 186: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 185, r10
+    6: JUMP_TITLE 187
+objet 187: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 186, r10
+    6: JUMP_TITLE 188
+objet 188: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 187, r10
+    6: JUMP_TITLE 189
+objet 189: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 188, r10
+    6: JUMP_TITLE 190
+objet 190: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 189, r10
+    6: JUMP_TITLE 191
+objet 191: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 190, r10
+    6: JUMP_TITLE 192
+objet 192: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 191, r10
+    6: JUMP_TITLE 193
+objet 193: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 192, r10
+    6: JUMP_TITLE 194
+objet 194: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 193, r10
+    6: JUMP_TITLE 195
+objet 195: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 194, r10
+    6: JUMP_TITLE 196
+objet 196: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 195, r10
+    6: JUMP_TITLE 197
+objet 197: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 196, r10
+    6: JUMP_TITLE 198
+objet 198: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 197, r10
+    6: JUMP_TITLE 199
+objet 199: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 198, r10
+    6: JUMP_TITLE 200
+objet 200: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 199, r10
+    6: JUMP_TITLE 201
+objet 201: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 200, r10
+    6: JUMP_TITLE 202
+objet 202: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 201, r10
+    6: JUMP_TITLE 203
+objet 203: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 202, r10
+    6: JUMP_TITLE 204
+objet 204: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 203, r10
+    6: JUMP_TITLE 205
+objet 205: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 204, r10
+    6: JUMP_TITLE 206
+objet 206: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 205, r10
+    6: JUMP_TITLE 207
+objet 207: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 206, r10
+    6: JUMP_TITLE 208
+objet 208: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 207, r10
+    6: JUMP_TITLE 209
+objet 209: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 208, r10
+    6: JUMP_TITLE 210
+objet 210: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 209, r10
+    6: JUMP_TITLE 211
+objet 211: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 210, r10
+    6: JUMP_TITLE 212
+objet 212: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 211, r10
+    6: JUMP_TITLE 213
+objet 213: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 212, r10
+    6: JUMP_TITLE 214
+objet 214: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 213, r10
+    6: JUMP_TITLE 215
+objet 215: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 214, r10
+    6: JUMP_TITLE 216
+objet 216: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 215, r10
+    6: JUMP_TITLE 217
+objet 217: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 216, r10
+    6: JUMP_TITLE 218
+objet 218: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 217, r10
+    6: JUMP_TITLE 219
+objet 219: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 218, r10
+    6: JUMP_TITLE 220
+objet 220: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 219, r10
+    6: JUMP_TITLE 221
+objet 221: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 220, r10
+    6: JUMP_TITLE 222
+objet 222: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 221, r10
+    6: JUMP_TITLE 223
+objet 223: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 222, r10
+    6: JUMP_TITLE 224
+objet 224: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 223, r10
+    6: JUMP_TITLE 225
+objet 225: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 224, r10
+    6: JUMP_TITLE 226
+objet 226: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 225, r10
+    6: JUMP_TITLE 227
+objet 227: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 226, r10
+    6: JUMP_TITLE 228
+objet 228: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 227, r10
+    6: JUMP_TITLE 229
+objet 229: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 228, r10
+    6: JUMP_TITLE 230
+objet 230: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 229, r10
+    6: JUMP_TITLE 231
+objet 231: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 230, r10
+    6: JUMP_TITLE 232
+objet 232: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 231, r10
+    6: JUMP_TITLE 233
+objet 233: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 232, r10
+    6: JUMP_TITLE 234
+objet 234: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 233, r10
+    6: JUMP_TITLE 235
+objet 235: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 234, r10
+    6: JUMP_TITLE 236
+objet 236: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 235, r10
+    6: JUMP_TITLE 237
+objet 237: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 236, r10
+    6: JUMP_TITLE 238
+objet 238: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 237, r10
+    6: JUMP_TITLE 239
+objet 239: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 238, r10
+    6: JUMP_TITLE 240
+objet 240: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 239, r10
+    6: JUMP_TITLE 241
+objet 241: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 240, r10
+    6: JUMP_TITLE 242
+objet 242: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 241, r10
+    6: JUMP_TITLE 243
+objet 243: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 242, r10
+    6: JUMP_TITLE 244
+objet 244: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 243, r10
+    6: JUMP_TITLE 245
+objet 245: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 244, r10
+    6: JUMP_TITLE 246
+objet 246: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 245, r10
+    6: JUMP_TITLE 247
+objet 247: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 246, r10
+    6: JUMP_TITLE 248
+objet 248: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 247, r10
+    6: JUMP_TITLE 249
+objet 249: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 248, r10
+    6: JUMP_TITLE 250
+objet 250: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 249, r10
+    6: JUMP_TITLE 251
+objet 251: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 250, r10
+    6: JUMP_TITLE 252
+objet 252: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r1, 254
+    1: GOTO 3
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 251, r10
+    6: JUMP_TITLE 253
+objet 253: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r10, r0
+    1: MOVE r0, 0
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 252, r10
+    6: JUMP_TITLE 254
+objet 254: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r10, r0
+    1: MOVE r0, 0
+    2: PLAY_PL 253
+    3: MOVE r10, r0
+    4: MOVE r0, 0
+    5: PLAY_PL_PM 253, r10
+    6: JUMP_TITLE 0
+objet 255: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r0, 0
+    1: MOVE r2, 1
+    2: MOVE r3, 65535
+    3: MOVE r1, 254
+    4: MOVE r2048, 1
+    5: MOVE r2049, 0
+    6: MOVE r2061, 1
+    7: JUMP_OBJECT 257
+objet 256: resume=1 menu_mask=0 title_mask=0
+    0: SET_STREAM 2147598337, 0
+    1: NOP
+    2: NOP
+    3: MOVE r4, 0
+    4: MOVE r2052, 0
+    5: MOVE r2060, 1
+    6: MOVE r2051, 0
+    7: JUMP_TITLE 0
+objet 257: resume=1 menu_mask=0 title_mask=0
+    0: NOP
+    1: NOP
+    2: NOP
+    3: NOP
+    4: NOP
+    5: NOP
+    6: MOVE r2066, 1
+    7: JUMP_OBJECT 256
+objet 258: resume=1 menu_mask=0 title_mask=0
+    0: CMP_EQ r2060, 0
+    1: GOTO 7
+    2: ADD r2055, 600
+    3: SUB r2054, 1
+    4: DIV r2054, 12
+    5: MOVE r10, 65535
+    6: PLAY_PL_PI r2055, r2054
+    7: MOVE r10, 65535
+    8: JUMP_TITLE 0
+objet 259: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r10, r3
+    1: MOVE r3, 65535
+    2: CMP_EQ r10, 65520
+    3: JUMP_OBJECT 258
+    4: CMP_EQ r10, 65521
+    5: JUMP_OBJECT 260
+    6: CMP_EQ r10, 65522
+    7: JUMP_OBJECT 261
+    8: CMP_EQ r10, 65523
+    9: JUMP_OBJECT 263
+   10: CMP_NE r10, 65535
+   11: PLAY_PL r10
+   12: MOVE r10, r4
+   13: MOVE r4, 0
+   14: CMP_NE r10, 0
+   15: JUMP_OBJECT 262
+   16: CMP_NE r2, 65534
+   17: SET_BUTTON_PAGE PSR2, 0
+   18: MOVE r2, 65534
+   19: PLAY_PL r1
+   20: NOP
+   21: NOP
+   22: NOP
+   23: GOTO 19
+objet 260: resume=1 menu_mask=0 title_mask=0
+    0: MOVE r0, 0
+    1: CMP_NE r2061, 0
+    2: PLAY_PL_PI 254, r2054
+    3: MOVE r10, 65535
+    4: JUMP_TITLE 0
+objet 261: resume=1 menu_mask=0 title_mask=0
+    0: CMP_NE r2066, 0
+    1: PLAY_PL_PI 255, r2054
+    2: MOVE r10, 65535
+    3: JUMP_TITLE 0
+objet 262: resume=1 menu_mask=0 title_mask=0
+    0: CMP_EQ r2084, 56992
+    1: GOTO 15
+    2: GOTO 14
+    3: MOVE r2085, r2084
+    4: AND r2085, 2147418112
+    5: MOVE r2086, r2084
+    6: AND r2086, 65535
+    7: MOVE r2087, r2086
+    8: AND r2086, 255
+    9: AND r2087, 16384
+   10: CMP_NE r2087, 0
+   11: SET_STREAM PSR136693798, r0
+   12: GOTO 14
+   13: SET_STREAM PSR136677414, r0
+   14: MOVE r2084, 56992
+   15: JUMP_TITLE r10
+objet 263: resume=1 menu_mask=0 title_mask=0
+    0: CMP_EQ r2060, 0
+    1: GOTO 5
+    2: ADD r2055, 600
+    3: MOVE r10, 65535
+    4: PLAY_PL_PI r2055, 0
+    5: MOVE r10, 65535
+    6: JUMP_TITLE 0

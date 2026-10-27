@@ -1,0 +1,18 @@
+[package]
+name = "bdauthor-gui"
+version = "0.1.0"
+edition = "2021"
+description = "Interface graphique native de bdauthor (egui/eframe)"
+
+[[bin]]
+name = "bdauthor"
+path = "src/main.rs"
+
+[dependencies]
+bdauthor-core = { path = "../bdauthor-core" }
+bdauthor-render = { path = "../bdauthor-render" }
+eframe = "0.29"
+rfd = "0.15"
+
+[profile.release]
+opt-level = 3

@@ -1,0 +1,22 @@
+# compilation Rust
+target/
+# donnees generees / volumineuses
+.cache_bdauthor/
+out/
+sortie_test/
+rust/*/sortie/
+videos/
+# outils et archives telecharges
+ffmpeg-*/
+*.7z
+*.zip
+# fichiers de test generes
+80002.clpi
+80002.m2ts
+rust/bdauthor-core/test.ts
+# Python
+__pycache__/
+*.pyc
+# divers
+*.log
+Thumbs.db

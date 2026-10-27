@@ -1,0 +1,19 @@
+version 0100
+PlayItem 0: clip 00002.M2TS  in=600.000s out=608.547s duree=8.547s connexion=1 (60 octets bruts : UO/STN)
+Mark 0: chapitre (entry mark) playitem=0 t=600.000s
+Mark 1: chapitre (entry mark) playitem=0 t=600.005s
+Mark 2: chapitre (entry mark) playitem=0 t=600.506s
+Mark 3: chapitre (entry mark) playitem=0 t=601.006s
+Mark 4: chapitre (entry mark) playitem=0 t=601.507s
+Mark 5: chapitre (entry mark) playitem=0 t=602.007s
+Mark 6: chapitre (entry mark) playitem=0 t=602.508s
+Mark 7: chapitre (entry mark) playitem=0 t=603.008s
+Mark 8: chapitre (entry mark) playitem=0 t=603.509s
+Mark 9: chapitre (entry mark) playitem=0 t=604.009s
+Mark 10: chapitre (entry mark) playitem=0 t=604.510s
+Mark 11: chapitre (entry mark) playitem=0 t=605.010s
+Mark 12: chapitre (entry mark) playitem=0 t=605.511s
+Mark 13: chapitre (entry mark) playitem=0 t=606.011s
+Mark 14: chapitre (entry mark) playitem=0 t=606.512s
+Mark 15: chapitre (entry mark) playitem=0 t=607.012s
+Mark 16: chapitre (entry mark) playitem=0 t=607.513s

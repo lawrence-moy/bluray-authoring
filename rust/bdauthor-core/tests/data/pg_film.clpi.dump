@@ -1,0 +1,12 @@
+version 0100
+ClipInfo : type d'application 1 = film (main TS), 84384 paquets (16201728 octets), debit 1895559 o/s
+Sequence : PCR PID 0x1001, 600.000s -> 608.547s
+Programme : PMT PID 0x0100
+  flux PID 0x1011 : H.264 720p 59.94 i/s
+  flux PID 0x1100 : AC3 langue fra
+EP_map PID 0x1011 : 3 entrees coarse, 18 fine
+  t=600.001s  SPN=4  (octet 768)
+  t=600.502s  SPN=5475  (octet 1051200)
+  t=601.003s  SPN=10148  (octet 1948416)
+  t=601.503s  SPN=15032  (octet 2886144)
+  ... derniere : t=608.512s  SPN=83513
