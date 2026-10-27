@@ -249,3 +249,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - JSON : "mise_en_page": {"principal": {"<page>": {"elements": [...]}}, "chapitres": {"<video>": {"<page>": {...}}}} (numeros a partir de 1).
 - Code : core/design.rs (modele + validation), core/editor.rs (logique testee), render (apercu), gui/editor_ui.rs (egui).
 - Teste ici : tout le coeur (cargo test). NON compile : render (modifs apres export 7) et gui (eframe indisponible hors ligne).
+
+## Depot git (a maintenir)
+- Depot local dans `code/` (branche `main`, identite locale moyla). `.gitignore` exclut target/, caches, videos, sorties, ffmpeg, archives.
+- Regle : apres chaque lot de modifications livre (et valide ou signale comme non compile), faire un commit descriptif
+  (`git add -A && git commit`), via `device_bash` dans `$HOME/mnt/Authoring/code` (demander d'abord `device_request_delete_permission`
+  pour le dossier connecte : git cree/supprime des fichiers .lock). Terminer les messages par les lignes d'attribution demandees par la session.
+- Ne jamais committer de gros fichiers (verifier `git status` avant `git add -A`).
