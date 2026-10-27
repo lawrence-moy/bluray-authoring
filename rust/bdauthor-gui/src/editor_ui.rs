@@ -447,7 +447,8 @@ impl App {
         // vérifications
         if custom {
             if let Some(d) = info.design(&self.model.designs) {
-                for p in (if info.is_free() { d.validate_free(info.page, info.pages, self.model.videos.len()) } else { d.validate(info.count(), info.menu, info.page, info.pages) }) {
+                let probs = if info.is_free() { d.validate_free(info.page, info.pages, self.model.videos.len()) } else { d.validate(info.count(), info.menu, info.page, info.pages) };
+                for p in probs {
                     let (c, t) = if p.error { (Color32::from_rgb(230, 100, 90), "Erreur") } else { (Color32::from_rgb(230, 190, 80), "Attention") };
                     ui.colored_label(c, format!("{t} : {}", p.msg));
                 }
