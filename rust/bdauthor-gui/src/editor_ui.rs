@@ -129,13 +129,27 @@ impl App {
     }
 
     /// (fichier, instant de la miniature) de chaque element de la page.
+    /// Page libre : video choisie pour chaque vignette, dans l'ordre de la liste.
+    fn free_slot_videos(&self, info: &PageInfo) -> Vec<Option<usize>> {
+        info.design(&self.model.designs).map(|d| {
+            d.items.iter().filter_map(|it| if let Kind::Slot { assign, .. } = it.kind { Some(assign.filter(|v| *v < self.model.videos.len())) } else { None }).collect()
+        }).unwrap_or_default()
+    }
+
+    fn video_thumb(&self, i: usize) -> (String, f64) {
+        let v = &self.model.videos[i];
+        let at = v.thumb_s.unwrap_or_else(|| self.durations.get(&v.file).map_or(0.0, |d| (d * 0.25).min(1.0)));
+        (v.file.clone(), at)
+    }
+
     fn slot_sources(&self, info: &PageInfo) -> Vec<(String, f64)> {
+        if info.is_free() {
+            return self.free_slot_videos(info).into_iter().map(|v| v.map_or((String::new(), 0.0), |i| self.video_thumb(i))).collect();
+        }
         let mut out = Vec::new();
         match info.video {
             None => for &i in &info.items {
-                let v = &self.model.videos[i];
-                let at = v.thumb_s.unwrap_or_else(|| self.durations.get(&v.file).map_or(0.0, |d| (d * 0.25).min(1.0)));
-                out.push((v.file.clone(), at));
+                out.push(self.video_thumb(i));
             },
             Some(vi) => {
                 let v = &self.model.videos[vi];
@@ -150,14 +164,16 @@ impl App {
 
     fn preview_slots(&self, info: &PageInfo) -> Vec<PreviewSlot> {
         let sources = self.slot_sources(info);
-        let labels: Vec<String> = match info.video {
+        let labels: Vec<String> = if info.is_free() {
+            self.free_slot_videos(info).into_iter().map(|v| v.map_or_else(|| "(aucune vidéo)".to_string(), |i| video_title(&self.model, i))).collect()
+        } else { match info.video {
             None => info.items.iter().map(|&i| video_title(&self.model, i)).collect(),
             Some(vi) => {
                 let v = &self.model.videos[vi];
                 let ch = v.chapter_list(self.durations.get(&v.file).copied());
                 info.items.iter().filter_map(|&j| ch.get(j)).map(|(t, n)| { let s = t.round() as i64; format!("{n} ({}:{:02})", s / 60, s % 60) }).collect()
             }
-        };
+        } };
         labels.into_iter().zip(sources).map(|(label, (file, at))| {
             let ms = (at * 1000.0).round() as i64;
             let thumb = self.thumbs.get(&(file.clone(), ms)).cloned();
@@ -178,6 +194,12 @@ impl App {
             Some(d) => d,
             None => match info.starting_point(&self.model) { Ok(d) => d, Err(_) => return },
         };
+        let mut design = design;
+        if info.is_free() {
+            for it in &mut design.items {
+                if let Kind::Slot { assign, .. } = &mut it.kind { *assign = None; } // les PreviewSlot sont deja dans l'ordre des vignettes
+            }
+        }
         let Ok(renderer) = &self.renderer else { return };
         let base = if self.model.bg.is_empty() {
             None
@@ -199,6 +221,12 @@ impl App {
     // ------------------------------------------------------------------ liste des pages (panneau de gauche)
     pub(crate) fn page_list_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Pages de menu");
+        if !self.model.videos.is_empty() && ui.button("+ Page libre").on_hover_text("Ajoute une page vierge à la suite du menu principal ; ses vignettes peuvent montrer n'importe quelle vidéo.").clicked() {
+            let f = bdauthor_core::editor::add_free_page(&mut self.model);
+            self.cur = Some(bdauthor_core::editor::PageRef::Free(f));
+            self.sel_item = None;
+            self.bump();
+        }
         let pages = self.pages();
         if pages.is_empty() {
             ui.label("Ajoutez des vidéos dans l'onglet « Projet ».");
@@ -208,12 +236,12 @@ impl App {
         let mut pick = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
             for p in &pages {
-                let mark = if p.custom(&self.model.designs) { "● " } else { "○ " };
+                let mark = if p.is_free() { "◆ " } else if p.custom(&self.model.designs) { "● " } else { "○ " };
                 if ui.selectable_label(cur == Some(p.r), format!("{mark}{}", p.label(&self.model))).clicked() { pick = Some(p.r); }
             }
         });
         ui.separator();
-        ui.label(egui::RichText::new("● mise en page personnalisée\n○ grille automatique").weak());
+        ui.label(egui::RichText::new("● mise en page personnalisée\n○ grille automatique\n◆ page libre").weak());
         if let Some(r) = pick {
             if self.cur != Some(r) {
                 self.cur = Some(r);
@@ -251,9 +279,11 @@ impl App {
                     }
                 }
             } else {
-                if ui.button("Revenir à la grille automatique").clicked() {
+                let free = info.is_free();
+                if ui.button(if free { "Supprimer cette page" } else { "Revenir à la grille automatique" }).clicked() {
                     info.remove_design(&mut self.model.designs);
                     self.sel_item = None;
+                    if free { self.cur = None; }
                     self.bump();
                 }
             }
@@ -269,7 +299,7 @@ impl App {
                         if ui.button(a.label()).clicked() { add = Some(Item::nav(a, 760, 940, 360, 80)); ui.close_menu(); }
                     }
                 });
-                if ui.button("+ Vignette").clicked() { add = Some(Item { x: 100, y: 300, w: 400, h: 250, kind: Kind::Slot { thumb_h: 200, assign: None } }); }
+                if ui.button("+ Vignette").clicked() { add = Some(Item { x: 100, y: 300, w: 400, h: 250, kind: Kind::Slot { thumb_h: 200, assign: if info.is_free() { Some(0) } else { None } } }); }
                 ui.separator();
                 ui.checkbox(&mut self.snap, "Aimantation 10 px");
             });
@@ -391,7 +421,7 @@ impl App {
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, col));
                     }
                     if matches!(it.kind, Kind::Slot { .. }) {
-                        let shown = eff.get(slot_no).copied().unwrap_or(slot_no) + 1;
+                        let shown = if info.is_free() { match it.kind { Kind::Slot { assign: Some(v), .. } => v + 1, _ => 0 } } else { eff.get(slot_no).copied().unwrap_or(slot_no) + 1 };
                         slot_no += 1;
                         painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, shown.to_string(), egui::FontId::proportional(14.0), col);
                     }
@@ -417,12 +447,12 @@ impl App {
         // vérifications
         if custom {
             if let Some(d) = info.design(&self.model.designs) {
-                for p in d.validate(info.count(), info.menu, info.page, info.pages) {
+                for p in (if info.is_free() { d.validate_free(info.page, info.pages, self.model.videos.len()) } else { d.validate(info.count(), info.menu, info.page, info.pages) }) {
                     let (c, t) = if p.error { (Color32::from_rgb(230, 100, 90), "Erreur") } else { (Color32::from_rgb(230, 190, 80), "Attention") };
                     ui.colored_label(c, format!("{t} : {}", p.msg));
                 }
             }
-            let others = self.pages().into_iter().filter(|p| p.menu == info.menu && p.r != info.r).count();
+            let others = self.pages().into_iter().filter(|p| p.menu == info.menu && p.r != info.r && !p.is_free()).count();
             if others > 0 && ui.button("Reprendre le décor et les boutons sur les autres pages de ce menu").clicked() {
                 self.copy_decor_to_others(&info);
             }
@@ -433,7 +463,7 @@ impl App {
 
     fn copy_decor_to_others(&mut self, info: &PageInfo) {
         let Some(src) = info.design(&self.model.designs).cloned() else { return };
-        for t in self.pages().into_iter().filter(|p| p.menu == info.menu && p.r != info.r) {
+        for t in self.pages().into_iter().filter(|p| p.menu == info.menu && p.r != info.r && !p.is_free()) {
             let default = match t.menu {
                 MenuType::Main => PageDesign::default_main(t.count(), t.page, t.pages),
                 MenuType::Chapters => PageDesign::default_chapter(t.count(), t.page, t.pages),
@@ -477,6 +507,8 @@ impl App {
         let font_check = self.renderer.as_ref();
         let count = info.count();
         let labels: Vec<String> = self.preview_slots(&info).into_iter().map(|s| s.label).collect();
+        let is_free = info.is_free();
+        let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
         {
             let Some(d) = info.design_mut(&mut self.model.designs) else { return };
             let eff = d.slot_assignment(count);
@@ -502,15 +534,26 @@ impl App {
                             changed = true;
                         }
                     });
-                    let cur = eff.get(slot_pos).copied().unwrap_or(0);
-                    let name = |e: usize| format!("{}. {}", e + 1, labels.get(e).cloned().unwrap_or_default());
-                    egui::ComboBox::from_label("Contenu").selected_text(name(cur)).show_ui(ui, |ui| {
-                        if ui.selectable_label(assign.is_none(), "Automatique (dans l'ordre)").clicked() { op = Some(Op::Assign(None)); }
-                        for e in 0..count {
-                            if ui.selectable_label(assign.is_some() && cur == e, name(e)).clicked() { op = Some(Op::Assign(Some(e))); }
-                        }
-                    });
-                    ui.label(egui::RichText::new("Choisir un contenu déjà utilisé par une autre vignette échange les deux.").weak());
+                    if is_free {
+                        // page libre : n'importe quelle video du projet (doublons permis)
+                        let name = |v: usize| format!("{}. {}", v + 1, video_labels.get(v).cloned().unwrap_or_default());
+                        let shown = assign.map_or_else(|| "(choisir une vidéo)".to_string(), name);
+                        egui::ComboBox::from_label("Vidéo").selected_text(shown).show_ui(ui, |ui| {
+                            for v in 0..video_labels.len() {
+                                if ui.selectable_label(*assign == Some(v), name(v)).clicked() { *assign = Some(v); changed = true; }
+                            }
+                        });
+                    } else {
+                        let cur = eff.get(slot_pos).copied().unwrap_or(0);
+                        let name = |e: usize| format!("{}. {}", e + 1, labels.get(e).cloned().unwrap_or_default());
+                        egui::ComboBox::from_label("Contenu").selected_text(name(cur)).show_ui(ui, |ui| {
+                            if ui.selectable_label(assign.is_none(), "Automatique (dans l'ordre)").clicked() { op = Some(Op::Assign(None)); }
+                            for e in 0..count {
+                                if ui.selectable_label(assign.is_some() && cur == e, name(e)).clicked() { op = Some(Op::Assign(Some(e))); }
+                            }
+                        });
+                        ui.label(egui::RichText::new("Choisir un contenu déjà utilisé par une autre vignette échange les deux.").weak());
+                    }
                 }
                 Kind::Nav { action, text } => {
                     egui::ComboBox::from_label("Action").selected_text(action.label()).show_ui(ui, |ui| {

@@ -92,9 +92,8 @@ fn resolve_design(ov: Option<&PageDesign>, expected: usize, menu: MenuType, page
 
 /// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page ; `s` = echelle du plan 1920 vers le menu.
 #[allow(clippy::too_many_arguments)]
-fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
     let (mut buttons, mut pix, mut k) = (Vec::new(), Vec::new(), 0usize);
-    let assignment = design.slot_assignment(slots.len());
     for (idx, it) in design.items.iter().enumerate() {
         let (x, y, w, h) = it.scaled(s);
         // textes et images places au-dessus de ce bouton dans l'ordre de superposition : poses sur ses images
@@ -422,7 +421,18 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         chapters.push(parse_chapters(v, sc)?);
     }
     let with_ch: Vec<usize> = (0..n).filter(|&i| !chapters[i].is_empty()).collect();
+    let designs = match proj.get("mise_en_page") {
+        Some(v) => Designs::from_value(v).map_err(|e| Error::Format(format!("mise_en_page : {e}")))?,
+        None => Designs::default(),
+    };
     let main_pg = paginate(n, par_page)?;
+    // pages libres (apres les pages automatiques) : chacune doit etre valide, sinon la construction s'arrete
+    let free_pages: &[PageDesign] = &designs.free;
+    let total_main = main_pg.len() + free_pages.len();
+    for (f, d) in free_pages.iter().enumerate() {
+        let errs: Vec<String> = d.validate_free(main_pg.len() + f, total_main, n).into_iter().filter(|x| x.error).map(|x| x.msg).collect();
+        if !errs.is_empty() { return bad(format!("page libre {} : {}", f + 1, errs.join(" "))); }
+    }
     let mut ch_pg: BTreeMap<usize, Vec<Vec<usize>>> = BTreeMap::new();
     for &i in &with_ch {
         ch_pg.insert(i, paginate(chapters[i].len(), par_page)?);
@@ -432,7 +442,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         for &i in idxs { video_page[i] = pg; }
     }
     let ch_counts: BTreeMap<usize, usize> = ch_pg.iter().map(|(&i, g)| (i, g.len())).collect();
-    let plan = plan_navigation(n, main_pg.len(), &ch_counts);
+    let plan = plan_navigation(n, total_main, &ch_counts);
     let first = &scans[0];
     let fmt = (first.width, first.height, first.fps);
     for (i, sc) in scans.iter().enumerate().skip(1) {
@@ -445,10 +455,6 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let sc_ = menu_size.0 as f64 / 1920.0;
 
     let still_opts = EncodeOpts { crf: eopts.crf, preset: eopts.preset.clone(), ..Default::default() };
-    let designs = match proj.get("mise_en_page") {
-        Some(v) => Designs::from_value(v).map_err(|e| Error::Format(format!("mise_en_page : {e}")))?,
-        None => Designs::default(),
-    };
     let custom_fond: Option<PathBuf> = menu_cfg.get("fond").and_then(Value::as_str).map(|f| p(f));
     let sd = size.0 as f64 / 1920.0; // echelle des textes/images poses sur le fond (qui a la taille de la video)
     // (rang dans l'ordre de superposition, decor) : le rang sert a poser sur les boutons ce qui est au-dessus d'eux
@@ -499,13 +505,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     (env.progress)(0.9);
 
     // 3. menu principal : une page par groupe de videos (page 1 = clip IG 80002, playlist N)
-    let main_pls: Vec<u32> = std::iter::once(n as u32).chain((1..main_pg.len()).map(|q| (n + q) as u32)).collect();
-    let mut next_pl = (n + main_pg.len()) as u32;
+    let main_pls: Vec<u32> = std::iter::once(n as u32).chain((1..total_main).map(|q| (n + q) as u32)).collect();
+    let mut next_pl = (n + total_main) as u32;
     let (mut next_ig, mut next_bg) = (80003u32, (n + 1) as u32);
     let mut first_page: Option<MenuStats> = None;
     for (pg, idxs) in main_pg.iter().enumerate() {
         let what = format!("menu principal, page {}", pg + 1);
-        let (design, custom) = resolve_design(designs.main.get(&pg), idxs.len(), MenuType::Main, pg, main_pg.len(), &what, &mut *env.log)?;
+        let (design, custom) = resolve_design(designs.main.get(&pg), idxs.len(), MenuType::Main, pg, total_main, &what, &mut *env.log)?;
         let mut slots = Vec::new();
         for &i in idxs {
             let v = &vids[i];
@@ -516,11 +522,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
         let target = |a: NavAction| match a {
             NavAction::Prev => plan.main_titles[pg.saturating_sub(1)] as u32,
-            NavAction::Next => plan.main_titles[(pg + 1).min(main_pg.len() - 1)] as u32,
+            NavAction::Next => plan.main_titles[(pg + 1).min(total_main - 1)] as u32,
             _ => 0,
         };
         let decor_r = scale_decor(&design);
-        let (buttons, pix) = page_buttons(env.tools, env.renderer, &design, &decor_r, MenuType::Main, pg, main_pg.len(), &slots, &target, sc_)?;
+        let (buttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Main, pg, total_main, &slots, &target, sc_)?;
         let decor: Vec<Decor> = decor_r.into_iter().map(|(_, d)| d).collect();
         let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
             let num = next_bg;
@@ -533,6 +539,41 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let ig_num = if pg == 0 { 80002 } else { let k = next_ig; next_ig += 1; k };
         let res = add_menu_page(&mut files, &buttons, &pix, ig_num, main_pls[pg], bg_num, &pscan, &what)?;
         if pg == 0 { first_page = Some(res); }
+    }
+    // pages libres du menu principal : vignettes de n'importe quelle video, fond propre a chaque page
+    for (f, design) in free_pages.iter().enumerate() {
+        let pg = main_pg.len() + f;
+        let what = format!("menu principal, page libre {}", f + 1);
+        let mut slots = Vec::new();
+        for it in design.items.iter() {
+            if let Kind::Slot { assign: Some(i), .. } = it.kind {
+                let v = &vids[i];
+                slots.push(SlotSpec {
+                    label: vtitle(v), source: p(&vfile(v)?), at: v.get("vignette_s").and_then(Value::as_f64), duration: durations[i], commands: vec![],
+                    go: plan.chapters.get(&i).map_or(i as u32 + 1, |c| c.pages[0] as u32),
+                });
+            }
+        }
+        let target = |a: NavAction| match a {
+            NavAction::Prev => plan.main_titles[pg.saturating_sub(1)] as u32,
+            NavAction::Next => plan.main_titles[(pg + 1).min(total_main - 1)] as u32,
+            _ => 0,
+        };
+        let decor_r = scale_decor(design);
+        let identity: Vec<usize> = (0..slots.len()).collect();
+        let (buttons, pix) = page_buttons(env.tools, env.renderer, design, &identity, &decor_r, MenuType::Main, pg, total_main, &slots, &target, sc_)?;
+        let decor: Vec<Decor> = decor_r.into_iter().map(|(_, d)| d).collect();
+        for l in design.validate_free(pg, total_main, n).iter().filter(|x| !x.error) { (env.log)(&format!("{what} : {}", l.msg)); }
+        let (bg_num, pscan) = if custom_fond.is_some() && decor.is_empty() {
+            (n as u32, bg_sc.clone())
+        } else {
+            let num = next_bg;
+            next_bg += 1;
+            let sc = own_background(env, &custom_fond, size, &decor, &tmp.0, &format!("fond_libre{f}.png"), fond_s, fps, &still_opts, &mut files, num)?;
+            (num, sc)
+        };
+        let ig_num = { let k = next_ig; next_ig += 1; k };
+        add_menu_page(&mut files, &buttons, &pix, ig_num, main_pls[pg], bg_num, &pscan, &what)?;
     }
     let first_page = first_page.expect("au moins une page");
     (env.progress)(0.95);
@@ -569,7 +610,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 NavAction::Back => retour_t,
             };
             let decor_r = scale_decor(&design);
-            let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, &decor_r, MenuType::Chapters, q, npg, &slots, &target, sc_)?;
+            let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Chapters, q, npg, &slots, &target, sc_)?;
             let decor: Vec<Decor> = decor_r.into_iter().map(|(_, d)| d).collect();
             let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
                 let num = next_bg;
@@ -611,7 +652,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let report = check_bdmv(&out_dir.join("BDMV"));
     (env.progress)(1.0);
     Ok(BuildInfo {
-        videos: n, main_pages: main_pg.len(),
+        videos: n, main_pages: total_main,
         chapters: chapters.iter().enumerate().filter(|(_, c)| !c.is_empty()).map(|(i, c)| (i + 1, c.len())).collect(),
         chapter_pages: ch_pg.iter().map(|(i, g)| (i + 1, g.len())).collect(),
         format: fmt, menu_size, ics_pts_s: first_page.pts as f64 / 90000.0, menu_bytes: first_page.bytes,

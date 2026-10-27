@@ -125,3 +125,31 @@ fn slot_assignment_and_swap() {
     let back = Designs::from_value(&bdauthor_core::json::parse(&ds.to_value().to_pretty()).unwrap()).unwrap();
     assert_eq!(back, ds);
 }
+
+#[test]
+fn free_pages_listing_and_add() {
+    let mut m = model(5);
+    m.par_page = Some(3); // 2 pages automatiques
+    assert_eq!(list_pages(&m, &HashMap::new()).len(), 2);
+    // pas de personnalisation : l'ajout d'une page libre n'ajoute rien a la page automatique precedente
+    let f = add_free_page(&mut m);
+    assert_eq!(f, 0);
+    let pages = list_pages(&m, &HashMap::new());
+    assert_eq!(pages.len(), 3);
+    assert!(pages.iter().all(|p| p.pages == 3), "les pages automatiques voient la page libre dans la suite");
+    let last = pages.last().unwrap();
+    assert!(last.is_free() && last.page == 2 && last.items.len() == 5);
+    assert!(last.custom(&m.designs));
+    assert_eq!(m.designs.free[0].items.len(), 1, "page vierge = bouton Precedent seulement");
+    // une 2e page libre : la 1re recoit un bouton Suivant
+    add_free_page(&mut m);
+    assert!(m.designs.free[0].items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Next, .. })));
+    // suppression
+    pages.last().unwrap().remove_design(&mut m.designs);
+    assert_eq!(m.designs.free.len(), 1);
+    // page automatique personnalisee sans « Suivant » : l'ajout le lui donne
+    let mut m2 = model(2);
+    m2.designs.main.insert(0, PageDesign::default_main(2, 0, 1).unwrap());
+    add_free_page(&mut m2);
+    assert!(m2.designs.main[&0].items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Next, .. })));
+}

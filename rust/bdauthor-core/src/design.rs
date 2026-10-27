@@ -197,6 +197,34 @@ impl PageDesign {
         p
     }
 
+    /// Page libre : page `page` (0-based) sur `pages` du menu principal, `n_videos` videos dans le projet. Chaque vignette doit
+    /// montrer une video existante (`assign`) ; les doublons sont permis.
+    pub fn validate_free(&self, page: usize, pages: usize, n_videos: usize) -> Vec<Problem> {
+        let mut p: Vec<Problem> = self.validate(self.slot_count(), MenuType::Main, page, pages);
+        let mut k = 0;
+        for it in &self.items {
+            if let Kind::Slot { assign, .. } = it.kind {
+                k += 1;
+                match assign {
+                    None => p.push(Problem { error: true, msg: format!("Vignette {k} : choisissez une vidéo.") }),
+                    Some(v) if v >= n_videos => p.push(Problem { error: true, msg: format!("Vignette {k} : la vidéo {} n'existe pas.", v + 1) }),
+                    _ => {}
+                }
+            }
+        }
+        if !self.items.iter().any(|i| matches!(i.kind, Kind::Nav { action: NavAction::Prev, .. })) && page > 0 {
+            p.push(Problem { error: false, msg: "Aucun bouton « Précédent » : cette page serait une impasse.".into() });
+        }
+        p
+    }
+
+    /// Page libre vierge : seulement le bouton « Précédent ».
+    pub fn blank_free(page: usize) -> Self {
+        let mut items = Vec::new();
+        if page > 0 { items.push(Item::nav(NavAction::Prev, 560, NAV_Y, 360, 80)); }
+        PageDesign { items }
+    }
+
     // ---------------------------------------------------------------- JSON
     pub fn to_value(&self) -> Value {
         let num = |v: i32| Value::Num(v as f64);
@@ -255,21 +283,36 @@ pub struct Designs {
     pub main: BTreeMap<usize, PageDesign>,
     /// (video 0-based, page 0-based) -> mise en page du menu de chapitres
     pub chapters: BTreeMap<(usize, usize), PageDesign>,
+    /// Pages libres du menu principal, apres les pages automatiques : leurs vignettes montrent n'importe quelle video du projet
+    /// (`assign` = indice de la video, obligatoire).
+    pub free: Vec<PageDesign>,
 }
 
 impl Designs {
-    pub fn is_empty(&self) -> bool { self.main.is_empty() && self.chapters.is_empty() }
+    pub fn is_empty(&self) -> bool { self.main.is_empty() && self.chapters.is_empty() && self.free.is_empty() }
 
     /// Echange deux videos (les menus de chapitres suivent leur video).
     pub fn swap_videos(&mut self, a: usize, b: usize) {
         let old = std::mem::take(&mut self.chapters);
         self.chapters = old.into_iter().map(|((v, p), d)| (((if v == a { b } else if v == b { a } else { v }), p), d)).collect();
+        for page in &mut self.free {
+            for it in &mut page.items {
+                if let Kind::Slot { assign: Some(v), .. } = &mut it.kind { *v = if *v == a { b } else if *v == b { a } else { *v }; }
+            }
+        }
     }
 
     /// Retire une video : ses menus de chapitres disparaissent, les suivants sont renumerotes.
     pub fn remove_video(&mut self, i: usize) {
         let old = std::mem::take(&mut self.chapters);
         self.chapters = old.into_iter().filter(|((v, _), _)| *v != i).map(|((v, p), d)| ((if v > i { v - 1 } else { v }, p), d)).collect();
+        // pages libres : les vignettes de cette video disparaissent, les suivantes sont renumerotees
+        for page in &mut self.free {
+            page.items.retain(|it| !matches!(it.kind, Kind::Slot { assign: Some(v), .. } if v == i));
+            for it in &mut page.items {
+                if let Kind::Slot { assign: Some(v), .. } = &mut it.kind { if *v > i { *v -= 1; } }
+            }
+        }
     }
 
     pub fn to_value(&self) -> Value {
@@ -278,7 +321,9 @@ impl Designs {
         let mut by_video: BTreeMap<usize, Vec<(String, Value)>> = BTreeMap::new();
         for ((v, p), d) in &self.chapters { by_video.entry(*v).or_default().push(((p + 1).to_string(), d.to_value())); }
         let ch = by_video.into_iter().map(|(v, pages)| ((v + 1).to_string(), Value::Obj(pages))).collect();
-        Value::Obj(vec![("principal".into(), Value::Obj(main)), ("chapitres".into(), Value::Obj(ch))])
+        let mut o = vec![("principal".into(), Value::Obj(main)), ("chapitres".into(), Value::Obj(ch))];
+        if !self.free.is_empty() { o.push(("libres".into(), Value::Arr(self.free.iter().map(PageDesign::to_value).collect()))); }
+        Value::Obj(o)
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
@@ -291,6 +336,11 @@ impl Designs {
             for (vk, pages) in m {
                 let Value::Obj(pp) = pages else { return Err(format!("chapitres, vidéo {vk} : objet attendu")) };
                 for (pk, page) in pp { d.chapters.insert((idx(vk)?, idx(pk)?), PageDesign::from_value(page).map_err(|e| format!("chapitres vidéo {vk}, page {pk} : {e}"))?); }
+            }
+        }
+        if let Some(libres) = v.get("libres").and_then(Value::as_array) {
+            for (k, page) in libres.iter().enumerate() {
+                d.free.push(PageDesign::from_value(page).map_err(|e| format!("page libre {} : {e}", k + 1))?);
             }
         }
         Ok(d)

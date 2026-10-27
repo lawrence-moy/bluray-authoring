@@ -10,6 +10,8 @@ pub enum PageRef {
     Main(usize),
     /// (video, page)
     Chapters(usize, usize),
+    /// Page libre du menu principal (0-based, apres les pages automatiques).
+    Free(usize),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -25,20 +27,29 @@ pub struct PageInfo {
 
 impl PageInfo {
     pub fn count(&self) -> usize { self.items.len() }
+    pub fn is_free(&self) -> bool { matches!(self.r, PageRef::Free(_)) }
     pub fn custom(&self, d: &Designs) -> bool {
-        match self.r { PageRef::Main(p) => d.main.contains_key(&p), PageRef::Chapters(v, p) => d.chapters.contains_key(&(v, p)) }
+        match self.r { PageRef::Main(p) => d.main.contains_key(&p), PageRef::Chapters(v, p) => d.chapters.contains_key(&(v, p)), PageRef::Free(f) => f < d.free.len() }
     }
     pub fn design<'a>(&self, d: &'a Designs) -> Option<&'a PageDesign> {
-        match self.r { PageRef::Main(p) => d.main.get(&p), PageRef::Chapters(v, p) => d.chapters.get(&(v, p)) }
+        match self.r { PageRef::Main(p) => d.main.get(&p), PageRef::Chapters(v, p) => d.chapters.get(&(v, p)), PageRef::Free(f) => d.free.get(f) }
     }
     pub fn design_mut<'a>(&self, d: &'a mut Designs) -> Option<&'a mut PageDesign> {
-        match self.r { PageRef::Main(p) => d.main.get_mut(&p), PageRef::Chapters(v, p) => d.chapters.get_mut(&(v, p)) }
+        match self.r { PageRef::Main(p) => d.main.get_mut(&p), PageRef::Chapters(v, p) => d.chapters.get_mut(&(v, p)), PageRef::Free(f) => d.free.get_mut(f) }
     }
     pub fn set_design(&self, d: &mut Designs, design: PageDesign) {
-        match self.r { PageRef::Main(p) => { d.main.insert(p, design); } PageRef::Chapters(v, p) => { d.chapters.insert((v, p), design); } }
+        match self.r {
+            PageRef::Main(p) => { d.main.insert(p, design); }
+            PageRef::Chapters(v, p) => { d.chapters.insert((v, p), design); }
+            PageRef::Free(f) => { if let Some(x) = d.free.get_mut(f) { *x = design; } }
+        }
     }
     pub fn remove_design(&self, d: &mut Designs) {
-        match self.r { PageRef::Main(p) => { d.main.remove(&p); } PageRef::Chapters(v, p) => { d.chapters.remove(&(v, p)); } }
+        match self.r {
+            PageRef::Main(p) => { d.main.remove(&p); }
+            PageRef::Chapters(v, p) => { d.chapters.remove(&(v, p)); }
+            PageRef::Free(f) => { if f < d.free.len() { d.free.remove(f); } }
+        }
     }
     /// Mise en page de depart (grille automatique + titre) pour cette page.
     pub fn starting_point(&self, m: &ProjectModel) -> Result<PageDesign, String> {
@@ -52,6 +63,7 @@ impl PageInfo {
     pub fn label(&self, m: &ProjectModel) -> String {
         match (self.menu, self.video) {
             (MenuType::Chapters, Some(v)) => format!("Chapitres de « {} » — page {}/{}", video_title(m, v), self.page + 1, self.pages),
+            _ if self.is_free() => format!("Page libre — page {}/{}", self.page + 1, self.pages),
             _ => format!("Menu principal — page {}/{}", self.page + 1, self.pages),
         }
     }
@@ -68,9 +80,14 @@ pub fn list_pages(m: &ProjectModel, durations: &HashMap<String, f64>) -> Vec<Pag
     let mut out = Vec::new();
     if m.videos.is_empty() { return out; }
     let main = paginate(m.videos.len(), m.par_page).unwrap_or_else(|_| vec![(0..m.videos.len()).collect()]);
-    let np = main.len();
+    let auto = main.len();
+    let np = auto + m.designs.free.len(); // les pages libres prolongent la suite des pages du menu principal
     for (p, idxs) in main.into_iter().enumerate() {
         out.push(PageInfo { r: PageRef::Main(p), menu: MenuType::Main, page: p, pages: np, items: idxs, video: None });
+    }
+    for f in 0..m.designs.free.len() {
+        // elements d'une page libre = toutes les videos du projet (a choisir pour chaque vignette)
+        out.push(PageInfo { r: PageRef::Free(f), menu: MenuType::Main, page: auto + f, pages: np, items: (0..m.videos.len()).collect(), video: None });
     }
     for (i, v) in m.videos.iter().enumerate() {
         let ch = v.chapter_list(durations.get(&v.file).copied());
@@ -178,6 +195,22 @@ pub fn copy_decor(src: &PageDesign, target: PageDesign, target_default: &PageDes
         }
     }
     PageDesign { items }
+}
+
+/// Ajoute une page libre vierge a la fin du menu principal et retourne son indice. La page precedente (automatique non
+/// personnalisee : deja geree par la grille ; personnalisee ou libre : on ajoute un bouton « Suivant » s'il manque) mene a la nouvelle.
+pub fn add_free_page(m: &mut ProjectModel) -> usize {
+    let auto = paginate(m.videos.len(), m.par_page).map(|g| g.len()).unwrap_or(1);
+    let f = m.designs.free.len();
+    let page = auto + f;
+    let prev: Option<&mut PageDesign> = if f > 0 { m.designs.free.get_mut(f - 1) } else { m.designs.main.get_mut(&(auto - 1)) };
+    if let Some(prev) = prev {
+        if !prev.items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: crate::design::NavAction::Next, .. })) {
+            prev.items.push(Item::nav(crate::design::NavAction::Next, 1000, 1080 - 60 - 80, 360, 80));
+        }
+    }
+    m.designs.free.push(PageDesign::blank_free(page));
+    f
 }
 
 // ------------------------------------------------------------------ annuler / refaire

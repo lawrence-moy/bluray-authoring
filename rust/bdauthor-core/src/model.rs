@@ -189,6 +189,15 @@ impl ProjectModel {
             if v.chapters.iter().any(|c| c.t < 0.0) { p.push(format!("Vidéo {} : temps de chapitre négatif.", i + 1)); }
             if v.auto_s.map_or(false, |a| a <= 0.0) { p.push(format!("Vidéo {} : intervalle de chapitres automatiques > 0.", i + 1)); }
         }
+        if !self.designs.free.is_empty() && !self.videos.is_empty() {
+            let auto = crate::project::paginate(self.videos.len(), self.par_page).map(|g| g.len()).unwrap_or(1);
+            let total = auto + self.designs.free.len();
+            for (f, d) in self.designs.free.iter().enumerate() {
+                for pr in d.validate_free(auto + f, total, self.videos.len()).into_iter().filter(|x| x.error) {
+                    p.push(format!("Page libre {} : {}", f + 1, pr.msg));
+                }
+            }
+        }
         if !self.bg.is_empty() && !abs(&self.bg).is_file() { p.push(format!("Image de fond introuvable ({}).", self.bg)); }
         p
     }

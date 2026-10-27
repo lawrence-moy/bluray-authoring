@@ -265,3 +265,13 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   (valide, sans doublon, le reste dans l'ordre) et `assign_slot` (echange avec la vignette qui avait deja cet element).
 - Editeur : boutons Tout derriere / Derriere / Devant / Tout devant, menu « Contenu » d'une vignette, liste des elements.
 - `copy_decor` conserve l'ordre de superposition de la page source.
+
+## Pages libres (menu principal)
+- `Designs.free` (JSON `mise_en_page.libres`, liste) : pages ajoutees apres les pages automatiques. Leurs vignettes ont un `assign`
+  OBLIGATOIRE = indice de video (JSON `element`, 1-based) ; doublons permis ; une vignette sur une video a chapitres ouvre son menu de chapitres.
+- Navigation : pages automatiques + libres forment une seule suite (Precedent/Suivant sur `total_main`). Titres/playlists/IG
+  numerotes comme les pages 2.. ; chaque page libre a son propre fond (`fond_libreN`).
+- `add_free_page` (editor.rs) ajoute une page vierge (bouton Precedent seul) et un bouton Suivant a la page precedente si elle est
+  personnalisee ou libre et n'en a pas ; une page automatique non personnalisee l'obtient de la grille.
+- `swap_videos` / `remove_video` remappent (ou retirent) les vignettes des pages libres. `ProjectModel::validate` refuse les pages libres invalides.
+- GUI : bouton « + Page libre » (liste des pages), « Supprimer cette page », menu « Vidéo » par vignette. Non compile (eframe hors ligne).

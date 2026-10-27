@@ -52,3 +52,33 @@ fn json_roundtrip_and_remap() {
     assert_eq!(y.chapters.keys().copied().collect::<Vec<_>>(), vec![(1, 0)]);
     assert!(PageDesign::from_value(&parse(r##"{"elements":[{"type":"zzz","x":1,"y":1,"w":1,"h":1}]}"##).unwrap()).is_err());
 }
+
+#[test]
+fn free_pages_json_swap_remove_validate() {
+    let mut ds = Designs::default();
+    let mut f = PageDesign::blank_free(1);
+    f.items.push(Item { x: 100, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: Some(2) } });
+    f.items.push(Item { x: 600, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: Some(0) } });
+    ds.free.push(f);
+    let text = ds.to_value().to_pretty();
+    assert!(text.contains("\"libres\""));
+    let back = Designs::from_value(&parse(&text).unwrap()).unwrap();
+    assert_eq!(back, ds);
+    // validation : videos 3 -> ok ; 2 -> la video 3 n'existe pas
+    assert!(ds.free[0].validate_free(1, 2, 3).iter().all(|p| !p.error));
+    assert!(ds.free[0].validate_free(1, 2, 2).iter().any(|p| p.error && p.msg.contains("n'existe pas")));
+    // vignette sans video
+    let mut g = ds.free[0].clone();
+    if let Kind::Slot { assign, .. } = &mut g.items[1].kind { *assign = None; }
+    assert!(g.validate_free(1, 2, 3).iter().any(|p| p.error));
+    // echange de videos 0 et 2 : les affectations suivent
+    let mut x = ds.clone();
+    x.swap_videos(0, 2);
+    let a: Vec<Option<usize>> = x.free[0].items.iter().filter_map(|i| if let Kind::Slot { assign, .. } = i.kind { Some(assign) } else { None }).collect();
+    assert_eq!(a, vec![Some(0), Some(2)]);
+    // retrait de la video 0 : sa vignette disparait, la video 2 devient 1
+    let mut y = ds.clone();
+    y.remove_video(0);
+    let a: Vec<Option<usize>> = y.free[0].items.iter().filter_map(|i| if let Kind::Slot { assign, .. } = i.kind { Some(assign) } else { None }).collect();
+    assert_eq!(a, vec![Some(1)]);
+}

@@ -125,6 +125,11 @@ fn custom_layout_project() {
           {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356},
           {"type":"image","fichier":"b.mp4","x":1400,"y":500,"w":300,"h":200},
           {"type":"navigation","action":"suivant","texte":"Page 2","x":800,"y":900,"w":300,"h":90} ] } },
+        "libres": [ { "elements": [
+          {"type":"texte","texte":"Mes favoris","x":100,"y":60,"w":1700,"h":120,"taille":80,"couleur":"#ffffff","alignement":"centre"},
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"element":3},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"element":1},
+          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90} ] } ],
         "chapitres": { "1": { "1": { "elements": [
           {"type":"vignette","vignette_h":200,"x":100,"y":300,"w":400,"h":250},
           {"type":"vignette","vignette_h":200,"x":600,"y":300,"w":400,"h":250},
@@ -138,6 +143,7 @@ fn custom_layout_project() {
         build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
     };
     assert!(info.report.ok(), "{}", info.report.render());
+    assert_eq!(info.main_pages, 3, "2 pages automatiques + 1 page libre");
     assert_eq!(OVERLAYS.load(std::sync::atomic::Ordering::SeqCst), 1, "seule la 2e vignette est recouverte par l'image placee devant elle");
     assert!(logs.iter().any(|l| l.contains("ignoree")), "la page de chapitres invalide doit etre signalee : {logs:?}");
     // la page 1 personnalisee a son propre fond : un clip de fond de plus que sans personnalisation
