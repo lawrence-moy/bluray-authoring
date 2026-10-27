@@ -38,6 +38,12 @@ pub trait Renderer {
     fn background(&self, title: &str, size: (u32, u32)) -> RgbaImage;
     /// Fond d'une page personnalisee : image `base` (ou degrade par defaut, sans titre) + textes et images, en pixels du fond.
     fn compose_background(&self, base: Option<&Path>, size: (u32, u32), decor: &[Decor]) -> std::result::Result<RgbaImage, String>;
+    /// Pose `decor` (coordonnees relatives a l'image du bouton) par-dessus les deux etats d'un bouton : textes et images
+    /// places au-dessus de ce bouton dans l'ordre de superposition. Par defaut, les etats sont rendus tels quels.
+    fn overlay(&self, states: [Arc<RgbaImage>; 2], decor: &[Decor]) -> [Arc<RgbaImage>; 2] {
+        let _ = decor;
+        states
+    }
 }
 
 /// Texte ou image posee sur le fond d'une page (coordonnees et tailles en pixels du fond).
@@ -46,6 +52,22 @@ pub enum Decor {
     /// `font` : voir `design::Kind::Text` (un chemin relatif au projet est deja converti en chemin complet).
     Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
+}
+
+impl Decor {
+    /// Rectangle (x, y, largeur, hauteur) du cadre.
+    pub fn rect(&self) -> (i32, i32, i32, i32) {
+        match self { Decor::Text { x, y, w, h, .. } | Decor::Image { x, y, w, h, .. } => (*x, *y, *w, *h) }
+    }
+    pub fn shifted(&self, dx: i32, dy: i32) -> Decor {
+        let mut d = self.clone();
+        match &mut d { Decor::Text { x, y, .. } | Decor::Image { x, y, .. } => { *x += dx; *y += dy; } }
+        d
+    }
+    pub fn intersects(&self, r: (i32, i32, i32, i32)) -> bool {
+        let (x, y, w, h) = self.rect();
+        x < r.0 + r.2 && r.0 < x + w && y < r.1 + r.3 && r.1 < y + h
+    }
 }
 
 struct SlotSpec { label: String, source: PathBuf, at: Option<f64>, duration: f64, commands: Vec<Command>, go: u32 }
@@ -70,24 +92,28 @@ fn resolve_design(ov: Option<&PageDesign>, expected: usize, menu: MenuType, page
 
 /// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page ; `s` = echelle du plan 1920 vers le menu.
 #[allow(clippy::too_many_arguments)]
-fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
     let (mut buttons, mut pix, mut k) = (Vec::new(), Vec::new(), 0usize);
-    for it in &design.items {
+    let assignment = design.slot_assignment(slots.len());
+    for (idx, it) in design.items.iter().enumerate() {
         let (x, y, w, h) = it.scaled(s);
+        // textes et images places au-dessus de ce bouton dans l'ordre de superposition : poses sur ses images
+        let above: Vec<Decor> = decor.iter().filter(|(i, d)| *i > idx && d.intersects((x, y, w, h))).map(|(_, d)| d.shifted(-x, -y)).collect();
+        let over = |st: [Arc<RgbaImage>; 2]| if above.is_empty() { st } else { renderer.overlay(st, &above) };
         match &it.kind {
-            Kind::Slot { thumb_h } => {
-                let sp = &slots[k];
+            Kind::Slot { thumb_h, .. } => {
+                let sp = &slots[assignment[k]];
                 k += 1;
                 let th = py_round(*thumb_h as f64 * s) as i32;
                 let thumb = ffmpeg::extract_thumbnail_rgba(tools, &sp.source, (w as u32, th as u32), sp.at, sp.duration)?;
-                let [nrm, sel] = renderer.thumb_button(&thumb, &sp.label, w as u32, h as u32, th as u32);
+                let [nrm, sel] = over(renderer.thumb_button(&thumb, &sp.label, w as u32, h as u32, th as u32));
                 let mut b = MenuButton::new("", sp.go, x, y, vec![nrm, sel.clone(), sel]);
                 b.commands = sp.commands.clone();
                 buttons.push(b);
                 pix.push(2 * w as u64 * h as u64);
             }
             Kind::Nav { action, text } if nav_applicable(*action, menu, page, pages) => {
-                let [nrm, sel] = renderer.text_button(text, w as u32, h as u32);
+                let [nrm, sel] = over(renderer.text_button(text, w as u32, h as u32));
                 buttons.push(MenuButton::new("", target(*action), x, y, vec![nrm, sel.clone(), sel]));
                 pix.push(2 * w as u64 * h as u64);
             }
@@ -425,15 +451,16 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     };
     let custom_fond: Option<PathBuf> = menu_cfg.get("fond").and_then(Value::as_str).map(|f| p(f));
     let sd = size.0 as f64 / 1920.0; // echelle des textes/images poses sur le fond (qui a la taille de la video)
-    let scale_decor = |d: &PageDesign| -> Vec<Decor> {
-        d.items.iter().filter_map(|it| {
+    // (rang dans l'ordre de superposition, decor) : le rang sert a poser sur les boutons ce qui est au-dessus d'eux
+    let scale_decor = |d: &PageDesign| -> Vec<(usize, Decor)> {
+        d.items.iter().enumerate().filter_map(|(rank, it)| {
             let (x, y, w, h) = it.scaled(sd);
             match &it.kind {
                 Kind::Text { text, size, color, align, font } => {
                     let font = if font.is_empty() { String::new() } else { let c = p(font); if c.is_file() { c.to_string_lossy().into_owned() } else { font.clone() } };
-                    Some(Decor::Text { text: text.clone(), x, y, w, h, size: py_round(*size as f64 * sd) as i32, color: *color, align: *align, font })
+                    Some((rank, Decor::Text { text: text.clone(), x, y, w, h, size: py_round(*size as f64 * sd) as i32, color: *color, align: *align, font }))
                 }
-                Kind::Image { path } => Some(Decor::Image { path: p(path), x, y, w, h }),
+                Kind::Image { path } => Some((rank, Decor::Image { path: p(path), x, y, w, h })),
                 _ => None,
             }
         }).collect()
@@ -492,8 +519,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             NavAction::Next => plan.main_titles[(pg + 1).min(main_pg.len() - 1)] as u32,
             _ => 0,
         };
-        let (buttons, pix) = page_buttons(env.tools, env.renderer, &design, MenuType::Main, pg, main_pg.len(), &slots, &target, sc_)?;
-        let decor = scale_decor(&design);
+        let decor_r = scale_decor(&design);
+        let (buttons, pix) = page_buttons(env.tools, env.renderer, &design, &decor_r, MenuType::Main, pg, main_pg.len(), &slots, &target, sc_)?;
+        let decor: Vec<Decor> = decor_r.into_iter().map(|(_, d)| d).collect();
         let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
             let num = next_bg;
             next_bg += 1;
@@ -540,8 +568,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 NavAction::PlayAll => i as u32 + 1,
                 NavAction::Back => retour_t,
             };
-            let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, MenuType::Chapters, q, npg, &slots, &target, sc_)?;
-            let decor = scale_decor(&design);
+            let decor_r = scale_decor(&design);
+            let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, &decor_r, MenuType::Chapters, q, npg, &slots, &target, sc_)?;
+            let decor: Vec<Decor> = decor_r.into_iter().map(|(_, d)| d).collect();
             let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
                 let num = next_bg;
                 next_bg += 1;

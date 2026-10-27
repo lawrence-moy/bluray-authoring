@@ -1,7 +1,7 @@
 //! Editeur visuel de mise en page (onglet « Mise en page ») : apercu fidele, glisser/redimensionner, inspecteur.
 use crate::App;
 use bdauthor_core::design::{Align, Item, Kind, MenuType, NavAction, PageDesign};
-use bdauthor_core::editor::{copy_decor, dragged_rect, hit_test, list_pages, move_in_list, move_slot_order, set_rect, video_title, Handle, PageInfo};
+use bdauthor_core::editor::{copy_decor, dragged_rect, hit_test, list_pages, move_in_list, set_rect, to_back, to_front, video_title, Handle, PageInfo};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -68,7 +68,7 @@ impl Worker {
     }
 }
 
-enum Op { Delete, Duplicate, Up, Down, SlotUp, SlotDown }
+enum Op { Delete, Duplicate, Up, Down, Front, Back, Assign(Option<usize>) }
 
 fn kind_color(k: &Kind) -> Color32 {
     match k {
@@ -269,7 +269,7 @@ impl App {
                         if ui.button(a.label()).clicked() { add = Some(Item::nav(a, 760, 940, 360, 80)); ui.close_menu(); }
                     }
                 });
-                if ui.button("+ Vignette").clicked() { add = Some(Item { x: 100, y: 300, w: 400, h: 250, kind: Kind::Slot { thumb_h: 200 } }); }
+                if ui.button("+ Vignette").clicked() { add = Some(Item { x: 100, y: 300, w: 400, h: 250, kind: Kind::Slot { thumb_h: 200, assign: None } }); }
                 ui.separator();
                 ui.checkbox(&mut self.snap, "Aimantation 10 px");
             });
@@ -379,6 +379,7 @@ impl App {
             // surcouche : cadres des éléments
             if let Some(d) = info.design(&self.model.designs) {
                 let mut slot_no = 0;
+                let eff = d.slot_assignment(info.count());
                 for (i, it) in d.items.iter().enumerate() {
                     let r = Rect::from_min_max(to_screen(it.x as f32, it.y as f32), to_screen((it.x + it.w) as f32, (it.y + it.h) as f32));
                     let selected = self.sel_item == Some(i);
@@ -390,8 +391,9 @@ impl App {
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, col));
                     }
                     if matches!(it.kind, Kind::Slot { .. }) {
+                        let shown = eff.get(slot_no).copied().unwrap_or(slot_no) + 1;
                         slot_no += 1;
-                        painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, slot_no.to_string(), egui::FontId::proportional(14.0), col);
+                        painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, shown.to_string(), egui::FontId::proportional(14.0), col);
                     }
                     if selected {
                         for c in [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] {
@@ -463,6 +465,8 @@ impl App {
         }
         let Some(i) = self.sel_item else {
             ui.label("Cliquez sur un élément de l'aperçu pour le modifier.\n\nGlissez pour déplacer, tirez un coin pour redimensionner, flèches du clavier pour ajuster (Maj : 10 px), Suppr pour retirer.");
+            ui.separator();
+            self.layers_ui(ui, &info);
             return;
         };
         let mut op: Option<Op> = None;
@@ -471,8 +475,12 @@ impl App {
         let mut pick_font = false;
         let base_dir = self.base_dir();
         let font_check = self.renderer.as_ref();
+        let count = info.count();
+        let labels: Vec<String> = self.preview_slots(&info).into_iter().map(|s| s.label).collect();
         {
             let Some(d) = info.design_mut(&mut self.model.designs) else { return };
+            let eff = d.slot_assignment(count);
+            let slot_pos = d.items.iter().take(i).filter(|x| matches!(x.kind, Kind::Slot { .. })).count();
             let Some(it) = d.items.get_mut(i) else { self.sel_item = None; return };
             ui.colored_label(kind_color(&it.kind), kind_name(&it.kind));
             egui::Grid::new("geometrie").num_columns(4).show(ui, |ui| {
@@ -485,7 +493,7 @@ impl App {
             });
             let h = it.h;
             match &mut it.kind {
-                Kind::Slot { thumb_h } => {
+                Kind::Slot { thumb_h, assign } => {
                     let mut lab = (h - *thumb_h).max(0);
                     ui.horizontal(|ui| {
                         ui.label("Hauteur du libellé :");
@@ -494,7 +502,15 @@ impl App {
                             changed = true;
                         }
                     });
-                    ui.label(egui::RichText::new("Les vignettes sont remplies dans l'ordre de la liste (numéro dans le coin).").weak());
+                    let cur = eff.get(slot_pos).copied().unwrap_or(0);
+                    let name = |e: usize| format!("{}. {}", e + 1, labels.get(e).cloned().unwrap_or_default());
+                    egui::ComboBox::from_label("Contenu").selected_text(name(cur)).show_ui(ui, |ui| {
+                        if ui.selectable_label(assign.is_none(), "Automatique (dans l'ordre)").clicked() { op = Some(Op::Assign(None)); }
+                        for e in 0..count {
+                            if ui.selectable_label(assign.is_some() && cur == e, name(e)).clicked() { op = Some(Op::Assign(Some(e))); }
+                        }
+                    });
+                    ui.label(egui::RichText::new("Choisir un contenu déjà utilisé par une autre vignette échange les deux.").weak());
                 }
                 Kind::Nav { action, text } => {
                     egui::ComboBox::from_label("Action").selected_text(action.label()).show_ui(ui, |ui| {
@@ -542,19 +558,16 @@ impl App {
                 }
             }
             ui.separator();
-            let is_slot = matches!(it.kind, Kind::Slot { .. });
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Dupliquer").clicked() { op = Some(Op::Duplicate); }
                 if ui.button("Supprimer").clicked() { op = Some(Op::Delete); }
             });
+            ui.label("Plan (superposition) :");
             ui.horizontal_wrapped(|ui| {
-                if is_slot {
-                    if ui.button("Vignette précédente").clicked() { op = Some(Op::SlotUp); }
-                    if ui.button("Vignette suivante").clicked() { op = Some(Op::SlotDown); }
-                } else {
-                    if ui.button("Vers l'arrière").clicked() { op = Some(Op::Up); }
-                    if ui.button("Vers l'avant").clicked() { op = Some(Op::Down); }
-                }
+                if ui.button("Tout derrière").clicked() { op = Some(Op::Back); }
+                if ui.button("Derrière").clicked() { op = Some(Op::Up); }
+                if ui.button("Devant").clicked() { op = Some(Op::Down); }
+                if ui.button("Tout devant").clicked() { op = Some(Op::Front); }
             });
         }
         if pick_font {
@@ -588,8 +601,9 @@ impl App {
                     }
                     Op::Up => self.sel_item = Some(move_in_list(d, i, true)),
                     Op::Down => self.sel_item = Some(move_in_list(d, i, false)),
-                    Op::SlotUp => self.sel_item = Some(move_slot_order(d, i, true)),
-                    Op::SlotDown => self.sel_item = Some(move_slot_order(d, i, false)),
+                    Op::Front => self.sel_item = Some(to_front(d, i)),
+                    Op::Back => self.sel_item = Some(to_back(d, i)),
+                    Op::Assign(e) => d.assign_slot(i, e, count),
                 }
             }
             changed = true;
@@ -597,6 +611,26 @@ impl App {
         if changed {
             self.bump();
         }
+        ui.separator();
+        self.layers_ui(ui, &info);
+    }
+
+    /// Liste des elements de la page, du premier plan (en haut) a l'arriere-plan ; un clic selectionne l'element.
+    fn layers_ui(&mut self, ui: &mut egui::Ui, info: &PageInfo) {
+        let Some(d) = info.design(&self.model.designs) else { return };
+        ui.label("Éléments (du premier plan à l'arrière-plan) :");
+        let mut pick = None;
+        for (idx, it) in d.items.iter().enumerate().rev() {
+            let what = match &it.kind {
+                Kind::Text { text, .. } => format!("Texte « {} »", text.lines().next().unwrap_or("").chars().take(24).collect::<String>()),
+                Kind::Image { path } => format!("Image {}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+                Kind::Nav { action, .. } => format!("Bouton {}", action.label()),
+                Kind::Slot { .. } => "Vignette".to_string(),
+            };
+            let text = egui::RichText::new(what).color(kind_color(&it.kind));
+            if ui.selectable_label(self.sel_item == Some(idx), text).clicked() { pick = Some(idx); }
+        }
+        if pick.is_some() { self.sel_item = pick; }
     }
 
     // ------------------------------------------------------------------ annuler / refaire

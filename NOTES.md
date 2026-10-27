@@ -256,3 +256,12 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   (`git add -A && git commit`), via `device_bash` dans `$HOME/mnt/Authoring/code` (demander d'abord `device_request_delete_permission`
   pour le dossier connecte : git cree/supprime des fichiers .lock). Terminer les messages par les lignes d'attribution demandees par la session.
 - Ne jamais committer de gros fichiers (verifier `git status` avant `git add -A`).
+
+## Plan (superposition) et contenu des vignettes
+- L'ordre de la liste d'elements d'une page = ordre de superposition (le dernier est au premier plan), tous types confondus.
+  Fond : textes/images dans l'ordre. Boutons (IG) toujours au-dessus du fond ; un texte/image place devant un bouton est
+  pose sur les images du bouton (`Renderer::overlay`, seulement sur l'intersection avec le cadre du decor).
+- Vignette : champ `assign` (JSON `element`, 1-based) = element de la page montre ; sinon automatique. `slot_assignment`
+  (valide, sans doublon, le reste dans l'ordre) et `assign_slot` (echange avec la vignette qui avait deja cet element).
+- Editeur : boutons Tout derriere / Derriere / Devant / Tout devant, menu « Contenu » d'une vignette, liste des elements.
+- `copy_decor` conserve l'ordre de superposition de la page source.

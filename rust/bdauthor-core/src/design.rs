@@ -36,7 +36,8 @@ impl Align {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
     /// Vignette cliquable + libelle ; `thumb_h` = hauteur de la vignette (le reste de `h` porte le libelle). Les vignettes se remplissent dans l'ordre de la liste.
-    Slot { thumb_h: i32 },
+    /// `assign` : element de la page montre par cette vignette (0-based) ; `None` = automatique (voir `PageDesign::slot_assignment`).
+    Slot { thumb_h: i32, assign: Option<usize> },
     Nav { action: NavAction, text: String },
     /// `font` : vide = police par defaut ; sinon fichier .ttf/.otf (chemin absolu ou relatif au projet) ou nom d'un fichier de police installe.
     Text { text: String, size: i32, color: [u8; 3], align: Align, font: String },
@@ -86,9 +87,47 @@ impl PageDesign {
     pub fn slots(&self) -> Vec<&Item> { self.items.iter().filter(|i| matches!(i.kind, Kind::Slot { .. })).collect() }
     pub fn slot_count(&self) -> usize { self.slots().len() }
 
+    /// Pour chaque vignette (dans l'ordre de la liste), l'indice (0-based) de l'element de la page qu'elle montre.
+    /// Les affectations explicites valides (dans la page, sans doublon) sont respectees ; les autres vignettes recoivent,
+    /// dans l'ordre de la liste, les elements restants dans l'ordre. `count` = nombre d'elements de la page.
+    pub fn slot_assignment(&self, count: usize) -> Vec<usize> {
+        let slots = self.slots();
+        let mut out = vec![usize::MAX; slots.len()];
+        let mut used = vec![false; count];
+        for (k, s) in slots.iter().enumerate() {
+            if let Kind::Slot { assign: Some(a), .. } = s.kind {
+                if a < count && !used[a] { used[a] = true; out[k] = a; }
+            }
+        }
+        let mut free = (0..count).filter(|e| !used[*e]);
+        for o in out.iter_mut().filter(|o| **o == usize::MAX) {
+            *o = free.next().unwrap_or(0);
+        }
+        out
+    }
+
+    /// Fait montrer a la vignette `item` (indice dans `items`) l'element `element` de la page (`None` : retour a l'automatique).
+    /// Si une autre vignette montrait deja cet element, les deux echangent leur contenu.
+    pub fn assign_slot(&mut self, item: usize, element: Option<usize>, count: usize) {
+        let Some(e) = element else {
+            if let Some(Kind::Slot { assign, .. }) = self.items.get_mut(item).map(|i| &mut i.kind) { *assign = None; }
+            return;
+        };
+        let pos: Vec<usize> = self.items.iter().enumerate().filter(|(_, i)| matches!(i.kind, Kind::Slot { .. })).map(|(k, _)| k).collect();
+        let Some(k) = pos.iter().position(|&p| p == item) else { return };
+        let eff = self.slot_assignment(count);
+        if e >= count { return; }
+        let prev = eff[k];
+        let other = eff.iter().position(|&x| x == e);
+        if let Kind::Slot { assign, .. } = &mut self.items[item].kind { *assign = Some(e); }
+        if let Some(t) = other.filter(|&t| t != k) {
+            if let Kind::Slot { assign, .. } = &mut self.items[pos[t]].kind { *assign = Some(prev); }
+        }
+    }
+
     fn grid(count: usize, reserve: i32) -> Result<Vec<Item>, String> {
         Ok(layout(count, (1920, 1080), reserve).map_err(|e| e.to_string())?
-            .into_iter().map(|c| Item { x: c.x, y: c.y, w: c.w, h: c.h, kind: Kind::Slot { thumb_h: c.th } }).collect())
+            .into_iter().map(|c| Item { x: c.x, y: c.y, w: c.w, h: c.h, kind: Kind::Slot { thumb_h: c.th, assign: None } }).collect())
     }
 
     /// Grille automatique du menu principal (page `page` sur `pages`) pour `count` videos.
@@ -136,7 +175,7 @@ impl PageDesign {
                 let m = format!("Élément {} dépasse de l'écran.", k + 1);
                 p.push(if it.is_button() { err(m) } else { warn(m) });
             }
-            if let Kind::Slot { thumb_h } = it.kind {
+            if let Kind::Slot { thumb_h, .. } = it.kind {
                 if thumb_h < 8 || thumb_h > it.h { p.push(err(format!("Élément {} : hauteur de vignette incohérente.", k + 1))); }
             }
             if let Kind::Nav { action, .. } = it.kind {
@@ -165,7 +204,10 @@ impl PageDesign {
             let mut o: Vec<(String, Value)> = Vec::new();
             let mut put = |k: &str, v: Value| o.push((k.to_string(), v));
             match &it.kind {
-                Kind::Slot { thumb_h } => { put("type", Value::Str("vignette".into())); put("vignette_h", num(*thumb_h)); }
+                Kind::Slot { thumb_h, assign } => {
+                    put("type", Value::Str("vignette".into())); put("vignette_h", num(*thumb_h));
+                    if let Some(a) = assign { put("element", num(*a as i32 + 1)); }
+                }
                 Kind::Nav { action, text } => { put("type", Value::Str("navigation".into())); put("action", Value::Str(action.name().into())); put("texte", Value::Str(text.clone())); }
                 Kind::Text { text, size, color, align, font } => {
                     if !font.is_empty() { put("police", Value::Str(font.clone())); }
@@ -186,7 +228,7 @@ impl PageDesign {
             let at = |key: &str| -> Result<i32, String> { e.get(key).and_then(Value::as_f64).map(|x| x.round() as i32).ok_or_else(|| format!("élément {} : « {key} » manquant", k + 1)) };
             let st = |key: &str| e.get(key).and_then(Value::as_str);
             let kind = match st("type").ok_or_else(|| format!("élément {} sans type", k + 1))? {
-                "vignette" => Kind::Slot { thumb_h: at("vignette_h")? },
+                "vignette" => Kind::Slot { thumb_h: at("vignette_h")?, assign: e.get("element").and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize) },
                 "navigation" => {
                     let action = st("action").and_then(NavAction::from_name).ok_or_else(|| format!("élément {} : action inconnue", k + 1))?;
                     Kind::Nav { action, text: st("texte").unwrap_or(action.default_text()).to_string() }

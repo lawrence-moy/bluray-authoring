@@ -7,6 +7,7 @@ use std::process::Command;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+static OVERLAYS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 struct Flat;
 fn fill(w: u32, h: u32, c: [u8; 3]) -> Arc<RgbaImage> {
     let mut im = RgbaImage::new(w, h);
@@ -24,6 +25,11 @@ impl Renderer for Flat {
     }
     fn text_button(&self, _label: &str, w: u32, h: u32) -> [Arc<RgbaImage>; 2] { [fill(w, h, [24, 32, 58]), fill(w, h, [60, 100, 190])] }
     fn background(&self, _t: &str, size: (u32, u32)) -> RgbaImage { (*fill(size.0, size.1, [20, 30, 80])).clone() }
+    fn overlay(&self, states: [Arc<RgbaImage>; 2], decor: &[Decor]) -> [Arc<RgbaImage>; 2] {
+        assert!(!decor.is_empty());
+        OVERLAYS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        states
+    }
     fn compose_background(&self, _base: Option<&std::path::Path>, size: (u32, u32), decor: &[Decor]) -> Result<RgbaImage, String> {
         let mut im = (*fill(size.0, size.1, [40, 20, 80])).clone();
         // un carre blanc par element pose, pour que le fond change reellement
@@ -115,8 +121,9 @@ fn custom_layout_project() {
       "mise_en_page": { "principal": { "1": { "elements": [
           {"type":"texte","texte":"Mon titre","x":100,"y":60,"w":1700,"h":120,"taille":90,"couleur":"#ffcc00","alignement":"gauche"},
           {"type":"image","fichier":"b.mp4","x":1500,"y":800,"w":300,"h":200},
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356},
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"element":2},
           {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356},
+          {"type":"image","fichier":"b.mp4","x":1400,"y":500,"w":300,"h":200},
           {"type":"navigation","action":"suivant","texte":"Page 2","x":800,"y":900,"w":300,"h":90} ] } },
         "chapitres": { "1": { "1": { "elements": [
           {"type":"vignette","vignette_h":200,"x":100,"y":300,"w":400,"h":250},
@@ -131,6 +138,7 @@ fn custom_layout_project() {
         build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
     };
     assert!(info.report.ok(), "{}", info.report.render());
+    assert_eq!(OVERLAYS.load(std::sync::atomic::Ordering::SeqCst), 1, "seule la 2e vignette est recouverte par l'image placee devant elle");
     assert!(logs.iter().any(|l| l.contains("ignoree")), "la page de chapitres invalide doit etre signalee : {logs:?}");
     // la page 1 personnalisee a son propre fond : un clip de fond de plus que sans personnalisation
     let bgs = std::fs::read_dir(dir.join("out/BDMV/STREAM")).unwrap().filter(|e| { let n = e.as_ref().unwrap().file_name().into_string().unwrap(); n.starts_with("0000") || n.starts_with("0001") }).count();

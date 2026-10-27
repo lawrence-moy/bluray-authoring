@@ -127,21 +127,10 @@ pub fn dragged_rect(orig: (i32, i32, i32, i32), handle: Handle, dx: f32, dy: f32
 /// Applique un rectangle a un element ; pour une vignette, la hauteur du libelle est conservee.
 pub fn set_rect(it: &mut Item, orig: &Item, rect: (i32, i32, i32, i32)) {
     it.x = rect.0; it.y = rect.1; it.w = rect.2; it.h = rect.3;
-    if let (Kind::Slot { thumb_h }, Kind::Slot { thumb_h: o }) = (&mut it.kind, &orig.kind) {
+    if let (Kind::Slot { thumb_h, .. }, Kind::Slot { thumb_h: o, .. }) = (&mut it.kind, &orig.kind) {
         let label_h = (orig.h - o).max(0);
         *thumb_h = (rect.3 - label_h).clamp(8.min(rect.3), rect.3);
     }
-}
-
-/// Echange la vignette `idx` avec la vignette precedente (`up`) ou suivante dans l'ordre de remplissage ; retourne le nouvel indice de l'element.
-pub fn move_slot_order(d: &mut PageDesign, idx: usize, up: bool) -> usize {
-    let slots: Vec<usize> = d.items.iter().enumerate().filter(|(_, i)| matches!(i.kind, Kind::Slot { .. })).map(|(k, _)| k).collect();
-    let Some(pos) = slots.iter().position(|&k| k == idx) else { return idx };
-    let other = if up { pos.checked_sub(1) } else { Some(pos + 1).filter(|p| *p < slots.len()) };
-    let Some(o) = other else { return idx };
-    // on echange les positions dans la liste (et non les contenus) : l'ordre de remplissage suit l'ordre de la liste
-    d.items.swap(idx, slots[o]);
-    slots[o]
 }
 
 /// Deplace un element dans la liste (ordre de superposition pour les decors) ; retourne son nouvel indice.
@@ -150,22 +139,45 @@ pub fn move_in_list(d: &mut PageDesign, idx: usize, up: bool) -> usize {
     match to { Some(t) => { d.items.swap(idx, t); t } None => idx }
 }
 
-/// Reprend sur `target` les textes, images et boutons de navigation de `src` (les vignettes de `target` restent telles quelles).
+/// Met l'element au premier plan (fin de liste) ; retourne son nouvel indice.
+pub fn to_front(d: &mut PageDesign, idx: usize) -> usize {
+    if idx >= d.items.len() { return idx; }
+    let it = d.items.remove(idx);
+    d.items.push(it);
+    d.items.len() - 1
+}
+
+/// Met l'element a l'arriere-plan (debut de liste) ; retourne son nouvel indice (0).
+pub fn to_back(d: &mut PageDesign, idx: usize) -> usize {
+    if idx >= d.items.len() { return idx; }
+    let it = d.items.remove(idx);
+    d.items.insert(0, it);
+    0
+}
+
+/// Reprend sur `target` les textes, images et boutons de navigation de `src`, dans l'ordre de superposition de `src`
+/// (les vignettes de `target` restent telles quelles, a la place des vignettes de `src`).
 /// Les boutons de navigation absents de `src` mais presents dans `target_default` (grille automatique de la page cible, par exemple
 /// « Precedent » qui n'existe pas en page 1) sont ajoutes a leur place par defaut.
-pub fn copy_decor(src: &PageDesign, mut target: PageDesign, target_default: &PageDesign) -> PageDesign {
-    target.items.retain(|i| matches!(i.kind, Kind::Slot { .. }));
-    target.items.extend(src.items.iter().filter(|i| !matches!(i.kind, Kind::Slot { .. })).cloned());
+pub fn copy_decor(src: &PageDesign, target: PageDesign, target_default: &PageDesign) -> PageDesign {
+    let mut slots = target.items.into_iter().filter(|i| matches!(i.kind, Kind::Slot { .. }));
+    let mut items = Vec::new();
+    for it in &src.items {
+        if matches!(it.kind, Kind::Slot { .. }) {
+            if let Some(s) = slots.next() { items.push(s); }
+        } else {
+            items.push(it.clone());
+        }
+    }
+    items.extend(slots);
     for d in &target_default.items {
         if let Kind::Nav { action, .. } = &d.kind {
-            if !target.items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: a, .. } if a == action)) {
-                target.items.push(d.clone());
+            if !items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: a, .. } if a == action)) {
+                items.push(d.clone());
             }
         }
     }
-    // textes et images derriere les boutons, comme dans le point de depart
-    target.items.sort_by_key(|i| if i.is_decor() { 0 } else { 1 });
-    target
+    PageDesign { items }
 }
 
 // ------------------------------------------------------------------ annuler / refaire

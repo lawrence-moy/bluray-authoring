@@ -27,7 +27,7 @@ fn page_list() {
 
 #[test]
 fn drag_and_hit() {
-    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40 } };
+    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, assign: None } };
     let items = vec![it(100, 100, 300, 200), it(250, 150, 300, 200)];
     assert_eq!(hit_test(&items, 260.0, 160.0, None, 8.0), Some((1, Handle::Body)), "l'element du dessus gagne");
     assert_eq!(hit_test(&items, 120.0, 120.0, None, 8.0), Some((0, Handle::Body)));
@@ -42,20 +42,20 @@ fn drag_and_hit() {
     // vignette : la hauteur du libelle est conservee
     let mut a = items[0].clone();
     set_rect(&mut a, &items[0], (100, 100, 300, 300));
-    assert_eq!(a.kind, Kind::Slot { thumb_h: 260 });
+    assert_eq!(a.kind, Kind::Slot { thumb_h: 260, assign: None });
 }
 
 #[test]
 fn ordering_and_decor_copy() {
     let mut d = PageDesign::starting_point(MenuType::Main, 3, 0, 2, "T").unwrap(); // [texte, v, v, v, suivant]
     assert!(matches!(d.items[0].kind, Kind::Text { .. }));
-    let first_slot = 1;
-    let new = move_slot_order(&mut d, first_slot, false);
-    assert_eq!(new, 2);
-    let n2 = move_slot_order(&mut d, 3, false); // la derniere vignette ne peut plus descendre
-    assert_eq!(n2, 3);
     let up = move_in_list(&mut d, 0, true);
     assert_eq!(up, 0);
+    assert_eq!(move_in_list(&mut d, 0, false), 1, "le texte passe devant la 1re vignette");
+    assert_eq!(to_front(&mut d, 1), 4);
+    assert!(matches!(d.items[4].kind, Kind::Text { .. }) && matches!(d.items[0].kind, Kind::Slot { .. }));
+    assert_eq!(to_back(&mut d, 4), 0);
+    assert!(matches!(d.items[0].kind, Kind::Text { .. }));
     let mut src = PageDesign::starting_point(MenuType::Main, 3, 0, 2, "Titre commun").unwrap();
     src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into() } });
     let target = PageDesign::default_main(2, 1, 2).unwrap();
@@ -98,4 +98,30 @@ fn history_undo_redo() {
     assert!(!h.can_redo());
     h.reset(&d);
     assert!(!h.can_undo());
+}
+
+#[test]
+fn slot_assignment_and_swap() {
+    let mut d = PageDesign::default_main(4, 0, 1).unwrap(); // 4 vignettes automatiques
+    assert_eq!(d.slot_assignment(4), vec![0, 1, 2, 3]);
+    d.assign_slot(2, Some(0), 4); // la 3e vignette montre l'element 1 : echange avec la 1re
+    assert_eq!(d.slot_assignment(4), vec![2, 1, 0, 3]);
+    d.assign_slot(3, Some(1), 4);
+    assert_eq!(d.slot_assignment(4), vec![2, 3, 0, 1]);
+    let mut seen = d.slot_assignment(4);
+    seen.sort();
+    assert_eq!(seen, vec![0, 1, 2, 3], "toujours une permutation");
+    d.assign_slot(2, None, 4);
+    let a = d.slot_assignment(4);
+    let mut s = a.clone(); s.sort(); s.dedup();
+    assert_eq!(s.len(), 4, "pas de doublon apres retour a l'automatique : {a:?}");
+    // affectation invalide ignoree (page plus petite)
+    let mut e = PageDesign::default_main(3, 0, 1).unwrap();
+    if let Kind::Slot { assign, .. } = &mut e.items[0].kind { *assign = Some(7); }
+    assert_eq!(e.slot_assignment(3), vec![0, 1, 2]);
+    // aller-retour JSON
+    let mut ds = Designs::default();
+    ds.main.insert(0, d.clone());
+    let back = Designs::from_value(&bdauthor_core::json::parse(&ds.to_value().to_pretty()).unwrap()).unwrap();
+    assert_eq!(back, ds);
 }

@@ -298,6 +298,11 @@ impl bdauthor_core::project::Renderer for FontRenderer {
         [mk(false), mk(true)]
     }
 
+    fn overlay(&self, states: [Arc<RgbaImage>; 2], decor: &[Decor]) -> [Arc<RgbaImage>; 2] {
+        let one = |a: &Arc<RgbaImage>| Arc::new(self.compose_on(a.as_ref().clone(), decor).unwrap_or_else(|_| a.as_ref().clone()));
+        [one(&states[0]), one(&states[1])]
+    }
+
     fn compose_background(&self, base: Option<&Path>, size: (u32, u32), decor: &[Decor]) -> std::result::Result<RgbaImage, String> {
         let im = match base {
             Some(f) => cover_resize(self.cached_image(f)?.as_ref(), size.0, size.1),
@@ -500,12 +505,14 @@ impl FontRenderer {
             Some(b) => b.clone(),
             None => self.cached_sprite(hkey(|h| ("degrade", size).hash(h)), || gradient(size)).as_ref().clone(),
         };
-        // decors (textes, images) d'abord, puis boutons, comme a la construction
+        // dans l'ordre de superposition de la mise en page (le dernier est au premier plan)
+        let assignment = design.slot_assignment(slots.len());
+        let mut k = 0;
         for it in &design.items {
-            let (x, y, w, h) = (r(it.x), r(it.y), r(it.w), r(it.h));
+            let (x, y, w, h) = (r(it.x), r(it.y), r(it.w).max(1), r(it.h).max(1));
             match &it.kind {
                 Kind::Text { text, size: sz, color, align, font } => {
-                    let (spr, px, py) = self.text_sprite(text, r(*sz), *color, *align, font, project_dir, w.max(1), h.max(1));
+                    let (spr, px, py) = self.text_sprite(text, r(*sz), *color, *align, font, project_dir, w, h);
                     blit(&mut im, &spr, x - px, y - py, 1.0);
                 }
                 Kind::Image { path } => {
@@ -515,23 +522,17 @@ impl FontRenderer {
                     let rs = self.cached_sprite(hkey(|hh| ("image", Arc::as_ptr(&src) as usize, nw, nh).hash(hh)), || resize(&src, nw, nh));
                     blit(&mut im, &rs, x + (w - nw as i32) / 2, y + (h - nh as i32) / 2, 1.0);
                 }
-                _ => {}
-            }
-        }
-        let mut k = 0;
-        for it in &design.items {
-            let (x, y, w, h) = (r(it.x), r(it.y), r(it.w).max(1), r(it.h).max(1));
-            match &it.kind {
-                Kind::Slot { thumb_h } => {
+                Kind::Slot { thumb_h, .. } => {
                     let th = r(*thumb_h).clamp(1, h);
-                    let slot = slots.get(k);
-                    let key = hkey(|hh| ("vignette", slot.map(|s| (&s.label, s.key)), k, w, h, th).hash(hh));
+                    let element = assignment.get(k).copied().unwrap_or(k);
+                    let slot = slots.get(element);
+                    let key = hkey(|hh| ("vignette", slot.map(|s| (&s.label, s.key)), element, w, h, th).hash(hh));
                     let n = self.cached_sprite(key, || {
                         let (label, thumb) = match slot {
                             Some(sl) => (sl.label.clone(), sl.thumb.as_ref().map(|t| cover_resize(t, w as u32, th as u32))),
-                            None => (format!("Élément {}", k + 1), None),
+                            None => (format!("Élément {}", element + 1), None),
                         };
-                        let thumb = thumb.unwrap_or_else(|| placeholder_thumb(w as u32, th as u32, k + 1, &self.font));
+                        let thumb = thumb.unwrap_or_else(|| placeholder_thumb(w as u32, th as u32, element + 1, &self.font));
                         let [n, _] = self.thumb_button(&thumb, &label, w as u32, h as u32, th as u32);
                         n.as_ref().clone()
                     });
@@ -545,7 +546,6 @@ impl FontRenderer {
                     });
                     blit(&mut im, &n, x, y, if nav_applicable(*action, menu, page, pages) { 1.0 } else { 0.35 });
                 }
-                _ => {}
             }
         }
         im
