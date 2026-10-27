@@ -15,7 +15,7 @@ use crate::menu::{build_menu_clip, required_ics_pts, MenuButton, MenuOptions};
 use crate::mobj::{Command, JUMP_TITLE_INSN, MOVE_RI_INSN};
 use crate::nav::{make_index, make_movie_objects_paged, make_playlist, plan_navigation, AudioStn, PlaylistParams, VideoStn};
 use crate::palette::RgbaImage;
-use crate::tsclip::{make_clip_clpi, py_floordiv, scan_clip, ClipScan, FRAME_RATES};
+use crate::tsclip::{make_clip_clpi, make_clip_clpi_pg, py_floordiv, scan_clip, ClipScan, FRAME_RATES};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -43,6 +43,12 @@ pub trait Renderer {
     fn overlay(&self, states: [Arc<RgbaImage>; 2], decor: &[Decor]) -> [Arc<RgbaImage>; 2] {
         let _ = decor;
         states
+    }
+    /// Image (fond transparent) d'une replique de sous-titre : texte centre, contour compris, aux tailles du style (deja a l'echelle de
+    /// la video). `max_w` : largeur disponible (le texte est reduit s'il deborde). `None` si ce moteur ne sait pas dessiner de sous-titres.
+    fn subtitle(&self, text: &str, style: &crate::subtitle::SubStyle, max_w: u32) -> Option<RgbaImage> {
+        let _ = (text, style, max_w);
+        None
     }
 }
 
@@ -338,6 +344,48 @@ fn get_usize(v: Option<&Value>, what: &str) -> Result<Option<usize>> {
     }
 }
 
+/// Ajoute les pistes de sous-titres `cfg` a un clip encode (remuxage). Retourne le nouveau clip et les flux PG declares (PID, langue).
+#[allow(clippy::too_many_arguments)]
+fn add_subtitles(
+    env: &mut BuildEnv, src: &Path, base: &Path, cfg: &[crate::subtitle::SubTrackCfg], lang: [u8; 3], tmp: &Path, m2ts: &[u8], num: usize,
+) -> Result<(Vec<u8>, Vec<(u16, [u8; 3])>)> {
+    use crate::subtitle::{load_cues, shift, SubSource};
+    let abs = |f: &str| -> PathBuf { let q = Path::new(f); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
+    let mut specs = Vec::new();
+    for (k, t) in cfg.iter().enumerate() {
+        if let Some(m) = t.problems().into_iter().next() { return bad(format!("video {num}, sous-titres {} : {m}", k + 1)); }
+        let tl: [u8; 3] = t.lang.as_bytes().try_into().map_err(|_| Error::Format(format!("video {num}, sous-titres {} : langue invalide", k + 1)))?;
+        let cues = match &t.source {
+            SubSource::File(f) => load_cues(&abs(f)).map_err(Error::Format)?,
+            SubSource::Embedded(idx) => {
+                let dst = tmp.join(format!("sous_titres_{num}_{idx}.srt"));
+                ffmpeg::extract_subtitle_srt(env.tools, src, *idx, &dst)?;
+                load_cues(&dst).map_err(Error::Format)?
+            }
+        };
+        let mut style = t.style.clone();
+        if !style.font.is_empty() {
+            let c = abs(&style.font);
+            if c.is_file() { style.font = c.to_string_lossy().into_owned(); }
+        }
+        specs.push(crate::film::SubSpec { lang: tl, cues: shift(&cues, t.offset_ms), style });
+    }
+    let enc = crate::film::load_encoded_m2ts(m2ts)?;
+    let tracks = crate::film::encode_sub_tracks(&enc, &specs, env.renderer)?;
+    let mut kept = Vec::new();
+    for (k, t) in tracks.into_iter().enumerate() {
+        if t.specs.is_empty() {
+            (env.log)(&format!("   sous-titres {} : aucune replique affichable, piste ignoree", k + 1));
+        } else {
+            kept.push(t);
+        }
+    }
+    let n_sets: usize = kept.iter().map(|t| t.specs.len()).sum();
+    let (out, _) = crate::film::mux_encoded_subs(&enc, lang, &kept)?;
+    (env.log)(&format!("   {} piste(s) de sous-titres ajoutee(s) ({} segments)", kept.len(), n_sets));
+    Ok((out, kept.iter().enumerate().map(|(k, t)| (crate::pgs::PG_PID0 + k as u16, t.lang)).collect()))
+}
+
 pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) -> Result<BuildInfo> {
     let base = std::fs::canonicalize(project_path).unwrap_or_else(|_| project_path.to_path_buf());
     let base = base.parent().map(Path::to_path_buf).unwrap_or_default();
@@ -378,6 +426,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let mut files: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut scans: Vec<ClipScan> = Vec::new();
     let mut durations: Vec<f64> = Vec::new();
+    let mut pg_info: Vec<Vec<(u16, [u8; 3])>> = Vec::new();
 
     // 1. videos
     for (i, v) in vids.iter().enumerate() {
@@ -410,8 +459,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 m
             }
         };
+        // sous-titres PGS : ajoutes par remuxage du clip encode (le cache ne contient pas les sous-titres)
+        let sub_cfg = crate::subtitle::tracks_from_value(v.get("soustitres")).map_err(Error::Format)?;
+        let (m2ts, pg) = if sub_cfg.is_empty() { (m2ts, Vec::new()) } else { add_subtitles(env, &src, &base, &sub_cfg, lang, &tmp.0, &m2ts, i + 1)? };
         let sc = scan_clip(&m2ts)?;
-        files.insert(format!("CLIPINF/{i:05}.clpi"), make_clip_clpi(&m2ts, lang, 0, None, "0100")?);
+        let pg_langs: Vec<[u8; 3]> = pg.iter().map(|x| x.1).collect();
+        files.insert(format!("CLIPINF/{i:05}.clpi"), make_clip_clpi_pg(&m2ts, lang, 0, None, "0100", &pg_langs)?);
+        pg_info.push(pg);
         files.insert(format!("STREAM/{i:05}.m2ts"), m2ts);
         scans.push(sc);
     }
@@ -658,7 +712,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             clip: format!("{i:05}"), in_time: (sc.start90 / 2) as u32, out_time: (sc.end90 / 2) as u32,
             video: VideoStn { pid: sc.video.0, coding: sc.video.1, fmt_rate: sc.video_code },
             audio: Some(AudioStn { pid: pid_a, coding: type_a, fmt_rate: code_a, lang }),
-            with_menu: false, marks: if chapters[i].is_empty() { None } else { Some(chapters[i].iter().map(|c| c.mark45).collect()) },
+            with_menu: false, pg: pg_info[i].clone(), marks: if chapters[i].is_empty() { None } else { Some(chapters[i].iter().map(|c| c.mark45).collect()) },
             ..Default::default()
         }));
     }

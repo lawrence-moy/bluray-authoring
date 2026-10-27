@@ -1,7 +1,7 @@
 //! Du fichier video au clip .m2ts Blu-ray : ffmpeg (transcodage) puis lecture du TS produit et muxage — equivalent de la fin de `encode.py`.
 use crate::ffmpeg::{self, EncodeOpts, Error, Result, Tools};
 use crate::m2ts::reassemble;
-use crate::mux::PmtStream;
+use crate::mux::{PesSpec, PmtStream};
 use crate::reader::*;
 use crate::tsclip::{nal_units, parse_psi};
 use crate::vmux::*;
@@ -89,6 +89,16 @@ pub fn load_encoded(ts: &[u8]) -> PResult<Encoded> {
         data.extend_from_slice(&[0, 0, 0, 0]);
         data.extend_from_slice(c);
     }
+    load_source_packets(&data)
+}
+
+/// Comme `load_encoded`, pour un clip .m2ts (paquets source de 192 octets) : permet de remultiplexer un clip, par exemple pour y
+/// ajouter des sous-titres sans refaire l'encodage.
+pub fn load_encoded_m2ts(m2ts: &[u8]) -> PResult<Encoded> {
+    load_source_packets(m2ts)
+}
+
+fn load_source_packets(data: &[u8]) -> PResult<Encoded> {
     let (_, _, streams) = parse_psi(&data)?;
     let vpid = streams.iter().find(|s| s.0 == 0x1B).ok_or_else(|| ParseError("aucun flux H.264".into()))?.1;
     let apid = streams.iter().find(|s| s.0 == 0x81).map(|s| s.1);
@@ -122,6 +132,48 @@ pub fn load_encoded(ts: &[u8]) -> PResult<Encoded> {
 
 /// Muxage M2TS d'un flux encode (`lang` : code de langue de la piste audio, 3 lettres).
 pub fn mux_encoded(enc: &Encoded, lang: [u8; 3]) -> Result<(Vec<u8>, MuxStats)> {
+    mux_encoded_subs(enc, lang, &[])
+}
+
+/// Piste de sous-titres PGS prete a etre multiplexee.
+#[derive(Debug, Clone)]
+pub struct PgOut {
+    pub lang: [u8; 3],
+    pub specs: Vec<PesSpec>,
+}
+
+/// Une piste a produire : repliques (temps en ms depuis le debut de la video), langue et style.
+#[derive(Debug, Clone)]
+pub struct SubSpec {
+    pub lang: [u8; 3],
+    pub cues: Vec<crate::subtitle::Cue>,
+    pub style: crate::subtitle::SubStyle,
+}
+
+/// Nombre maximal de pistes de sous-titres par video.
+pub const MAX_SUB_TRACKS: usize = 8;
+
+/// Rend et encode les pistes de sous-titres d'un flux encode. Le temps 0 des repliques est la premiere image de la video.
+pub fn encode_sub_tracks(enc: &Encoded, specs: &[SubSpec], renderer: &dyn crate::project::Renderer) -> Result<Vec<PgOut>> {
+    if specs.len() > MAX_SUB_TRACKS {
+        return Err(Error::Format(format!("{MAX_SUB_TRACKS} pistes de sous-titres au plus par video")));
+    }
+    let (w, h, _) = crate::tsclip::parse_sps(&enc.sps).map_err(|e| Error::Format(e.0))?;
+    let pts: Vec<u64> = enc.video.iter().map(|v| v.pts).collect();
+    let fps = crate::tsclip::frame_rate(&pts).map_err(|e| Error::Format(e.0))?;
+    let rate_code = crate::tsclip::FRAME_RATES.iter().find(|r| r.0 == fps).map(|r| r.2).ok_or_else(|| Error::Format(format!("cadence {fps} non geree")))?;
+    let base = pts.iter().copied().min().ok_or_else(|| Error::Format("aucune image video".into()))?;
+    let mut out = Vec::new();
+    for sp in specs {
+        let cues = crate::subtitle::merge(&sp.cues);
+        let t = crate::pgs::encode_track(&cues, &sp.style, renderer, (w, h), rate_code, base, START_PTS as u64).map_err(Error::Format)?;
+        out.push(PgOut { lang: sp.lang, specs: t });
+    }
+    Ok(out)
+}
+
+/// Muxage avec des pistes de sous-titres PGS (PID 0x1200 + n).
+pub fn mux_encoded_subs(enc: &Encoded, lang: [u8; 3], subs: &[PgOut]) -> Result<(Vec<u8>, MuxStats)> {
     let mut streams = vec![PmtStream { stream_type: 0x1B, pid: 0x1011, desc: avc_descriptor(&enc.sps) }];
     if let Some(a0) = enc.audio.first() {
         let mut d = vec![0x05, 0x04, 0x41, 0x43, 0x2d, 0x33];
@@ -131,7 +183,16 @@ pub fn mux_encoded(enc: &Encoded, lang: [u8; 3]) -> Result<(Vec<u8>, MuxStats)> 
         d.push(0);
         streams.push(PmtStream { stream_type: 0x81, pid: 0x1100, desc: d });
     }
-    mux_film(&enc.video, &enc.audio, &streams, &MuxParams::default()).map_err(Error::Format)
+    let mut tracks = Vec::new();
+    for (k, t) in subs.iter().enumerate() {
+        let pid = crate::pgs::PG_PID0 + k as u16;
+        let mut d = vec![0x0A, 4];
+        d.extend_from_slice(&t.lang);
+        d.push(0);
+        streams.push(PmtStream { stream_type: crate::pgs::PG_STREAM_TYPE, pid, desc: d });
+        tracks.push(SubTrack { pid, specs: t.specs.clone() });
+    }
+    mux_film_subs(&enc.video, &enc.audio, &tracks, &streams, &MuxParams::default()).map_err(Error::Format)
 }
 
 #[derive(Debug, Clone)]

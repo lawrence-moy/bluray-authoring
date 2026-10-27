@@ -426,3 +426,70 @@ mod tests {
         assert!(line.ends_with("-c:a ac3 -b:a 192k -ar 48000 -ac 2 -f mpegts -pes_payload_size 0 out.ts"));
     }
 }
+
+// ---------------------------------------------------------------- sous-titres integres
+
+/// Piste de sous-titres d'un fichier video.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SubStreamInfo {
+    /// Numero parmi les pistes de sous-titres (0 = la premiere), celui de `-map 0:s:N`.
+    pub index: u32,
+    pub codec: String,
+    pub lang: String,
+    pub title: String,
+}
+
+impl SubStreamInfo {
+    /// Sous-titres texte que bdauthor sait convertir (les formats en images, comme PGS ou DVD, ne le sont pas).
+    pub fn is_text(&self) -> bool {
+        matches!(self.codec.as_str(), "subrip" | "srt" | "ass" | "ssa" | "mov_text" | "webvtt" | "text" | "microdvd" | "subviewer" | "sami")
+    }
+}
+
+pub fn parse_sub_streams_flat(text: &str) -> Vec<SubStreamInfo> {
+    let mut streams: BTreeMap<u32, BTreeMap<String, String>> = BTreeMap::new();
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once('=') else { continue };
+        if let Some(rest) = k.strip_prefix("streams.stream.") {
+            if let Some((idx, field)) = rest.split_once('.') {
+                if let Ok(i) = idx.parse::<u32>() {
+                    streams.entry(i).or_default().insert(field.to_string(), v.trim().trim_matches('"').to_string());
+                }
+            }
+        }
+    }
+    let get = |m: &BTreeMap<String, String>, k: &str| m.get(k).cloned().unwrap_or_default();
+    streams
+        .values()
+        .filter(|s| s.get("codec_type").map(String::as_str) == Some("subtitle"))
+        .enumerate()
+        .map(|(n, s)| SubStreamInfo { index: n as u32, codec: get(s, "codec_name"), lang: get(s, "tags.language"), title: get(s, "tags.title") })
+        .collect()
+}
+
+pub fn list_subtitle_streams(tools: &Tools, src: &Path) -> Result<Vec<SubStreamInfo>> {
+    let mut c = Command::new(&tools.ffprobe);
+    c.args(["-v", "error", "-of", "flat", "-show_entries", "stream=index,codec_type,codec_name:stream_tags=language,title"]).arg(src);
+    no_window(&mut c);
+    let out = c.output()?;
+    if !out.status.success() {
+        return Err(Error::Probe(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    Ok(parse_sub_streams_flat(&String::from_utf8_lossy(&out.stdout)))
+}
+
+/// Extrait la piste de sous-titres texte `index` (voir `SubStreamInfo::index`) en SRT.
+pub fn extract_subtitle_srt(tools: &Tools, src: &Path, index: u32, dst: &Path) -> Result<()> {
+    let mut c = Command::new(&tools.ffmpeg);
+    c.args(["-y", "-v", "error", "-i"]).arg(src).args(["-map", &format!("0:s:{index}"), "-f", "srt"]).arg(dst);
+    no_window(&mut c);
+    let out = c.output()?;
+    if !out.status.success() {
+        return Err(Error::Format(format!(
+            "extraction de la piste de sous-titres {} impossible (seuls les sous-titres texte sont geres) : {}",
+            index + 1,
+            String::from_utf8_lossy(&out.stderr).trim()
+        )));
+    }
+    Ok(())
+}

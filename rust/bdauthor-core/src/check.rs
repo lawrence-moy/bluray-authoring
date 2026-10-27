@@ -247,6 +247,46 @@ pub fn check_bdmv(root: &Path) -> Report {
         r.info(format!("menu {num} : {n_btn} bouton(s), commandes verifiees"));
     }
 
+    // sous-titres PGS
+    for num in order.clone() {
+        let Some(Some(c)) = clips.get(&num) else { continue };
+        let pgs: Vec<u16> = c.clpi.program.programs.first().map(|p| p.streams.iter().filter(|s| s.coding_type == 0x90).map(|s| s.pid).collect()).unwrap_or_default();
+        if pgs.is_empty() { continue }
+        let data = std::fs::read(&c.path).unwrap_or_default();
+        for pid in pgs {
+            let pes = match reassemble(&data, pid) {
+                Ok(p) => p,
+                Err(e) => { r.err(format!("sous-titres {num} PID {pid:#x} : {e}")); continue }
+            };
+            let (mut sets, mut shown, mut last_pts, mut open, mut bad) = (0usize, 0usize, 0u64, false, false);
+            for e in &pes {
+                let segs = match crate::pgs::parse_segments(&e.data) {
+                    Ok(s) => s,
+                    Err(m) => { r.err(format!("sous-titres {num} PID {pid:#x} : {m}")); bad = true; break }
+                };
+                for (t, p) in segs {
+                    match t {
+                        crate::pgs::SEG_PCS => {
+                            if open { r.err(format!("sous-titres {num} PID {pid:#x} : ensemble d'affichage sans fin")); bad = true; }
+                            open = true;
+                            let pts = e.pts.unwrap_or(0);
+                            if pts < last_pts { r.err(format!("sous-titres {num} PID {pid:#x} : PTS non croissants")); bad = true; }
+                            last_pts = pts;
+                            if p.len() > 10 && p[10] > 0 { shown += 1; }
+                            if e.dts.is_none() { r.warn(format!("sous-titres {num} PID {pid:#x} : PCS sans DTS")); }
+                        }
+                        crate::pgs::SEG_END => { if !open { r.err(format!("sous-titres {num} PID {pid:#x} : fin sans composition")); bad = true; } open = false; sets += 1; }
+                        crate::pgs::SEG_WDS | crate::pgs::SEG_PDS | crate::pgs::SEG_ODS => { if !open { r.err(format!("sous-titres {num} PID {pid:#x} : segment hors composition")); bad = true; } }
+                        t => { r.err(format!("sous-titres {num} PID {pid:#x} : segment {t:#x} inattendu")); bad = true; }
+                    }
+                }
+                if bad { break }
+            }
+            if open && !bad { r.err(format!("sous-titres {num} PID {pid:#x} : dernier ensemble sans fin")); bad = true; }
+            if !bad { r.info(format!("sous-titres {num} PID {pid:#x} : {sets} ensemble(s) d'affichage, {shown} sous-titre(s) affiche(s)")); }
+        }
+    }
+
     // BACKUP
     for rel in ["index.bdmv", "MovieObject.bdmv"] {
         if read(root, rel) != read(root, &format!("BACKUP/{rel}")) { r.warn(format!("BACKUP/{rel} absent ou different")); }

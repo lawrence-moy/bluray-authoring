@@ -2,6 +2,7 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
 mod editor_ui;
+mod subs_ui;
 
 use bdauthor_core::check::Kind;
 use bdauthor_core::editor::{History, PageRef};
@@ -82,6 +83,7 @@ struct App {
     preview_tex: Option<egui::TextureHandle>,
     base_cache: Option<(PathBuf, RgbaImage)>,
     durations: HashMap<String, f64>,
+    sub_probes: subs_ui::Probes,
     thumbs: HashMap<(String, i64), Arc<RgbaImage>>,
     requested: HashSet<String>,
     worker: Option<editor_ui::Worker>,
@@ -102,7 +104,7 @@ impl Default for App {
     fn default() -> Self {
         App {
             mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, sel_item: None, drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
-            durations: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
+            durations: HashMap::new(), sub_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
 }
@@ -381,6 +383,7 @@ impl eframe::App for App {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.add_enabled_ui(!busy, |ui| {
                     let mut changed = false;
+                    let sub_base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
                     if let Some(v) = self.sel.and_then(|i| self.model.videos.get_mut(i)) {
                         ui.heading("Vidéo sélectionnée");
                         ui.label(egui::RichText::new(&v.file).weak());
@@ -426,6 +429,8 @@ impl eframe::App for App {
                             v.chapters.push(ChapterEntry { t, title: String::new() });
                             changed = true;
                         }
+                        ui.separator();
+                        changed |= subs_ui::panel(ui, v, &mut self.sub_probes, &sub_base);
                         ui.separator();
                     } else {
                         ui.label("Ajoutez des vidéos puis sélectionnez-en une pour régler son titre, sa vignette et ses chapitres.");

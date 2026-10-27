@@ -224,6 +224,8 @@ pub struct ClipScan {
     pub eps: Vec<(u64, usize, usize)>, // (pts, spn, taille de l'unite d'acces)
     pub video_code: u8,
     pub audio_codes: Vec<(u16, u8, u8)>, // (pid, stream_type, octet format/frequence)
+    /// PID des flux de sous-titres PGS (stream_type 0x90), dans l'ordre de la PMT.
+    pub pg: Vec<u16>,
 }
 
 pub fn scan_clip(data: &[u8]) -> PResult<ClipScan> {
@@ -263,6 +265,7 @@ pub fn scan_clip(data: &[u8]) -> PResult<ClipScan> {
     Ok(ClipScan {
         num_packets: data.len() / 192, pcr_pid, pmt_pid, video: (vid.1, vid.0), audio: aud.iter().map(|&(t, p)| (p, t)).collect(),
         width: w, height: h, progressive: prog, fps, start90: *firsts.iter().min().unwrap(), end90: *pts.iter().max().unwrap(), eps, video_code, audio_codes,
+        pg: streams.iter().filter(|s| s.0 == 0x90).map(|s| s.1).collect(),
     })
 }
 
@@ -305,6 +308,11 @@ pub fn py_floordiv(a: f64, b: f64) -> f64 {
 
 /// .clpi d'un clip de film. `pad` : octet de remplissage des attributs de flux (multiAVCHD : b'0', disques usuels : zeros).
 pub fn make_clip_clpi(data: &[u8], lang: [u8; 3], pad: u8, aspect_code: Option<u8>, version: &str) -> PResult<Vec<u8>> {
+    make_clip_clpi_pg(data, lang, pad, aspect_code, version, &[])
+}
+
+/// Comme `make_clip_clpi`, en declarant les flux de sous-titres PGS du clip ; `pg_langs` : langue de chacun, dans l'ordre des PID.
+pub fn make_clip_clpi_pg(data: &[u8], lang: [u8; 3], pad: u8, aspect_code: Option<u8>, version: &str, pg_langs: &[[u8; 3]]) -> PResult<Vec<u8>> {
     let sc = scan_clip(data)?;
     let (start45, end45) = ((sc.start90 / 2) as u32, (sc.end90 / 2) as u32);
     let rate = py_floordiv(data.len() as f64, (end45 - start45) as f64 / 45000.0) as u32;
@@ -318,6 +326,11 @@ pub fn make_clip_clpi(data: &[u8], lang: [u8; 3], pad: u8, aspect_code: Option<u
     let mut streams = vec![Stream { pid: sc.video.0, coding_type: sc.video.1, attrs: fill(&[sc.video_code, aspect << 4, 0, 0]) }];
     for &(pid, typ, code) in &sc.audio_codes {
         streams.push(Stream { pid, coding_type: typ, attrs: fill(&[code, lang[0], lang[1], lang[2]]) });
+    }
+    let mut pgs = sc.pg.clone();
+    pgs.sort_unstable();
+    for (k, &pid) in pgs.iter().enumerate() {
+        streams.push(Stream { pid, coding_type: 0x90, attrs: fill(&pg_langs.get(k).copied().unwrap_or(*b"und")) });
     }
     Ok(Clpi {
         version: version.into(),

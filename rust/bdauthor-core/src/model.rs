@@ -17,6 +17,8 @@ pub struct VideoEntry {
     pub thumb_s: Option<f64>,
     pub chapters: Vec<ChapterEntry>,
     pub auto_s: Option<f64>,
+    /// Pistes de sous-titres PGS.
+    pub subs: Vec<crate::subtitle::SubTrackCfg>,
     raw: Value,
 }
 
@@ -44,7 +46,7 @@ impl VideoEntry {
     }
 
     pub fn new(file: &str) -> Self {
-        VideoEntry { file: file.into(), title: String::new(), thumb_s: None, chapters: vec![], auto_s: None, raw: Value::Obj(vec![]) }
+        VideoEntry { file: file.into(), title: String::new(), thumb_s: None, chapters: vec![], auto_s: None, subs: vec![], raw: Value::Obj(vec![]) }
     }
 }
 
@@ -101,6 +103,7 @@ impl ProjectModel {
             e.title = x.get("titre").and_then(Value::as_str).unwrap_or("").into();
             e.thumb_s = x.get("vignette_s").and_then(Value::as_f64);
             e.auto_s = x.get("chapitres_auto_s").and_then(Value::as_f64);
+            e.subs = crate::subtitle::tracks_from_value(x.get("soustitres"))?;
             for c in x.get("chapitres").and_then(Value::as_array).unwrap_or(&[]) {
                 e.chapters.push(match c {
                     Value::Obj(_) => ChapterEntry { t: c.get("t").and_then(Value::as_f64).ok_or("chapitre sans « t »")?, title: c.get("titre").and_then(Value::as_str).unwrap_or("").into() },
@@ -136,6 +139,7 @@ impl ProjectModel {
             set(&mut o, "titre", if e.title.is_empty() { None } else { Some(s(&e.title)) });
             set(&mut o, "vignette_s", e.thumb_s.map(n));
             set(&mut o, "chapitres_auto_s", e.auto_s.map(n));
+            set(&mut o, "soustitres", crate::subtitle::tracks_to_value(&e.subs));
             set(&mut o, "chapitres", if e.chapters.is_empty() { None } else {
                 Some(Value::Arr(e.chapters.iter().map(|c| if c.title.is_empty() { n(c.t) } else { Value::Obj(vec![("t".into(), n(c.t)), ("titre".into(), s(&c.title))]) }).collect()))
             });
@@ -188,6 +192,13 @@ impl ProjectModel {
             if v.chapters.len() > MAX_CHAPTERS { p.push(format!("Vidéo {} : {MAX_CHAPTERS} chapitres au maximum.", i + 1)); }
             if v.chapters.iter().any(|c| c.t < 0.0) { p.push(format!("Vidéo {} : temps de chapitre négatif.", i + 1)); }
             if v.auto_s.map_or(false, |a| a <= 0.0) { p.push(format!("Vidéo {} : intervalle de chapitres automatiques > 0.", i + 1)); }
+            if v.subs.len() > crate::film::MAX_SUB_TRACKS { p.push(format!("Vidéo {} : {} pistes de sous-titres au maximum.", i + 1, crate::film::MAX_SUB_TRACKS)); }
+            for (k, st) in v.subs.iter().enumerate() {
+                for m in st.problems() { p.push(format!("Vidéo {}, sous-titres {} : {m}.", i + 1, k + 1)); }
+                if let crate::subtitle::SubSource::File(f) = &st.source {
+                    if !f.trim().is_empty() && !abs(f).is_file() { p.push(format!("Vidéo {}, sous-titres {} : fichier introuvable ({f}).", i + 1, k + 1)); }
+                }
+            }
         }
         if !self.designs.free.is_empty() && !self.videos.is_empty() {
             let auto = crate::project::paginate(self.videos.len(), self.par_page).map(|g| g.len()).unwrap_or(1);

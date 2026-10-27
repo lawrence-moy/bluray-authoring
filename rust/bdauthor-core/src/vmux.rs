@@ -58,6 +58,7 @@ pub fn packetize(pes: &[u8], pid: u16, mut cc: u8) -> (Vec<Vec<u8>>, u8) {
 enum Kind {
     Audio,
     Video,
+    Sub,
 }
 
 struct Item {
@@ -163,8 +164,22 @@ pub struct MuxStats {
     pub pcr: usize,
 }
 
+/// Piste de sous-titres PGS a multiplexer : PID et PES (dans l'ordre du flux), horodatages en 90 kHz.
+#[derive(Debug, Clone)]
+pub struct SubTrack {
+    pub pid: u16,
+    pub specs: Vec<PesSpec>,
+}
+
 /// `video` : unites d'acces en ordre de decodage ; `audio` : trames AC3 ; temps en 90 kHz. `pmt_streams` : flux de la PMT.
 pub fn mux_film(video: &[VideoAu], audio: &[AudioFrame], pmt_streams: &[PmtStream], p: &MuxParams) -> Result<(Vec<u8>, MuxStats), String> {
+    mux_film_subs(video, audio, &[], pmt_streams, p)
+}
+
+/// Comme `mux_film`, avec des pistes de sous-titres PGS (sans elles, la sortie est identique octet pour octet).
+pub fn mux_film_subs(
+    video: &[VideoAu], audio: &[AudioFrame], subs: &[SubTrack], pmt_streams: &[PmtStream], p: &MuxParams,
+) -> Result<(Vec<u8>, MuxStats), String> {
     if video.is_empty() {
         return Err("aucune image video".into());
     }
@@ -172,18 +187,26 @@ pub fn mux_film(video: &[VideoAu], audio: &[AudioFrame], pmt_streams: &[PmtStrea
     let dt = (188u64 * 27_000_000) as f64 / rate as f64;
     // (heure de decodage, genre, pid, PES, taille)
     let mut raw: Vec<(u64, Kind, u16, Vec<u8>, usize)> = Vec::with_capacity(video.len() + audio.len());
+    let sub_total: usize = subs.iter().map(|t| t.specs.len()).sum();
+    raw.reserve(sub_total);
     for v in video {
         raw.push((v.dts.unwrap_or(v.pts) * 300, Kind::Video, p.video_pid, build_pes(STREAM_ID_VIDEO, v.pts, v.dts, &v.data)?, v.data.len()));
     }
     for a in audio {
         raw.push((a.pts * 300, Kind::Audio, p.audio_pid, build_pes(STREAM_ID_AUDIO, a.pts, None, &a.data)?, a.data.len()));
     }
+    for t in subs {
+        for sp in &t.specs {
+            raw.push((sp.dts.unwrap_or(sp.pts) * 300, Kind::Sub, t.pid, crate::pgs::build_pg_pes(sp)?, 0));
+        }
+    }
     raw.sort_by_key(|x| (x.0, x.1 == Kind::Video)); // « a » avant « v », tri stable
     let (mut ccv, mut cca) = (0u8, 0u8);
+    let mut ccs: std::collections::HashMap<u16, u8> = std::collections::HashMap::new();
     let items: Vec<Item> = raw
         .into_iter()
         .map(|(dl, kind, pid, pes, size)| {
-            let cc = if pid == p.video_pid { &mut ccv } else { &mut cca };
+            let cc = if kind == Kind::Sub { ccs.entry(pid).or_insert(0) } else if pid == p.video_pid { &mut ccv } else { &mut cca };
             let (packets, next) = packetize(&pes, pid, *cc);
             *cc = next;
             Item { kind, deadline: dl, packets, size }

@@ -284,3 +284,11 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   des menus (message avec le texte du bouton). `ProjectModel::validate` fait une verification partielle (hors chapitres automatiques).
 - Coherence : echange/retrait de video et suppression d'une page libre remappent ou annulent les cibles (`Designs::page_removed`).
 - GUI : action « Aller à une page » + menu « Page cible » (toutes les pages), avertissement si la page n'existe plus.
+
+## Sous-titres PGS (Blu-ray, images)
+- Par video : `"soustitres": [ {"fichier":"x.srt"|"piste":N, "langue":"fra", "decalage_ms":0, "style":{police,taille,couleur,contour_couleur,contour,position(bas|milieu|haut),marge}} ]`, 8 pistes au maximum. Tailles du style donnees pour 1080 lignes, mises a l'echelle pour 720.
+- Modules : `subtitle.rs` (SRT/ASS/UTF-8/UTF-16/cp1252, fusion des chevauchements, reglages), `pgs.rs` (segments PCS/WDS/PDS/ODS(fragmentes)/END, ensembles d'affichage, relecture pour tests), `film.rs` (`encode_sub_tracks`, `mux_encoded_subs`, `load_encoded_m2ts`), `vmux.rs` (`mux_film_subs`, `SubTrack`; sortie identique octet pour octet sans sous-titres), `tsclip.rs` (`make_clip_clpi_pg`, `ClipScan.pg`), `nav.rs` (`PlaylistParams.pg`, entrees PG du STN), `check.rs` (controle des flux PG), `ffmpeg.rs` (`list_subtitle_streams`, `extract_subtitle_srt`), `render` (`FontRenderer::subtitle` avec contour), GUI `subs_ui.rs`.
+- Principe : le cache garde le clip encode SANS sous-titres ; les sous-titres sont ajoutes a chaque construction par remuxage (rapide). PID 0x1200+n, stream_type 0x90, PES stream_id 0xBD.
+- Chaque replique = une epoque (PCS 0x80 + WDS + PDS + ODS + END) puis un ensemble d'effacement (PCS normal sans objet) ; si la replique suivante arrive avant que l'effacement soit possible (delai de decodage ~0,26 s en 1080), elle remplace directement la precedente. Duree minimale 0,3 s.
+- Valide : ffmpeg decode les flux et affiche aux bons instants et positions (tests/subtitle_e2e.rs). NON valide : lecteur de salon, VLC (a tester par l'utilisateur).
+- Non fait : piste « par defaut » (SET_STREAM / PSR2), sous-titres images integres (PGS/DVD), styles ASS (seuls texte et sauts de ligne sont conserves), italique/gras.

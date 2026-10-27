@@ -30,6 +30,12 @@ impl Renderer for Flat {
         OVERLAYS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         states
     }
+    fn subtitle(&self, text: &str, style: &bdauthor_core::subtitle::SubStyle, max_w: u32) -> Option<RgbaImage> {
+        let (w, h) = ((text.chars().count() as u32 * 12 + 40).min(max_w), style.size as u32);
+        let mut im = RgbaImage::new(w, h);
+        for y in 0..h { for x in 0..w { im.set(x, y, [255, 0, 255, 255]); } }
+        Some(im)
+    }
     fn compose_background(&self, _base: Option<&std::path::Path>, size: (u32, u32), decor: &[Decor]) -> Result<RgbaImage, String> {
         let mut im = (*fill(size.0, size.1, [40, 20, 80])).clone();
         // un carre blanc par element pose, pour que le fond change reellement
@@ -150,5 +156,61 @@ fn custom_layout_project() {
     // la page 1 personnalisee a son propre fond : un clip de fond de plus que sans personnalisation
     let bgs = std::fs::read_dir(dir.join("out/BDMV/STREAM")).unwrap().filter(|e| { let n = e.as_ref().unwrap().file_name().into_string().unwrap(); n.starts_with("0000") || n.starts_with("0001") }).count();
     assert!(bgs >= 5, "{bgs}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn project_with_subtitles() {
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_projsub_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a_fr.srt"), "1\r\n00:00:00,500 --> 00:00:01,500\r\nBonjour\r\n\r\n2\r\n00:00:02,000 --> 00:00:03,000\r\nSalut\r\n").unwrap();
+    std::fs::write(dir.join("a_en.srt"), "1\n00:00:01,000 --> 00:00:02,000\nHello\n").unwrap();
+    let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
+    // a.mp4 avec une piste de sous-titres texte integree (mov_text)
+    run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=4", "-f", "lavfi", "-i", "sine=duration=4", "-i", dir.join("a_en.srt").to_str().unwrap(),
+          "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-c:s", "mov_text", "-metadata:s:s:0", "language=eng", "-shortest", dir.join("a.mp4").to_str().unwrap()]);
+    run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i", "sine=duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", dir.join("b.mp4").to_str().unwrap()]);
+    let streams = bdauthor_core::ffmpeg::list_subtitle_streams(&tools, &dir.join("a.mp4")).unwrap();
+    assert_eq!(streams.len(), 1);
+    assert!(streams[0].is_text() && streams[0].lang == "eng", "{streams:?}");
+    let proj = r#"{ "titre": "Test", "langue": "fra",
+      "videos": [ {"fichier": "a.mp4", "soustitres": [ {"fichier": "a_fr.srt", "langue": "fra", "style": {"taille": 70}}, {"piste": 0, "langue": "eng", "decalage_ms": 250, "style": {"position": "haut"}} ]},
+                  {"fichier": "b.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2} }"#;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let build = |out: &str| {
+        let mut logs = Vec::new();
+        let info = {
+            let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
+            let cancel = AtomicBool::new(false);
+            let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+            build_project(&dir.join("projet.json"), &dir.join(out), &mut env).unwrap()
+        };
+        (info, logs)
+    };
+    let (info, logs) = build("out");
+    assert!(info.report.ok(), "{}", info.report.render());
+    let rep = info.report.render();
+    assert!(rep.contains("sous-titres 00000 PID 0x1200") && rep.contains("sous-titres 00000 PID 0x1201"), "{rep}");
+    assert!(!rep.contains("sous-titres 00001"), "{rep}");
+    assert!(logs.iter().any(|l| l.contains("2 piste(s) de sous-titres")), "{logs:?}");
+    // le clip declare les deux flux PG, la playlist aussi
+    let clpi = bdauthor_core::clpi::Clpi::parse(&std::fs::read(dir.join("out/BDMV/CLIPINF/00000.clpi")).unwrap()).unwrap();
+    let pg: Vec<(u16, String)> = clpi.program.programs[0].streams.iter().filter(|s| s.coding_type == 0x90).map(|s| (s.pid, String::from_utf8_lossy(&s.attrs[..3]).into_owned())).collect();
+    assert_eq!(pg, vec![(0x1200, "fra".to_string()), (0x1201, "eng".to_string())]);
+    let clpi1 = bdauthor_core::clpi::Clpi::parse(&std::fs::read(dir.join("out/BDMV/CLIPINF/00001.clpi")).unwrap()).unwrap();
+    assert!(clpi1.program.programs[0].streams.iter().all(|s| s.coding_type != 0x90));
+    let mpls = std::fs::read(dir.join("out/BDMV/PLAYLIST/00000.mpls")).unwrap();
+    let needle = [9u8, 1, 0x12, 0x00, 0, 0, 0, 0, 0, 0, 5, 0x90, b'f', b'r', b'a', 0];
+    assert!(mpls.windows(needle.len()).any(|w| w == needle), "entree PG absente de la playlist");
+    // ffprobe voit 2 flux de sous-titres dans le clip
+    let pr = Command::new(&tools.ffprobe).args(["-v", "error", "-select_streams", "s", "-show_entries", "stream=codec_name,id", "-of", "csv=p=0"]).arg(dir.join("out/BDMV/STREAM/00000.m2ts")).output().unwrap();
+    let ids: std::collections::BTreeSet<String> = String::from_utf8_lossy(&pr.stdout).lines().filter(|l| l.contains("hdmv_pgs")).map(String::from).collect();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    // second passage : encodage en cache, sous-titres refaits
+    let (_, logs2) = build("out2");
+    assert!(logs2.iter().any(|l| l.contains("cache")) && logs2.iter().any(|l| l.contains("2 piste(s) de sous-titres")), "{logs2:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

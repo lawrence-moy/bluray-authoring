@@ -51,6 +51,8 @@ pub struct PlaylistParams {
     pub still_mode: u8, // 0 aucun, 1 fini, 2 infini
     pub still_time: u16,
     pub marks: Option<Vec<u32>>,
+    /// Sous-titres PGS du clip : (PID, langue).
+    pub pg: Vec<(u16, [u8; 3])>,
 }
 
 impl Default for PlaylistParams {
@@ -60,13 +62,13 @@ impl Default for PlaylistParams {
             video: VideoStn { pid: 0x1011, coding: 0x1B, fmt_rate: 0x57 },
             audio: Some(AudioStn { pid: 0x1100, coding: 0x81, fmt_rate: 0x31, lang: *b"und" }),
             menu_clip: "80002".into(), menu_in: 21478, menu_out: 22979, ig_pid: 0x1400, ig_lang: *b"eng",
-            with_menu: true, still_mode: 0, still_time: 0, marks: None,
+            with_menu: true, still_mode: 0, still_time: 0, marks: None, pg: Vec::new(),
         }
     }
 }
 
 /// Table des flux (STN) du PlayItem.
-fn stn(video: &VideoStn, audio: &Option<AudioStn>, ig: Option<(u16, [u8; 3])>) -> Vec<u8> {
+fn stn(video: &VideoStn, audio: &Option<AudioStn>, pg: &[(u16, [u8; 3])], ig: Option<(u16, [u8; 3])>) -> Vec<u8> {
     let mut v = vec![9, 1];
     v.p16(video.pid);
     v.zeros(6);
@@ -80,6 +82,15 @@ fn stn(video: &VideoStn, audio: &Option<AudioStn>, ig: Option<(u16, [u8; 3])>) -
         a.extend_from_slice(&[5, au.coding, au.fmt_rate]);
         a.extend_from_slice(&au.lang);
     }
+    let mut sp = Vec::new();
+    for &(pid, lang) in pg {
+        sp.extend_from_slice(&[9, 1]);
+        sp.p16(pid);
+        sp.zeros(6);
+        sp.extend_from_slice(&[5, 0x90]);
+        sp.extend_from_slice(&lang);
+        sp.p8(0);
+    }
     let mut g = Vec::new();
     if let Some((pid, lang)) = ig {
         g.extend_from_slice(&[9, 2, 0, 0]);
@@ -89,16 +100,17 @@ fn stn(video: &VideoStn, audio: &Option<AudioStn>, ig: Option<(u16, [u8; 3])>) -
         g.extend_from_slice(&lang);
         g.p8(0);
     }
-    let mut counts = vec![1, audio.is_some() as u8, 0, ig.is_some() as u8, 0, 0, 0];
+    let mut counts = vec![1, audio.is_some() as u8, pg.len() as u8, ig.is_some() as u8, 0, 0, 0];
     counts.zeros(5);
     // le champ de longueur de multiAVCHD ne couvre pas l'entree IG : reproduit a l'identique
-    let length = 2 + counts.len() + v.len() + a.len();
+    let length = 2 + counts.len() + v.len() + a.len() + sp.len();
     let mut out = Vec::new();
     out.p16(length as u16);
     out.p16(0);
     out.extend(counts);
     out.extend(v);
     out.extend(a);
+    out.extend(sp);
     out.extend(g);
     out
 }
@@ -108,7 +120,7 @@ pub fn make_playlist(p: &PlaylistParams) -> Vec<u8> {
     let mut tail = vec![0u8; 9];
     tail.p8(p.still_mode);
     tail.p16(p.still_time);
-    tail.extend(stn(&p.video, &p.audio, if p.with_menu { Some((p.ig_pid, p.ig_lang)) } else { None }));
+    tail.extend(stn(&p.video, &p.audio, &p.pg, if p.with_menu { Some((p.ig_pid, p.ig_lang)) } else { None }));
     let subpaths = if p.with_menu {
         vec![SubPath {
             subpath_type: 3, is_repeat: 0,

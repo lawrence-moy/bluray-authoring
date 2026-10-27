@@ -303,6 +303,42 @@ impl bdauthor_core::project::Renderer for FontRenderer {
         [one(&states[0]), one(&states[1])]
     }
 
+    fn subtitle(&self, text: &str, style: &bdauthor_core::subtitle::SubStyle, max_w: u32) -> Option<RgbaImage> {
+        if text.trim().is_empty() {
+            return None;
+        }
+        let custom = self.custom_font(&style.font, Path::new(""));
+        let font: &FontVec = custom.as_deref().unwrap_or(&self.font);
+        let lines: Vec<&str> = text.split('\n').collect();
+        let outline = style.outline.max(0);
+        let pad = outline + 4;
+        // la plus longue ligne doit tenir dans la largeur de la video : la taille est reduite sinon
+        let avail = (max_w as f32 * 0.92 - 2.0 * pad as f32).max(40.0);
+        let mut size = style.size.max(8) as f32;
+        let widest = |sz: f32| lines.iter().map(|l| text_extent(font, l, sz).0).fold(0.0f32, f32::max);
+        let wide = widest(size);
+        if wide > avail {
+            size = (size * avail / wide).max(8.0);
+        }
+        let lh = text_extent(font, "Ag", size).1 * 1.1;
+        let (tw, th) = (widest(size).ceil() as i32 + 2, (lh * lines.len() as f32).ceil() as i32);
+        let (w, h) = (tw + 2 * pad, th + 2 * pad);
+        let mut im = RgbaImage::new(w as u32, h as u32);
+        let rect = |dx: i32, dy: i32| (pad + dx, pad + dy, tw, th);
+        if outline > 0 {
+            // contour : le texte redessine a tous les decalages entiers du disque de rayon `outline`
+            for dy in -outline..=outline {
+                for dx in -outline..=outline {
+                    if dx * dx + dy * dy <= outline * outline + outline / 2 {
+                        draw_text_block(&mut im, font, text, size, style.outline_color, rect(dx, dy), Align::Center);
+                    }
+                }
+            }
+        }
+        draw_text_block(&mut im, font, text, size, style.color, rect(0, 0), Align::Center);
+        Some(im)
+    }
+
     fn compose_background(&self, base: Option<&Path>, size: (u32, u32), decor: &[Decor]) -> std::result::Result<RgbaImage, String> {
         let im = match base {
             Some(f) => cover_resize(self.cached_image(f)?.as_ref(), size.0, size.1),
