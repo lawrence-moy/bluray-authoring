@@ -464,7 +464,7 @@ impl eframe::App for App {
                         ui.label("Image de fond :");
                         changed |= ui.add(egui::TextEdit::singleline(&mut m.bg).hint_text("(fond généré automatiquement)")).changed();
                         if ui.button("Choisir…").clicked() {
-                            if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp"]).pick_file() {
+                            if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                                 m.bg = clean(&f);
                                 changed = true;
                             }

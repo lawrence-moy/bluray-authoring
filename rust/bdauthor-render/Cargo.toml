@@ -10,5 +10,7 @@ path = "src/bin/bdauthor-build.rs"
 
 [dependencies]
 bdauthor-core = { path = "../bdauthor-core" }
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "bmp"] }
 ab_glyph = "0.2"
+# images SVG (pur Rust)
+resvg = "0.45"

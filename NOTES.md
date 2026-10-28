@@ -305,3 +305,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - JSON : `"video": N` (1-based) et `"cible": {...}` sur la vignette. Pages libres : leurs vignettes utilisent maintenant `video` ; un ancien `"element"` d'une page libre est converti a la lecture.
 - Construction : `page_buttons` recoit `video_specs` (une SlotSpec par video) ; les pages libres n'ont plus d'elements propres. Echange/retrait de video renumerotent ou suppriment ces vignettes sur toutes les pages.
 - GUI : liste « Contenu » (elements de la page puis toutes les videos) et « Au clic » (habituel, lire la video associee, pages, autres videos) ; l'apercu recoit les vignettes dans l'ordre de la liste. Sur le canevas : « V3 » = video 3 choisie, « → » = destination personnalisee.
+
+## Vignettes sans video, doublons, images SVG
+- `Kind::Slot.video: Option<Option<usize>>` : `None` = vignette d'element ; `Some(Some(v))` = video v ; `Some(None)` = vignette de video sans video (apres retrait de la video, ou pas encore choisie) : conservee dans la mise en page, avertissement, absente du disque. JSON : `"video": null`.
+- Retrait d'une video : ses vignettes restent en place, sans video (plus de suppression).
+- Doublons : plusieurs vignettes peuvent montrer le meme element de la page (plus d'echange automatique) ou la meme video. `slot_assignment` renvoie `usize::MAX` pour une vignette automatique sans element restant (erreur « sans élément ») ; un element sans vignette n'est plus qu'un avertissement (`unshown_elements`).
+- SVG : `bdauthor-render` depend de `resvg = "0.45"` (`load_svg`, `is_svg`, rasterise a 2048 px sur le plus grand cote puis reduit au cadre ; polices systeme pour les textes du SVG). `load_image` accepte SVG/SVGZ partout (images, fond). Fond de menu commun en SVG : converti en PNG par le moteur de dessin avant ffmpeg. `image` gagne la fonction `bmp` (le BMP etait propose mais non lisible).
+- API resvg ecrite sans pouvoir compiler (crates.io inaccessible depuis le cloud) : verifier a la premiere compilation Windows.

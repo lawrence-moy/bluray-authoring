@@ -15,7 +15,52 @@ pub type Result<T> = std::result::Result<T, String>;
 pub const FILL_COLORS: [[u8; 3]; 3] = [[30, 60, 140], [90, 150, 230], [240, 150, 40]];
 pub const TEXT_COLOR: [u8; 3] = [255, 255, 255];
 
+/// Plus grand cote (px) d'un SVG converti en image ; l'image est ensuite reduite a la taille de son cadre.
+pub const SVG_RASTER_MAX: u32 = 2048;
+
+/// Fichier SVG (ou SVG compresse) d'apres son extension ?
+pub fn is_svg(path: &Path) -> bool {
+    path.extension().and_then(|e| e.to_str()).map_or(false, |e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz"))
+}
+
+/// Dessine un SVG (bibliotheque resvg) a la taille `max_side` pour son plus grand cote, fond transparent.
+pub fn load_svg(path: &Path, max_side: u32) -> Result<RgbaImage> {
+    use resvg::{tiny_skia, usvg};
+    static FONTS: std::sync::OnceLock<Arc<usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut opt = usvg::Options::default();
+    opt.resources_dir = path.parent().map(Path::to_path_buf);
+    // polices du systeme pour les textes du SVG (chargees une seule fois)
+    opt.fontdb = FONTS.get_or_init(|| {
+        let mut db = usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        Arc::new(db)
+    }).clone();
+    let tree = usvg::Tree::from_data(&data, &opt).map_err(|e| format!("{} : SVG illisible ({e})", path.display()))?;
+    let size = tree.size();
+    let (sw, sh) = (size.width().max(1.0), size.height().max(1.0));
+    let k = max_side as f32 / sw.max(sh);
+    let (w, h) = (((sw * k).round() as u32).max(1), ((sh * k).round() as u32).max(1));
+    let mut pm = tiny_skia::Pixmap::new(w, h).ok_or_else(|| format!("{} : taille de SVG invalide", path.display()))?;
+    resvg::render(&tree, tiny_skia::Transform::from_scale(w as f32 / sw, h as f32 / sh), &mut pm.as_mut());
+    // tiny-skia travaille en alpha premultiplie : retour aux couleurs directes
+    let mut px = pm.take();
+    for p in px.chunks_exact_mut(4) {
+        let a = p[3] as u32;
+        if a > 0 && a < 255 {
+            for c in &mut p[..3] {
+                *c = ((*c as u32 * 255 + a / 2) / a).min(255) as u8;
+            }
+        }
+    }
+    RgbaImage::from_raw(w, h, px)
+}
+
+/// Charge une image PNG, JPEG, BMP ou SVG.
 pub fn load_image(path: &Path) -> Result<RgbaImage> {
+    if is_svg(path) {
+        return load_svg(path, SVG_RASTER_MAX);
+    }
     let im = image::open(path).map_err(|e| format!("{}: {e}", path.display()))?.to_rgba8();
     let (w, h) = im.dimensions();
     RgbaImage::from_raw(w, h, im.into_raw())
@@ -579,7 +624,7 @@ impl FontRenderer {
                     let n = self.cached_sprite(key, || {
                         let (label, thumb) = match slot {
                             Some(sl) => (sl.label.clone(), sl.thumb.as_ref().map(|t| cover_resize(t, w as u32, th as u32))),
-                            None => (format!("Élément {}", element + 1), None),
+                            None => (if element == usize::MAX { "(vide)".to_string() } else { format!("Élément {}", element + 1) }, None),
                         };
                         let thumb = thumb.unwrap_or_else(|| placeholder_thumb(w as u32, th as u32, element + 1, &self.font));
                         let [n, _] = self.thumb_button(&thumb, &label, w as u32, h as u32, th as u32);

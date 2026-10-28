@@ -140,7 +140,9 @@ fn custom_layout_project() {
           {"type":"navigation","action":"aller_a","texte":"Chapitres de a","cible":{"menu":"chapitres","video":1,"page":1},"x":1200,"y":900,"w":400,"h":90},
           {"type":"texte","texte":"Lire c","x":100,"y":700,"w":400,"h":90,"taille":60,"couleur":"#ffffff","alignement":"centre","cible":{"lire":"video","video":3}},
           {"type":"image","fichier":"b.mp4","x":1600,"y":60,"w":200,"h":120,"cible":{"menu":"principal","page":1}},
-          {"type":"navigation","action":"aller_a","texte":"Lire b","cible":{"lire":"video","video":2},"x":1500,"y":700,"w":300,"h":90} ] } ],
+          {"type":"navigation","action":"aller_a","texte":"Lire b","cible":{"lire":"video","video":2},"x":1500,"y":700,"w":300,"h":90},
+          {"type":"vignette","vignette_h":100,"x":600,"y":700,"w":200,"h":130,"video":null},
+          {"type":"vignette","vignette_h":100,"x":850,"y":700,"w":200,"h":130,"video":3} ] } ],
         "chapitres": { "1": { "1": { "elements": [
           {"type":"vignette","vignette_h":200,"x":100,"y":300,"w":400,"h":250},
           {"type":"vignette","vignette_h":200,"x":600,"y":300,"w":400,"h":250},
@@ -156,9 +158,10 @@ fn custom_layout_project() {
     assert!(info.report.ok(), "{}", info.report.render());
     assert_eq!(info.main_pages, 3, "2 pages automatiques + 1 page libre");
     assert_eq!(OVERLAYS.load(std::sync::atomic::Ordering::SeqCst), 1, "seule la 2e vignette est recouverte par l'image placee devant elle");
-    // page libre : 2 vignettes, « Precedent », 2 boutons « Aller a », un texte et une image cliquables
+    // page libre : 3 vignettes (dont la video 3 deux fois ; celle sans video est absente), « Precedent », 2 boutons « Aller a »,
+    // un texte et une image cliquables
     let rep = info.report.render();
-    assert!(rep.contains(": 7 bouton(s)"), "{rep}");
+    assert!(rep.contains(": 8 bouton(s)"), "{rep}");
     // page 1 : 2 vignettes d'elements, « Suivant », une vignette de la video 3 menant a la page libre
     assert!(rep.contains(": 4 bouton(s)"), "{rep}");
     assert!(logs.iter().any(|l| l.contains("ignoree")), "la page de chapitres invalide doit etre signalee : {logs:?}");

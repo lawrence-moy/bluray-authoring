@@ -181,8 +181,12 @@ impl App {
             out.push(match it.fixed_video() {
                 Some(v) if v < n => SlotShow::Video(v),
                 Some(_) => SlotShow::Missing,
-                None if info.is_free() => SlotShow::Missing,
-                None => { let e = eff.get(k).copied().unwrap_or(k); k += 1; SlotShow::Element(e) }
+                None if info.is_free() || it.is_video_slot() => SlotShow::Missing,
+                None => {
+                    let e = eff.get(k).copied().unwrap_or(usize::MAX);
+                    k += 1;
+                    if e == usize::MAX { SlotShow::Missing } else { SlotShow::Element(e) }
+                }
             });
         }
         out
@@ -369,12 +373,12 @@ impl App {
                         if ui.button(a.label()).clicked() { add = Some(Item::nav(a, 760, 940, 360, 80)); ui.close_menu(); }
                     }
                 });
-                if ui.button("+ Vignette").clicked() { add = Some(Item { x: 100, y: 300, w: 400, h: 250, kind: Kind::Slot { thumb_h: 200, assign: None, video: if info.is_free() { Some(0) } else { None }, link: None } }); }
+                if ui.button("+ Vignette").clicked() { add = Some(Item { x: 100, y: 300, w: 400, h: 250, kind: Kind::Slot { thumb_h: 200, assign: None, video: if info.is_free() { Some(None) } else { None }, link: None } }); }
                 ui.separator();
                 ui.checkbox(&mut self.snap, "Aimantation 10 px");
             });
             if pick_image {
-                if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp"]).pick_file() {
+                if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                     let rel = self.relative(&f);
                     add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None } });
                 }
@@ -493,8 +497,12 @@ impl App {
                     if matches!(it.kind, Kind::Slot { .. }) {
                         let shown = match it.fixed_video() {
                             Some(v) => format!("V{}", v + 1),
-                            None if info.is_free() => "?".to_string(),
-                            None => { let e = eff.get(slot_no).copied().unwrap_or(slot_no) + 1; slot_no += 1; e.to_string() }
+                            None if info.is_free() || it.is_video_slot() => "?".to_string(),
+                            None => {
+                                let e = eff.get(slot_no).copied().unwrap_or(usize::MAX);
+                                slot_no += 1;
+                                if e == usize::MAX { "?".to_string() } else { (e + 1).to_string() }
+                            }
                         };
                         let shown = if it.link().is_some() { format!("{shown} →") } else { shown };
                         painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(14.0), col);
@@ -614,14 +622,15 @@ impl App {
                     });
                     // contenu : un element de la page (pages automatiques) ou n'importe quelle video du projet
                     let vname = |v: usize| format!("Vidéo {}. {}", v + 1, video_labels.get(v).cloned().unwrap_or_default());
-                    let ename = |e: usize| format!("{}. {}", e + 1, labels.get(e).cloned().unwrap_or_default());
-                    let cur = eff.get(slot_pos).copied().unwrap_or(0);
+                    let ename = |e: usize| if e == usize::MAX { "(aucun élément : à choisir)".to_string() } else { format!("{}. {}", e + 1, labels.get(e).cloned().unwrap_or_default()) };
+                    let cur = eff.get(slot_pos).copied().unwrap_or(usize::MAX);
                     let shown = match *video {
-                        Some(v) => vname(v),
+                        Some(Some(v)) => vname(v),
+                        Some(None) => "(aucune vidéo : à choisir)".to_string(),
                         None if is_free => "(choisir une vidéo)".to_string(),
                         None => ename(cur),
                     };
-                    let old_video = *video;
+                    let old_video = (*video).flatten();
                     egui::ComboBox::from_label("Contenu").selected_text(shown).show_ui(ui, |ui| {
                         if !is_free {
                             ui.label(egui::RichText::new("Éléments de cette page").weak());
@@ -633,19 +642,19 @@ impl App {
                         }
                         ui.label(egui::RichText::new("N'importe quelle vidéo du projet").weak());
                         for v in 0..video_labels.len() {
-                            if ui.selectable_label(*video == Some(v), vname(v)).clicked() { *video = Some(v); changed = true; }
+                            if ui.selectable_label(*video == Some(Some(v)), vname(v)).clicked() { *video = Some(Some(v)); changed = true; }
                         }
                     });
                     // « lire la video associee » suit le changement de video
-                    if let (Some(o), Some(nv)) = (old_video, *video) {
+                    if let (Some(o), Some(nv)) = (old_video, (*video).flatten()) {
                         if o != nv && *link == Some(Target::Video(o)) { *link = Some(Target::Video(nv)); }
                     }
                     if !is_free && video.is_none() {
-                        ui.label(egui::RichText::new("Choisir un élément déjà utilisé par une autre vignette échange les deux.").weak());
+                        ui.label(egui::RichText::new("Plusieurs vignettes peuvent montrer le même élément ou la même vidéo.").weak());
                     }
                     let habit = if info.menu == MenuType::Chapters && video.is_none() { "Habituel : lire depuis ce chapitre" } else { "Habituel : menu de chapitres s'il existe, sinon lecture" };
                     let mut opts: Vec<(Target, String)> = Vec::new();
-                    if let Some(v) = *video { opts.push((Target::Video(v), "Lire la vidéo associée".to_string())); }
+                    if let Some(Some(v)) = *video { opts.push((Target::Video(v), "Lire la vidéo associée".to_string())); }
                     opts.extend(page_targets.iter().cloned());
                     let shown = link.and_then(|t| opts.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| if link.is_some() { "(destination introuvable)".into() } else { habit.to_string() });
                     egui::ComboBox::from_label("Au clic").selected_text(shown).show_ui(ui, |ui| {
@@ -731,7 +740,7 @@ impl App {
             }
         }
         if pick_image {
-            if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp"]).pick_file() {
+            if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                 let rel = self.relative(&f);
                 if let Some(Kind::Image { path, .. }) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).map(|it| &mut it.kind) {
                     *path = rel;
@@ -776,7 +785,7 @@ impl App {
                 Kind::Text { text, link, .. } => format!("Texte « {} »{}", text.lines().next().unwrap_or("").chars().take(24).collect::<String>(), if link.is_some() { " (cliquable)" } else { "" }),
                 Kind::Image { path, link } => format!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { " (cliquable)" } else { "" }),
                 Kind::Nav { action, text, .. } => if *action == NavAction::Goto { format!("Bouton « {text} »") } else { format!("Bouton {}", action.label()) },
-                Kind::Slot { video, link, .. } => format!("Vignette{}{}", video.map_or(String::new(), |v| format!(" (vidéo {})", v + 1)), if link.is_some() { " →" } else { "" }),
+                Kind::Slot { video, link, .. } => format!("Vignette{}{}", match video { Some(Some(v)) => format!(" (vidéo {})", v + 1), Some(None) => " (sans vidéo)".to_string(), None => String::new() }, if link.is_some() { " →" } else { "" }),
             };
             let text = egui::RichText::new(what).color(kind_color(&it.kind));
             if ui.selectable_label(self.sel_item == Some(idx), text).clicked() { pick = Some(idx); }

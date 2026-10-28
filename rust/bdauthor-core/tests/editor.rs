@@ -104,17 +104,18 @@ fn history_undo_redo() {
 fn slot_assignment_and_swap() {
     let mut d = PageDesign::default_main(4, 0, 1).unwrap(); // 4 vignettes automatiques
     assert_eq!(d.slot_assignment(4), vec![0, 1, 2, 3]);
-    d.assign_slot(2, Some(0), 4); // la 3e vignette montre l'element 1 : echange avec la 1re
-    assert_eq!(d.slot_assignment(4), vec![2, 1, 0, 3]);
-    d.assign_slot(3, Some(1), 4);
-    assert_eq!(d.slot_assignment(4), vec![2, 3, 0, 1]);
-    let mut seen = d.slot_assignment(4);
-    seen.sort();
-    assert_eq!(seen, vec![0, 1, 2, 3], "toujours une permutation");
+    // la 3e vignette montre l'element 1 : les vignettes automatiques prennent les elements restants
+    d.assign_slot(2, Some(0), 4);
+    assert_eq!(d.slot_assignment(4), vec![1, 2, 0, 3]);
+    assert!(d.unshown_elements(4).is_empty());
+    // deux vignettes explicites sur le meme element, les deux autres automatiques
+    d.assign_slot(0, Some(0), 4);
+    assert_eq!(d.slot_assignment(4), vec![0, 1, 0, 2]);
+    let v = d.validate(4, MenuType::Main, 0, 1);
+    assert!(v.iter().all(|p| !p.error) && v.iter().any(|p| p.msg.contains("sans vignette")), "{v:?}");
     d.assign_slot(2, None, 4);
-    let a = d.slot_assignment(4);
-    let mut s = a.clone(); s.sort(); s.dedup();
-    assert_eq!(s.len(), 4, "pas de doublon apres retour a l'automatique : {a:?}");
+    d.assign_slot(0, None, 4);
+    assert_eq!(d.slot_assignment(4), vec![0, 1, 2, 3], "retour a l'automatique");
     // affectation invalide ignoree (page plus petite)
     let mut e = PageDesign::default_main(3, 0, 1).unwrap();
     if let Kind::Slot { assign, .. } = &mut e.items[0].kind { *assign = Some(7); }

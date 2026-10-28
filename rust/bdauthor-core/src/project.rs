@@ -117,11 +117,12 @@ fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, ass
         match &it.kind {
             Kind::Slot { thumb_h, video, link, .. } => {
                 let sp = match video {
-                    Some(v) => videos.get(*v).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?,
+                    Some(Some(v)) => videos.get(*v).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?,
+                    Some(None) => continue, // vignette sans video : absente du disque
                     None => {
-                        let sp = &slots[assignment[k]];
+                        let a = assignment.get(k).copied().unwrap_or(usize::MAX);
                         k += 1;
-                        sp
+                        match slots.get(a) { Some(sp) => sp, None => continue }
                     }
                 };
                 let th = py_round(*thumb_h as f64 * s) as i32;
@@ -593,7 +594,14 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     };
 
     // 2. fond de menu commun (clip image fixe, sans audio)
+    let is_svg = |f: &Path| f.extension().and_then(|e| e.to_str()).map_or(false, |e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz"));
     let bg_png: PathBuf = match &custom_fond {
+        // ffmpeg ne lit pas le SVG : le moteur de dessin le convertit
+        Some(f) if is_svg(f) => {
+            let png = tmp.0.join("fond_svg.png");
+            std::fs::write(&png, crate::png::write_png(&env.renderer.compose_background(Some(f), size, &[]).map_err(Error::Format)?))?;
+            png
+        }
         Some(f) => f.clone(),
         None => {
             let f = tmp.0.join("fond.png");

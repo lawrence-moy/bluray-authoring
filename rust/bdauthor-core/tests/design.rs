@@ -20,7 +20,8 @@ fn default_grids_match_layout() {
 fn validation() {
     let mut d = PageDesign::starting_point(MenuType::Main, 3, 0, 2, "Titre").unwrap();
     assert!(d.validate(3, MenuType::Main, 0, 2).iter().all(|p| !p.error), "{:?}", d.validate(3, MenuType::Main, 0, 2));
-    assert!(d.validate(4, MenuType::Main, 0, 2).iter().any(|p| p.error)); // il en faut 4
+    assert!(d.validate(4, MenuType::Main, 0, 2).iter().any(|p| !p.error && p.msg.contains("sans vignette"))); // 4e element non montre
+    assert!(d.validate(2, MenuType::Main, 0, 2).iter().any(|p| p.error && p.msg.contains("sans élément"))); // une vignette de trop
     d.items.push(Item::nav(NavAction::Back, 10, 10, 200, 80)); // sans objet dans le menu principal
     assert!(d.validate(3, MenuType::Main, 0, 2).iter().any(|p| p.msg.contains("n'apparaîtra pas")));
     d.items[1].x = -5;
@@ -57,8 +58,8 @@ fn json_roundtrip_and_remap() {
 fn free_pages_json_swap_remove_validate() {
     let mut ds = Designs::default();
     let mut f = PageDesign::blank_free(1);
-    f.items.push(Item { x: 100, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(2), link: None } });
-    f.items.push(Item { x: 600, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(0), link: None } });
+    f.items.push(Item { x: 100, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(2)), link: None } });
+    f.items.push(Item { x: 600, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(0)), link: None } });
     ds.free.push(f);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("\"libres\""));
@@ -69,18 +70,23 @@ fn free_pages_json_swap_remove_validate() {
     assert!(ds.free[0].validate_free(1, 2, 2).iter().any(|p| p.error && p.msg.contains("n'existe pas")));
     // vignette sans video
     let mut g = ds.free[0].clone();
-    if let Kind::Slot { video, .. } = &mut g.items[1].kind { *video = None; }
+    if let Kind::Slot { video, .. } = &mut g.items[1].kind { *video = None; } // vignette d'element sur une page libre : erreur
     assert!(g.validate_free(1, 2, 3).iter().any(|p| p.error));
     // echange de videos 0 et 2 : les affectations suivent
     let mut x = ds.clone();
     x.swap_videos(0, 2);
-    let a: Vec<Option<usize>> = x.free[0].items.iter().filter_map(|i| if let Kind::Slot { video, .. } = i.kind { Some(video) } else { None }).collect();
+    let a: Vec<Option<usize>> = x.free[0].items.iter().filter_map(|i| if let Kind::Slot { .. } = i.kind { Some(i.fixed_video()) } else { None }).collect();
     assert_eq!(a, vec![Some(0), Some(2)]);
-    // retrait de la video 0 : sa vignette disparait, la video 2 devient 1
+    // retrait de la video 0 : sa vignette reste en place sans video, la video 2 devient 1
     let mut y = ds.clone();
     y.remove_video(0);
-    let a: Vec<Option<usize>> = y.free[0].items.iter().filter_map(|i| if let Kind::Slot { video, .. } = i.kind { Some(video) } else { None }).collect();
-    assert_eq!(a, vec![Some(1)]);
+    let a: Vec<Option<usize>> = y.free[0].items.iter().filter_map(|i| if let Kind::Slot { .. } = i.kind { Some(i.fixed_video()) } else { None }).collect();
+    assert_eq!(a, vec![Some(1), None]);
+    assert!(y.free[0].items.iter().filter(|i| i.is_video_slot()).count() == 2);
+    let pr = y.free[0].validate_free(1, 2, 2);
+    assert!(pr.iter().all(|p| !p.error) && pr.iter().any(|p| p.msg.contains("sans vidéo")), "{pr:?}");
+    let back = Designs::from_value(&parse(&y.to_value().to_pretty()).unwrap()).unwrap();
+    assert_eq!(back, y, "une vignette sans video survit a l'enregistrement");
 }
 
 #[test]
@@ -161,11 +167,11 @@ fn fixed_video_slots_with_destination() {
     // anciens fichiers : « element » d'une page libre devient la video
     let old = parse(r#"{"principal":{},"chapitres":{},"libres":[{"elements":[{"type":"vignette","vignette_h":200,"x":0,"y":0,"w":300,"h":250,"element":2}]}]}"#).unwrap();
     let d = Designs::from_value(&old).unwrap();
-    assert!(matches!(d.free[0].items[0].kind, Kind::Slot { assign: None, video: Some(1), .. }));
+    assert!(matches!(d.free[0].items[0].kind, Kind::Slot { assign: None, video: Some(Some(1)), .. }));
     // page automatique : 2 elements + une vignette de la video 3 qui ouvre la page 2
     let mut p = PageDesign::default_main(2, 0, 2).unwrap();
     let before = p.slot_count();
-    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, assign: Some(0), video: Some(2), link: Some(Target::Main(1)) } });
+    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, assign: Some(0), video: Some(Some(2)), link: Some(Target::Main(1)) } });
     assert_eq!(p.slot_count(), before, "une vignette de video choisie ne compte pas parmi les elements");
     assert_eq!(p.all_slot_count(), before + 1);
     assert!(p.validate(2, MenuType::Main, 0, 2).iter().all(|x| !x.error), "{:?}", p.validate(2, MenuType::Main, 0, 2));
@@ -174,14 +180,14 @@ fn fixed_video_slots_with_destination() {
     ds.main.insert(0, p);
     let text = ds.to_value().to_pretty();
     let back = Designs::from_value(&parse(&text).unwrap()).unwrap();
-    assert!(matches!(back.main[&0].items.last().unwrap().kind, Kind::Slot { assign: None, video: Some(2), link: Some(Target::Main(1)), .. }));
+    assert!(matches!(back.main[&0].items.last().unwrap().kind, Kind::Slot { assign: None, video: Some(Some(2)), link: Some(Target::Main(1)), .. }));
     let fixed = |d: &Designs| d.main[&0].items.last().map(|i| (i.fixed_video(), i.link()));
     let mut x = back.clone();
     x.swap_videos(2, 0);
     assert_eq!(fixed(&x), Some((Some(0), Some(Target::Main(1)))));
     let mut y = back.clone();
     y.remove_video(2);
-    assert!(y.main[&0].items.iter().all(|i| i.fixed_video().is_none()), "la vignette de la video retiree disparait");
+    assert!(y.main[&0].items.last().map_or(false, |i| i.is_video_slot() && i.fixed_video().is_none()), "la vignette de la video retiree reste, sans video");
     let mut z = back.clone();
     z.page_removed(1);
     assert_eq!(fixed(&z), Some((Some(2), None)));
