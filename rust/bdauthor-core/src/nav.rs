@@ -115,12 +115,18 @@ fn stn(video: &VideoStn, audio: &Option<AudioStn>, pg: &[(u16, [u8; 3])], ig: Op
     out
 }
 
-/// Playlist : un PlayItem (le film ou le fond) + un SubPath de type 3 (menu IG) si `with_menu` + marques de chapitre.
-pub fn make_playlist(p: &PlaylistParams) -> Vec<u8> {
+/// Fin d'un PlayItem (mode d'arret sur image, table des flux) d'apres les parametres d'une playlist.
+fn item_tail(p: &PlaylistParams) -> Vec<u8> {
     let mut tail = vec![0u8; 9];
     tail.p8(p.still_mode);
     tail.p16(p.still_time);
     tail.extend(stn(&p.video, &p.audio, &p.pg, if p.with_menu { Some((p.ig_pid, p.ig_lang)) } else { None }));
+    tail
+}
+
+/// Playlist : un PlayItem (le film ou le fond) + un SubPath de type 3 (menu IG) si `with_menu` + marques de chapitre.
+pub fn make_playlist(p: &PlaylistParams) -> Vec<u8> {
+    let tail = item_tail(p);
     let subpaths = if p.with_menu {
         vec![SubPath {
             subpath_type: 3, is_repeat: 0,
@@ -138,6 +144,21 @@ pub fn make_playlist(p: &PlaylistParams) -> Vec<u8> {
         marks: times.into_iter().map(Mark::chapter).collect(), extension: vec![],
     }
     .pack()
+}
+
+/// Playlist enchainant plusieurs clips (« Tout lire ») : un PlayItem par element, sans menu ; une marque au debut de chaque
+/// element puis ses chapitres (`marks` de chaque element).
+pub fn make_playlist_multi(items: &[PlaylistParams]) -> Vec<u8> {
+    let mut marks = Vec::new();
+    for (k, p) in items.iter().enumerate() {
+        for t in p.marks.clone().unwrap_or_else(|| vec![p.in_time]) {
+            marks.push(Mark { playitem_ref: k as u16, ..Mark::chapter(t) });
+        }
+    }
+    let mut app_info = vec![0u8, 1];
+    app_info.zeros(12);
+    let playitems = items.iter().map(|p| PlayItem::new(&p.clip, p.in_time, p.out_time, item_tail(&PlaylistParams { with_menu: false, ..p.clone() }))).collect();
+    Mpls { version: "0100".into(), app_info, playitems, subpaths: vec![], marks, extension: vec![] }.pack()
 }
 
 /// Titres d'une video a chapitres : pages de son menu de chapitres et titre « lecture depuis un repere ».

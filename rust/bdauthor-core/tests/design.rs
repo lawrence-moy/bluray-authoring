@@ -234,3 +234,28 @@ fn button_style_json_scale_weight() {
     assert_eq!(plain.bytes, sz(a, &own, 2) + sz(b2, &ButtonStyle::default(), 2) + 300 * 80 * 3);
     assert!(DECODED_LIMIT > w.bytes);
 }
+
+#[test]
+fn home_page_json_and_remap() {
+    let mut ds = Designs::default();
+    assert!(ds.is_empty());
+    ds.home = Some(Target::Chapters(2, 0));
+    assert!(!ds.is_empty());
+    let back = Designs::from_value(&parse(&ds.to_value().to_pretty()).unwrap()).unwrap();
+    assert_eq!(back.home, Some(Target::Chapters(2, 0)));
+    let mut a = ds.clone();
+    a.swap_videos(2, 0);
+    assert_eq!(a.home, Some(Target::Chapters(0, 0)));
+    let mut b = ds.clone();
+    b.remove_video(1);
+    assert_eq!(b.home, Some(Target::Chapters(1, 0)));
+    b.remove_video(1);
+    assert_eq!(b.home, None);
+    let mut c = Designs { home: Some(Target::Main(3)), ..Default::default() };
+    c.page_removed(1);
+    assert_eq!(c.home, Some(Target::Main(2)));
+    c.page_removed(2);
+    assert_eq!(c.home, None);
+    // « Tout lire » existe aussi dans le menu principal
+    assert!(nav_applicable(NavAction::PlayAll, MenuType::Main, 0, 1));
+}

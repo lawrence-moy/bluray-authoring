@@ -63,10 +63,12 @@ pub struct MenuOptions {
     pub video_size: (u32, u32),
     pub ui_model: u8,
     pub rgb_colors: usize,
+    /// Code de cadence de la video sous le menu (1 = 23,976, 2 = 24, 3 = 25, 4 = 29,97, 6 = 50, 7 = 59,94).
+    pub frame_rate_code: u8,
 }
 impl Default for MenuOptions {
     fn default() -> Self {
-        MenuOptions { ics_pts: 42956, video_size: (1920, 1080), ui_model: 1, rgb_colors: 63 }
+        MenuOptions { ics_pts: 42956, video_size: (1920, 1080), ui_model: 1, rgb_colors: 63, frame_rate_code: 1 }
     }
 }
 
@@ -132,7 +134,7 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
     }
     let page = Page { default_activated: 0xFFFF, bogs, ..Default::default() };
     let ics = Ics {
-        video_width: o.video_size.0 as u16, video_height: o.video_size.1 as u16, frame_rate_byte: 0x10,
+        video_width: o.video_size.0 as u16, video_height: o.video_size.1 as u16, frame_rate_byte: o.frame_rate_code << 4,
         composition_number: 0, composition_state: 0x80, sequence_descriptor: 0xC0, stream_model: 1, ui_model: o.ui_model,
         pages: vec![page], ..Default::default()
     };

@@ -278,6 +278,8 @@ pub enum SimAction {
     Play(usize),
     /// Lit une video depuis un chapitre : (video, chapitre).
     PlayChapter(usize, usize),
+    /// Lit toutes les videos a la suite (« Tout lire » du menu principal), puis revient a l'accueil.
+    PlayAllVideos,
     /// Page precedente / suivante du meme menu.
     Prev,
     Next,
@@ -323,7 +325,7 @@ pub fn sim_buttons(info: &PageInfo, design: &PageDesign, style: &crate::style::B
             Kind::Nav { action, target, .. } if crate::design::nav_applicable(*action, info.menu, info.page, info.pages) => match action {
                 NavAction::Prev => Some(SimAction::Prev),
                 NavAction::Next => Some(SimAction::Next),
-                NavAction::PlayAll => info.video.map(SimAction::Play),
+                NavAction::PlayAll => Some(info.video.map_or(SimAction::PlayAllVideos, SimAction::Play)),
                 NavAction::Back => Some(SimAction::Back),
                 NavAction::Goto => target.map(SimAction::Go),
             },

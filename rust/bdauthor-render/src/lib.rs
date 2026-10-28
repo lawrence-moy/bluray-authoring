@@ -538,6 +538,10 @@ impl bdauthor_core::project::Renderer for FontRenderer {
         Ok(three(&face, st, own[1].is_some()))
     }
 
+    fn compose_layer(&self, size: (u32, u32), decor: &[Decor]) -> std::result::Result<RgbaImage, String> {
+        self.compose_on(RgbaImage::new(size.0, size.1), decor)
+    }
+
     fn overlay(&self, states: [Arc<RgbaImage>; 3], decor: &[Decor]) -> [Arc<RgbaImage>; 3] {
         let one = |a: &Arc<RgbaImage>| Arc::new(self.compose_on(a.as_ref().clone(), decor).unwrap_or_else(|_| a.as_ref().clone()));
         let n = one(&states[0]);

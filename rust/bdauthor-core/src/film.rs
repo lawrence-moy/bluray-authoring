@@ -229,3 +229,18 @@ pub fn make_still_m2ts(
     let (m2ts, mux) = mux_encoded(&enc, *b"und")?;
     Ok((m2ts, FilmStats { cible: format!("{}x{} fixe", size.0, size.1), images: enc.video.len(), trames_audio: 0, mux }))
 }
+
+/// Fond de menu anime ou sonore -> contenu d'un .m2ts (video, et audio si le fond a du son). Voir `ffmpeg::make_menu_bg_ts`.
+#[allow(clippy::too_many_arguments)]
+pub fn make_menu_bg_m2ts(
+    tools: &Tools, visual: ffmpeg::BgVisual, layer: Option<&Path>, music: Option<&Path>, seconds: f64, size: (u32, u32), fps: &str, lang: [u8; 3],
+    opts: &EncodeOpts, workdir: Option<&Path>, cancel: &AtomicBool,
+) -> Result<(Vec<u8>, FilmStats)> {
+    let tmp = TempDir::new(workdir)?;
+    let ts_path = tmp.0.join("fond.ts");
+    ffmpeg::make_menu_bg_ts(tools, visual, layer, music, &ts_path, seconds, size, fps, opts, cancel)?;
+    let enc = load_encoded(&std::fs::read(&ts_path)?)?;
+    drop(tmp);
+    let (m2ts, mux) = mux_encoded(&enc, lang)?;
+    Ok((m2ts, FilmStats { cible: format!("{}x{} fond de menu", size.0, size.1), images: enc.video.len(), trames_audio: enc.audio.len(), mux }))
+}

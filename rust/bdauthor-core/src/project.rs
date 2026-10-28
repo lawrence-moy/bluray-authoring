@@ -13,8 +13,8 @@ use crate::film::{make_film_m2ts, make_still_m2ts};
 use crate::ig::py_round;
 use crate::json::{self, Value};
 use crate::menu::{build_menu_clip, required_ics_pts, MenuButton, MenuOptions};
-use crate::mobj::{Command, JUMP_TITLE_INSN, MOVE_RI_INSN};
-use crate::nav::{make_index, make_movie_objects_paged, make_playlist, plan_navigation, AudioStn, PlaylistParams, VideoStn};
+use crate::mobj::{Command, MovieObject, MovieObjectBdmv, GOTO_INSN, JUMP_TITLE_INSN, MOVE_RI_INSN, NOP_INSN, PLAY_PL_INSN};
+use crate::nav::{make_index, make_movie_objects_paged, make_playlist, make_playlist_multi, plan_navigation, AudioStn, PlaylistParams, VideoStn};
 use crate::palette::RgbaImage;
 use crate::tsclip::{make_clip_clpi, make_clip_clpi_pg, py_floordiv, scan_clip, ClipScan, FRAME_RATES};
 use std::collections::BTreeMap;
@@ -44,6 +44,11 @@ pub trait Renderer {
     fn background(&self, title: &str, size: (u32, u32)) -> RgbaImage;
     /// Fond d'une page personnalisee : image `base` (ou degrade par defaut, sans titre) + textes et images, en pixels du fond.
     fn compose_background(&self, base: Option<&Path>, size: (u32, u32), decor: &[Decor]) -> std::result::Result<RgbaImage, String>;
+    /// Calque transparent de `size` portant les textes et images `decor` (pose sur un fond video). Par defaut : calque vide.
+    fn compose_layer(&self, size: (u32, u32), decor: &[Decor]) -> std::result::Result<RgbaImage, String> {
+        let _ = decor;
+        Ok(RgbaImage::new(size.0, size.1))
+    }
     /// Pose `decor` (coordonnees relatives a l'image du bouton) par-dessus les etats d'un bouton : textes et images
     /// places au-dessus de ce bouton dans l'ordre de superposition. Par defaut, les etats sont rendus tels quels.
     fn overlay(&self, states: [Arc<RgbaImage>; 3], decor: &[Decor]) -> [Arc<RgbaImage>; 3] {
@@ -250,13 +255,88 @@ fn still_clip(tools: &Tools, cancel: &AtomicBool, png: &Path, seconds: f64, size
     Ok(sc)
 }
 
-/// Fond propre a une page personnalisee : compose (base + textes + images), ecrit en PNG puis encode en clip fixe.
+/// Fond anime (video) et/ou sonore (musique) des menus du projet.
+struct MenuBg {
+    video: Option<PathBuf>,
+    /// garder le son de la video de fond (a defaut de musique)
+    video_audio: bool,
+    music: Option<PathBuf>,
+    /// duree des fonds animes ou sonores (s)
+    seconds: f64,
+    lang: [u8; 3],
+    cache: Option<PathBuf>,
+}
+
+impl MenuBg {
+    fn animated(&self) -> bool { self.video.is_some() || self.music.is_some() }
+}
+
+/// Identite d'un fichier pour les cles de cache : chemin, taille, date de modification.
+fn file_id(p: &Path) -> String {
+    let md = std::fs::metadata(p).ok();
+    let mtime = md.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+    format!("{}|{}|{mtime}", p.display(), md.map_or(0, |m| m.len()))
+}
+
+/// Clip de fond numero `num` : image fixe `image` (fond fixe sans son : comme avant), ou fond anime/sonore (video du projet, ou
+/// `image` accompagnee de la musique), avec le calque `layer` (textes et images de la page) pose sur la video.
 #[allow(clippy::too_many_arguments)]
-fn own_background(env: &BuildEnv, base: &Option<PathBuf>, size: (u32, u32), decor: &[Decor], tmp: &Path, name: &str, seconds: f64, fps: &str, opts: &EncodeOpts, files: &mut BTreeMap<String, Vec<u8>>, num: u32) -> Result<ClipScan> {
+fn menu_bg_clip(env: &BuildEnv, mb: &MenuBg, image: Option<&Path>, layer: Option<&RgbaImage>, tmp: &Path, name: &str, fond_s: f64, size: (u32, u32), fps: &str, opts: &EncodeOpts, files: &mut BTreeMap<String, Vec<u8>>, num: u32) -> Result<ClipScan> {
+    if !mb.animated() {
+        let img = image.ok_or_else(|| Error::Format("fond de menu : image manquante".into()))?;
+        return still_clip(env.tools, env.cancel, img, fond_s, size, fps, opts, files, num);
+    }
+    let layer_png = match layer {
+        Some(l) if l.data.chunks_exact(4).any(|p| p[3] > 0) => {
+            let f = tmp.join(format!("{name}_calque.png"));
+            let bytes = crate::png::write_png(l);
+            std::fs::write(&f, &bytes)?;
+            Some((f, fnv1a(&bytes)))
+        }
+        _ => None,
+    };
+    let visual = match &mb.video {
+        Some(v) => ffmpeg::BgVisual::Video(v, mb.video_audio),
+        None => ffmpeg::BgVisual::Image(image.ok_or_else(|| Error::Format("fond de menu : image manquante".into()))?),
+    };
+    let vis_id = match visual { ffmpeg::BgVisual::Video(v, a) => format!("{}|{a}", file_id(v)), ffmpeg::BgVisual::Image(i) => format!("{:x}", fnv1a(&std::fs::read(i)?)) };
+    let key = format!(
+        "{:016x}",
+        fnv1a(format!("fond|{vis_id}|{:?}|{}|{size:?}|{fps}|{:.3}|{}|{}|{}|{}", layer_png.as_ref().map(|l| l.1), mb.music.as_deref().map(file_id).unwrap_or_default(),
+                      mb.seconds, opts.crf, opts.preset, opts.audio_bitrate, String::from_utf8_lossy(&mb.lang)).as_bytes())
+    );
+    let cache_file = mb.cache.as_ref().map(|d| d.join(format!("fond_{key}.m2ts")));
+    let m2ts = match cache_file.as_ref().and_then(|c| std::fs::read(c).ok()).filter(|b| !b.is_empty() && b.len() % 192 == 0) {
+        Some(b) => b,
+        None => {
+            let (m, _) = crate::film::make_menu_bg_m2ts(env.tools, visual, layer_png.as_ref().map(|l| l.0.as_path()), mb.music.as_deref(), mb.seconds, size, fps, mb.lang, opts, None, env.cancel)?;
+            if let Some(c) = &cache_file {
+                std::fs::create_dir_all(c.parent().unwrap_or(Path::new(".")))?;
+                let t = c.with_extension("m2ts.tmp");
+                std::fs::write(&t, &m)?;
+                std::fs::rename(&t, c)?;
+            }
+            m
+        }
+    };
+    let sc = scan_clip(&m2ts)?;
+    files.insert(format!("CLIPINF/{num:05}.clpi"), make_clip_clpi(&m2ts, mb.lang, 0, None, "0100")?);
+    files.insert(format!("STREAM/{num:05}.m2ts"), m2ts);
+    Ok(sc)
+}
+
+/// Fond propre a une page personnalisee : compose (base + textes + images), ou, avec un fond video, calque des textes et images
+/// pose sur la video ; puis encode.
+#[allow(clippy::too_many_arguments)]
+fn own_background(env: &BuildEnv, mb: &MenuBg, base: &Option<PathBuf>, size: (u32, u32), decor: &[Decor], tmp: &Path, name: &str, seconds: f64, fps: &str, opts: &EncodeOpts, files: &mut BTreeMap<String, Vec<u8>>, num: u32) -> Result<ClipScan> {
+    if mb.video.is_some() {
+        let layer = env.renderer.compose_layer(size, decor).map_err(Error::Format)?;
+        return menu_bg_clip(env, mb, None, Some(&layer), tmp, name, seconds, size, fps, opts, files, num);
+    }
     let img = env.renderer.compose_background(base.as_deref(), size, decor).map_err(Error::Format)?;
     let f = tmp.join(name);
     std::fs::write(&f, crate::png::write_png(&img))?;
-    still_clip(env.tools, env.cancel, &f, seconds, size, fps, opts, files, num)
+    menu_bg_clip(env, mb, Some(&f), None, tmp, name, seconds, size, fps, opts, files, num)
 }
 
 // ------------------------------------------------------------------ mise en page
@@ -394,11 +474,17 @@ fn fnv1a(data: &[u8]) -> u64 {
     data.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
-fn cache_key(path: &Path, lang: [u8; 3], o: &EncodeOpts) -> Result<String> {
+fn cache_key(path: &Path, lang: [u8; 3], o: &EncodeOpts, info: &ffmpeg::VideoInfo) -> Result<String> {
     let md = std::fs::metadata(path)?;
     let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    let s = format!("{}|{}|{}|{}|{}|{}|{}|{}|{}|v1", abs.display(), md.len(), mtime, String::from_utf8_lossy(&lang), o.crf, o.maxrate, o.keyint, o.audio_bitrate, o.preset);
+    let mut s = format!("{}|{}|{}|{}|{}|{}|{}|{}|{}|v1", abs.display(), md.len(), mtime, String::from_utf8_lossy(&lang), o.crf, o.maxrate, o.keyint, o.audio_bitrate, o.preset);
+    // cibles apparues apres la premiere version (PAL, entrelace) : cle differente, pour ne pas reprendre un ancien encodage ;
+    // les autres cibles gardent leur cle (pas de reencodage inutile)
+    let tg = ffmpeg::pick_target_scan(info.width, info.height, info.fps(), info.interlaced().then(|| info.top_first()));
+    if !matches!(tg.label, "1080p" | "720p59.94" | "720p50" | "720p59.94 (cadence doublee)" | "720p24") {
+        s.push_str(&format!("|cible={}", tg.label));
+    }
     Ok(format!("{:016x}", fnv1a(s.as_bytes())))
 }
 
@@ -549,7 +635,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         durations.push(info.duration_s);
         let cached = match &cache_dir {
             Some(d) => {
-                let f = d.join(format!("{}.m2ts", cache_key(&src, lang, &eopts)?));
+                let f = d.join(format!("{}.m2ts", cache_key(&src, lang, &eopts, &info)?));
                 std::fs::read(&f).ok().filter(|b| !b.is_empty() && b.len() % 192 == 0).map(|b| (b, f))
             }
             None => None,
@@ -563,7 +649,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 (env.log)(&format!("   {} : {} images, {} trames audio", st.cible, st.images, st.trames_audio));
                 if let Some(d) = &cache_dir {
                     std::fs::create_dir_all(d)?;
-                    let f = d.join(format!("{}.m2ts", cache_key(&src, lang, &eopts)?));
+                    let f = d.join(format!("{}.m2ts", cache_key(&src, lang, &eopts, &info)?));
                     let t = f.with_extension("m2ts.tmp");
                     std::fs::write(&t, &m)?;
                     std::fs::rename(&t, &f)?;
@@ -608,7 +694,22 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         for &i in idxs { video_page[i] = pg; }
     }
     let ch_counts: BTreeMap<usize, usize> = ch_pg.iter().map(|(&i, g)| (i, g.len())).collect();
-    let plan = plan_navigation(n, total_main, &ch_counts);
+    let mut plan = plan_navigation(n, total_main, &ch_counts);
+    // titres ajoutes apres ceux du plan : la page 1 quand l'accueil est une autre page (le titre 0, « Top Menu », mene alors a
+    // l'accueil), et « Tout lire » du menu principal s'il est utilise
+    let home = designs.home;
+    if matches!(home, Some(Target::Video(_))) { return bad("page d'accueil : choisissez une page du menu, pas une video"); }
+    let custom_home = home.map_or(false, |h| h != Target::Main(0));
+    let base_titles = plan.total_titles;
+    let page1_title = if custom_home {
+        plan.total_titles += 1;
+        plan.main_titles[0] = plan.total_titles;
+        Some(plan.total_titles)
+    } else {
+        None
+    };
+    let uses_play_all = designs.main.values().chain(designs.free.iter()).any(|d| d.items.iter().any(|it| matches!(it.kind, Kind::Nav { action: NavAction::PlayAll, .. })));
+    let play_all_title = if uses_play_all { plan.total_titles += 1; Some(plan.total_titles) } else { None };
     // titre visé par un bouton « Aller a » ; None si la page n'existe pas
     let goto = |t: Target| -> Option<u32> {
         match t {
@@ -628,6 +729,10 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             }
         }
     }
+    let home_title = match home {
+        Some(h) if custom_home => Some(goto(h).ok_or_else(|| Error::Format("page d'accueil inexistante (page supprimee ?)".into()))?),
+        _ => None,
+    };
     let first = &scans[0];
     let fmt = (first.width, first.height, first.fps);
     for (i, sc) in scans.iter().enumerate().skip(1) {
@@ -641,6 +746,20 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
 
     let still_opts = EncodeOpts { crf: eopts.crf, preset: eopts.preset.clone(), ..Default::default() };
     let custom_fond: Option<PathBuf> = menu_cfg.get("fond").and_then(Value::as_str).map(|f| p(f));
+    // fond anime (video) et musique des menus
+    let bg_video: Option<PathBuf> = menu_cfg.get("fond_video").and_then(Value::as_str).filter(|f| !f.is_empty()).map(|f| p(f));
+    let music: Option<PathBuf> = menu_cfg.get("musique").and_then(Value::as_str).filter(|f| !f.is_empty()).map(|f| p(f));
+    let mut mb = MenuBg { video: bg_video.clone(), video_audio: false, music: music.clone(), seconds: fond_s, lang, cache: cache_dir.clone() };
+    if let Some(v) = &bg_video {
+        let info = ffmpeg::probe(env.tools, v)?;
+        mb.video_audio = info.has_audio && menu_cfg.get("son_fond_video").and_then(Value::as_bool).unwrap_or(false);
+        mb.seconds = info.duration_s.clamp(1.0, 120.0);
+    } else if let Some(m) = &music {
+        mb.seconds = ffmpeg::probe_duration(env.tools, m)?.clamp(1.0, 300.0);
+    }
+    let animated = mb.animated();
+    // fond commun a toutes les pages sans decor propre : image du projet, video du projet
+    let common_visual = custom_fond.is_some() || bg_video.is_some();
     let sd = size.0 as f64 / 1920.0; // echelle des textes/images poses sur le fond (qui a la taille de la video)
     // (rang dans l'ordre de superposition, decor) : le rang sert a poser sur les boutons ce qui est au-dessus d'eux
     // dessin d'un texte ou d'une image a l'echelle `k`
@@ -661,7 +780,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     };
     let add_menu_page = |files: &mut BTreeMap<String, Vec<u8>>, buttons: &[MenuButton], pix: &[u64], ig_num: u32, pl_num: u32, bg_num: u32, bgscan: &ClipScan, label: &str| -> Result<MenuStats> {
         let pts = required_ics_pts(pix, (menu_size.0 as u64, menu_size.1 as u64), 42956, 9000);
-        let clip = build_menu_clip(buttons, &MenuOptions { ics_pts: pts, video_size: menu_size, ui_model: 0, rgb_colors: 63 }).map_err(Error::Format)?;
+        let clip = build_menu_clip(buttons, &MenuOptions { ics_pts: pts, video_size: menu_size, ui_model: 0, rgb_colors: 63, frame_rate_code: FRAME_RATES.iter().find(|r| r.0 == bgscan.fps).map_or(1, |r| r.2) }).map_err(Error::Format)?;
         if clip.m2ts.len() > 6 * 1024 * 1024 {
             return bad(format!("{label} trop lourd ({:.1} Mo) : reduire le nombre d'elements par page (menu.par_page)", clip.m2ts.len() as f64 / 1e6));
         }
@@ -670,9 +789,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         files.insert(format!("CLIPINF/{ig_num:05}.clpi"), clip.clpi);
         files.insert(format!("PLAYLIST/{pl_num:05}.mpls"), make_playlist(&PlaylistParams {
             clip: format!("{bg_num:05}"), in_time: (bgscan.start90 / 2) as u32, out_time: (bgscan.end90 / 2) as u32,
-            video: VideoStn { pid: bgscan.video.0, coding: bgscan.video.1, fmt_rate: bgscan.video_code }, audio: None,
+            video: VideoStn { pid: bgscan.video.0, coding: bgscan.video.1, fmt_rate: bgscan.video_code },
+            audio: bgscan.audio_codes.first().map(|&(pid, coding, fmt_rate)| AudioStn { pid, coding, fmt_rate, lang }),
             with_menu: true, menu_clip: format!("{ig_num:05}"), menu_in: (pts / 2) as u32, menu_out: (pts / 2 + 1501) as u32,
-            still_mode: if boucle { 0 } else { 2 }, // 2 = arret infini sur la derniere image : le menu ne redemarre pas
+            // 2 = arret infini sur la derniere image : le menu ne redemarre pas ; un fond anime ou sonore tourne toujours en boucle
+            still_mode: if boucle || animated { 0 } else { 2 },
             ..Default::default()
         }));
         Ok(stats)
@@ -696,7 +817,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     };
     (env.log)("encodage du fond de menu ...");
     let fps = fps_str(first.fps)?;
-    let bg_sc = still_clip(env.tools, env.cancel, &bg_png, fond_s, size, fps, &still_opts, &mut files, n as u32)?;
+    let bg_sc = menu_bg_clip(env, &mb, Some(&bg_png), None, &tmp.0, "fond", fond_s, size, fps, &still_opts, &mut files, n as u32)?;
     (env.progress)(0.9);
 
     // vignette montrant une video choisie (sur n'importe quelle page) : comme une vignette du menu principal
@@ -737,16 +858,17 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             NavAction::Prev => plan.main_titles[pg.saturating_sub(1)] as u32,
             NavAction::Next => plan.main_titles[(pg + 1).min(total_main - 1)] as u32,
             NavAction::Goto => t.and_then(&goto).unwrap_or(0),
+            NavAction::PlayAll => play_all_title.map_or(0, u32::from),
             _ => 0,
         };
         let decor_r = scale_decor(&design, sc_);
         let (buttons, pix) = page_buttons(&benv, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Main, pg, total_main, &slots, &target)?;
         if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
         let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
-        let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
+        let (bg_num, pscan) = if custom && !(common_visual && decor.is_empty()) {
             let num = next_bg;
             next_bg += 1;
-            let sc = own_background(env, &custom_fond, size, &decor, &tmp.0, &format!("fond_p{pg}.png"), fond_s, fps, &still_opts, &mut files, num)?;
+            let sc = own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_p{pg}.png"), fond_s, fps, &still_opts, &mut files, num)?;
             (num, sc)
         } else {
             (n as u32, bg_sc.clone())
@@ -764,6 +886,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             NavAction::Prev => plan.main_titles[pg.saturating_sub(1)] as u32,
             NavAction::Next => plan.main_titles[(pg + 1).min(total_main - 1)] as u32,
             NavAction::Goto => t.and_then(&goto).unwrap_or(0),
+            NavAction::PlayAll => play_all_title.map_or(0, u32::from),
             _ => 0,
         };
         let decor_r = scale_decor(design, sc_);
@@ -772,12 +895,12 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
         let decor: Vec<Decor> = scale_decor(design, sd).into_iter().map(|(_, d)| d).collect();
         for l in design.validate_free(pg, total_main, n).iter().filter(|x| !x.error) { (env.log)(&format!("{what} : {}", l.msg)); }
-        let (bg_num, pscan) = if custom_fond.is_some() && decor.is_empty() {
+        let (bg_num, pscan) = if common_visual && decor.is_empty() {
             (n as u32, bg_sc.clone())
         } else {
             let num = next_bg;
             next_bg += 1;
-            let sc = own_background(env, &custom_fond, size, &decor, &tmp.0, &format!("fond_libre{f}.png"), fond_s, fps, &still_opts, &mut files, num)?;
+            let sc = own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_libre{f}.png"), fond_s, fps, &still_opts, &mut files, num)?;
             (num, sc)
         };
         let ig_num = { let k = next_ig; next_ig += 1; k };
@@ -793,7 +916,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let npg = ch_pg[&i].len();
         let retour_t = plan.main_titles[video_page[i]] as u32;
         let titles = &plan.chapters[&i];
-        let mut shared: Option<(u32, ClipScan)> = if custom_fond.is_some() { Some((n as u32, bg_sc.clone())) } else { None };
+        let mut shared: Option<(u32, ClipScan)> = if common_visual { Some((n as u32, bg_sc.clone())) } else { None };
         let mut pls = Vec::new();
         for (q, idxs) in ch_pg[&i].iter().enumerate() {
             let what = format!("menu de chapitres {} (page {})", i + 1, q + 1);
@@ -822,10 +945,10 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             let (cbuttons, pix) = page_buttons(&benv, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Chapters, q, npg, &slots, &target)?;
             if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
             let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
-            let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
+            let (bg_num, pscan) = if custom && !(common_visual && decor.is_empty()) {
                 let num = next_bg;
                 next_bg += 1;
-                let sc = own_background(env, &custom_fond, size, &decor, &tmp.0, &format!("fond_ch{k}_{q}.png"), fond_s, fps, &still_opts, &mut files, num)?;
+                let sc = own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_ch{k}_{q}.png"), fond_s, fps, &still_opts, &mut files, num)?;
                 (num, sc)
             } else {
                 if shared.is_none() {
@@ -833,7 +956,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                     next_bg += 1;
                     let cbg = tmp.0.join(format!("fond_ch{k}.png"));
                     std::fs::write(&cbg, crate::png::write_png(&env.renderer.background(&format!("{} - chapitres", vtitle(&vids[i])), size)))?;
-                    shared = Some((num, still_clip(env.tools, env.cancel, &cbg, fond_s, size, fps, &still_opts, &mut files, num)?));
+                    shared = Some((num, menu_bg_clip(env, &mb, Some(&cbg), None, &tmp.0, &format!("fond_ch{k}"), fond_s, size, fps, &still_opts, &mut files, num)?));
                 }
                 let (num, sc) = shared.clone().unwrap();
                 (num, sc)
@@ -844,20 +967,99 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     }
 
     // 5. playlists des videos et navigation
+    let mut video_params = Vec::new();
     for (i, sc) in scans.iter().enumerate() {
         let Some(&(pid_a, type_a, code_a)) = sc.audio_codes.first() else { return bad(format!("la video {} n'a pas de piste audio exploitable", i + 1)) };
-        files.insert(format!("PLAYLIST/{i:05}.mpls"), make_playlist(&PlaylistParams {
+        let pp = PlaylistParams {
             clip: format!("{i:05}"), in_time: (sc.start90 / 2) as u32, out_time: (sc.end90 / 2) as u32,
             video: VideoStn { pid: sc.video.0, coding: sc.video.1, fmt_rate: sc.video_code },
             audio: Some(AudioStn { pid: pid_a, coding: type_a, fmt_rate: code_a, lang }),
             with_menu: false, pg: pg_info[i].clone(), marks: if chapters[i].is_empty() { None } else { Some(chapters[i].iter().map(|c| c.mark45).collect()) },
             ..Default::default()
-        }));
+        };
+        files.insert(format!("PLAYLIST/{i:05}.mpls"), make_playlist(&pp));
+        video_params.push(pp);
     }
+    // « Tout lire » : toutes les videos a la suite
+    let play_all_pl = if play_all_title.is_some() {
+        let pl = next_pl;
+        next_pl += 1;
+        files.insert(format!("PLAYLIST/{pl:05}.mpls"), make_playlist_multi(&video_params));
+        Some(pl)
+    } else {
+        None
+    };
+    // sequence d'ouverture : une video jouee a l'insertion du disque, avant l'accueil
+    let intro_pl = match menu_cfg.get("intro").and_then(Value::as_str).filter(|f| !f.is_empty()) {
+        None => None,
+        Some(f) => {
+            let src = p(f);
+            (env.log)(&format!("sequence d'ouverture {f} ..."));
+            let info = ffmpeg::probe(env.tools, &src)?;
+            let cache_file = match &cache_dir { Some(d) => Some(d.join(format!("{}.m2ts", cache_key(&src, lang, &eopts, &info)?))), None => None };
+            let m2ts = match cache_file.as_ref().and_then(|c| std::fs::read(c).ok()).filter(|b| !b.is_empty() && b.len() % 192 == 0) {
+                Some(b) => b,
+                None => {
+                    let (m, _) = make_film_m2ts(env.tools, &src, lang, &eopts, None, &mut |_| {}, env.cancel)?;
+                    if let Some(c) = &cache_file {
+                        std::fs::create_dir_all(c.parent().unwrap_or(Path::new(".")))?;
+                        let t = c.with_extension("m2ts.tmp");
+                        std::fs::write(&t, &m)?;
+                        std::fs::rename(&t, c)?;
+                    }
+                    m
+                }
+            };
+            let num = next_bg;
+            next_bg += 1;
+            let sc = scan_clip(&m2ts)?;
+            files.insert(format!("CLIPINF/{num:05}.clpi"), make_clip_clpi(&m2ts, lang, 0, None, "0100")?);
+            files.insert(format!("STREAM/{num:05}.m2ts"), m2ts);
+            let (pid_a, type_a, code_a) = *sc.audio_codes.first().ok_or_else(|| Error::Format("sequence d'ouverture sans audio".into()))?;
+            let pl = next_pl;
+            next_pl += 1;
+            files.insert(format!("PLAYLIST/{pl:05}.mpls"), make_playlist(&PlaylistParams {
+                clip: format!("{num:05}"), in_time: (sc.start90 / 2) as u32, out_time: (sc.end90 / 2) as u32,
+                video: VideoStn { pid: sc.video.0, coding: sc.video.1, fmt_rate: sc.video_code },
+                audio: Some(AudioStn { pid: pid_a, coding: type_a, fmt_rate: code_a, lang }), with_menu: false, ..Default::default()
+            }));
+            Some(pl)
+        }
+    };
+    let _ = (next_pl, next_bg);
     let main_pls16: Vec<u16> = main_pls.iter().map(|&x| x as u16).collect();
-    files.insert("MovieObject.bdmv".into(), make_movie_objects_paged(n, &main_pls16, &plan.main_titles, &ch_pls, &plan.chapters, &video_page, retour_ch));
+    let mo = make_movie_objects_paged(n, &main_pls16, &plan.main_titles, &ch_pls, &plan.chapters, &video_page, retour_ch);
     let title_objs: Vec<u16> = (1..=plan.total_titles).collect();
-    files.insert("index.bdmv".into(), make_index(0, 0, &title_objs, b"bdauthor"));
+    if page1_title.is_none() && play_all_pl.is_none() && intro_pl.is_none() {
+        files.insert("MovieObject.bdmv".into(), mo);
+        files.insert("index.bdmv".into(), make_index(0, 0, &title_objs, b"bdauthor"));
+    } else {
+        // objets des titres ajoutes (meme ordre que leur numero), puis objet d'ouverture
+        let mut m = MovieObjectBdmv::parse(&mo)?;
+        if m.objects.len() != base_titles as usize + 1 { return bad("objets de navigation : numerotation inattendue"); }
+        let jump = |t: u32| Command::new(JUMP_TITLE_INSN, t, 0);
+        if page1_title.is_some() {
+            // la page 1 recoit son propre titre ; l'objet 0 (Top Menu) mene a l'accueil
+            m.objects.push(MovieObject::new(vec![
+                Command::new(PLAY_PL_INSN, main_pls[0], 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0),
+                Command::new(GOTO_INSN, 0, 0),
+            ]));
+            m.objects[0] = MovieObject::new(vec![jump(home_title.unwrap_or(0))]);
+        }
+        if let Some(pl) = play_all_pl {
+            // toutes les videos puis retour a l'accueil (titre 0 = Top Menu)
+            m.objects.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, pl, 0), jump(0)]));
+        }
+        let fp = match intro_pl {
+            Some(pl) => {
+                m.objects.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, pl, 0), jump(0)]));
+                (m.objects.len() - 1) as u16
+            }
+            None => 0,
+        };
+        files.insert("MovieObject.bdmv".into(), m.pack());
+        files.insert("index.bdmv".into(), make_index(fp, 0, &title_objs, b"bdauthor"));
+    }
     write_bdmv(out_dir, &files)?;
     let report = check_bdmv(&out_dir.join("BDMV"));
     (env.progress)(1.0);

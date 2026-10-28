@@ -124,11 +124,21 @@ pub struct VideoInfo {
     pub codec: String,
     pub duration_s: f64,
     pub has_audio: bool,
+    /// Ordre des trames d'une source entrelacee (« tt », « bb », « tb », « bt ») ; vide ou « progressive » sinon.
+    pub field_order: String,
 }
 
 impl VideoInfo {
     pub fn fps(&self) -> f64 {
         self.fps_num as f64 / self.fps_den.max(1) as f64
+    }
+    /// Source entrelacee ?
+    pub fn interlaced(&self) -> bool {
+        matches!(self.field_order.as_str(), "tt" | "bb" | "tb" | "bt")
+    }
+    /// Trame du haut en premier (sinon trame du bas) ?
+    pub fn top_first(&self) -> bool {
+        !matches!(self.field_order.as_str(), "bb" | "bt")
     }
 }
 
@@ -172,13 +182,14 @@ pub fn parse_probe_flat(text: &str) -> Result<VideoInfo> {
         codec: get(video, "codec_name"),
         duration_s: get(&format, "duration").parse().unwrap_or(0.0),
         has_audio: streams.values().any(|s| s.get("codec_type").map(String::as_str) == Some("audio")),
+        field_order: get(video, "field_order"),
     })
 }
 
 pub fn probe(tools: &Tools, src: &Path) -> Result<VideoInfo> {
     let mut c = Command::new(&tools.ffprobe);
     c.args(["-v", "error", "-of", "flat", "-show_entries"])
-        .arg("stream=index,codec_type,codec_name,width,height,r_frame_rate,pix_fmt,color_range:format=duration")
+        .arg("stream=index,codec_type,codec_name,width,height,r_frame_rate,pix_fmt,color_range,field_order:format=duration")
         .arg(src);
     no_window(&mut c);
     let out = c.output()?;
@@ -196,6 +207,21 @@ pub struct Target {
     pub height: u32,
     pub fps: &'static str,
     pub label: &'static str,
+    /// Codage entrelace de la sortie.
+    pub scan: Scan,
+    /// Desentrelacer la source en doublant la cadence (une image par trame).
+    pub deinterlace: bool,
+}
+
+/// Mode de balayage de la video encodee.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Scan {
+    Progressive,
+    /// Images progressives transportees en 1080i (« PsF ») : seule facon admise par le Blu-ray pour 1080p25 et 1080p29,97.
+    PsF,
+    /// Vrai entrelace, trame du haut / du bas en premier.
+    Tff,
+    Bff,
 }
 
 fn film_fps(fps: f64) -> &'static str {
@@ -204,21 +230,54 @@ fn film_fps(fps: f64) -> &'static str {
 
 /// Cible Blu-ray la plus proche de la source (cadence changee par doublement/suppression d'images, jamais par interpolation).
 pub fn pick_target(width: u32, height: u32, fps: f64) -> Target {
+    pick_target_scan(width, height, fps, None)
+}
+
+/// Comme `pick_target`, en tenant compte d'une source entrelacee (`Some(trame du haut en premier ?)`).
+/// Formats Blu-ray : 1080p23,976/24, 1080i50/59,94 (dont PsF pour 25p/29,97p), 720p23,976/24/50/59,94.
+pub fn pick_target_scan(width: u32, height: u32, fps: f64, interlaced: Option<bool>) -> Target {
     let _ = width;
-    let t = |w, h, f, l| Target { width: w, height: h, fps: f, label: l };
-    if height > 800 && fps < 26.0 {
-        return t(1920, 1080, film_fps(fps), "1080p");
+    let t = |w, h, f, l, scan, deinterlace| Target { width: w, height: h, fps: f, label: l, scan, deinterlace };
+    let p = Scan::Progressive;
+    // une source entrelacee annoncee en trames par seconde (50, 59,94) a la moitie en images
+    let fps = if interlaced.is_some() && fps >= 45.0 { fps / 2.0 } else { fps };
+    let near = |a: f64| (fps - a).abs() < 0.6;
+    let hd = height > 800;
+    if let Some(top) = interlaced {
+        let sc = if top { Scan::Tff } else { Scan::Bff };
+        if hd && near(25.0) { return t(1920, 1080, "25", "1080i50", sc, false); }
+        if hd && (near(29.97) || near(30.0)) { return t(1920, 1080, "30000/1001", "1080i59.94", sc, false); }
+        // definition standard entrelacee : desentrelacee en 50 ou 59,94 images par seconde
+        if near(25.0) { return t(1280, 720, "50", "720p50 (desentrelace)", p, true); }
+        if near(29.97) || near(30.0) { return t(1280, 720, "60000/1001", "720p59.94 (desentrelace)", p, true); }
+    }
+    if hd && near(25.0) {
+        return t(1920, 1080, "25", "1080p25 (PsF)", Scan::PsF, false);
+    }
+    if hd && (near(29.97) || near(30.0)) {
+        return t(1920, 1080, "30000/1001", "1080p29.97 (PsF)", Scan::PsF, false);
+    }
+    if hd && fps < 26.0 {
+        return t(1920, 1080, film_fps(fps), "1080p", p, false);
     }
     if fps >= 55.0 {
-        return t(1280, 720, "60000/1001", "720p59.94");
+        return t(1280, 720, "60000/1001", "720p59.94", p, false);
     }
     if fps >= 45.0 {
-        return t(1280, 720, "50", "720p50");
+        return t(1280, 720, "50", "720p50", p, false);
+    }
+    if near(25.0) {
+        return t(1280, 720, "50", "720p50 (cadence doublee)", p, false);
     }
     if fps >= 26.0 {
-        return t(1280, 720, "60000/1001", "720p59.94 (cadence doublee)");
+        return t(1280, 720, "60000/1001", "720p59.94 (cadence doublee)", p, false);
     }
-    t(1280, 720, film_fps(fps), "720p24")
+    t(1280, 720, film_fps(fps), "720p24", p, false)
+}
+
+/// Balayage impose pour une image fixe ou un fond de menu de `size` a la cadence `fps` (1080 a 25 ou 29,97 i/s : PsF).
+pub fn scan_for(size: (u32, u32), fps: &str) -> Scan {
+    if size.1 == 1080 && matches!(fps, "25" | "30000/1001") { Scan::PsF } else { Scan::Progressive }
 }
 
 #[derive(Debug, Clone)]
@@ -236,16 +295,27 @@ impl Default for EncodeOpts {
     }
 }
 
-fn x264_args(crf: u32, maxrate: u32, keyint: u32, preset: &str) -> Vec<String> {
-    let x264 = format!(
+fn x264_args_scan(crf: u32, maxrate: u32, keyint: u32, preset: &str, scan: Scan) -> Vec<String> {
+    let mut x264 = format!(
         "bluray-compat=1:keyint={keyint}:open-gop=0:aud=1:nal-hrd=vbr:vbv-maxrate={maxrate}:vbv-bufsize=30000:level=4.1:bframes=3"
     );
+    match scan {
+        Scan::Progressive => {}
+        Scan::PsF => x264.push_str(":fake-interlaced=1:pic-struct=1"),
+        Scan::Tff => x264.push_str(":tff=1"),
+        Scan::Bff => x264.push_str(":bff=1"),
+    }
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
     let mut out = v(&["-c:v", "libx264", "-profile:v", "high", "-preset", preset, "-crf"]);
     out.push(crf.to_string());
     out.extend(v(&["-x264-params"]));
     out.push(x264);
     out.extend(v(&["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"]));
+    match scan {
+        Scan::Tff => out.extend(v(&["-flags", "+ildct+ilme", "-field_order", "tt"])),
+        Scan::Bff => out.extend(v(&["-flags", "+ildct+ilme", "-field_order", "bb"])),
+        _ => {}
+    }
     out
 }
 
@@ -303,17 +373,24 @@ fn s(p: &Path) -> String {
 }
 
 /// Construit les arguments ffmpeg (sans les options communes) pour le transcodage d'une video. Public pour les tests.
+/// Une source sans piste audio recoit une piste muette (le disque reste homogene : chaque video a son audio).
 pub fn encode_args(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts) -> (Vec<String>, Target) {
-    let tg = pick_target(info.width, info.height, info.fps());
+    let tg = pick_target_scan(info.width, info.height, info.fps(), info.interlaced().then(|| info.top_first()));
+    let interl = matches!(tg.scan, Scan::Tff | Scan::Bff);
+    let pre = if tg.deinterlace { "bwdif=mode=send_field," } else { "" };
     let vf = format!(
-        "fps={},scale={}:{}:in_range={}:in_color_matrix=bt709:out_range=tv:out_color_matrix=bt709,format=yuv420p",
-        tg.fps, tg.width, tg.height, if info.full_range { "pc" } else { "tv" }
+        "{pre}fps={},scale={}:{}:in_range={}:in_color_matrix=bt709:out_range=tv:out_color_matrix=bt709{},format=yuv420p",
+        tg.fps, tg.width, tg.height, if info.full_range { "pc" } else { "tv" }, if interl { ":interl=1" } else { "" }
     );
     let mut a: Vec<String> = ["-i"].iter().map(|x| x.to_string()).collect();
     a.push(s(src));
-    a.extend(["-map", "0:v:0", "-map", "0:a:0", "-vf"].iter().map(|x| x.to_string()));
+    if info.has_audio {
+        a.extend(["-map", "0:v:0", "-map", "0:a:0", "-vf"].iter().map(|x| x.to_string()));
+    } else {
+        a.extend(["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000", "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-vf"].iter().map(|x| x.to_string()));
+    }
     a.push(vf);
-    a.extend(x264_args(o.crf, o.maxrate, o.keyint, &o.preset));
+    a.extend(x264_args_scan(o.crf, o.maxrate, o.keyint, &o.preset, tg.scan));
     a.extend(["-c:a", "ac3", "-b:a"].iter().map(|x| x.to_string()));
     a.push(o.audio_bitrate.clone());
     a.extend(["-ar", "48000", "-ac", "2", "-f", "mpegts", "-pes_payload_size", "0"].iter().map(|x| x.to_string()));
@@ -356,9 +433,86 @@ pub fn make_still_ts(
     a.push(s(image));
     a.push("-vf".into());
     a.push(vf);
-    a.extend(x264_args(opts.crf, 30000, 30, &opts.preset));
+    a.extend(x264_args_scan(opts.crf, 30000, 30, &opts.preset, scan_for(size, fps)));
     a.extend(["-an", "-f", "mpegts"].iter().map(|x| x.to_string()));
     a.push(s(dst));
+    run_ffmpeg(tools, &a, seconds, &mut |_| {}, cancel)
+}
+
+/// Duree (s) d'un fichier audio ou video.
+pub fn probe_duration(tools: &Tools, src: &Path) -> Result<f64> {
+    let mut c = Command::new(&tools.ffprobe);
+    c.args(["-v", "error", "-of", "flat", "-show_entries", "format=duration"]).arg(src);
+    no_window(&mut c);
+    let out = c.output()?;
+    if !out.status.success() {
+        return Err(Error::Probe(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .find_map(|l| l.strip_prefix("format.duration=").map(|v| v.trim().trim_matches('"').parse::<f64>()))
+        .and_then(|r| r.ok())
+        .filter(|d| *d > 0.0)
+        .ok_or_else(|| Error::Probe(format!("{} : duree illisible", src.display())))
+}
+
+/// Visuel d'un fond de menu anime ou sonore.
+#[derive(Debug, Clone, Copy)]
+pub enum BgVisual<'a> {
+    Image(&'a Path),
+    /// Video (et faut-il garder son propre son, a defaut de musique ?)
+    Video(&'a Path, bool),
+}
+
+/// Fond de menu -> MPEG-TS de `seconds` secondes au format `size` / `fps` : visuel (image fixe ou video recadree sans
+/// deformation), calque transparent `layer` pose par-dessus (textes et images de la page), son (`music`, sinon celui de la video).
+#[allow(clippy::too_many_arguments)]
+pub fn make_menu_bg_ts(
+    tools: &Tools, visual: BgVisual, layer: Option<&Path>, music: Option<&Path>, dst: &Path, seconds: f64, size: (u32, u32), fps: &str,
+    opts: &EncodeOpts, cancel: &AtomicBool,
+) -> Result<()> {
+    let st = |x: &str| x.to_string();
+    let t = format!("{seconds:.3}");
+    let mut a: Vec<String> = Vec::new();
+    match visual {
+        BgVisual::Image(p) => a.extend([st("-loop"), st("1"), st("-framerate"), st(fps), st("-t"), t.clone(), st("-i"), s(p)]),
+        BgVisual::Video(p, _) => a.extend([st("-t"), t.clone(), st("-i"), s(p)]),
+    }
+    let mut next = 1;
+    let layer_idx = layer.map(|l| {
+        a.extend([st("-loop"), st("1"), st("-framerate"), st(fps), st("-t"), t.clone(), st("-i"), s(l)]);
+        next += 1;
+        next - 1
+    });
+    let music_idx = music.map(|m| {
+        a.extend([st("-t"), t.clone(), st("-i"), s(m)]);
+        next += 1;
+        next - 1
+    });
+    let mut fc = format!(
+        "[0:v]fps={fps},scale={w}:{h}:force_original_aspect_ratio=increase:out_color_matrix=bt709:out_range=tv,crop={w}:{h},setsar=1[b]",
+        w = size.0, h = size.1
+    );
+    let mut last = "b".to_string();
+    if let Some(i) = layer_idx {
+        fc.push_str(&format!(";[{last}][{i}:v]overlay=0:0[c]"));
+        last = "c".into();
+    }
+    fc.push_str(&format!(";[{last}]format=yuv420p[v]"));
+    a.extend([st("-filter_complex"), fc, st("-map"), st("[v]")]);
+    let audio = match (music_idx, visual) {
+        (Some(i), _) => Some(format!("{i}:a:0")),
+        (None, BgVisual::Video(_, true)) => Some("0:a:0".to_string()),
+        _ => None,
+    };
+    a.extend(x264_args_scan(opts.crf, 30000, 30, &opts.preset, scan_for(size, fps)));
+    match audio {
+        Some(m) => {
+            a.extend([st("-map"), m, st("-c:a"), st("ac3"), st("-b:a"), opts.audio_bitrate.clone(), st("-ar"), st("48000"), st("-ac"), st("2")]);
+        }
+        None => a.push(st("-an")),
+    }
+    a.extend([st("-t"), t, st("-f"), st("mpegts"), st("-pes_payload_size"), st("0"), s(dst)]);
     run_ffmpeg(tools, &a, seconds, &mut |_| {}, cancel)
 }
 
@@ -399,8 +553,21 @@ mod tests {
         assert_eq!(pick_target(1920, 1080, 50.0).label, "720p50");
         assert_eq!(pick_target(1920, 1080, 23.976).fps, "24000/1001");
         assert_eq!(pick_target(1920, 1080, 24.0).fps, "24");
-        assert_eq!(pick_target(1920, 1080, 30.0).label, "720p59.94 (cadence doublee)");
+        assert_eq!(pick_target(1280, 720, 30.0).label, "720p59.94 (cadence doublee)");
         assert_eq!(pick_target(640, 480, 15.0).label, "720p24");
+        // PAL et 29,97 : 1080 en PsF pour une source HD, 720p a cadence doublee sinon
+        let t = pick_target(1920, 1080, 25.0);
+        assert_eq!((t.height, t.fps, t.scan), (1080, "25", Scan::PsF));
+        assert_eq!(pick_target(1920, 1080, 29.97).scan, Scan::PsF);
+        assert_eq!(pick_target(1280, 720, 25.0).label, "720p50 (cadence doublee)");
+        // entrelace : 1080i conserve (trame du haut ou du bas), 50 trames/s annoncees = 25 images/s ; SD desentrelacee
+        assert_eq!(pick_target_scan(1920, 1080, 25.0, Some(true)).scan, Scan::Tff);
+        assert_eq!(pick_target_scan(1920, 1080, 50.0, Some(false)).label, "1080i50");
+        assert_eq!(pick_target_scan(1920, 1080, 29.97, Some(true)).fps, "30000/1001");
+        let sd = pick_target_scan(720, 576, 25.0, Some(true));
+        assert!(sd.deinterlace && sd.fps == "50" && sd.height == 720);
+        assert_eq!(scan_for((1920, 1080), "25"), Scan::PsF);
+        assert_eq!(scan_for((1280, 720), "50"), Scan::Progressive);
     }
 
     #[test]
@@ -418,12 +585,19 @@ mod tests {
     #[test]
     fn arguments_identiques_a_python() {
         let info = VideoInfo { width: 1280, height: 720, fps_num: 60000, fps_den: 1001, pix_fmt: "yuv420p".into(), full_range: false,
-                               codec: "h264".into(), duration_s: 10.0, has_audio: true };
+                               codec: "h264".into(), duration_s: 10.0, has_audio: true, field_order: String::new() };
         let (a, _) = encode_args(Path::new("in.mp4"), Path::new("out.ts"), &info, &EncodeOpts::default());
         let line = a.join(" ");
         assert!(line.contains("fps=60000/1001,scale=1280:720:in_range=tv:in_color_matrix=bt709:out_range=tv:out_color_matrix=bt709,format=yuv420p"));
         assert!(line.contains("bluray-compat=1:keyint=30:open-gop=0:aud=1:nal-hrd=vbr:vbv-maxrate=30000:vbv-bufsize=30000:level=4.1:bframes=3"));
         assert!(line.ends_with("-c:a ac3 -b:a 192k -ar 48000 -ac 2 -f mpegts -pes_payload_size 0 out.ts"));
+        // sans audio : piste muette ; entrelace : options de codage entrelace
+        let muet = VideoInfo { has_audio: false, ..info.clone() };
+        let l2 = encode_args(Path::new("in.mp4"), Path::new("out.ts"), &muet, &EncodeOpts::default()).0.join(" ");
+        assert!(l2.contains("anullsrc") && l2.contains("-map 1:a:0") && l2.contains("-shortest"));
+        let i50 = VideoInfo { width: 1920, height: 1080, fps_num: 25, fps_den: 1, field_order: "tt".into(), ..info.clone() };
+        let l3 = encode_args(Path::new("in.mp4"), Path::new("out.ts"), &i50, &EncodeOpts::default()).0.join(" ");
+        assert!(l3.contains(":tff=1") && l3.contains("+ildct+ilme") && l3.contains(":interl=1"), "{l3}");
     }
 }
 

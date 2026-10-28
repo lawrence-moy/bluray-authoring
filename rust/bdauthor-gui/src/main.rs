@@ -487,6 +487,15 @@ impl eframe::App for App {
                         ui.label("Durée du fond :");
                         changed |= ui.add(egui::DragValue::new(&mut m.bg_seconds).speed(0.5).range(1.0..=600.0).suffix(" s")).changed();
                     });
+                    changed |= file_row(ui, "Vidéo de fond (animée) :", &mut m.bg_video, "(aucune)", "Vidéos", VIDEO_EXTS);
+                    if !m.bg_video.is_empty() {
+                        changed |= ui.checkbox(&mut m.bg_video_audio, "Garder le son de la vidéo de fond (s'il n'y a pas de musique)").changed();
+                    }
+                    changed |= file_row(ui, "Musique des menus :", &mut m.music, "(aucune)", "Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]);
+                    if !m.bg_video.is_empty() || !m.music.is_empty() {
+                        ui.label(egui::RichText::new("Le fond tourne en boucle : il dure autant que la vidéo de fond (2 min au plus) ou, sans vidéo, que la musique (5 min au plus). Les textes et images des pages personnalisées sont posés sur la vidéo.").weak());
+                    }
+                    changed |= file_row(ui, "Séquence d'ouverture :", &mut m.intro, "(aucune : le menu s'ouvre directement)", "Vidéos", VIDEO_EXTS);
                     changed |= ui.checkbox(&mut m.menu_1080, "Menu en 1920x1080 (sinon : taille de la vidéo)").changed();
                     changed |= ui.checkbox(&mut m.loop_menu, "Rejouer le fond en boucle (sinon : arrêt sur la dernière image)").changed();
                     changed |= ui.checkbox(&mut m.back_to_chapters, "Après une vidéo à chapitres, revenir à son menu de chapitres").changed();
@@ -508,6 +517,28 @@ impl eframe::App for App {
             });
         });
     }
+}
+
+const VIDEO_EXTS: &[&str] = &["mp4", "mkv", "mov", "avi", "m2ts", "mts", "ts", "webm", "wmv", "flv", "m4v", "mpg", "mpeg"];
+
+/// Ligne « libelle : [chemin] Choisir… Aucun » ; retourne vrai si le chemin a change.
+fn file_row(ui: &mut egui::Ui, label: &str, path: &mut String, hint: &str, filter: &str, exts: &[&str]) -> bool {
+    let mut changed = false;
+    ui.horizontal(|ui| {
+        ui.label(label);
+        changed |= ui.add(egui::TextEdit::singleline(path).hint_text(hint)).changed();
+        if ui.button("Choisir…").clicked() {
+            if let Some(f) = rfd::FileDialog::new().add_filter(filter, exts).pick_file() {
+                *path = clean(&f);
+                changed = true;
+            }
+        }
+        if !path.is_empty() && ui.button("Aucun").clicked() {
+            path.clear();
+            changed = true;
+        }
+    });
+    changed
 }
 
 fn main() -> eframe::Result<()> {

@@ -170,7 +170,18 @@ impl App {
                 }
             }
         }
-        for (file, at) in self.slot_sources(info) {
+        // video de fond anime : sa duree puis une image
+        let bgv = self.model.bg_video.clone();
+        if !bgv.is_empty() && !self.durations.contains_key(&bgv) && self.requested.insert(format!("P|{bgv}")) {
+            if let Some(w) = &self.worker {
+                let _ = w.tx.send(Job::Probe { key: bgv.clone(), path: abs_path(&base, &bgv) });
+            }
+        }
+        let mut sources = self.slot_sources(info);
+        if let Some(&d) = self.durations.get(&bgv) {
+            sources.push((bgv.clone(), (d / 2.0).min(1.0)));
+        }
+        for (file, at) in sources {
             let Some(&dur) = self.durations.get(&file) else { continue };
             let ms = (at * 1000.0).round() as i64;
             if !self.thumbs.contains_key(&(file.clone(), ms)) && self.requested.insert(format!("T|{file}|{ms}")) {
@@ -208,6 +219,14 @@ impl App {
         let v = &self.model.videos[i];
         let at = v.thumb_s.unwrap_or_else(|| self.durations.get(&v.file).map_or(0.0, |d| (d * 0.25).min(1.0)));
         (v.file.clone(), at)
+    }
+
+    /// Image de la video de fond (1 s) pour l'apercu, si elle est deja extraite.
+    fn bg_video_frame(&self) -> Option<std::sync::Arc<RgbaImage>> {
+        let f = &self.model.bg_video;
+        let d = *self.durations.get(f)?;
+        let ms = ((d / 2.0).min(1.0) * 1000.0).round() as i64;
+        self.thumbs.get(&(f.clone(), ms)).cloned()
     }
 
     /// (fichier, instant de la miniature) de chaque element de la page (videos de la page, ou chapitres).
@@ -287,7 +306,10 @@ impl App {
             if let Kind::Slot { assign, video, .. } = &mut it.kind { *assign = None; *video = None; }
         }
         let Ok(renderer) = &self.renderer else { return };
-        let base = if self.model.bg.is_empty() {
+        let bg_frame = (!self.model.bg_video.is_empty()).then(|| self.bg_video_frame()).flatten();
+        let base = if let Some(f) = bg_frame {
+            Some(cover_resize(&f, PREVIEW.0, PREVIEW.1))
+        } else if self.model.bg.is_empty() {
             None
         } else {
             let path = abs_path(&base_dir, &self.model.bg);
@@ -323,15 +345,17 @@ impl App {
             return;
         }
         let cur = self.current_info().map(|p| p.r);
+        let home_ref = self.home_page();
         let mut pick = None;
         egui::ScrollArea::vertical().show(ui, |ui| {
             for p in &pages {
                 let mark = if p.is_free() { "◆ " } else if p.custom(&self.model.designs) { "● " } else { "○ " };
-                if ui.selectable_label(cur == Some(p.r), format!("{mark}{}", p.label(&self.model))).clicked() { pick = Some(p.r); }
+                let home = if home_ref == Some(p.r) { "  (accueil)" } else { "" };
+                if ui.selectable_label(cur == Some(p.r), format!("{mark}{}{home}", p.label(&self.model))).clicked() { pick = Some(p.r); }
             }
         });
         ui.separator();
-        ui.label(egui::RichText::new("● mise en page personnalisée\n○ grille automatique\n◆ page libre").weak());
+        ui.label(egui::RichText::new("● mise en page personnalisée\n○ grille automatique\n◆ page libre\n(accueil) : page d'accueil (touche TOP MENU, ouverture du disque)").weak());
         if let Some(r) = pick {
             if self.cur != Some(r) {
                 self.cur = Some(r);
@@ -374,6 +398,14 @@ impl App {
             }
             ui.separator();
             ui.strong(info.label(&self.model));
+            let this = match info.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(info.page) };
+            let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
+            if is_home {
+                ui.label(egui::RichText::new("Page d'accueil").strong());
+            } else if ui.button("Définir comme page d'accueil").on_hover_text("Page affichée à l'ouverture du disque et par la touche TOP MENU").clicked() {
+                self.model.designs.home = if this == Target::Main(0) { None } else { Some(this) };
+                self.bump();
+            }
             if !custom {
                 if ui.button("Personnaliser cette page").clicked() {
                     if let Ok(d) = info.starting_point(&self.model) {
@@ -628,6 +660,7 @@ impl App {
             ui.label("Le menu se comporte comme sur un lecteur Blu-ray :");
             ui.label("• Flèches : passer au bouton voisin (même règle que sur le disque)");
             ui.label("• Entrée (ou clic sur un bouton) : valider ; l'état « activé » s'affiche un instant");
+            ui.label("• M (ou Origine) : touche TOP MENU, retour à la page d'accueil");
             ui.label("• Échap : arrêter la simulation");
             ui.label(egui::RichText::new("Les lectures de vidéo sont simulées par un écran noir ; à la fin, le menu revient là où le disque reviendrait.").weak());
             return;

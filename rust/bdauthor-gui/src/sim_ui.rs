@@ -30,6 +30,12 @@ impl App {
         sim_buttons(info, &d, &self.model.designs.style, self.model.videos.len(), &|v| self.has_chapters(&pages, v))
     }
 
+    /// Page d'accueil (touche TOP MENU) : celle choisie, sinon la page 1 du menu principal.
+    pub(crate) fn home_page(&self) -> Option<PageRef> {
+        let pages = self.pages();
+        self.model.designs.home.and_then(|h| page_of_target(&pages, h)).or_else(|| page_of_target(&pages, Target::Main(0)))
+    }
+
     /// L'etat « active » est-il affiche ?
     pub(crate) fn sim_pressed(&self) -> bool {
         self.sim.as_ref().map_or(false, |s| s.pressed.is_some())
@@ -61,6 +67,9 @@ impl App {
             SimAction::PlayChapter(v, c) => {
                 let name = self.model.videos.get(v).and_then(|x| x.chapter_list(self.durations.get(&x.file).copied()).get(c).map(|t| t.1.clone())).unwrap_or_else(|| format!("chapitre {}", c + 1));
                 play = Some((format!("Lecture de « {} » à partir de « {name} »", video_title(&self.model, v)), back_of(v)));
+            }
+            SimAction::PlayAllVideos => {
+                play = Some(("Lecture de toutes les vidéos à la suite".to_string(), self.home_page()));
             }
             SimAction::Go(t) => go = page_of_target(&pages, t),
             SimAction::Prev | SimAction::Next => {
@@ -94,9 +103,17 @@ impl App {
         };
         let keys = ctx.input(|i| {
             (i.key_pressed(Key::ArrowUp), i.key_pressed(Key::ArrowDown), i.key_pressed(Key::ArrowLeft), i.key_pressed(Key::ArrowRight),
-             i.key_pressed(Key::Enter) || i.key_pressed(Key::Space), i.key_pressed(Key::Escape))
+             i.key_pressed(Key::Enter) || i.key_pressed(Key::Space), i.key_pressed(Key::Escape), i.key_pressed(Key::Home) || i.key_pressed(Key::M))
         });
-        let (up, down, left, right, ok, esc) = keys;
+        let (up, down, left, right, ok, esc, top_menu) = keys;
+        // touche TOP MENU (Origine ou M) : accueil, meme pendant une lecture
+        if top_menu {
+            sim.playing = None;
+            sim.pressed = None;
+            self.sim = Some(sim);
+            if let Some(h) = self.home_page() { self.sim_goto(h); }
+            return;
+        }
 
         // lecture simulee d'une video
         if let Some((what, back)) = sim.playing.clone() {
@@ -151,7 +168,7 @@ impl App {
         }
         self.sel_item = Some(buttons[sim.btn].item);
         self.sim = Some(sim);
-        help(painter, &format!("Simulation · bouton {} sur {} · Flèches : se déplacer · Entrée : valider · Échap : quitter", self.sim.as_ref().map_or(0, |s| s.btn) + 1, buttons.len()));
+        help(painter, &format!("Simulation · bouton {} sur {} · Flèches : se déplacer · Entrée : valider · M : TOP MENU · Échap : quitter", self.sim.as_ref().map_or(0, |s| s.btn) + 1, buttons.len()));
         if let Some(a) = action {
             self.sim_do(info, a);
         }

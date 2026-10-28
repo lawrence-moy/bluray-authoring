@@ -162,19 +162,27 @@ pub fn check_bdmv(root: &Path) -> Report {
         }
         if m.marks.is_empty() {
             r.warn(format!("playlist {pl} : aucune marque de chapitre"));
-        } else if let Some(it0) = m.playitems.first() {
-            let eps: Vec<u64> = match clips.get(&it0.clip) {
-                Some(Some(c)) => c.clpi.cpi.iter().flat_map(|cp| cp.streams.iter()).flat_map(|s| s.entries()).map(|e| e.0).collect(),
-                _ => continue,
-            };
-            let times: Vec<u32> = m.marks.iter().map(|k| k.time).collect();
-            if times.windows(2).any(|w| w[0] > w[1]) {
-                r.err(format!("playlist {pl} : marques de chapitre non croissantes"));
-            }
+        } else {
+            // chaque marque se rapporte a son PlayItem (playlists « Tout lire » : plusieurs elements)
+            let mut last: Option<(u16, u32)> = None;
             for (k, mk) in m.marks.iter().enumerate() {
-                if !(it0.in_time <= mk.time && mk.time <= it0.out_time) {
-                    r.err(format!("playlist {pl} marque {k} : temps {} hors du PlayItem ({}-{})", mk.time, it0.in_time, it0.out_time));
-                } else if !eps.is_empty() && mk.time != it0.in_time && !eps.iter().any(|&e| { let d = mk.time as i64 * 2 - e as i64; (0..1024).contains(&d) }) {
+                let Some(it) = m.playitems.get(mk.playitem_ref as usize) else {
+                    r.err(format!("playlist {pl} marque {k} : element {} inexistant", mk.playitem_ref));
+                    continue;
+                };
+                if let Some((ref_, t)) = last {
+                    if mk.playitem_ref < ref_ || (mk.playitem_ref == ref_ && mk.time < t) {
+                        r.err(format!("playlist {pl} : marques de chapitre non croissantes"));
+                    }
+                }
+                last = Some((mk.playitem_ref, mk.time));
+                let eps: Vec<u64> = match clips.get(&it.clip) {
+                    Some(Some(c)) => c.clpi.cpi.iter().flat_map(|cp| cp.streams.iter()).flat_map(|s| s.entries()).map(|e| e.0).collect(),
+                    _ => continue,
+                };
+                if !(it.in_time <= mk.time && mk.time <= it.out_time) {
+                    r.err(format!("playlist {pl} marque {k} : temps {} hors du PlayItem ({}-{})", mk.time, it.in_time, it.out_time));
+                } else if !eps.is_empty() && mk.time != it.in_time && !eps.iter().any(|&e| { let d = mk.time as i64 * 2 - e as i64; (0..1024).contains(&d) }) {
                     r.warn(format!("playlist {pl} marque {k} : pas sur une image d'acces de l'EP_map"));
                 }
             }

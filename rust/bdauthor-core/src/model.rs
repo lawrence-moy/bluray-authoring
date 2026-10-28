@@ -58,6 +58,14 @@ pub struct ProjectModel {
     pub crf: u32,
     pub preset: String,
     pub bg: String, // chemin ; vide = fond genere
+    /// Sequence d'ouverture : video jouee a l'insertion du disque (vide = aucune).
+    pub intro: String,
+    /// Fond de menu anime : video jouee en boucle sous les menus (vide = aucun).
+    pub bg_video: String,
+    /// Garder le son de la video de fond (quand il n'y a pas de musique).
+    pub bg_video_audio: bool,
+    /// Musique des menus (vide = aucune).
+    pub music: String,
     pub bg_seconds: f64,
     pub menu_1080: bool,
     pub loop_menu: bool,
@@ -72,7 +80,7 @@ pub struct ProjectModel {
 impl Default for ProjectModel {
     fn default() -> Self {
         ProjectModel {
-            title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), bg: String::new(), bg_seconds: 5.0,
+            title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), bg: String::new(), intro: String::new(), bg_video: String::new(), bg_video_audio: false, music: String::new(), bg_seconds: 5.0,
             menu_1080: false, loop_menu: false, back_to_chapters: true, par_page: None, cache: true, designs: Designs::default(), raw: Value::Obj(vec![]),
         }
     }
@@ -118,6 +126,10 @@ impl ProjectModel {
         }
         if let Some(menu) = v.get("menu") {
             m.bg = menu.get("fond").and_then(Value::as_str).unwrap_or("").into();
+            m.intro = menu.get("intro").and_then(Value::as_str).unwrap_or("").into();
+            m.bg_video = menu.get("fond_video").and_then(Value::as_str).unwrap_or("").into();
+            m.bg_video_audio = menu.get("son_fond_video").and_then(Value::as_bool).unwrap_or(false);
+            m.music = menu.get("musique").and_then(Value::as_str).unwrap_or("").into();
             m.bg_seconds = menu.get("fond_secondes").and_then(Value::as_f64).unwrap_or(5.0);
             m.menu_1080 = menu.get("taille").and_then(Value::as_str) == Some("1080");
             m.loop_menu = menu.get("boucle").and_then(Value::as_bool).unwrap_or(false);
@@ -152,6 +164,10 @@ impl ProjectModel {
         set(&mut root, "encodage", Some(enc));
         let mut menu = root.get("menu").cloned().unwrap_or(Value::Obj(vec![]));
         set(&mut menu, "fond", if self.bg.is_empty() { None } else { Some(s(&self.bg)) });
+        set(&mut menu, "intro", if self.intro.is_empty() { None } else { Some(s(&self.intro)) });
+        set(&mut menu, "fond_video", if self.bg_video.is_empty() { None } else { Some(s(&self.bg_video)) });
+        set(&mut menu, "son_fond_video", if self.bg_video_audio { Some(Value::Bool(true)) } else { None });
+        set(&mut menu, "musique", if self.music.is_empty() { None } else { Some(s(&self.music)) });
         set(&mut menu, "fond_secondes", Some(n(self.bg_seconds)));
         set(&mut menu, "taille", if self.menu_1080 { Some(s("1080")) } else { None });
         set(&mut menu, "boucle", Some(Value::Bool(self.loop_menu)));
@@ -226,6 +242,14 @@ impl ProjectModel {
             }
         }
         if !self.bg.is_empty() && !abs(&self.bg).is_file() { p.push(format!("Image de fond introuvable ({}).", self.bg)); }
+        if !self.intro.is_empty() && !abs(&self.intro).is_file() { p.push(format!("Séquence d'ouverture introuvable ({}).", self.intro)); }
+        if !self.bg_video.is_empty() && !abs(&self.bg_video).is_file() { p.push(format!("Vidéo de fond introuvable ({}).", self.bg_video)); }
+        if !self.music.is_empty() && !abs(&self.music).is_file() { p.push(format!("Musique du menu introuvable ({}).", self.music)); }
+        if let Some(h) = self.designs.home {
+            let total = crate::project::paginate(self.videos.len().max(1), self.par_page).map(|g| g.len()).unwrap_or(1) + self.designs.free.len();
+            let bad = match h { crate::design::Target::Main(q) => q >= total, crate::design::Target::Chapters(v, _) => v >= self.videos.len(), crate::design::Target::Video(_) => true };
+            if bad { p.push("Page d'accueil invalide : choisissez une page existante.".into()); }
+        }
         p
     }
 }

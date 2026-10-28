@@ -33,7 +33,7 @@ fn bout_en_bout() {
     let mut max = 0.0f64;
     let tg = encode_to_ts(&tools, &src, &ts, &info, &EncodeOpts { preset: "ultrafast".into(), ..Default::default() },
                           &mut |p| max = max.max(p), &AtomicBool::new(false)).unwrap();
-    assert_eq!(tg.label, "720p24"); // 25 i/s -> 720p24 (comportement identique à Python ; voir NOTES.md : cas PAL à revoir)
+    assert_eq!(tg.label, "720p50 (cadence doublee)"); // 25 i/s en definition standard -> 720p50 (chaque image doublee)
     assert_eq!(max, 1.0);
     assert_eq!(std::fs::metadata(&ts).unwrap().len() % 188, 0);
 
@@ -64,13 +64,13 @@ fn annulation_et_erreurs() {
     assert!(matches!(probe(&tools, &bad), Err(Error::Probe(_))));
     assert!(probe(&tools, &dir.join("absent.mp4")).is_err());
 
-    // source sans piste audio : ffmpeg echoue proprement avec un message exploitable
+    // source sans piste audio : une piste muette est ajoutee
     let muet = dir.join("muet.mp4");
     assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-i"]).arg(&src).args(["-an", "-c:v", "copy"]).arg(&muet).status().unwrap().success());
     let info2 = probe(&tools, &muet).unwrap();
     assert!(!info2.has_audio);
     let r = encode_to_ts(&tools, &muet, &dir.join("m.ts"), &info2, &EncodeOpts::default(), &mut |_| {}, &AtomicBool::new(false));
-    assert!(matches!(r, Err(Error::Ffmpeg { .. })), "{r:?}");
+    assert!(r.is_ok(), "{r:?}");
     cancel.store(false, Ordering::Relaxed);
     let _ = std::fs::remove_dir_all(dir);
 }

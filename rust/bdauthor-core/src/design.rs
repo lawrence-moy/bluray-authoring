@@ -156,7 +156,9 @@ pub fn nav_applicable(action: NavAction, menu: MenuType, page: usize, pages: usi
     match action {
         NavAction::Prev => page > 0,
         NavAction::Next => page + 1 < pages,
-        NavAction::PlayAll | NavAction::Back => menu == MenuType::Chapters,
+        // « Tout lire » : la video du menu de chapitres, ou toutes les videos depuis le menu principal
+        NavAction::PlayAll => true,
+        NavAction::Back => menu == MenuType::Chapters,
         NavAction::Goto => true,
     }
 }
@@ -450,10 +452,12 @@ pub struct Designs {
     pub free: Vec<PageDesign>,
     /// Apparence des boutons de tout le projet (chaque element peut avoir la sienne, voir `Item::look`).
     pub style: ButtonStyle,
+    /// Page d'accueil (touche TOP MENU et ouverture du disque) ; `None` = page 1 du menu principal.
+    pub home: Option<Target>,
 }
 
 impl Designs {
-    pub fn is_empty(&self) -> bool { self.main.is_empty() && self.chapters.is_empty() && self.free.is_empty() && self.style == ButtonStyle::default() }
+    pub fn is_empty(&self) -> bool { self.main.is_empty() && self.chapters.is_empty() && self.free.is_empty() && self.style == ButtonStyle::default() && self.home.is_none() }
 
     /// Echange deux videos (les menus de chapitres suivent leur video).
     pub fn swap_videos(&mut self, a: usize, b: usize) {
@@ -469,6 +473,7 @@ impl Designs {
                 if let Some(Some(t)) = it.targets_mut() { t.swap_videos(a, b); }
             }
         }
+        if let Some(h) = &mut self.home { h.swap_videos(a, b); }
     }
 
     fn all_mut(&mut self) -> impl Iterator<Item = &mut PageDesign> {
@@ -478,6 +483,11 @@ impl Designs {
     /// La page `page` (rang dans le menu principal, pages automatiques puis libres) vient d'etre supprimee : les boutons qui y
     /// menaient perdent leur cible, les suivants sont decales.
     pub fn page_removed(&mut self, page: usize) {
+        match self.home {
+            Some(Target::Main(p)) if p == page => self.home = None,
+            Some(Target::Main(p)) if p > page => self.home = Some(Target::Main(p - 1)),
+            _ => {}
+        }
         for d in self.all_mut() {
             for it in &mut d.items {
                 if let Some(target) = it.targets_mut() {
@@ -493,6 +503,11 @@ impl Designs {
 
     /// Retire une video : ses menus de chapitres disparaissent, les suivants sont renumerotes.
     pub fn remove_video(&mut self, i: usize) {
+        match self.home {
+            Some(Target::Chapters(v, _)) if v == i => self.home = None,
+            Some(Target::Chapters(v, q)) if v > i => self.home = Some(Target::Chapters(v - 1, q)),
+            _ => {}
+        }
         let old = std::mem::take(&mut self.chapters);
         self.chapters = old.into_iter().filter(|((v, _), _)| *v != i).map(|((v, p), d)| ((if v > i { v - 1 } else { v }, p), d)).collect();
         // pages libres : les vignettes de cette video disparaissent, les suivantes sont renumerotees
@@ -531,6 +546,7 @@ impl Designs {
         let mut o = vec![("principal".into(), Value::Obj(main)), ("chapitres".into(), Value::Obj(ch))];
         if !self.free.is_empty() { o.push(("libres".into(), Value::Arr(self.free.iter().map(PageDesign::to_value).collect()))); }
         if self.style != ButtonStyle::default() { o.push(("style_boutons".into(), self.style.to_value())); }
+        if let Some(h) = self.home { o.push(("accueil".into(), h.to_value())); }
         Value::Obj(o)
     }
 
@@ -558,6 +574,7 @@ impl Designs {
                 d.free.push(pd);
             }
         }
+        if let Some(h) = v.get("accueil") { d.home = Some(Target::from_value(h).ok_or("page d'accueil invalide")?); }
         if let Some(st) = v.get("style_boutons") { d.style = ButtonStyle::from_value(st).map_err(|e| format!("style des boutons : {e}"))?; }
         Ok(d)
     }

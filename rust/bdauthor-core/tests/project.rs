@@ -294,3 +294,113 @@ fn styled_buttons_project() {
     assert_eq!(size(b1.normal.0), (373, 237));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn home_intro_and_play_all() {
+    let Ok(tools) = Tools::locate() else { return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_home_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for (f, d) in [("a", 3), ("b", 3), ("intro", 2)] {
+        assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", &format!("testsrc=size=640x360:rate=25:duration={d}"),
+            "-f", "lavfi", "-i", &format!("sine=duration={d}"), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
+            .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
+    }
+    // accueil = page libre (page 2 du menu principal) ; « Tout lire » sur la page 1 ; sequence d'ouverture
+    let proj = r##"{ "titre": "Accueil", "langue": "fra", "videos": [ {"fichier": "a.mp4", "chapitres": [0, 1.5]}, {"fichier": "b.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2, "intro": "intro.mp4"},
+      "mise_en_page": { "accueil": {"menu": "principal", "page": 2},
+        "principal": { "1": { "elements": [
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356},
+          {"type":"navigation","action":"tout_lire","texte":"Tout lire","x":800,"y":900,"w":300,"h":90} ] } },
+        "libres": [ { "elements": [
+          {"type":"navigation","action":"aller_a","texte":"Videos","cible":{"menu":"principal","page":1},"x":800,"y":500,"w":300,"h":90} ] } ] } }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let info = {
+        let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
+    };
+    assert!(info.report.ok(), "{}", info.report.render());
+    let root = dir.join("out/BDMV");
+    let mo = bdauthor_core::mobj::MovieObjectBdmv::parse(&std::fs::read(root.join("MovieObject.bdmv")).unwrap()).unwrap();
+    let idx = bdauthor_core::index::IndexBdmv::parse(&std::fs::read(root.join("index.bdmv")).unwrap()).unwrap();
+    let text = |o: usize| mo.objects[o].commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; ");
+    // titres : 2 videos, page 2 du menu principal (= page libre), chapitres de a (1 page + lecture depuis un repere) = 5 ;
+    // puis la page 1 (titre 6) et « Tout lire » (titre 7)
+    assert_eq!(idx.titles.len(), 7);
+    assert!(text(0).contains("JUMP_TITLE 3"), "Top Menu -> accueil (titre de la page libre) : {}", text(0));
+    assert!(text(6).starts_with("PLAY_PL"), "titre 6 = page 1 du menu : {}", text(6));
+    assert!(text(7).starts_with("PLAY_PL") && text(7).contains("JUMP_TITLE 0"), "{}", text(7));
+    // ouverture : objet dedie, lecture de l'intro puis accueil
+    let fp = idx.first_playback.id_ref as usize;
+    assert_eq!(fp, mo.objects.len() - 1);
+    assert!(text(fp).starts_with("PLAY_PL") && text(fp).ends_with("JUMP_TITLE 0"), "{}", text(fp));
+    // la playlist « Tout lire » enchaine les deux videos, avec une marque au debut de chacune et les chapitres de a
+    let pl_all = mo.objects[7].commands[0].dst;
+    let m = bdauthor_core::mpls::Mpls::parse(&std::fs::read(root.join(format!("PLAYLIST/{pl_all:05}.mpls"))).unwrap()).unwrap();
+    assert_eq!(m.playitems.iter().map(|p| p.clip.as_str()).collect::<Vec<_>>(), vec!["00000", "00001"]);
+    assert_eq!(m.marks.iter().map(|k| k.playitem_ref).collect::<Vec<_>>(), vec![0, 0, 1]);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn animated_menu_background_with_music() {
+    let Ok(tools) = Tools::locate() else { return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_animbg_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
+    for f in ["a", "b"] {
+        run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=2", "-f", "lavfi", "-i", "sine=duration=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", dir.join(format!("{f}.mp4")).to_str().unwrap()]);
+    }
+    run(&["-f", "lavfi", "-i", "mandelbrot=size=320x180:rate=25", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", dir.join("fond.mp4").to_str().unwrap()]);
+    run(&["-f", "lavfi", "-i", "sine=frequency=440:duration=5", "-c:a", "libmp3lame", dir.join("musique.mp3").to_str().unwrap()]);
+    let proj = r##"{ "titre": "Anime", "langue": "fra", "videos": [ {"fichier": "a.mp4", "chapitres": [0, 1]}, {"fichier": "b.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_video": "fond.mp4", "musique": "musique.mp3", "par_page": 1},
+      "mise_en_page": { "principal": { "2": { "elements": [
+          {"type":"texte","texte":"Page 2","x":100,"y":60,"w":800,"h":120,"taille":80,"couleur":"#ffcc00","alignement":"gauche"},
+          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356},
+          {"type":"navigation","action":"precedent","texte":"<","x":800,"y":900,"w":300,"h":90} ] } } } }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let build = |out: &str| {
+        let mut logs = Vec::new();
+        let info = {
+            let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
+            let cancel = AtomicBool::new(false);
+            let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+            build_project(&dir.join("projet.json"), &dir.join(out), &mut env).unwrap()
+        };
+        (info, logs)
+    };
+    let t0 = std::time::Instant::now();
+    let (info, _) = build("out");
+    let first = t0.elapsed();
+    assert!(info.report.ok(), "{}", info.report.render());
+    let root = dir.join("out/BDMV");
+    // pages du menu principal : playlists 2 et 3 (apres les 2 videos) ; fond avec son, en boucle (pas d'arret sur image)
+    for pl in [2, 3] {
+        let m = bdauthor_core::mpls::Mpls::parse(&std::fs::read(root.join(format!("PLAYLIST/{pl:05}.mpls"))).unwrap()).unwrap();
+        let it = &m.playitems[0];
+        let sc = bdauthor_core::tsclip::scan_clip(&std::fs::read(root.join(format!("STREAM/{}.m2ts", it.clip))).unwrap()).unwrap();
+        assert!(!sc.audio_codes.is_empty(), "fond de la playlist {pl} sans son");
+        let dur = (sc.end90 - sc.start90) as f64 / 90000.0;
+        assert!((2.5..3.5).contains(&dur), "duree du fond = celle de la video ({dur} s)");
+        let mpls = std::fs::read(root.join(format!("PLAYLIST/{pl:05}.mpls"))).unwrap();
+        // entree audio (AC3, 0x81) dans la table des flux
+        assert!(mpls.windows(3).any(|w| w == [5, 0x81, sc.audio_codes[0].2]), "flux audio absent de la playlist {pl}");
+        let _ = it;
+    }
+    // la page 2 a son propre fond (texte pose sur la video), la page 1 le fond commun
+    let clips: Vec<String> = [2, 3].iter().map(|pl| bdauthor_core::mpls::Mpls::parse(&std::fs::read(root.join(format!("PLAYLIST/{pl:05}.mpls"))).unwrap()).unwrap().playitems[0].clip.clone()).collect();
+    assert_ne!(clips[0], clips[1]);
+    // second passage : fonds repris du cache
+    let t1 = std::time::Instant::now();
+    let (info2, _) = build("out2");
+    assert!(info2.report.ok());
+    assert!(dir.join(".cache_bdauthor").read_dir().unwrap().filter_map(|e| e.ok()).any(|e| e.file_name().to_string_lossy().starts_with("fond_")));
+    assert!(t1.elapsed() < first, "le cache doit accelerer ({:?} contre {:?})", t1.elapsed(), first);
+    let _ = std::fs::remove_dir_all(&dir);
+}
