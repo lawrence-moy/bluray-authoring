@@ -220,7 +220,8 @@ impl ProjectModel {
                         if bad { p.push(format!("Bouton « {text} » : destination invalide ou non choisie.")); }
                     }
                     let bad_link = match it.link() { Some(Target::Main(q)) => q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => v >= self.videos.len(), None => false };
-                    if bad_link { p.push("Texte ou image cliquable : destination invalide.".into()); }
+                    if bad_link { p.push("Élément cliquable : destination invalide.".into()); }
+                    if it.fixed_video().map_or(false, |v| v >= self.videos.len()) { p.push("Vignette : la vidéo choisie n'existe pas.".into()); }
                 }
             }
         }

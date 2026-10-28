@@ -27,7 +27,7 @@ fn page_list() {
 
 #[test]
 fn drag_and_hit() {
-    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, assign: None } };
+    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, assign: None, video: None, link: None } };
     let items = vec![it(100, 100, 300, 200), it(250, 150, 300, 200)];
     assert_eq!(hit_test(&items, 260.0, 160.0, None, 8.0), Some((1, Handle::Body)), "l'element du dessus gagne");
     assert_eq!(hit_test(&items, 120.0, 120.0, None, 8.0), Some((0, Handle::Body)));
@@ -42,7 +42,7 @@ fn drag_and_hit() {
     // vignette : la hauteur du libelle est conservee
     let mut a = items[0].clone();
     set_rect(&mut a, &items[0], (100, 100, 300, 300));
-    assert_eq!(a.kind, Kind::Slot { thumb_h: 260, assign: None });
+    assert_eq!(a.kind, Kind::Slot { thumb_h: 260, assign: None, video: None, link: None });
 }
 
 #[test]

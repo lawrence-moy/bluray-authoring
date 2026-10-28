@@ -77,7 +77,11 @@ impl Align {
 pub enum Kind {
     /// Vignette cliquable + libelle ; `thumb_h` = hauteur de la vignette (le reste de `h` porte le libelle). Les vignettes se remplissent dans l'ordre de la liste.
     /// `assign` : element de la page montre par cette vignette (0-based) ; `None` = automatique (voir `PageDesign::slot_assignment`).
-    Slot { thumb_h: i32, assign: Option<usize> },
+    /// `video` : si present, la vignette montre cette video du projet (0-based) quelle que soit la page, et ne compte pas parmi les
+    /// elements de la page (`assign` est alors ignore) ; obligatoire sur les pages libres.
+    /// `link` : destination au clic ; `None` = comportement habituel (video : son menu de chapitres s'il existe, sinon la lecture ;
+    /// chapitre : lecture depuis ce chapitre).
+    Slot { thumb_h: i32, assign: Option<usize>, video: Option<usize>, link: Option<Target> },
     /// `target` : page visee par une action `Goto` (ignore pour les autres actions).
     Nav { action: NavAction, text: String, target: Option<Target> },
     /// `font` : vide = police par defaut ; sinon fichier .ttf/.otf (chemin absolu ou relatif au projet) ou nom d'un fichier de police installe.
@@ -94,13 +98,21 @@ impl Item {
     pub fn is_button(&self) -> bool { matches!(self.kind, Kind::Slot { .. } | Kind::Nav { .. }) || self.link().is_some() }
     /// Destination d'un texte ou d'une image cliquable.
     pub fn link(&self) -> Option<Target> {
-        match self.kind { Kind::Text { link, .. } | Kind::Image { link, .. } => link, _ => None }
+        match self.kind { Kind::Text { link, .. } | Kind::Image { link, .. } | Kind::Slot { link, .. } => link, _ => None }
+    }
+    /// Vignette d'un element de la page (et non d'une video choisie) ?
+    pub fn is_element_slot(&self) -> bool { matches!(self.kind, Kind::Slot { video: None, .. }) }
+    /// Vignette montrant une video choisie : son indice.
+    pub fn fixed_video(&self) -> Option<usize> { if let Kind::Slot { video, .. } = self.kind { video } else { None } }
+    /// Vignette vierge (elements de la page dans l'ordre, comportement habituel).
+    pub fn slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32) -> Item {
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: None, link: None } }
     }
     /// Destinations modifiables de l'element : cible d'un bouton « Aller a », lien d'un texte ou d'une image.
     pub fn targets_mut(&mut self) -> Option<&mut Option<Target>> {
         match &mut self.kind {
             Kind::Nav { action: NavAction::Goto, target, .. } => Some(target),
-            Kind::Text { link, .. } | Kind::Image { link, .. } => Some(link),
+            Kind::Text { link, .. } | Kind::Image { link, .. } | Kind::Slot { link, .. } => Some(link),
             _ => None,
         }
     }
@@ -140,8 +152,11 @@ pub fn nav_applicable(action: NavAction, menu: MenuType, page: usize, pages: usi
 const NAV_Y: i32 = 1080 - 60 - 80;
 
 impl PageDesign {
-    pub fn slots(&self) -> Vec<&Item> { self.items.iter().filter(|i| matches!(i.kind, Kind::Slot { .. })).collect() }
+    /// Vignettes des elements de la page (hors vignettes de videos choisies), dans l'ordre de la liste.
+    pub fn slots(&self) -> Vec<&Item> { self.items.iter().filter(|i| i.is_element_slot()).collect() }
     pub fn slot_count(&self) -> usize { self.slots().len() }
+    /// Toutes les vignettes, y compris celles de videos choisies.
+    pub fn all_slot_count(&self) -> usize { self.items.iter().filter(|i| matches!(i.kind, Kind::Slot { .. })).count() }
 
     /// Pour chaque vignette (dans l'ordre de la liste), l'indice (0-based) de l'element de la page qu'elle montre.
     /// Les affectations explicites valides (dans la page, sans doublon) sont respectees ; les autres vignettes recoivent,
@@ -169,7 +184,7 @@ impl PageDesign {
             if let Some(Kind::Slot { assign, .. }) = self.items.get_mut(item).map(|i| &mut i.kind) { *assign = None; }
             return;
         };
-        let pos: Vec<usize> = self.items.iter().enumerate().filter(|(_, i)| matches!(i.kind, Kind::Slot { .. })).map(|(k, _)| k).collect();
+        let pos: Vec<usize> = self.items.iter().enumerate().filter(|(_, i)| i.is_element_slot()).map(|(k, _)| k).collect();
         let Some(k) = pos.iter().position(|&p| p == item) else { return };
         let eff = self.slot_assignment(count);
         if e >= count { return; }
@@ -183,7 +198,7 @@ impl PageDesign {
 
     fn grid(count: usize, reserve: i32) -> Result<Vec<Item>, String> {
         Ok(layout(count, (1920, 1080), reserve).map_err(|e| e.to_string())?
-            .into_iter().map(|c| Item { x: c.x, y: c.y, w: c.w, h: c.h, kind: Kind::Slot { thumb_h: c.th, assign: None } }).collect())
+            .into_iter().map(|c| Item::slot(c.x, c.y, c.w, c.h, c.th)).collect())
     }
 
     /// Grille automatique du menu principal (page `page` sur `pages`) pour `count` videos.
@@ -224,7 +239,8 @@ impl PageDesign {
         if n != expected_slots {
             p.push(err(format!("{n} vignette(s) placée(s) pour {expected_slots} élément(s) sur cette page.")));
         }
-        if n > MAX_PER_PAGE { p.push(err(format!("{n} vignettes : {MAX_PER_PAGE} au maximum par page."))); }
+        let all = self.all_slot_count();
+        if all > MAX_PER_PAGE { p.push(err(format!("{all} vignettes : {MAX_PER_PAGE} au maximum par page."))); }
         for (k, it) in self.items.iter().enumerate() {
             if it.w < 8 || it.h < 8 { p.push(err(format!("Élément {} trop petit.", k + 1))); }
             if it.x < 0 || it.y < 0 || it.x + it.w > PLANE.0 || it.y + it.h > PLANE.1 {
@@ -262,9 +278,9 @@ impl PageDesign {
         let mut p: Vec<Problem> = self.validate(self.slot_count(), MenuType::Main, page, pages);
         let mut k = 0;
         for it in &self.items {
-            if let Kind::Slot { assign, .. } = it.kind {
+            if let Kind::Slot { video, .. } = it.kind {
                 k += 1;
-                match assign {
+                match video {
                     None => p.push(Problem { error: true, msg: format!("Vignette {k} : choisissez une vidéo.") }),
                     Some(v) if v >= n_videos => p.push(Problem { error: true, msg: format!("Vignette {k} : la vidéo {} n'existe pas.", v + 1) }),
                     _ => {}
@@ -285,6 +301,9 @@ impl PageDesign {
             if let Some(t) = t {
                 if !exists(t) { p.push(Problem { error: true, msg: format!("Élément {} : la destination n'existe pas.", k + 1) }); }
             }
+            if let Some(v) = it.fixed_video() {
+                if !exists(Target::Video(v)) { p.push(Problem { error: true, msg: format!("Élément {} : la vidéo {} n'existe pas.", k + 1, v + 1) }); }
+            }
         }
         p
     }
@@ -303,9 +322,13 @@ impl PageDesign {
             let mut o: Vec<(String, Value)> = Vec::new();
             let mut put = |k: &str, v: Value| o.push((k.to_string(), v));
             match &it.kind {
-                Kind::Slot { thumb_h, assign } => {
+                Kind::Slot { thumb_h, assign, video, link } => {
                     put("type", Value::Str("vignette".into())); put("vignette_h", num(*thumb_h));
-                    if let Some(a) = assign { put("element", num(*a as i32 + 1)); }
+                    match video {
+                        Some(v) => put("video", num(*v as i32 + 1)),
+                        None => if let Some(a) = assign { put("element", num(*a as i32 + 1)); },
+                    }
+                    if let Some(t) = link { put("cible", t.to_value()); }
                 }
                 Kind::Nav { action, text, target } => {
                     put("type", Value::Str("navigation".into())); put("action", Value::Str(action.name().into())); put("texte", Value::Str(text.clone()));
@@ -337,7 +360,10 @@ impl PageDesign {
                 match e.get("cible") { None | Some(Value::Null) => Ok(None), Some(c) => Target::from_value(c).map(Some).ok_or_else(|| format!("élément {} : cible invalide", k + 1)) }
             };
             let kind = match st("type").ok_or_else(|| format!("élément {} sans type", k + 1))? {
-                "vignette" => Kind::Slot { thumb_h: at("vignette_h")?, assign: e.get("element").and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize) },
+                "vignette" => {
+                    let one = |key: &str| e.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
+                    Kind::Slot { thumb_h: at("vignette_h")?, assign: one("element"), video: one("video"), link: link()? }
+                }
                 "navigation" => {
                     let action = st("action").and_then(NavAction::from_name).ok_or_else(|| format!("élément {} : action inconnue", k + 1))?;
                     let target = match e.get("cible") {
@@ -380,9 +406,9 @@ impl Designs {
     pub fn swap_videos(&mut self, a: usize, b: usize) {
         let old = std::mem::take(&mut self.chapters);
         self.chapters = old.into_iter().map(|((v, p), d)| (((if v == a { b } else if v == b { a } else { v }), p), d)).collect();
-        for page in &mut self.free {
+        for page in self.all_mut() {
             for it in &mut page.items {
-                if let Kind::Slot { assign: Some(v), .. } = &mut it.kind { *v = if *v == a { b } else if *v == b { a } else { *v }; }
+                if let Kind::Slot { video: Some(v), .. } = &mut it.kind { *v = if *v == a { b } else if *v == b { a } else { *v }; }
             }
         }
         for d in self.all_mut() {
@@ -429,10 +455,10 @@ impl Designs {
                 }
             }
         }
-        for page in &mut self.free {
-            page.items.retain(|it| !matches!(it.kind, Kind::Slot { assign: Some(v), .. } if v == i));
+        for page in self.all_mut() {
+            page.items.retain(|it| it.fixed_video() != Some(i));
             for it in &mut page.items {
-                if let Kind::Slot { assign: Some(v), .. } = &mut it.kind { if *v > i { *v -= 1; } }
+                if let Kind::Slot { video: Some(v), .. } = &mut it.kind { if *v > i { *v -= 1; } }
             }
         }
     }
@@ -462,7 +488,14 @@ impl Designs {
         }
         if let Some(libres) = v.get("libres").and_then(Value::as_array) {
             for (k, page) in libres.iter().enumerate() {
-                d.free.push(PageDesign::from_value(page).map_err(|e| format!("page libre {} : {e}", k + 1))?);
+                let mut pd = PageDesign::from_value(page).map_err(|e| format!("page libre {} : {e}", k + 1))?;
+                // anciens fichiers : sur une page libre, « element » designait deja la video
+                for it in &mut pd.items {
+                    if let Kind::Slot { assign, video, .. } = &mut it.kind {
+                        if video.is_none() { *video = assign.take(); }
+                    }
+                }
+                d.free.push(pd);
             }
         }
         Ok(d)

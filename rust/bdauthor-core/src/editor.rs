@@ -177,10 +177,10 @@ pub fn to_back(d: &mut PageDesign, idx: usize) -> usize {
 /// Les boutons de navigation absents de `src` mais presents dans `target_default` (grille automatique de la page cible, par exemple
 /// « Precedent » qui n'existe pas en page 1) sont ajoutes a leur place par defaut.
 pub fn copy_decor(src: &PageDesign, target: PageDesign, target_default: &PageDesign) -> PageDesign {
-    let mut slots = target.items.into_iter().filter(|i| matches!(i.kind, Kind::Slot { .. }));
+    let mut slots = target.items.into_iter().filter(|i| i.is_element_slot());
     let mut items = Vec::new();
     for it in &src.items {
-        if matches!(it.kind, Kind::Slot { .. }) {
+        if it.is_element_slot() {
             if let Some(s) = slots.next() { items.push(s); }
         } else {
             items.push(it.clone());

@@ -299,3 +299,9 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - `Item::link()`, `Item::targets_mut()` ; `is_button()` inclut les elements cliquables (chevauchements, debordement) ; echange/retrait de videos et suppression de pages renumerotent aussi ces liens.
 - Corrige au passage : les textes/images poses sur les boutons (superposition) etaient a l'echelle de la video et non du menu quand le menu est en 1080 sur une video 720.
 - GUI : case « Cliquable » + liste « Destination » (pages puis « Lire la video N ») dans l'inspecteur ; la liste du bouton « Aller a » propose aussi les videos.
+
+## Vignettes : n'importe quelle video, destination au clic
+- `Kind::Slot { thumb_h, assign, video, link }`. `video: Some(v)` = la vignette montre la video v du projet sur n'importe quelle page et ne compte pas parmi les elements de la page (`slots()`/`slot_count()` = vignettes d'elements seulement ; `all_slot_count()` pour la limite par page). `link: Some(t)` remplace le comportement habituel (chapitres sinon lecture ; sur une page de chapitres : lecture depuis le chapitre).
+- JSON : `"video": N` (1-based) et `"cible": {...}` sur la vignette. Pages libres : leurs vignettes utilisent maintenant `video` ; un ancien `"element"` d'une page libre est converti a la lecture.
+- Construction : `page_buttons` recoit `video_specs` (une SlotSpec par video) ; les pages libres n'ont plus d'elements propres. Echange/retrait de video renumerotent ou suppriment ces vignettes sur toutes les pages.
+- GUI : liste « Contenu » (elements de la page puis toutes les videos) et « Au clic » (habituel, lire la video associee, pages, autres videos) ; l'apercu recoit les vignettes dans l'ordre de la liste. Sur le canevas : « V3 » = video 3 choisie, « → » = destination personnalisee.

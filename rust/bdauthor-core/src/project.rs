@@ -106,7 +106,8 @@ fn resolve_design(ov: Option<&PageDesign>, expected: usize, menu: MenuType, page
 #[allow(clippy::too_many_arguments)]
 /// `decor` : textes et images non cliquables a l'echelle `s` ; `to_decor` : dessin d'un element texte/image a une echelle donnee
 /// (sert aux textes et images cliquables, qui deviennent des boutons).
-fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], to_decor: &dyn Fn(&Item, f64) -> Option<Decor>, menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+/// `slots` : elements de la page ; `videos` : une entree par video du projet (vignettes montrant une video choisie).
+fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], to_decor: &dyn Fn(&Item, f64) -> Option<Decor>, menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], videos: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
     let (mut buttons, mut pix, mut k) = (Vec::new(), Vec::new(), 0usize);
     for (idx, it) in design.items.iter().enumerate() {
         let (x, y, w, h) = it.scaled(s);
@@ -114,14 +115,25 @@ fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, ass
         let above: Vec<Decor> = decor.iter().filter(|(i, d)| *i > idx && d.intersects((x, y, w, h))).map(|(_, d)| d.shifted(-x, -y)).collect();
         let over = |st: [Arc<RgbaImage>; 2]| if above.is_empty() { st } else { renderer.overlay(st, &above) };
         match &it.kind {
-            Kind::Slot { thumb_h, .. } => {
-                let sp = &slots[assignment[k]];
-                k += 1;
+            Kind::Slot { thumb_h, video, link, .. } => {
+                let sp = match video {
+                    Some(v) => videos.get(*v).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?,
+                    None => {
+                        let sp = &slots[assignment[k]];
+                        k += 1;
+                        sp
+                    }
+                };
                 let th = py_round(*thumb_h as f64 * s) as i32;
                 let thumb = ffmpeg::extract_thumbnail_rgba(tools, &sp.source, (w as u32, th as u32), sp.at, sp.duration)?;
                 let [nrm, sel] = over(renderer.thumb_button(&thumb, &sp.label, w as u32, h as u32, th as u32));
                 let mut b = MenuButton::new("", sp.go, x, y, vec![nrm, sel.clone(), sel]);
                 b.commands = sp.commands.clone();
+                if let Some(t) = link {
+                    // destination choisie : remplace le comportement habituel de la vignette
+                    b.title = target(NavAction::Goto, Some(*t));
+                    b.commands.clear();
+                }
                 buttons.push(b);
                 pix.push(2 * w as u64 * h as u64);
             }
@@ -594,6 +606,15 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let bg_sc = still_clip(env.tools, env.cancel, &bg_png, fond_s, size, fps, &still_opts, &mut files, n as u32)?;
     (env.progress)(0.9);
 
+    // vignette montrant une video choisie (sur n'importe quelle page) : comme une vignette du menu principal
+    let mut video_specs = Vec::with_capacity(n);
+    for (i, v) in vids.iter().enumerate() {
+        video_specs.push(SlotSpec {
+            label: vtitle(v), source: p(&vfile(v)?), at: v.get("vignette_s").and_then(Value::as_f64), duration: durations[i], commands: vec![],
+            go: plan.chapters.get(&i).map_or(i as u32 + 1, |c| c.pages[0] as u32),
+        });
+    }
+
     // 3. menu principal : une page par groupe de videos (page 1 = clip IG 80002, playlist N)
     let main_pls: Vec<u32> = std::iter::once(n as u32).chain((1..total_main).map(|q| (n + q) as u32)).collect();
     let mut next_pl = (n + total_main) as u32;
@@ -617,7 +638,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             _ => 0,
         };
         let decor_r = scale_decor(&design, sc_);
-        let (buttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, &to_decor, MenuType::Main, pg, total_main, &slots, &target, sc_)?;
+        let (buttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, &to_decor, MenuType::Main, pg, total_main, &slots, &video_specs, &target, sc_)?;
         let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
         let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
             let num = next_bg;
@@ -635,16 +656,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     for (f, design) in free_pages.iter().enumerate() {
         let pg = main_pg.len() + f;
         let what = format!("menu principal, page libre {}", f + 1);
-        let mut slots = Vec::new();
-        for it in design.items.iter() {
-            if let Kind::Slot { assign: Some(i), .. } = it.kind {
-                let v = &vids[i];
-                slots.push(SlotSpec {
-                    label: vtitle(v), source: p(&vfile(v)?), at: v.get("vignette_s").and_then(Value::as_f64), duration: durations[i], commands: vec![],
-                    go: plan.chapters.get(&i).map_or(i as u32 + 1, |c| c.pages[0] as u32),
-                });
-            }
-        }
+        let slots: Vec<SlotSpec> = Vec::new(); // page libre : toutes ses vignettes montrent une video choisie
         let target = |a: NavAction, t: Option<Target>| match a {
             NavAction::Prev => plan.main_titles[pg.saturating_sub(1)] as u32,
             NavAction::Next => plan.main_titles[(pg + 1).min(total_main - 1)] as u32,
@@ -653,7 +665,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         };
         let decor_r = scale_decor(design, sc_);
         let identity: Vec<usize> = (0..slots.len()).collect();
-        let (buttons, pix) = page_buttons(env.tools, env.renderer, design, &identity, &decor_r, &to_decor, MenuType::Main, pg, total_main, &slots, &target, sc_)?;
+        let (buttons, pix) = page_buttons(env.tools, env.renderer, design, &identity, &decor_r, &to_decor, MenuType::Main, pg, total_main, &slots, &video_specs, &target, sc_)?;
         let decor: Vec<Decor> = scale_decor(design, sd).into_iter().map(|(_, d)| d).collect();
         for l in design.validate_free(pg, total_main, n).iter().filter(|x| !x.error) { (env.log)(&format!("{what} : {}", l.msg)); }
         let (bg_num, pscan) = if custom_fond.is_some() && decor.is_empty() {
@@ -703,7 +715,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 NavAction::Goto => t.and_then(&goto).unwrap_or(0),
             };
             let decor_r = scale_decor(&design, sc_);
-            let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, &to_decor, MenuType::Chapters, q, npg, &slots, &target, sc_)?;
+            let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, &to_decor, MenuType::Chapters, q, npg, &slots, &video_specs, &target, sc_)?;
             let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
             let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
                 let num = next_bg;
