@@ -3,3 +3,4 @@
 *.jpg binary
 *.m2ts binary
 *.clpi binary
+*.bat text eol=crlf
