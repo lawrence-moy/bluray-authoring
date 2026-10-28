@@ -34,7 +34,7 @@ fn validation() {
 fn json_roundtrip_and_remap() {
     let mut ds = Designs::default();
     let mut p = PageDesign::starting_point(MenuType::Chapters, 3, 0, 1, "Chapitres").unwrap();
-    p.items.push(Item { x: 50, y: 60, w: 300, h: 200, kind: Kind::Image { path: "logo.png".into() } });
+    p.items.push(Item { x: 50, y: 60, w: 300, h: 200, kind: Kind::Image { path: "logo.png".into(), link: None } });
     if let Kind::Text { color, align, font, .. } = &mut p.items[0].kind { *color = [10, 200, 30]; *align = Align::Left; *font = "georgia.ttf".into(); }
     ds.main.insert(1, PageDesign::default_main(4, 1, 3).unwrap());
     ds.chapters.insert((2, 0), p.clone());
@@ -112,4 +112,46 @@ fn goto_buttons_json_remap_and_check() {
     // verification des cibles
     let ok = |t: Target| matches!(t, Target::Main(0..=1));
     assert!(ds.main[&0].check_targets(&ok).iter().any(|p| p.error), "chapitres inexistants");
+}
+
+#[test]
+fn clickable_text_image_and_video_targets() {
+    let mut ds = Designs::default();
+    let mut p = PageDesign::default_main(2, 0, 1).unwrap();
+    let mut t = Item::text("Lire", 100, 900, 300, 80, 50);
+    if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Video(2)); }
+    p.items.push(t);
+    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Image { path: "logo.png".into(), link: Some(Target::Main(1)) } });
+    p.items.push(Item { x: 900, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "b".into(), target: Some(Target::Video(1)) } });
+    p.items.push(Item { x: 1300, y: 900, w: 300, h: 80, kind: Kind::Image { path: "deco.png".into(), link: None } });
+    ds.main.insert(0, p);
+    let text = ds.to_value().to_pretty();
+    assert!(text.contains("\"lire\": \"video\""), "{text}");
+    let back = Designs::from_value(&parse(&text).unwrap()).unwrap();
+    assert_eq!(back, ds);
+    let items = &ds.main[&0].items;
+    let n = items.len();
+    assert!(items[n - 4].is_button() && items[n - 3].is_button() && !items[n - 1].is_button());
+    let links = |d: &Designs| -> Vec<Option<Target>> { d.main[&0].items.iter().rev().take(4).rev().map(|i| match i.kind { Kind::Nav { target, .. } => target, _ => i.link() }).collect() };
+    assert_eq!(links(&ds), vec![Some(Target::Video(2)), Some(Target::Main(1)), Some(Target::Video(1)), None]);
+    let mut x = ds.clone();
+    x.swap_videos(1, 2);
+    assert_eq!(links(&x), vec![Some(Target::Video(1)), Some(Target::Main(1)), Some(Target::Video(2)), None]);
+    let mut y = ds.clone();
+    y.remove_video(1);
+    assert_eq!(links(&y), vec![Some(Target::Video(1)), Some(Target::Main(1)), None, None]);
+    let mut z = ds.clone();
+    z.page_removed(1);
+    assert_eq!(links(&z)[1], None);
+    // chevauchement : un texte cliquable compte comme un bouton
+    let mut o = PageDesign::default();
+    o.items.push(Item { x: 0, y: 0, w: 400, h: 100, kind: Kind::Image { path: "a.png".into(), link: Some(Target::Video(0)) } });
+    o.items.push(Item::nav(NavAction::Goto, 100, 50, 300, 80));
+    assert!(o.validate(0, MenuType::Main, 0, 1).iter().any(|p| p.msg.contains("chevauchent")));
+    // destinations inexistantes
+    let ok = |t: Target| matches!(t, Target::Main(0) | Target::Video(0..=1));
+    let probs = ds.main[&0].check_targets(&ok);
+    assert_eq!(probs.iter().filter(|p| p.error).count(), 2, "{probs:?}");
+    // cible illisible
+    assert!(PageDesign::from_value(&parse(r#"{"elements":[{"type":"texte","texte":"x","taille":20,"x":0,"y":0,"w":50,"h":50,"cible":{"menu":"???"}}]}"#).unwrap()).is_err());
 }

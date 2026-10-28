@@ -292,3 +292,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Chaque replique = une epoque (PCS 0x80 + WDS + PDS + ODS + END) puis un ensemble d'effacement (PCS normal sans objet) ; si la replique suivante arrive avant que l'effacement soit possible (delai de decodage ~0,26 s en 1080), elle remplace directement la precedente. Duree minimale 0,3 s.
 - Valide : ffmpeg decode les flux et affiche aux bons instants et positions (tests/subtitle_e2e.rs). NON valide : lecteur de salon, VLC (a tester par l'utilisateur).
 - Non fait : piste « par defaut » (SET_STREAM / PSR2), sous-titres images integres (PGS/DVD), styles ASS (seuls texte et sauts de ligne sont conserves), italique/gras.
+
+## Textes et images cliquables, bouton vers une video
+- `Target::Video(v)` (JSON `"cible": {"lire":"video","video":N}`) : un bouton « Aller a » peut lire n'importe quelle video (titre v+1, retour comme apres une vignette).
+- `Kind::Text/Image { .., link: Option<Target> }` (JSON : champ `cible` sur l'element) : l'element devient un bouton IG. Etat normal = l'element seul sur fond transparent, selectionne = cadre bleu translucide borde de blanc (`Renderer::decor_button`, defaut = bouton texte vide). Il n'est plus dessine dans le fond.
+- `Item::link()`, `Item::targets_mut()` ; `is_button()` inclut les elements cliquables (chevauchements, debordement) ; echange/retrait de videos et suppression de pages renumerotent aussi ces liens.
+- Corrige au passage : les textes/images poses sur les boutons (superposition) etaient a l'echelle de la video et non du menu quand le menu est en 1080 sur une video 720.
+- GUI : case « Cliquable » + liste « Destination » (pages puis « Lire la video N ») dans l'inspecteur ; la liste du bouton « Aller a » propose aussi les videos.

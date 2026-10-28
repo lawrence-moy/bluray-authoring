@@ -57,7 +57,7 @@ fn ordering_and_decor_copy() {
     assert_eq!(to_back(&mut d, 4), 0);
     assert!(matches!(d.items[0].kind, Kind::Text { .. }));
     let mut src = PageDesign::starting_point(MenuType::Main, 3, 0, 2, "Titre commun").unwrap();
-    src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into() } });
+    src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into(), link: None } });
     let target = PageDesign::default_main(2, 1, 2).unwrap();
     let out = copy_decor(&src, target.clone(), &target);
     assert!(out.items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Prev, .. })), "Precedent repris de la page cible");

@@ -298,6 +298,19 @@ impl bdauthor_core::project::Renderer for FontRenderer {
         [mk(false), mk(true)]
     }
 
+    fn decor_button(&self, decor: &Decor, w: u32, h: u32) -> [Arc<RgbaImage>; 2] {
+        let one = std::slice::from_ref(decor);
+        // normal : l'element seul sur fond transparent ; selectionne : sur un cadre bleu translucide borde de blanc
+        let normal = self.compose_on(RgbaImage::new(w, h), one).unwrap_or_else(|_| RgbaImage::new(w, h));
+        let mut back = rounded_rect(w, h, (w.min(h) as f32 * 0.15).min(16.0), SELECTED_BG);
+        for p in back.data.chunks_exact_mut(4) {
+            p[3] = (p[3] as u32 * 150 / 255) as u8;
+        }
+        let mut sel = self.compose_on(back.clone(), one).unwrap_or(back);
+        border(&mut sel, true);
+        [Arc::new(normal), Arc::new(sel)]
+    }
+
     fn overlay(&self, states: [Arc<RgbaImage>; 2], decor: &[Decor]) -> [Arc<RgbaImage>; 2] {
         let one = |a: &Arc<RgbaImage>| Arc::new(self.compose_on(a.as_ref().clone(), decor).unwrap_or_else(|_| a.as_ref().clone()));
         [one(&states[0]), one(&states[1])]
@@ -547,11 +560,11 @@ impl FontRenderer {
         for it in &design.items {
             let (x, y, w, h) = (r(it.x), r(it.y), r(it.w).max(1), r(it.h).max(1));
             match &it.kind {
-                Kind::Text { text, size: sz, color, align, font } => {
+                Kind::Text { text, size: sz, color, align, font, .. } => {
                     let (spr, px, py) = self.text_sprite(text, r(*sz), *color, *align, font, project_dir, w, h);
                     blit(&mut im, &spr, x - px, y - py, 1.0);
                 }
-                Kind::Image { path } => {
+                Kind::Image { path, .. } => {
                     let Ok(src) = self.cached_image(&abs(path)) else { continue };
                     let sc = (w as f64 / src.width as f64).min(h as f64 / src.height as f64);
                     let (nw, nh) = (((src.width as f64 * sc).round() as u32).max(1), ((src.height as f64 * sc).round() as u32).max(1));

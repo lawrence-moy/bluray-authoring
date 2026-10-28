@@ -5,7 +5,7 @@
 //! pagination au-dela de 12 elements (voir `paginate`), menus de chapitres, cache d'encodage.
 //! Le dessin (vignettes, libelles, fond) est delegue a un `Renderer` : le crate `bdauthor-render` en fournit un complet.
 use crate::check::{check_bdmv, Report};
-use crate::design::{nav_applicable, Align, Designs, Kind, MenuType, NavAction, PageDesign, Target};
+use crate::design::{nav_applicable, Align, Designs, Item, Kind, MenuType, NavAction, PageDesign, Target};
 use crate::disc::write_bdmv;
 use crate::ffmpeg::{self, EncodeOpts, Error, Tools};
 use crate::film::{make_film_m2ts, make_still_m2ts};
@@ -43,6 +43,12 @@ pub trait Renderer {
     fn overlay(&self, states: [Arc<RgbaImage>; 2], decor: &[Decor]) -> [Arc<RgbaImage>; 2] {
         let _ = decor;
         states
+    }
+    /// (normal, selectionne) d'un texte ou d'une image cliquable : `decor` est deja place dans un cadre de `w` x `h` (coordonnees relatives).
+    /// Par defaut : un bouton sans libelle.
+    fn decor_button(&self, decor: &Decor, w: u32, h: u32) -> [Arc<RgbaImage>; 2] {
+        let _ = decor;
+        self.text_button("", w, h)
     }
     /// Image (fond transparent) d'une replique de sous-titre : texte centre, contour compris, aux tailles du style (deja a l'echelle de
     /// la video). `max_w` : largeur disponible (le texte est reduit s'il deborde). `None` si ce moteur ne sait pas dessiner de sous-titres.
@@ -98,7 +104,9 @@ fn resolve_design(ov: Option<&PageDesign>, expected: usize, menu: MenuType, page
 
 /// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page ; `s` = echelle du plan 1920 vers le menu.
 #[allow(clippy::too_many_arguments)]
-fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+/// `decor` : textes et images non cliquables a l'echelle `s` ; `to_decor` : dessin d'un element texte/image a une echelle donnee
+/// (sert aux textes et images cliquables, qui deviennent des boutons).
+fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], to_decor: &dyn Fn(&Item, f64) -> Option<Decor>, menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
     let (mut buttons, mut pix, mut k) = (Vec::new(), Vec::new(), 0usize);
     for (idx, it) in design.items.iter().enumerate() {
         let (x, y, w, h) = it.scaled(s);
@@ -120,6 +128,12 @@ fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, ass
             Kind::Nav { action, text, target: tg } if nav_applicable(*action, menu, page, pages) => {
                 let [nrm, sel] = over(renderer.text_button(text, w as u32, h as u32));
                 buttons.push(MenuButton::new("", target(*action, *tg), x, y, vec![nrm, sel.clone(), sel]));
+                pix.push(2 * w as u64 * h as u64);
+            }
+            Kind::Text { .. } | Kind::Image { .. } if it.link().is_some() => {
+                let Some(d) = to_decor(it, s) else { continue };
+                let [nrm, sel] = over(renderer.decor_button(&d.shifted(-x, -y), w as u32, h as u32));
+                buttons.push(MenuButton::new("", target(NavAction::Goto, it.link()), x, y, vec![nrm, sel.clone(), sel]));
                 pix.push(2 * w as u64 * h as u64);
             }
             _ => {}
@@ -502,13 +516,17 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         match t {
             Target::Main(p) => plan.main_titles.get(p).copied(),
             Target::Chapters(v, q) => plan.chapters.get(&v).and_then(|c| c.pages.get(q).copied()),
+            Target::Video(v) => (v < n).then_some(v as u16 + 1),
         }
         .map(|x| x as u32)
     };
     for d in designs.main.values().chain(designs.chapters.values()).chain(designs.free.iter()) {
         for it in &d.items {
             if let Kind::Nav { action: NavAction::Goto, text, target } = &it.kind {
-                if target.and_then(&goto).is_none() { return bad(format!("bouton « {text} » : page cible inexistante ou non choisie")); }
+                if target.and_then(&goto).is_none() { return bad(format!("bouton « {text} » : destination inexistante ou non choisie")); }
+            }
+            if let Some(t) = it.link() {
+                if goto(t).is_none() { return bad("texte ou image cliquable : destination inexistante (page ou video supprimee ?)"); }
             }
         }
     }
@@ -527,18 +545,21 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let custom_fond: Option<PathBuf> = menu_cfg.get("fond").and_then(Value::as_str).map(|f| p(f));
     let sd = size.0 as f64 / 1920.0; // echelle des textes/images poses sur le fond (qui a la taille de la video)
     // (rang dans l'ordre de superposition, decor) : le rang sert a poser sur les boutons ce qui est au-dessus d'eux
-    let scale_decor = |d: &PageDesign| -> Vec<(usize, Decor)> {
-        d.items.iter().enumerate().filter_map(|(rank, it)| {
-            let (x, y, w, h) = it.scaled(sd);
-            match &it.kind {
-                Kind::Text { text, size, color, align, font } => {
-                    let font = if font.is_empty() { String::new() } else { let c = p(font); if c.is_file() { c.to_string_lossy().into_owned() } else { font.clone() } };
-                    Some((rank, Decor::Text { text: text.clone(), x, y, w, h, size: py_round(*size as f64 * sd) as i32, color: *color, align: *align, font }))
-                }
-                Kind::Image { path } => Some((rank, Decor::Image { path: p(path), x, y, w, h })),
-                _ => None,
+    // dessin d'un texte ou d'une image a l'echelle `k`
+    let to_decor = |it: &Item, k: f64| -> Option<Decor> {
+        let (x, y, w, h) = it.scaled(k);
+        match &it.kind {
+            Kind::Text { text, size, color, align, font, .. } => {
+                let font = if font.is_empty() { String::new() } else { let c = p(font); if c.is_file() { c.to_string_lossy().into_owned() } else { font.clone() } };
+                Some(Decor::Text { text: text.clone(), x, y, w, h, size: py_round(*size as f64 * k) as i32, color: *color, align: *align, font })
             }
-        }).collect()
+            Kind::Image { path, .. } => Some(Decor::Image { path: p(path), x, y, w, h }),
+            _ => None,
+        }
+    };
+    // textes et images non cliquables (les cliquables sont des boutons), a l'echelle `k`
+    let scale_decor = |d: &PageDesign, k: f64| -> Vec<(usize, Decor)> {
+        d.items.iter().enumerate().filter(|(_, it)| it.link().is_none()).filter_map(|(rank, it)| to_decor(it, k).map(|x| (rank, x))).collect()
     };
     let add_menu_page = |files: &mut BTreeMap<String, Vec<u8>>, buttons: &[MenuButton], pix: &[u64], ig_num: u32, pl_num: u32, bg_num: u32, bgscan: &ClipScan, label: &str| -> Result<MenuStats> {
         let pts = required_ics_pts(pix, (menu_size.0 as u64, menu_size.1 as u64), 42956, 9000);
@@ -595,9 +616,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             NavAction::Goto => t.and_then(&goto).unwrap_or(0),
             _ => 0,
         };
-        let decor_r = scale_decor(&design);
-        let (buttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Main, pg, total_main, &slots, &target, sc_)?;
-        let decor: Vec<Decor> = decor_r.into_iter().map(|(_, d)| d).collect();
+        let decor_r = scale_decor(&design, sc_);
+        let (buttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, &to_decor, MenuType::Main, pg, total_main, &slots, &target, sc_)?;
+        let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
         let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
             let num = next_bg;
             next_bg += 1;
@@ -630,10 +651,10 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             NavAction::Goto => t.and_then(&goto).unwrap_or(0),
             _ => 0,
         };
-        let decor_r = scale_decor(design);
+        let decor_r = scale_decor(design, sc_);
         let identity: Vec<usize> = (0..slots.len()).collect();
-        let (buttons, pix) = page_buttons(env.tools, env.renderer, design, &identity, &decor_r, MenuType::Main, pg, total_main, &slots, &target, sc_)?;
-        let decor: Vec<Decor> = decor_r.into_iter().map(|(_, d)| d).collect();
+        let (buttons, pix) = page_buttons(env.tools, env.renderer, design, &identity, &decor_r, &to_decor, MenuType::Main, pg, total_main, &slots, &target, sc_)?;
+        let decor: Vec<Decor> = scale_decor(design, sd).into_iter().map(|(_, d)| d).collect();
         for l in design.validate_free(pg, total_main, n).iter().filter(|x| !x.error) { (env.log)(&format!("{what} : {}", l.msg)); }
         let (bg_num, pscan) = if custom_fond.is_some() && decor.is_empty() {
             (n as u32, bg_sc.clone())
@@ -681,9 +702,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 NavAction::Back => retour_t,
                 NavAction::Goto => t.and_then(&goto).unwrap_or(0),
             };
-            let decor_r = scale_decor(&design);
-            let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Chapters, q, npg, &slots, &target, sc_)?;
-            let decor: Vec<Decor> = decor_r.into_iter().map(|(_, d)| d).collect();
+            let decor_r = scale_decor(&design, sc_);
+            let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, &to_decor, MenuType::Chapters, q, npg, &slots, &target, sc_)?;
+            let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
             let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
                 let num = next_bg;
                 next_bg += 1;

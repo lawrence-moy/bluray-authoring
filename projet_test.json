@@ -13,7 +13,21 @@
     {
       "fichier": "videos/GSC_0022.MP4",
       "titre": "Vidéo 3",
-      "chapitres_auto_s": 5
+      "chapitres_auto_s": 5,
+      "soustitres": [
+        {
+          "fichier": "C:\\Users\\moyla\\Desktop\\Divers\\terror et quebab_v2.srt",
+          "langue": "fra",
+          "style": {
+            "taille": 56,
+            "couleur": "#ffffff",
+            "contour_couleur": "#000000",
+            "contour": 3,
+            "position": "bas",
+            "marge": 70
+          }
+        }
+      ]
     },
     {
       "fichier": "videos/GSC_0025.MP4",
@@ -63,5 +77,74 @@
     "boucle": false,
     "retour": "chapitres",
     "cache": true
+  },
+  "mise_en_page": {
+    "principal": {
+      "1": {
+        "elements": [
+          {
+            "type": "texte",
+            "texte": "Mes vidéos",
+            "taille": 84,
+            "couleur": "#ffffff",
+            "alignement": "centre",
+            "x": 100,
+            "y": 90,
+            "w": 1720,
+            "h": 110
+          },
+          {
+            "type": "vignette",
+            "vignette_h": 202,
+            "x": 180,
+            "y": 440,
+            "w": 360,
+            "h": 250
+          },
+          {
+            "type": "vignette",
+            "vignette_h": 202,
+            "x": 580,
+            "y": 440,
+            "w": 360,
+            "h": 250
+          },
+          {
+            "type": "vignette",
+            "vignette_h": 202,
+            "x": 980,
+            "y": 440,
+            "w": 360,
+            "h": 250
+          },
+          {
+            "type": "vignette",
+            "vignette_h": 202,
+            "x": 1380,
+            "y": 440,
+            "w": 360,
+            "h": 250
+          },
+          {
+            "type": "navigation",
+            "action": "suivant",
+            "texte": "Suivant >",
+            "x": 1000,
+            "y": 940,
+            "w": 360,
+            "h": 80
+          },
+          {
+            "type": "image",
+            "fichier": "Sans titre.png",
+            "x": 390,
+            "y": 730,
+            "w": 270,
+            "h": 200
+          }
+        ]
+      }
+    },
+    "chapitres": {}
   }
 }

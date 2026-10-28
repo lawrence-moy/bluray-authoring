@@ -216,9 +216,11 @@ impl ProjectModel {
             for pg in d.main.values().chain(d.chapters.values()).chain(d.free.iter()) {
                 for it in &pg.items {
                     if let Kind::Nav { action: NavAction::Goto, text, target } = &it.kind {
-                        let bad = match target { None => true, Some(Target::Main(q)) => *q >= total, Some(Target::Chapters(v, _)) => *v >= self.videos.len() };
-                        if bad { p.push(format!("Bouton « {text} » : page cible invalide ou non choisie.")); }
+                        let bad = match target { None => true, Some(Target::Main(q)) => *q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => *v >= self.videos.len() };
+                        if bad { p.push(format!("Bouton « {text} » : destination invalide ou non choisie.")); }
                     }
+                    let bad_link = match it.link() { Some(Target::Main(q)) => q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => v >= self.videos.len(), None => false };
+                    if bad_link { p.push("Texte ou image cliquable : destination invalide.".into()); }
                 }
             }
         }

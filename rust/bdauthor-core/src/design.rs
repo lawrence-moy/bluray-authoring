@@ -9,13 +9,44 @@ use std::collections::BTreeMap;
 
 pub const PLANE: (i32, i32) = (1920, 1080);
 
-/// Page vers laquelle un bouton « Aller a » mene.
+/// Destination d'un bouton « Aller a », ou d'un texte / d'une image cliquable : une page du menu ou une video a lire.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Target {
     /// Page du menu principal (0-based, pages automatiques puis pages libres).
     Main(usize),
     /// Page de chapitres : (video, page), 0-based.
     Chapters(usize, usize),
+    /// Lecture d'une video (0-based) depuis le debut.
+    Video(usize),
+}
+
+impl Target {
+    /// Valeur JSON (champ « cible »).
+    pub fn to_value(self) -> Value {
+        let num = |v: usize| Value::Num((v + 1) as f64);
+        let o = match self {
+            Target::Main(p) => vec![("menu".to_string(), Value::Str("principal".into())), ("page".to_string(), num(p))],
+            Target::Chapters(v, p) => vec![("menu".to_string(), Value::Str("chapitres".into())), ("video".to_string(), num(v)), ("page".to_string(), num(p))],
+            Target::Video(v) => vec![("lire".to_string(), Value::Str("video".into())), ("video".to_string(), num(v))],
+        };
+        Value::Obj(o)
+    }
+    pub fn from_value(c: &Value) -> Option<Target> {
+        let n = |key: &str| c.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
+        if c.get("lire").and_then(Value::as_str) == Some("video") {
+            return n("video").map(Target::Video);
+        }
+        match c.get("menu").and_then(Value::as_str) {
+            Some("principal") => n("page").map(Target::Main),
+            Some("chapitres") => n("video").zip(n("page")).map(|(v, p)| Target::Chapters(v, p)),
+            _ => None,
+        }
+    }
+    /// Renumerotation quand deux videos echangent leur place.
+    fn swap_videos(&mut self, a: usize, b: usize) {
+        let sw = |v: &mut usize| *v = if *v == a { b } else if *v == b { a } else { *v };
+        match self { Target::Chapters(v, _) | Target::Video(v) => sw(v), Target::Main(_) => {} }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,7 +62,7 @@ impl NavAction {
         match self { NavAction::Prev => "< Précédent", NavAction::Next => "Suivant >", NavAction::PlayAll => "Tout lire", NavAction::Back => "Retour", NavAction::Goto => "Aller à…" }
     }
     pub fn label(self) -> &'static str {
-        match self { NavAction::Prev => "Page précédente", NavAction::Next => "Page suivante", NavAction::PlayAll => "Tout lire", NavAction::Back => "Retour", NavAction::Goto => "Aller à une page" }
+        match self { NavAction::Prev => "Page précédente", NavAction::Next => "Page suivante", NavAction::PlayAll => "Tout lire", NavAction::Back => "Retour", NavAction::Goto => "Aller à une page ou lire une vidéo" }
     }
 }
 
@@ -50,15 +81,29 @@ pub enum Kind {
     /// `target` : page visee par une action `Goto` (ignore pour les autres actions).
     Nav { action: NavAction, text: String, target: Option<Target> },
     /// `font` : vide = police par defaut ; sinon fichier .ttf/.otf (chemin absolu ou relatif au projet) ou nom d'un fichier de police installe.
-    Text { text: String, size: i32, color: [u8; 3], align: Align, font: String },
-    Image { path: String },
+    /// `link` : si present, le texte devient un bouton qui mene a cette destination.
+    Text { text: String, size: i32, color: [u8; 3], align: Align, font: String, link: Option<Target> },
+    /// `link` : si present, l'image devient un bouton qui mene a cette destination.
+    Image { path: String, link: Option<Target> },
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Item { pub x: i32, pub y: i32, pub w: i32, pub h: i32, pub kind: Kind }
 
 impl Item {
-    pub fn is_button(&self) -> bool { matches!(self.kind, Kind::Slot { .. } | Kind::Nav { .. }) }
+    pub fn is_button(&self) -> bool { matches!(self.kind, Kind::Slot { .. } | Kind::Nav { .. }) || self.link().is_some() }
+    /// Destination d'un texte ou d'une image cliquable.
+    pub fn link(&self) -> Option<Target> {
+        match self.kind { Kind::Text { link, .. } | Kind::Image { link, .. } => link, _ => None }
+    }
+    /// Destinations modifiables de l'element : cible d'un bouton « Aller a », lien d'un texte ou d'une image.
+    pub fn targets_mut(&mut self) -> Option<&mut Option<Target>> {
+        match &mut self.kind {
+            Kind::Nav { action: NavAction::Goto, target, .. } => Some(target),
+            Kind::Text { link, .. } | Kind::Image { link, .. } => Some(link),
+            _ => None,
+        }
+    }
     pub fn is_decor(&self) -> bool { !self.is_button() }
     /// (x, y, largeur, hauteur) mis a l'echelle `s` (arrondi comme Python).
     pub fn scaled(&self, s: f64) -> (i32, i32, i32, i32) {
@@ -66,7 +111,7 @@ impl Item {
         (r(self.x), r(self.y), r(self.w), r(self.h))
     }
     pub fn text(text: &str, x: i32, y: i32, w: i32, h: i32, size: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new() } }
+        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None } }
     }
     pub fn nav(action: NavAction, x: i32, y: i32, w: i32, h: i32) -> Item {
         Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } } }
@@ -199,7 +244,7 @@ impl PageDesign {
         let active: Vec<(usize, &Item)> = self.items.iter().enumerate().filter(|(_, i)| match &i.kind {
             Kind::Slot { .. } => true,
             Kind::Nav { action, .. } => nav_applicable(*action, menu, page, pages),
-            _ => false,
+            _ => i.link().is_some(),
         }).collect();
         for (ai, (a, ia)) in active.iter().enumerate() {
             for (b, ib) in &active[ai + 1..] {
@@ -236,8 +281,9 @@ impl PageDesign {
     pub fn check_targets(&self, exists: &dyn Fn(Target) -> bool) -> Vec<Problem> {
         let mut p = Vec::new();
         for (k, it) in self.items.iter().enumerate() {
-            if let Kind::Nav { action: NavAction::Goto, target: Some(t), .. } = it.kind {
-                if !exists(t) { p.push(Problem { error: true, msg: format!("Élément {} : la page visée n'existe pas.", k + 1) }); }
+            let t = match it.kind { Kind::Nav { action: NavAction::Goto, target: Some(t), .. } => Some(t), _ => it.link() };
+            if let Some(t) = t {
+                if !exists(t) { p.push(Problem { error: true, msg: format!("Élément {} : la destination n'existe pas.", k + 1) }); }
             }
         }
         p
@@ -263,20 +309,18 @@ impl PageDesign {
                 }
                 Kind::Nav { action, text, target } => {
                     put("type", Value::Str("navigation".into())); put("action", Value::Str(action.name().into())); put("texte", Value::Str(text.clone()));
-                    if let (NavAction::Goto, Some(t)) = (action, target) {
-                        let o = match t {
-                            Target::Main(p) => vec![("menu".to_string(), Value::Str("principal".into())), ("page".to_string(), num(*p as i32 + 1))],
-                            Target::Chapters(v, p) => vec![("menu".to_string(), Value::Str("chapitres".into())), ("video".to_string(), num(*v as i32 + 1)), ("page".to_string(), num(*p as i32 + 1))],
-                        };
-                        put("cible", Value::Obj(o));
-                    }
+                    if let (NavAction::Goto, Some(t)) = (action, target) { put("cible", t.to_value()); }
                 }
-                Kind::Text { text, size, color, align, font } => {
+                Kind::Text { text, size, color, align, font, link } => {
+                    if let Some(t) = link { put("cible", t.to_value()); }
                     if !font.is_empty() { put("police", Value::Str(font.clone())); }
                     put("type", Value::Str("texte".into())); put("texte", Value::Str(text.clone())); put("taille", num(*size));
                     put("couleur", Value::Str(format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]))); put("alignement", Value::Str(align.name().into()));
                 }
-                Kind::Image { path } => { put("type", Value::Str("image".into())); put("fichier", Value::Str(path.clone())); }
+                Kind::Image { path, link } => {
+                    if let Some(t) = link { put("cible", t.to_value()); }
+                    put("type", Value::Str("image".into())); put("fichier", Value::Str(path.clone()));
+                }
             }
             put("x", num(it.x)); put("y", num(it.y)); put("w", num(it.w)); put("h", num(it.h));
             Value::Obj(o)
@@ -289,17 +333,15 @@ impl PageDesign {
         for (k, e) in v.get("elements").and_then(Value::as_array).ok_or("page sans « elements »")?.iter().enumerate() {
             let at = |key: &str| -> Result<i32, String> { e.get(key).and_then(Value::as_f64).map(|x| x.round() as i32).ok_or_else(|| format!("élément {} : « {key} » manquant", k + 1)) };
             let st = |key: &str| e.get(key).and_then(Value::as_str);
+            let link = || -> Result<Option<Target>, String> {
+                match e.get("cible") { None | Some(Value::Null) => Ok(None), Some(c) => Target::from_value(c).map(Some).ok_or_else(|| format!("élément {} : cible invalide", k + 1)) }
+            };
             let kind = match st("type").ok_or_else(|| format!("élément {} sans type", k + 1))? {
                 "vignette" => Kind::Slot { thumb_h: at("vignette_h")?, assign: e.get("element").and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize) },
                 "navigation" => {
                     let action = st("action").and_then(NavAction::from_name).ok_or_else(|| format!("élément {} : action inconnue", k + 1))?;
-                    let n = |c: &Value, key: &str| c.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
                     let target = match e.get("cible") {
-                        Some(c) if action == NavAction::Goto => match c.get("menu").and_then(Value::as_str) {
-                            Some("principal") => n(c, "page").map(Target::Main),
-                            Some("chapitres") => n(c, "video").zip(n(c, "page")).map(|(v, p)| Target::Chapters(v, p)),
-                            _ => return Err(format!("élément {} : cible invalide", k + 1)),
-                        },
+                        Some(c) if action == NavAction::Goto => Some(Target::from_value(c).ok_or_else(|| format!("élément {} : cible invalide", k + 1))?),
                         _ => None,
                     };
                     Kind::Nav { action, text: st("texte").unwrap_or(action.default_text()).to_string(), target }
@@ -308,9 +350,9 @@ impl PageDesign {
                     let c = st("couleur").unwrap_or("#ffffff").trim_start_matches('#');
                     let rgb = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6).ok_or_else(|| format!("élément {} : couleur invalide", k + 1))?;
                     Kind::Text { text: st("texte").unwrap_or("").to_string(), size: at("taille")?, color: [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8],
-                                 align: st("alignement").and_then(Align::from_name).unwrap_or(Align::Center), font: st("police").unwrap_or("").to_string() }
+                                 align: st("alignement").and_then(Align::from_name).unwrap_or(Align::Center), font: st("police").unwrap_or("").to_string(), link: link()? }
                 }
-                "image" => Kind::Image { path: st("fichier").ok_or_else(|| format!("élément {} : « fichier » manquant", k + 1))?.to_string() },
+                "image" => Kind::Image { path: st("fichier").ok_or_else(|| format!("élément {} : « fichier » manquant", k + 1))?.to_string(), link: link()? },
                 t => return Err(format!("élément {} : type « {t} » inconnu", k + 1)),
             };
             items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind });
@@ -345,7 +387,7 @@ impl Designs {
         }
         for d in self.all_mut() {
             for it in &mut d.items {
-                if let Kind::Nav { target: Some(Target::Chapters(v, _)), .. } = &mut it.kind { *v = if *v == a { b } else if *v == b { a } else { *v }; }
+                if let Some(Some(t)) = it.targets_mut() { t.swap_videos(a, b); }
             }
         }
     }
@@ -359,7 +401,7 @@ impl Designs {
     pub fn page_removed(&mut self, page: usize) {
         for d in self.all_mut() {
             for it in &mut d.items {
-                if let Kind::Nav { action: NavAction::Goto, target, .. } = &mut it.kind {
+                if let Some(target) = it.targets_mut() {
                     match *target {
                         Some(Target::Main(p)) if p == page => *target = None,
                         Some(Target::Main(p)) if p > page => *target = Some(Target::Main(p - 1)),
@@ -377,10 +419,11 @@ impl Designs {
         // pages libres : les vignettes de cette video disparaissent, les suivantes sont renumerotees
         for d in self.all_mut() {
             for it in &mut d.items {
-                if let Kind::Nav { action: NavAction::Goto, target, .. } = &mut it.kind {
+                if let Some(target) = it.targets_mut() {
                     match *target {
-                        Some(Target::Chapters(v, _)) if v == i => *target = None,
+                        Some(Target::Chapters(v, _)) | Some(Target::Video(v)) if v == i => *target = None,
                         Some(Target::Chapters(v, q)) if v > i => *target = Some(Target::Chapters(v - 1, q)),
+                        Some(Target::Video(v)) if v > i => *target = Some(Target::Video(v - 1)),
                         _ => {}
                     }
                 }

@@ -83,9 +83,34 @@ fn kind_name(k: &Kind) -> &'static str {
     match k {
         Kind::Slot { .. } => "Vignette",
         Kind::Nav { .. } => "Bouton de navigation",
-        Kind::Text { .. } => "Texte",
-        Kind::Image { .. } => "Image",
+        Kind::Text { link: None, .. } => "Texte",
+        Kind::Text { .. } => "Texte cliquable",
+        Kind::Image { link: None, .. } => "Image",
+        Kind::Image { .. } => "Image cliquable",
     }
+}
+
+/// Case « cliquable » et choix de la destination d'un texte ou d'une image.
+fn link_ui(ui: &mut egui::Ui, link: &mut Option<Target>, targets: &[(Target, String)], changed: &mut bool) {
+    let mut on = link.is_some();
+    if ui.checkbox(&mut on, "Cliquable (devient un bouton du menu)").changed() {
+        *link = if on { targets.first().map(|t| t.0) } else { None };
+        *changed = true;
+    }
+    if link.is_some() {
+        destination_combo(ui, link, targets, changed);
+        ui.label(egui::RichText::new("Sélectionné à la télécommande, l'élément est entouré d'un cadre bleu.").weak());
+    }
+}
+
+/// Liste des destinations possibles : pages du menu puis videos a lire.
+fn destination_combo(ui: &mut egui::Ui, target: &mut Option<Target>, targets: &[(Target, String)], changed: &mut bool) {
+    let shown = target.and_then(|t| targets.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| "(destination introuvable : à choisir)".to_string());
+    egui::ComboBox::from_label("Destination").selected_text(shown).show_ui(ui, |ui| {
+        for (t, label) in targets {
+            if ui.selectable_label(*target == Some(*t), label).clicked() { *target = Some(*t); *changed = true; }
+        }
+    });
 }
 
 impl App {
@@ -93,12 +118,16 @@ impl App {
         list_pages(&self.model, &self.durations)
     }
 
-    /// Pages visables par un bouton « Aller a » : (cible, libelle).
+    /// Destinations d'un bouton « Aller a » ou d'un element cliquable : (cible, libelle) ; les pages, puis les videos a lire.
     fn page_targets(&self) -> Vec<(Target, String)> {
-        self.pages().into_iter().map(|p| {
+        let mut out: Vec<(Target, String)> = self.pages().into_iter().map(|p| {
             let t = match p.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(p.page) };
-            (t, p.label(&self.model))
-        }).collect()
+            (t, format!("Page : {}", p.label(&self.model)))
+        }).collect();
+        for v in 0..self.model.videos.len() {
+            out.push((Target::Video(v), format!("Lire la vidéo {}. {}", v + 1, video_title(&self.model, v))));
+        }
+        out
     }
 
     fn current_info(&self) -> Option<PageInfo> {
@@ -314,7 +343,7 @@ impl App {
             if pick_image {
                 if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp"]).pick_file() {
                     let rel = self.relative(&f);
-                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel } });
+                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None } });
                 }
             }
             if let Some(it) = add {
@@ -577,16 +606,12 @@ impl App {
                         }
                     });
                     if *action == NavAction::Goto {
-                        let shown = target.and_then(|t| page_targets.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| "(page introuvable : à choisir)".to_string());
-                        egui::ComboBox::from_label("Page cible").selected_text(shown).show_ui(ui, |ui| {
-                            for (t, label) in &page_targets {
-                                if ui.selectable_label(*target == Some(*t), label).clicked() { *target = Some(*t); changed = true; }
-                            }
-                        });
+                        destination_combo(ui, target, &page_targets, &mut changed);
                     }
                     ui.horizontal(|ui| { ui.label("Texte :"); changed |= ui.text_edit_singleline(text).changed(); });
                 }
-                Kind::Text { text, size, color, align, font } => {
+                Kind::Text { text, size, color, align, font, link } => {
+                    link_ui(ui, link, &page_targets, &mut changed);
                     changed |= ui.add(egui::TextEdit::multiline(text).desired_rows(3).desired_width(f32::INFINITY)).changed();
                     ui.horizontal(|ui| {
                         ui.label("Taille :");
@@ -617,7 +642,8 @@ impl App {
                         }
                     });
                 }
-                Kind::Image { path } => {
+                Kind::Image { path, link } => {
+                    link_ui(ui, link, &page_targets, &mut changed);
                     ui.horizontal(|ui| { ui.label("Fichier :"); changed |= ui.text_edit_singleline(path).changed(); });
                     if ui.button("Choisir…").clicked() { pick_image = true; }
                     ui.label(egui::RichText::new("L'image est ajustée dans le cadre sans déformation.").weak());
@@ -648,7 +674,7 @@ impl App {
         if pick_image {
             if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp"]).pick_file() {
                 let rel = self.relative(&f);
-                if let Some(Kind::Image { path }) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).map(|it| &mut it.kind) {
+                if let Some(Kind::Image { path, .. }) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).map(|it| &mut it.kind) {
                     *path = rel;
                     changed = true;
                 }
@@ -688,8 +714,8 @@ impl App {
         let mut pick = None;
         for (idx, it) in d.items.iter().enumerate().rev() {
             let what = match &it.kind {
-                Kind::Text { text, .. } => format!("Texte « {} »", text.lines().next().unwrap_or("").chars().take(24).collect::<String>()),
-                Kind::Image { path } => format!("Image {}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+                Kind::Text { text, link, .. } => format!("Texte « {} »{}", text.lines().next().unwrap_or("").chars().take(24).collect::<String>(), if link.is_some() { " (cliquable)" } else { "" }),
+                Kind::Image { path, link } => format!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { " (cliquable)" } else { "" }),
                 Kind::Nav { action, text, .. } => if *action == NavAction::Goto { format!("Bouton « {text} »") } else { format!("Bouton {}", action.label()) },
                 Kind::Slot { .. } => "Vignette".to_string(),
             };
