@@ -1,6 +1,6 @@
 //! Logique de l'editeur de mise en page, independante de l'interface : liste des pages, selection a la souris,
 //! deplacement et redimensionnement avec aimantation, reprise d'un decor sur d'autres pages.
-use crate::design::{Designs, Item, Kind, MenuType, PageDesign, PLANE};
+use crate::design::{Designs, Item, Kind, MenuType, NavAction, PageDesign, Target, PLANE};
 use crate::model::ProjectModel;
 use crate::project::paginate;
 use std::collections::HashMap;
@@ -266,4 +266,91 @@ impl History {
         self.last_ms = 0;
         true
     }
+}
+
+// ------------------------------------------------------------------ simulation de la telecommande
+/// Effet de la validation d'un bouton dans la simulation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum SimAction {
+    /// Ouvre une page du menu.
+    Go(Target),
+    /// Lit une video depuis le debut.
+    Play(usize),
+    /// Lit une video depuis un chapitre : (video, chapitre).
+    PlayChapter(usize, usize),
+    /// Page precedente / suivante du meme menu.
+    Prev,
+    Next,
+    /// Retour au menu principal (page de la video).
+    Back,
+}
+
+/// Un bouton de la page tel qu'il sera sur le disque : element de la mise en page, cadre (plan 1920), effet, voisins.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SimButton {
+    pub item: usize,
+    pub rect: (i32, i32, i32, i32),
+    pub action: SimAction,
+    /// indices (dans la liste des boutons) des voisins (haut, bas, gauche, droite)
+    pub neighbors: (usize, usize, usize, usize),
+}
+
+/// Boutons d'une page dans l'ordre du disque (le premier est selectionne a l'ouverture), avec la meme regle de voisinage que le
+/// constructeur. `has_chapters(v)` : la video v a-t-elle un menu de chapitres ?
+pub fn sim_buttons(info: &PageInfo, design: &PageDesign, style: &crate::style::ButtonStyle, n_videos: usize, has_chapters: &dyn Fn(usize) -> bool) -> Vec<SimButton> {
+    let open_video = |v: usize| if has_chapters(v) { SimAction::Go(Target::Chapters(v, 0)) } else { SimAction::Play(v) };
+    let asg = design.slot_assignment(info.items.len());
+    let mut out: Vec<SimButton> = Vec::new();
+    let mut e = 0;
+    for (idx, it) in design.items.iter().enumerate() {
+        let action = match &it.kind {
+            Kind::Slot { video, link, .. } => {
+                let usual = match video {
+                    Some(Some(v)) if *v < n_videos => Some(open_video(*v)),
+                    Some(_) => None,
+                    None => {
+                        let a = asg.get(e).copied().unwrap_or(usize::MAX);
+                        e += 1;
+                        info.items.get(a).map(|&x| match info.video { Some(v) => SimAction::PlayChapter(v, x), None => open_video(x) })
+                    }
+                };
+                match (usual, link) {
+                    (None, _) => None,
+                    (Some(_), Some(t)) => Some(SimAction::Go(*t)),
+                    (Some(u), None) => Some(u),
+                }
+            }
+            Kind::Nav { action, target, .. } if crate::design::nav_applicable(*action, info.menu, info.page, info.pages) => match action {
+                NavAction::Prev => Some(SimAction::Prev),
+                NavAction::Next => Some(SimAction::Next),
+                NavAction::PlayAll => info.video.map(SimAction::Play),
+                NavAction::Back => Some(SimAction::Back),
+                NavAction::Goto => target.map(SimAction::Go),
+            },
+            _ => it.link().map(SimAction::Go),
+        };
+        let Some(action) = action else { continue };
+        let st = it.look.style.as_ref().unwrap_or(style);
+        let (mx, my) = st.margins(it.w, it.h);
+        out.push(SimButton { item: idx, rect: (it.x - mx, it.y - my, it.w + 2 * mx, it.h + 2 * my), action, neighbors: (0, 0, 0, 0) });
+    }
+    let rects: Vec<(i32, i32, i32, i32)> = out.iter().map(|b| b.rect).collect();
+    for (b, n) in out.iter_mut().zip(crate::menu::auto_neighbors(&rects)) {
+        b.neighbors = (n.0 as usize, n.1 as usize, n.2 as usize, n.3 as usize);
+    }
+    out
+}
+
+/// Page (dans `pages`, liste de `list_pages`) correspondant a une destination ; `None` si elle n'existe pas.
+pub fn page_of_target(pages: &[PageInfo], t: Target) -> Option<PageRef> {
+    match t {
+        Target::Main(p) => pages.iter().find(|i| i.menu == MenuType::Main && i.page == p).map(|i| i.r),
+        Target::Chapters(v, q) => pages.iter().find(|i| i.r == PageRef::Chapters(v, q)).map(|i| i.r),
+        Target::Video(_) => None,
+    }
+}
+
+/// Page du menu principal ou se trouve la video `v` (pages automatiques).
+pub fn main_page_of_video(pages: &[PageInfo], v: usize) -> Option<PageRef> {
+    pages.iter().find(|i| matches!(i.r, PageRef::Main(_)) && i.items.contains(&v)).map(|i| i.r)
 }

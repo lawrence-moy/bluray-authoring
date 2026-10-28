@@ -321,3 +321,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Rendu (`bdauthor-render`) : `finish_state` (arrondi, cadre, assombrissement, agrandissement, halo = silhouette floutee), `decor_face`, `skin_button`. Apercu : `render_page_preview(.., style, selected)` montre l'element choisi a l'etat selectionne.
 - GUI : bouton « Style des boutons… » (fenetre, style du projet), inspecteur « Apparence propre a cet element » + images dessinees (navigation, textes/images cliquables), ligne « Poids des boutons » sous l'apercu (taille du menu deduite de la 1re video : 1080 si hauteur > 800 et <= 25 i/s, sinon 720 ; 1080 si l'option est cochee).
 - Les chevauchements dus au halo/agrandissement ne sont pas encore signales par la validation.
+
+## Simulation de la telecommande (editeur)
+- Cœur (`editor.rs`) : `sim_buttons(info, design, style, n_videos, has_chapters)` -> boutons de la page dans l'ordre du disque (le 1er est selectionne a l'ouverture), cadre elargi des marges du style, `SimAction` (Go(Target), Play, PlayChapter, Prev, Next, Back) et voisins calcules par `menu::auto_neighbors` (meme regle que le disque). `page_of_target`, `main_page_of_video`.
+- Rendu : `render_page_preview(.., selected, activated)` montre l'etat active de l'element choisi.
+- GUI `sim_ui.rs` : bouton « ▶ Simuler la télécommande » ; fleches = voisins, Entree/Espace/clic = valider (etat active 350 ms) puis action ; lecture de video simulee par un ecran noir, retour comme sur le disque (menu de chapitres si « revenir aux chapitres » et chapitres, sinon page de la video) ; Echap quitte. Pendant la simulation, l'edition et l'inspecteur sont desactives ; le focus clavier des widgets est rendu chaque image.

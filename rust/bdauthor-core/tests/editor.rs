@@ -154,3 +154,39 @@ fn free_pages_listing_and_add() {
     add_free_page(&mut m2);
     assert!(m2.designs.main[&0].items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Next, .. })));
 }
+
+#[test]
+fn remote_simulation() {
+    use bdauthor_core::style::ButtonStyle;
+    let info = PageInfo { r: PageRef::Main(0), menu: MenuType::Main, page: 0, pages: 2, items: vec![0, 1, 2, 3], video: None };
+    let mut d = PageDesign::default_main(4, 0, 2).unwrap();
+    let mut t = Item::text("Chapitres de 3", 100, 60, 400, 80, 40);
+    if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Chapters(2, 0)); }
+    d.items.push(t);
+    d.items.push(Item { x: 1500, y: 60, w: 200, h: 120, kind: Kind::Slot { thumb_h: 100, assign: None, video: Some(None), link: None }, look: Default::default() });
+    let st = ButtonStyle::default();
+    let b = sim_buttons(&info, &d, &st, 4, &|v| v == 1);
+    let acts: Vec<SimAction> = b.iter().map(|x| x.action).collect();
+    // 4 vignettes (la 2e ouvre son menu de chapitres), « Suivant », le texte cliquable ; la vignette sans video n'existe pas
+    assert_eq!(acts, vec![SimAction::Play(0), SimAction::Go(Target::Chapters(1, 0)), SimAction::Play(2), SimAction::Play(3), SimAction::Next, SimAction::Go(Target::Chapters(2, 0))]);
+    // voisins : meme regle que le disque (bdauthor_core::menu::auto_neighbors)
+    let rects: Vec<(i32, i32, i32, i32)> = b.iter().map(|x| x.rect).collect();
+    let n = bdauthor_core::menu::auto_neighbors(&rects);
+    assert!(b.iter().zip(&n).all(|(x, m)| x.neighbors == (m.0 as usize, m.1 as usize, m.2 as usize, m.3 as usize)));
+    assert_eq!(b[0].neighbors.3, 1);
+    assert_eq!(b[1].neighbors.2, 0);
+    // destination personnalisee d'une vignette
+    if let Kind::Slot { link, .. } = &mut d.items[0].kind { *link = Some(Target::Main(1)); }
+    assert_eq!(sim_buttons(&info, &d, &st, 4, &|_| false)[0].action, SimAction::Go(Target::Main(1)));
+    // page de chapitres
+    let ci = PageInfo { r: PageRef::Chapters(1, 0), menu: MenuType::Chapters, page: 0, pages: 1, items: vec![0, 1, 2], video: Some(1) };
+    let c = PageDesign::default_chapter(3, 0, 1).unwrap();
+    let acts: Vec<SimAction> = sim_buttons(&ci, &c, &st, 4, &|_| true).iter().map(|x| x.action).collect();
+    assert_eq!(acts, vec![SimAction::PlayChapter(1, 0), SimAction::PlayChapter(1, 1), SimAction::PlayChapter(1, 2), SimAction::Play(1), SimAction::Back]);
+    // pages visees
+    let pages = vec![info.clone(), PageInfo { r: PageRef::Free(0), menu: MenuType::Main, page: 1, pages: 2, items: vec![0, 1, 2, 3], video: None }, ci.clone()];
+    assert_eq!(page_of_target(&pages, Target::Main(1)), Some(PageRef::Free(0)));
+    assert_eq!(page_of_target(&pages, Target::Chapters(1, 0)), Some(PageRef::Chapters(1, 0)));
+    assert_eq!(page_of_target(&pages, Target::Chapters(3, 0)), None);
+    assert_eq!(main_page_of_video(&pages, 2), Some(PageRef::Main(0)));
+}

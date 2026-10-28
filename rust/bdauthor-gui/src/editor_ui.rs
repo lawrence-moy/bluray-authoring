@@ -296,9 +296,11 @@ impl App {
             }
             self.base_cache.as_ref().map(|(_, i)| i.clone())
         };
-        let sel = if info.custom(&self.model.designs) { self.sel_item } else { None };
-        let img = renderer.render_page_preview(&design, info.menu, info.page, info.pages, &slots, base.as_ref(), PREVIEW, &base_dir, &self.model.designs.style, sel);
+        let sel = if info.custom(&self.model.designs) || self.sim.is_some() { self.sel_item } else { None };
+        let act = self.sim_pressed();
+        let img = renderer.render_page_preview(&design, info.menu, info.page, info.pages, &slots, base.as_ref(), PREVIEW, &base_dir, &self.model.designs.style, sel, act);
         self.preview_sel = self.sel_item;
+        self.preview_act = act;
         let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data);
         match &mut self.preview_tex {
             Some(t) => t.set(ci, egui::TextureOptions::LINEAR),
@@ -358,6 +360,18 @@ impl App {
             if ui.add_enabled(self.history.can_redo(), egui::Button::new("↷ Rétablir")).on_hover_text("Ctrl+Y ou Ctrl+Maj+Z").clicked() { self.redo_action(); }
             ui.separator();
             if ui.button("Style des boutons…").on_hover_text("Couleurs, cadre, halo, agrandissement des boutons de tout le projet").clicked() { self.show_style = true; }
+            if self.sim.is_none() {
+                if ui.button("▶ Simuler la télécommande").on_hover_text("Parcourir le menu comme sur un lecteur : flèches, Entrée, Échap").clicked() {
+                    self.sim = Some(crate::sim_ui::Sim::default());
+                    self.sel_item = None;
+                    self.drag = None;
+                    self.edit_gen += 1;
+                }
+            } else if ui.button("■ Arrêter la simulation").clicked() {
+                self.sim = None;
+                self.sel_item = None;
+                self.edit_gen += 1;
+            }
             ui.separator();
             ui.strong(info.label(&self.model));
             if !custom {
@@ -423,7 +437,7 @@ impl App {
         // aperçu régénéré hors glissement
         let min_gap = if self.cfg.adaptive_preview { (self.render_ms * 1.25).clamp(16.0, 200.0) } else { 0.0 };
         let due = self.drag.is_none() || self.last_preview.elapsed().as_secs_f32() * 1000.0 >= min_gap;
-        if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() || (self.preview_sel != self.sel_item && self.drag.is_none()) {
+        if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() || (self.preview_sel != self.sel_item && self.drag.is_none()) || self.preview_act != self.sim_pressed() {
             let t = std::time::Instant::now();
             self.refresh_preview(ctx, &info);
             self.render_ms = t.elapsed().as_secs_f32() * 1000.0;
@@ -452,7 +466,9 @@ impl App {
         let to_screen = |x: f32, y: f32| pos2(rect.min.x + x * k, rect.min.y + y * k);
         let to_plane = |p: egui::Pos2| ((p.x - rect.min.x) / k, (p.y - rect.min.y) / k);
 
-        if custom {
+        if self.sim.is_some() {
+            self.sim_ui(ctx, &info, &resp, &painter, rect, k);
+        } else if custom {
             // interactions
             let snapshot: Vec<Item> = info.design(&self.model.designs).map(|d| d.items.clone()).unwrap_or_default();
             let grid = if self.snap { 10 } else { 0 };
@@ -607,6 +623,15 @@ impl App {
 
     // ------------------------------------------------------------------ inspecteur (panneau de droite)
     pub(crate) fn inspector_ui(&mut self, ui: &mut egui::Ui) {
+        if self.sim.is_some() {
+            ui.heading("Simulation");
+            ui.label("Le menu se comporte comme sur un lecteur Blu-ray :");
+            ui.label("• Flèches : passer au bouton voisin (même règle que sur le disque)");
+            ui.label("• Entrée (ou clic sur un bouton) : valider ; l'état « activé » s'affiche un instant");
+            ui.label("• Échap : arrêter la simulation");
+            ui.label(egui::RichText::new("Les lectures de vidéo sont simulées par un écran noir ; à la fin, le menu revient là où le disque reviendrait.").weak());
+            return;
+        }
         ui.heading("Élément");
         let Some(info) = self.current_info() else { return };
         if !info.custom(&self.model.designs) {

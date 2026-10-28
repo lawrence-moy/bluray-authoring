@@ -774,9 +774,10 @@ impl FontRenderer {
     /// `base` : fond deja redimensionne a `size` (ou `None` pour le degrade par defaut).
     /// Apercu fidele d'une page (meme code de dessin que la construction du disque), a la taille `size`.
     /// `project_dir` sert a resoudre les chemins relatifs des images. Les boutons de navigation sans objet sur cette page sont attenues.
-    /// `style` : apparence des boutons du projet ; `selected` : element (indice dans la page) montre dans son etat selectionne.
+    /// `style` : apparence des boutons du projet ; `selected` : element (indice dans la page) montre dans son etat selectionne,
+    /// ou active si `activated`.
     #[allow(clippy::too_many_arguments)]
-    pub fn render_page_preview(&self, design: &PageDesign, menu: MenuType, page: usize, pages: usize, slots: &[PreviewSlot], base: Option<&RgbaImage>, size: (u32, u32), project_dir: &Path, style: &ButtonStyle, selected: Option<usize>) -> RgbaImage {
+    pub fn render_page_preview(&self, design: &PageDesign, menu: MenuType, page: usize, pages: usize, slots: &[PreviewSlot], base: Option<&RgbaImage>, size: (u32, u32), project_dir: &Path, style: &ButtonStyle, selected: Option<usize>, activated: bool) -> RgbaImage {
         use bdauthor_core::project::Renderer;
         let s = size.0 as f64 / 1920.0;
         let r = |v: i32| (v as f64 * s).round() as i32;
@@ -792,7 +793,7 @@ impl FontRenderer {
             let (x, y, w, h) = (r(it.x), r(it.y), r(it.w).max(1), r(it.h).max(1));
             let st = it.look.style.as_ref().unwrap_or(style).scaled(s);
             let (mx, my) = st.margins(w, h);
-            let state = if selected == Some(idx) { 1usize } else { 0 };
+            let state = if selected == Some(idx) { if activated { 2usize } else { 1 } } else { 0 };
             let skin = &it.look.skin;
             let skinned = !skin.normal.is_empty() && !matches!(it.kind, Kind::Slot { .. });
             // etat choisi d'un bouton dessine par l'utilisateur ; None si ses images sont illisibles

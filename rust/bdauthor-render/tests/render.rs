@@ -62,11 +62,11 @@ fn compose_and_preview() {
     let d = PageDesign::starting_point(MenuType::Chapters, 3, 0, 2, "Mes chapitres").unwrap();
     let slots = vec![PreviewSlot { label: "Intro (0:00)".into(), thumb: None, key: 0 }; 3];
     let st = bdauthor_core::style::ButtonStyle::default();
-    let p = r.render_page_preview(&d, MenuType::Chapters, 0, 2, &slots, None, size, std::path::Path::new("."), &st, None);
+    let p = r.render_page_preview(&d, MenuType::Chapters, 0, 2, &slots, None, size, std::path::Path::new("."), &st, None, false);
     assert_eq!((p.width, p.height), size);
     assert_ne!(p, gradient(size));
     // element selectionne : l'apercu change
-    let p2 = r.render_page_preview(&d, MenuType::Chapters, 0, 2, &slots, None, size, std::path::Path::new("."), &st, Some(1));
+    let p2 = r.render_page_preview(&d, MenuType::Chapters, 0, 2, &slots, None, size, std::path::Path::new("."), &st, Some(1), false);
     assert_ne!(p, p2);
     // cover_resize : dimensions exactes
     let c = cover_resize(&rounded_rect(200, 100, 0.0, [1, 2, 3]), 50, 50);
