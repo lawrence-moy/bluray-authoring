@@ -25,6 +25,8 @@ pub(crate) struct DragState {
 
 pub(crate) enum Job {
     Probe { key: String, path: PathBuf },
+    /// duree d'un fichier audio (musique de menu)
+    ProbeAudio { key: String, path: PathBuf },
     Thumb { key: String, path: PathBuf, at: f64, duration: f64 },
 }
 
@@ -52,6 +54,10 @@ impl Worker {
                     (Err(e), _) => Event::Error(format!("ffmpeg introuvable : {e}")),
                     (Ok(t), Job::Probe { key, path }) => match probe(t, &path) {
                         Ok(i) => Event::Duration(key, i.duration_s, i.height, i.fps()),
+                        Err(e) => Event::Error(format!("Lecture de {key} impossible : {e}")),
+                    },
+                    (Ok(t), Job::ProbeAudio { key, path }) => match bdauthor_core::ffmpeg::probe_duration(t, &path) {
+                        Ok(d) => Event::Duration(key, d, 0, 0.0),
                         Err(e) => Event::Error(format!("Lecture de {key} impossible : {e}")),
                     },
                     (Ok(t), Job::Thumb { key, path, at, duration }) => {
@@ -219,6 +225,35 @@ impl App {
         let v = &self.model.videos[i];
         let at = v.thumb_s.unwrap_or_else(|| self.durations.get(&v.file).map_or(0.0, |d| (d * 0.25).min(1.0)));
         (v.file.clone(), at)
+    }
+
+    /// Duree d'un fichier (video ou, si `audio`, son seul) une fois sondee ; demande le sondage sinon.
+    pub(crate) fn media_duration(&mut self, file: &str, audio: bool) -> Option<f64> {
+        if file.is_empty() { return None; }
+        if let Some(&d) = self.durations.get(file) { return Some(d); }
+        if self.requested.insert(format!("P|{file}")) {
+            let path = abs_path(&self.base_dir(), file);
+            if let Some(w) = &self.worker {
+                let key = file.to_string();
+                let _ = w.tx.send(if audio { Job::ProbeAudio { key, path } } else { Job::Probe { key, path } });
+            }
+        }
+        None
+    }
+
+    /// Duree et place estimee d'un fond anime (`video`) ou sonore (`music` sur image fixe).
+    pub(crate) fn bg_note(&mut self, video: &str, music: &str) -> Option<String> {
+        let fmt = |d: f64| { let s = d.round() as i64; if s >= 60 { format!("{} min {:02} s", s / 60, s % 60) } else { format!("{s} s") } };
+        if !video.is_empty() {
+            let d = self.media_duration(video, false)?;
+            let per_min = if self.menu_plane().1 >= 1080 { 60.0 } else { 30.0 };
+            return Some(format!("Durée {} (jouée en entier, en boucle) · environ {:.0} Mo sur le disque pour chaque page qui utilise ce fond (estimation)", fmt(d), d / 60.0 * per_min));
+        }
+        if !music.is_empty() {
+            let d = self.media_duration(music, true)?;
+            return Some(format!("Le fond durera {} (la musique, en entier) · environ {:.0} Mo par page qui l'utilise (estimation)", fmt(d), (d / 60.0 * 2.5).max(1.0)));
+        }
+        None
     }
 
     /// Fond visible sur une page : (image, video), d'apres le fond propre a la page ou celui du projet.
@@ -471,9 +506,17 @@ impl App {
             let mut open = true;
             let mut pick: Option<u8> = None;
             let mut changed = false;
+            let note = {
+                use bdauthor_core::design::{PageMusic, PageVisual};
+                let bg = info.design(&self.model.designs).map(|d| d.bg.clone()).unwrap_or_default();
+                let video = match &bg.visual { PageVisual::Video(f, _) => f.clone(), PageVisual::Project => self.model.bg_video.clone(), _ => String::new() };
+                let music = match &bg.music { PageMusic::File(f) => f.clone(), PageMusic::Project => self.model.music.clone(), PageMusic::Silent => String::new() };
+                if bg.is_default() { None } else { self.bg_note(&video, &music) }
+            };
             if let Some(d) = info.design_mut(&mut self.model.designs) {
                 egui::Window::new("Fond de cette page").open(&mut open).resizable(false).show(ctx, |ui| {
                     changed |= page_bg_ui(ui, &mut d.bg, &mut pick);
+                    if let Some(n) = &note { ui.label(egui::RichText::new(n).weak()); }
                 });
             }
             self.show_page_bg = open;
@@ -1029,7 +1072,7 @@ fn page_bg_ui(ui: &mut egui::Ui, bg: &mut bdauthor_core::design::PageBg, pick: &
         PageVisual::Video(f, son) => {
             ui.horizontal(|ui| { ui.label("Vidéo :"); ui.text_edit_singleline(f); if ui.button("Choisir…").clicked() { *pick = Some(1); } });
             ui.checkbox(son, "Garder le son de la vidéo (s'il n'y a pas de musique)");
-            ui.label(egui::RichText::new("Jouée en boucle, 2 minutes au plus ; les textes et images de la page sont posés dessus.").weak());
+            ui.label(egui::RichText::new("Jouée en entier, en boucle ; les textes et images de la page sont posés dessus.").weak());
         }
         PageVisual::Project => {}
     }

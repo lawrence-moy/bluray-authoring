@@ -452,6 +452,8 @@ impl eframe::App for App {
                     }
 
                     ui.heading("Disque");
+                    let (bgv, mus) = (self.model.bg_video.clone(), self.model.music.clone());
+                    let bg_note = self.bg_note(&bgv, &mus);
                     let m = &mut self.model;
                     ui.horizontal(|ui| {
                         ui.label("Titre du disque :");
@@ -495,7 +497,8 @@ impl eframe::App for App {
                     }
                     changed |= file_row(ui, "Musique des menus :", &mut m.music, "(aucune)", "Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]);
                     if !m.bg_video.is_empty() || !m.music.is_empty() {
-                        ui.label(egui::RichText::new("Le fond tourne en boucle : il dure autant que la vidéo de fond (2 min au plus) ou, sans vidéo, que la musique (5 min au plus). Les textes et images des pages personnalisées sont posés sur la vidéo.").weak());
+                        ui.label(egui::RichText::new("Le fond tourne en boucle : il dure autant que la vidéo de fond ou, sans vidéo, que la musique. Les textes et images des pages personnalisées sont posés sur la vidéo.").weak());
+                        if let Some(n) = &bg_note { ui.label(egui::RichText::new(n).weak()); }
                     }
                     changed |= file_row(ui, "Séquence d'ouverture :", &mut m.intro, "(aucune : le menu s'ouvre directement)", "Vidéos", VIDEO_EXTS);
                     changed |= ui.checkbox(&mut m.menu_1080, "Menu en 1920x1080 (sinon : taille de la vidéo)").changed();

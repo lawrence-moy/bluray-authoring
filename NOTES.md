@@ -344,3 +344,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Construction : `page_bg` (fermeture de build_project) -> MenuBg + image de base propres a la page ; la page a alors toujours son propre clip (`own_background`), et `add_menu_page(.., looping)` met la boucle si ce fond est anime ou sonore. Pages automatiques (non personnalisees) : fond du projet.
 - GUI : bouton « Fond de cette page… » (pages personnalisees), fenetre `page_bg_ui` ; l'apercu montre l'image ou une image de la video propre a la page (`page_visual`).
 - Test : project.rs `per_page_backgrounds` (video propre sans musique, image propre + musique du projet, page commune).
+
+## Fonds animes : plus de limite de duree
+- Les limites (video 2 min, musique 5 min) etaient un choix de bdauthor, pas une regle Blu-ray : retirees. La video ou la musique est utilisee en entier (au moins 1 s).
+- Journal : « fonds de menu animes ou sonores : N clip(s), X Mo au total ».
+- GUI : duree et place estimee (60 Mo/min en 1080, 30 en 720 ; ~2,5 Mo/min pour image + musique) sous les reglages du fond du projet et dans « Fond de cette page » ; job `ProbeAudio` (ffmpeg::probe_duration) pour la duree des musiques.

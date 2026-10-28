@@ -17,7 +17,7 @@ use crate::mobj::{Command, MovieObject, MovieObjectBdmv, GOTO_INSN, JUMP_TITLE_I
 use crate::nav::{make_index, make_movie_objects_paged, make_playlist, make_playlist_multi, plan_navigation, AudioStn, PlaylistParams, VideoStn};
 use crate::palette::RgbaImage;
 use crate::tsclip::{make_clip_clpi, make_clip_clpi_pg, py_floordiv, scan_clip, ClipScan, FRAME_RATES};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -753,9 +753,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     if let Some(v) = &bg_video {
         let info = ffmpeg::probe(env.tools, v)?;
         mb.video_audio = info.has_audio && menu_cfg.get("son_fond_video").and_then(Value::as_bool).unwrap_or(false);
-        mb.seconds = info.duration_s.clamp(1.0, 120.0);
+        mb.seconds = info.duration_s.max(1.0);
     } else if let Some(m) = &music {
-        mb.seconds = ffmpeg::probe_duration(env.tools, m)?.clamp(1.0, 300.0);
+        mb.seconds = ffmpeg::probe_duration(env.tools, m)?.max(1.0);
     }
     let animated = mb.animated();
     // fond propre a une page (si sa mise en page en definit un) : (fond anime/sonore, image de base)
@@ -772,9 +772,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         if let Some(v) = &video {
             let info = ffmpeg::probe(tools_, v)?;
             video_audio &= info.has_audio;
-            seconds = info.duration_s.clamp(1.0, 120.0);
+            seconds = info.duration_s.max(1.0);
         } else if let Some(m) = &music {
-            seconds = ffmpeg::probe_duration(tools_, m)?.clamp(1.0, 300.0);
+            seconds = ffmpeg::probe_duration(tools_, m)?.max(1.0);
         }
         Ok(Some((MenuBg { video, video_audio, music, seconds, lang, cache: cache_dir.clone() }, base)))
     };
@@ -799,12 +799,15 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         d.items.iter().enumerate().filter(|(_, it)| it.link().is_none()).filter_map(|(rank, it)| to_decor(it, k).map(|x| (rank, x))).collect()
     };
     // `looping` : fond anime ou sonore (le menu tourne alors toujours en boucle)
+    // clips de fond animes ou sonores (pour le resume de la construction)
+    let anim_clips: std::cell::RefCell<BTreeSet<u32>> = Default::default();
     let add_menu_page = |files: &mut BTreeMap<String, Vec<u8>>, buttons: &[MenuButton], pix: &[u64], ig_num: u32, pl_num: u32, bg_num: u32, bgscan: &ClipScan, label: &str, looping: bool| -> Result<MenuStats> {
         let pts = required_ics_pts(pix, (menu_size.0 as u64, menu_size.1 as u64), 42956, 9000);
         let clip = build_menu_clip(buttons, &MenuOptions { ics_pts: pts, video_size: menu_size, ui_model: 0, rgb_colors: 63, frame_rate_code: FRAME_RATES.iter().find(|r| r.0 == bgscan.fps).map_or(1, |r| r.2) }).map_err(Error::Format)?;
         if clip.m2ts.len() > 6 * 1024 * 1024 {
             return bad(format!("{label} trop lourd ({:.1} Mo) : reduire le nombre d'elements par page (menu.par_page)", clip.m2ts.len() as f64 / 1e6));
         }
+        if looping { anim_clips.borrow_mut().insert(bg_num); }
         let stats = MenuStats { pts, bytes: clip.m2ts.len(), objects: clip.menu.ods.len(), palette: clip.menu.pds.entries.len() };
         files.insert(format!("STREAM/{ig_num:05}.m2ts"), clip.m2ts);
         files.insert(format!("CLIPINF/{ig_num:05}.clpi"), clip.clpi);
@@ -1063,6 +1066,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
     };
     let _ = (next_pl, next_bg);
+    let anim = anim_clips.borrow().clone();
+    if !anim.is_empty() {
+        let bytes: usize = anim.iter().filter_map(|num| files.get(&format!("STREAM/{num:05}.m2ts"))).map(Vec::len).sum();
+        (env.log)(&format!("fonds de menu animes ou sonores : {} clip(s), {:.0} Mo au total", anim.len(), bytes as f64 / 1e6));
+    }
     let main_pls16: Vec<u16> = main_pls.iter().map(|&x| x as u16).collect();
     let mo = make_movie_objects_paged(n, &main_pls16, &plan.main_titles, &ch_pls, &plan.chapters, &video_page, retour_ch);
     let title_objs: Vec<u16> = (1..=plan.total_titles).collect();
