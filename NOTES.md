@@ -338,3 +338,9 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Fond anime/sonore : `menu.fond_video` (video, 2 min max), `menu.son_fond_video` (garder son son), `menu.musique` (5 min max sur image fixe) ; `ffmpeg::make_menu_bg_ts`, `film::make_menu_bg_m2ts`, `project::menu_bg_clip` (cache `.cache_bdauthor/fond_*.m2ts`), `Renderer::compose_layer` (calque transparent des textes/images pose sur la video). Playlists des menus avec flux audio ; boucle forcee (still_mode 0).
 - GUI : Projet (fond video, son, musique, ouverture), Mise en page (« Definir comme page d'accueil », repere « (accueil) »), apercu avec une image de la video de fond ; simulation : M / Origine = TOP MENU, « Tout lire » du menu principal.
 - Tests : tests/formats.rs (PsF, 1080i50, sans son, fond fixe PsF), project.rs (accueil/ouverture/tout lire, fond anime + musique + cache).
+
+## Fond propre a chaque page
+- `PageDesign.bg: PageBg { visual: PageVisual (Project | Image(f) | Video(f, son)), music: PageMusic (Project | Silent | File(f)) }` ; JSON de la page : `"fond_page": {"image"|"video", "son_video", "musique": chemin | null (aucune)}` (absent = comme le projet). Repris par « copier le decor ».
+- Construction : `page_bg` (fermeture de build_project) -> MenuBg + image de base propres a la page ; la page a alors toujours son propre clip (`own_background`), et `add_menu_page(.., looping)` met la boucle si ce fond est anime ou sonore. Pages automatiques (non personnalisees) : fond du projet.
+- GUI : bouton « Fond de cette page… » (pages personnalisees), fenetre `page_bg_ui` ; l'apercu montre l'image ou une image de la video propre a la page (`page_visual`).
+- Test : project.rs `per_page_backgrounds` (video propre sans musique, image propre + musique du projet, page commune).

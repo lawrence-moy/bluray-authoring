@@ -259,3 +259,17 @@ fn home_page_json_and_remap() {
     // « Tout lire » existe aussi dans le menu principal
     assert!(nav_applicable(NavAction::PlayAll, MenuType::Main, 0, 1));
 }
+
+#[test]
+fn page_background_json() {
+    let mut p = PageDesign::default_main(1, 0, 1).unwrap();
+    assert!(!p.to_value().to_pretty().contains("fond_page"));
+    p.bg = PageBg { visual: PageVisual::Video("fond.mp4".into(), true), music: PageMusic::Silent };
+    let t = p.to_value().to_pretty();
+    assert!(t.contains("fond_page") && t.contains("son_video"));
+    assert_eq!(PageDesign::from_value(&parse(&t).unwrap()).unwrap(), p);
+    p.bg = PageBg { visual: PageVisual::Image("a.png".into()), music: PageMusic::File("m.mp3".into()) };
+    assert_eq!(PageDesign::from_value(&parse(&p.to_value().to_pretty()).unwrap()).unwrap(), p);
+    p.bg = PageBg { visual: PageVisual::Project, music: PageMusic::File("m.mp3".into()) };
+    assert_eq!(PageDesign::from_value(&parse(&p.to_value().to_pretty()).unwrap()).unwrap(), p);
+}

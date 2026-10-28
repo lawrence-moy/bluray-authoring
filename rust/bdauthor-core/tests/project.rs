@@ -404,3 +404,53 @@ fn animated_menu_background_with_music() {
     assert!(t1.elapsed() < first, "le cache doit accelerer ({:?} contre {:?})", t1.elapsed(), first);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn per_page_backgrounds() {
+    let Ok(tools) = Tools::locate() else { return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_pagebg_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
+    for f in ["a", "b", "c"] {
+        run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=2", "-f", "lavfi", "-i", "sine=duration=2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", dir.join(format!("{f}.mp4")).to_str().unwrap()]);
+    }
+    run(&["-f", "lavfi", "-i", "mandelbrot=size=320x180:rate=25", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", dir.join("fond.mp4").to_str().unwrap()]);
+    run(&["-f", "lavfi", "-i", "sine=frequency=440:duration=4", "-c:a", "libmp3lame", dir.join("musique.mp3").to_str().unwrap()]);
+    run(&["-f", "lavfi", "-i", "color=c=green:size=320x180", "-frames:v", "1", dir.join("vert.png").to_str().unwrap()]);
+    // musique du projet ; page 1 : video propre, sans musique ; page 2 : image propre + musique du projet ; page 3 : comme le projet
+    let proj = r##"{ "titre": "Fonds", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"}, {"fichier": "c.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"musique": "musique.mp3", "par_page": 1, "fond_secondes": 2},
+      "mise_en_page": { "principal": {
+        "1": { "fond_page": {"video": "fond.mp4", "musique": null}, "elements": [
+          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356},
+          {"type":"navigation","action":"suivant","texte":">","x":800,"y":900,"w":300,"h":90} ] },
+        "2": { "fond_page": {"image": "vert.png"}, "elements": [
+          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356},
+          {"type":"navigation","action":"precedent","texte":"<","x":400,"y":900,"w":300,"h":90},
+          {"type":"navigation","action":"suivant","texte":">","x":1200,"y":900,"w":300,"h":90} ] } } } }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let info = {
+        let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
+    };
+    assert!(info.report.ok(), "{}", info.report.render());
+    let root = dir.join("out/BDMV");
+    // playlists des pages du menu principal : 3, 4, 5
+    let page = |pl: u32| {
+        let m = bdauthor_core::mpls::Mpls::parse(&std::fs::read(root.join(format!("PLAYLIST/{pl:05}.mpls"))).unwrap()).unwrap();
+        let clip = m.playitems[0].clip.clone();
+        let sc = bdauthor_core::tsclip::scan_clip(&std::fs::read(root.join(format!("STREAM/{clip}.m2ts"))).unwrap()).unwrap();
+        (clip, !sc.audio_codes.is_empty(), ((sc.end90 - sc.start90) as f64 / 90000.0).round() as i64)
+    };
+    let (c1, a1, d1) = page(3);
+    let (c2, a2, d2) = page(4);
+    let (c3, a3, d3) = page(5);
+    assert_eq!((a1, d1), (false, 3), "page 1 : video propre (3 s), sans musique");
+    assert_eq!((a2, d2), (true, 4), "page 2 : image propre + musique du projet (4 s)");
+    assert_eq!((a3, d3), (true, 4), "page 3 : fond commun + musique du projet");
+    assert!(c1 != c2 && c2 != c3 && c1 != c3);
+    let _ = std::fs::remove_dir_all(&dir);
+}

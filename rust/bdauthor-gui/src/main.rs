@@ -79,6 +79,8 @@ struct App {
     show_config: bool,
     /// fenetre « Style des boutons »
     show_style: bool,
+    /// fenetre « Fond de cette page »
+    show_page_bg: bool,
     /// element montre selectionne dans l'apercu courant
     preview_sel: Option<usize>,
     /// etat « active » montre dans l'apercu courant
@@ -115,7 +117,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, preview_sel: None, preview_act: false, sim: None, sel_item: None, drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_page_bg: false, preview_sel: None, preview_act: false, sim: None, sel_item: None, drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }

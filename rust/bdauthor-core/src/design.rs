@@ -145,8 +145,75 @@ impl Item {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum MenuType { Main, Chapters }
 
+/// Visuel du fond d'une page.
 #[derive(Debug, Clone, PartialEq, Default)]
-pub struct PageDesign { pub items: Vec<Item> }
+pub enum PageVisual {
+    /// celui du projet (image, video ou fond genere)
+    #[default]
+    Project,
+    Image(String),
+    /// video jouee en boucle ; `bool` : garder son son (a defaut de musique)
+    Video(String, bool),
+}
+
+/// Musique d'une page.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum PageMusic {
+    /// celle du projet
+    #[default]
+    Project,
+    Silent,
+    File(String),
+}
+
+/// Fond propre a une page (sinon : celui du projet).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PageBg {
+    pub visual: PageVisual,
+    pub music: PageMusic,
+}
+
+impl PageBg {
+    pub fn is_default(&self) -> bool { *self == PageBg::default() }
+    pub fn to_value(&self) -> Value {
+        let mut o: Vec<(String, Value)> = Vec::new();
+        match &self.visual {
+            PageVisual::Project => {}
+            PageVisual::Image(p) => o.push(("image".into(), Value::Str(p.clone()))),
+            PageVisual::Video(p, a) => {
+                o.push(("video".into(), Value::Str(p.clone())));
+                if *a { o.push(("son_video".into(), Value::Bool(true))); }
+            }
+        }
+        match &self.music {
+            PageMusic::Project => {}
+            PageMusic::Silent => o.push(("musique".into(), Value::Null)),
+            PageMusic::File(p) => o.push(("musique".into(), Value::Str(p.clone()))),
+        }
+        Value::Obj(o)
+    }
+    pub fn from_value(v: &Value) -> PageBg {
+        let st = |k: &str| v.get(k).and_then(Value::as_str).filter(|x| !x.is_empty()).map(String::from);
+        let visual = match (st("video"), st("image")) {
+            (Some(p), _) => PageVisual::Video(p, v.get("son_video").and_then(Value::as_bool).unwrap_or(false)),
+            (None, Some(p)) => PageVisual::Image(p),
+            _ => PageVisual::Project,
+        };
+        let music = match v.get("musique") {
+            None => PageMusic::Project,
+            Some(Value::Str(p)) if !p.is_empty() => PageMusic::File(p.clone()),
+            Some(_) => PageMusic::Silent,
+        };
+        PageBg { visual, music }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct PageDesign {
+    pub items: Vec<Item>,
+    /// Fond propre a cette page ; par defaut celui du projet.
+    pub bg: PageBg,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Problem { pub error: bool, pub msg: String }
@@ -219,7 +286,7 @@ impl PageDesign {
         let mut items = Self::grid(count, if pages > 1 { 140 } else { 0 })?;
         if page > 0 { items.push(Item::nav(NavAction::Prev, 560, NAV_Y, 360, 80)); }
         if page + 1 < pages { items.push(Item::nav(NavAction::Next, 1000, NAV_Y, 360, 80)); }
-        Ok(PageDesign { items })
+        Ok(PageDesign { items, ..Default::default() })
     }
 
     /// Grille automatique d'une page de menu de chapitres.
@@ -234,7 +301,7 @@ impl PageDesign {
             items.push(Item::nav(NavAction::Back, 980, NAV_Y, 320, 80));
             if page + 1 < pages { items.push(Item::nav(NavAction::Next, 1340, NAV_Y, 320, 80)); }
         }
-        Ok(PageDesign { items })
+        Ok(PageDesign { items, ..Default::default() })
     }
 
     /// Point de depart de l'editeur : la grille automatique + un texte de titre.
@@ -357,7 +424,7 @@ impl PageDesign {
     pub fn blank_free(page: usize) -> Self {
         let mut items = Vec::new();
         if page > 0 { items.push(Item::nav(NavAction::Prev, 560, NAV_Y, 360, 80)); }
-        PageDesign { items }
+        PageDesign { items, ..Default::default() }
     }
 
     // ---------------------------------------------------------------- JSON
@@ -396,7 +463,9 @@ impl PageDesign {
             if !it.look.skin.is_empty() { put("images_etats", it.look.skin.to_value()); }
             Value::Obj(o)
         }).collect();
-        Value::Obj(vec![("elements".into(), Value::Arr(items))])
+        let mut o = vec![("elements".into(), Value::Arr(items))];
+        if !self.bg.is_default() { o.push(("fond_page".into(), self.bg.to_value())); }
+        Value::Obj(o)
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
@@ -436,7 +505,7 @@ impl PageDesign {
             };
             items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look });
         }
-        Ok(PageDesign { items })
+        Ok(PageDesign { items, bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default() })
     }
 }
 

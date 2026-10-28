@@ -6,7 +6,7 @@
 //! Le dessin (vignettes, libelles, fond) est delegue a un `Renderer` : le crate `bdauthor-render` en fournit un complet.
 use crate::check::{check_bdmv, Report};
 use crate::style::ButtonStyle;
-use crate::design::{nav_applicable, Align, Designs, Item, Kind, MenuType, NavAction, PageDesign, Target};
+use crate::design::{nav_applicable, Align, Designs, Item, Kind, MenuType, NavAction, PageDesign, PageMusic, PageVisual, Target};
 use crate::disc::write_bdmv;
 use crate::ffmpeg::{self, EncodeOpts, Error, Tools};
 use crate::film::{make_film_m2ts, make_still_m2ts};
@@ -758,6 +758,26 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         mb.seconds = ffmpeg::probe_duration(env.tools, m)?.clamp(1.0, 300.0);
     }
     let animated = mb.animated();
+    // fond propre a une page (si sa mise en page en definit un) : (fond anime/sonore, image de base)
+    let tools_ = env.tools;
+    let page_bg = |d: &PageDesign| -> Result<Option<(MenuBg, Option<PathBuf>)>> {
+        if d.bg.is_default() { return Ok(None); }
+        let (video, video_audio, base) = match &d.bg.visual {
+            PageVisual::Project => (mb.video.clone(), mb.video_audio, custom_fond.clone()),
+            PageVisual::Image(f) => (None, false, Some(p(f))),
+            PageVisual::Video(f, a) => (Some(p(f)), *a, None),
+        };
+        let music = match &d.bg.music { PageMusic::Project => mb.music.clone(), PageMusic::Silent => None, PageMusic::File(f) => Some(p(f)) };
+        let (mut video_audio, mut seconds) = (video_audio, fond_s);
+        if let Some(v) = &video {
+            let info = ffmpeg::probe(tools_, v)?;
+            video_audio &= info.has_audio;
+            seconds = info.duration_s.clamp(1.0, 120.0);
+        } else if let Some(m) = &music {
+            seconds = ffmpeg::probe_duration(tools_, m)?.clamp(1.0, 300.0);
+        }
+        Ok(Some((MenuBg { video, video_audio, music, seconds, lang, cache: cache_dir.clone() }, base)))
+    };
     // fond commun a toutes les pages sans decor propre : image du projet, video du projet
     let common_visual = custom_fond.is_some() || bg_video.is_some();
     let sd = size.0 as f64 / 1920.0; // echelle des textes/images poses sur le fond (qui a la taille de la video)
@@ -778,7 +798,8 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let scale_decor = |d: &PageDesign, k: f64| -> Vec<(usize, Decor)> {
         d.items.iter().enumerate().filter(|(_, it)| it.link().is_none()).filter_map(|(rank, it)| to_decor(it, k).map(|x| (rank, x))).collect()
     };
-    let add_menu_page = |files: &mut BTreeMap<String, Vec<u8>>, buttons: &[MenuButton], pix: &[u64], ig_num: u32, pl_num: u32, bg_num: u32, bgscan: &ClipScan, label: &str| -> Result<MenuStats> {
+    // `looping` : fond anime ou sonore (le menu tourne alors toujours en boucle)
+    let add_menu_page = |files: &mut BTreeMap<String, Vec<u8>>, buttons: &[MenuButton], pix: &[u64], ig_num: u32, pl_num: u32, bg_num: u32, bgscan: &ClipScan, label: &str, looping: bool| -> Result<MenuStats> {
         let pts = required_ics_pts(pix, (menu_size.0 as u64, menu_size.1 as u64), 42956, 9000);
         let clip = build_menu_clip(buttons, &MenuOptions { ics_pts: pts, video_size: menu_size, ui_model: 0, rgb_colors: 63, frame_rate_code: FRAME_RATES.iter().find(|r| r.0 == bgscan.fps).map_or(1, |r| r.2) }).map_err(Error::Format)?;
         if clip.m2ts.len() > 6 * 1024 * 1024 {
@@ -793,7 +814,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             audio: bgscan.audio_codes.first().map(|&(pid, coding, fmt_rate)| AudioStn { pid, coding, fmt_rate, lang }),
             with_menu: true, menu_clip: format!("{ig_num:05}"), menu_in: (pts / 2) as u32, menu_out: (pts / 2 + 1501) as u32,
             // 2 = arret infini sur la derniere image : le menu ne redemarre pas ; un fond anime ou sonore tourne toujours en boucle
-            still_mode: if boucle || animated { 0 } else { 2 },
+            still_mode: if boucle || looping { 0 } else { 2 },
             ..Default::default()
         }));
         Ok(stats)
@@ -865,16 +886,21 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let (buttons, pix) = page_buttons(&benv, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Main, pg, total_main, &slots, &target)?;
         if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
         let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
-        let (bg_num, pscan) = if custom && !(common_visual && decor.is_empty()) {
+        let pbg = if custom { page_bg(&design)? } else { None };
+        let (bg_num, pscan, looping) = if let Some((pmb, pbase)) = &pbg {
+            let num = next_bg;
+            next_bg += 1;
+            (num, own_background(env, pmb, pbase, size, &decor, &tmp.0, &format!("fond_p{pg}.png"), fond_s, fps, &still_opts, &mut files, num)?, pmb.animated())
+        } else if custom && !(common_visual && decor.is_empty()) {
             let num = next_bg;
             next_bg += 1;
             let sc = own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_p{pg}.png"), fond_s, fps, &still_opts, &mut files, num)?;
-            (num, sc)
+            (num, sc, animated)
         } else {
-            (n as u32, bg_sc.clone())
+            (n as u32, bg_sc.clone(), animated)
         };
         let ig_num = if pg == 0 { 80002 } else { let k = next_ig; next_ig += 1; k };
-        let res = add_menu_page(&mut files, &buttons, &pix, ig_num, main_pls[pg], bg_num, &pscan, &what)?;
+        let res = add_menu_page(&mut files, &buttons, &pix, ig_num, main_pls[pg], bg_num, &pscan, &what, looping)?;
         if pg == 0 { first_page = Some(res); }
     }
     // pages libres du menu principal : vignettes de n'importe quelle video, fond propre a chaque page
@@ -895,16 +921,21 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
         let decor: Vec<Decor> = scale_decor(design, sd).into_iter().map(|(_, d)| d).collect();
         for l in design.validate_free(pg, total_main, n).iter().filter(|x| !x.error) { (env.log)(&format!("{what} : {}", l.msg)); }
-        let (bg_num, pscan) = if common_visual && decor.is_empty() {
-            (n as u32, bg_sc.clone())
+        let pbg = page_bg(design)?;
+        let (bg_num, pscan, looping) = if let Some((pmb, pbase)) = &pbg {
+            let num = next_bg;
+            next_bg += 1;
+            (num, own_background(env, pmb, pbase, size, &decor, &tmp.0, &format!("fond_libre{f}.png"), fond_s, fps, &still_opts, &mut files, num)?, pmb.animated())
+        } else if common_visual && decor.is_empty() {
+            (n as u32, bg_sc.clone(), animated)
         } else {
             let num = next_bg;
             next_bg += 1;
             let sc = own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_libre{f}.png"), fond_s, fps, &still_opts, &mut files, num)?;
-            (num, sc)
+            (num, sc, animated)
         };
         let ig_num = { let k = next_ig; next_ig += 1; k };
-        add_menu_page(&mut files, &buttons, &pix, ig_num, main_pls[pg], bg_num, &pscan, &what)?;
+        add_menu_page(&mut files, &buttons, &pix, ig_num, main_pls[pg], bg_num, &pscan, &what, looping)?;
     }
     let first_page = first_page.expect("au moins une page");
     (env.progress)(0.95);
@@ -945,11 +976,16 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             let (cbuttons, pix) = page_buttons(&benv, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Chapters, q, npg, &slots, &target)?;
             if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
             let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
-            let (bg_num, pscan) = if custom && !(common_visual && decor.is_empty()) {
+            let pbg = if custom { page_bg(&design)? } else { None };
+            let (bg_num, pscan, looping) = if let Some((pmb, pbase)) = &pbg {
+                let num = next_bg;
+                next_bg += 1;
+                (num, own_background(env, pmb, pbase, size, &decor, &tmp.0, &format!("fond_ch{k}_{q}.png"), fond_s, fps, &still_opts, &mut files, num)?, pmb.animated())
+            } else if custom && !(common_visual && decor.is_empty()) {
                 let num = next_bg;
                 next_bg += 1;
                 let sc = own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_ch{k}_{q}.png"), fond_s, fps, &still_opts, &mut files, num)?;
-                (num, sc)
+                (num, sc, animated)
             } else {
                 if shared.is_none() {
                     let num = next_bg;
@@ -959,9 +995,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                     shared = Some((num, menu_bg_clip(env, &mb, Some(&cbg), None, &tmp.0, &format!("fond_ch{k}"), fond_s, size, fps, &still_opts, &mut files, num)?));
                 }
                 let (num, sc) = shared.clone().unwrap();
-                (num, sc)
+                (num, sc, animated)
             };
-            add_menu_page(&mut files, &cbuttons, &pix, ig_num, pl_num, bg_num, &pscan, &what)?;
+            add_menu_page(&mut files, &cbuttons, &pix, ig_num, pl_num, bg_num, &pscan, &what, looping)?;
         }
         ch_pls.insert(i, pls);
     }

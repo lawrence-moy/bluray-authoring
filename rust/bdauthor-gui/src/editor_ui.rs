@@ -171,7 +171,7 @@ impl App {
             }
         }
         // video de fond anime : sa duree puis une image
-        let bgv = self.model.bg_video.clone();
+        let bgv = self.page_visual(info).1.unwrap_or_default();
         if !bgv.is_empty() && !self.durations.contains_key(&bgv) && self.requested.insert(format!("P|{bgv}")) {
             if let Some(w) = &self.worker {
                 let _ = w.tx.send(Job::Probe { key: bgv.clone(), path: abs_path(&base, &bgv) });
@@ -221,9 +221,19 @@ impl App {
         (v.file.clone(), at)
     }
 
-    /// Image de la video de fond (1 s) pour l'apercu, si elle est deja extraite.
-    fn bg_video_frame(&self) -> Option<std::sync::Arc<RgbaImage>> {
-        let f = &self.model.bg_video;
+    /// Fond visible sur une page : (image, video), d'apres le fond propre a la page ou celui du projet.
+    pub(crate) fn page_visual(&self, info: &PageInfo) -> (Option<String>, Option<String>) {
+        use bdauthor_core::design::PageVisual;
+        let nz = |s: &String| (!s.is_empty()).then(|| s.clone());
+        match info.design(&self.model.designs).map(|d| &d.bg.visual) {
+            Some(PageVisual::Image(f)) => (Some(f.clone()), None),
+            Some(PageVisual::Video(f, _)) => (None, Some(f.clone())),
+            _ => (nz(&self.model.bg), nz(&self.model.bg_video)),
+        }
+    }
+
+    /// Image (1 s) d'une video de fond pour l'apercu, si elle est deja extraite.
+    fn video_frame(&self, f: &String) -> Option<std::sync::Arc<RgbaImage>> {
         let d = *self.durations.get(f)?;
         let ms = ((d / 2.0).min(1.0) * 1000.0).round() as i64;
         self.thumbs.get(&(f.clone(), ms)).cloned()
@@ -306,13 +316,14 @@ impl App {
             if let Kind::Slot { assign, video, .. } = &mut it.kind { *assign = None; *video = None; }
         }
         let Ok(renderer) = &self.renderer else { return };
-        let bg_frame = (!self.model.bg_video.is_empty()).then(|| self.bg_video_frame()).flatten();
+        let (vis_image, vis_video) = self.page_visual(info);
+        let bg_frame = vis_video.as_ref().and_then(|v| self.video_frame(v));
         let base = if let Some(f) = bg_frame {
             Some(cover_resize(&f, PREVIEW.0, PREVIEW.1))
-        } else if self.model.bg.is_empty() {
+        } else if vis_video.is_some() || vis_image.is_none() {
             None
         } else {
-            let path = abs_path(&base_dir, &self.model.bg);
+            let path = abs_path(&base_dir, vis_image.as_deref().unwrap_or(""));
             if self.base_cache.as_ref().map_or(true, |(p, _)| *p != path) {
                 self.base_cache = renderer.cached_image(&path).ok().map(|im| (path.clone(), cover_resize(&im, PREVIEW.0, PREVIEW.1)));
             }
@@ -398,6 +409,7 @@ impl App {
             }
             ui.separator();
             ui.strong(info.label(&self.model));
+            if custom && ui.button("Fond de cette page…").on_hover_text("Image, vidéo ou musique propres à cette page").clicked() { self.show_page_bg = true; }
             let this = match info.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(info.page) };
             let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
             if is_home {
@@ -452,6 +464,39 @@ impl App {
                     self.bump();
                 }
             }
+        }
+
+        // fenetre du fond de la page courante
+        if custom && self.show_page_bg {
+            let mut open = true;
+            let mut pick: Option<u8> = None;
+            let mut changed = false;
+            if let Some(d) = info.design_mut(&mut self.model.designs) {
+                egui::Window::new("Fond de cette page").open(&mut open).resizable(false).show(ctx, |ui| {
+                    changed |= page_bg_ui(ui, &mut d.bg, &mut pick);
+                });
+            }
+            self.show_page_bg = open;
+            if let Some(k) = pick {
+                let (name, exts): (&str, &[&str]) = match k {
+                    0 => ("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]),
+                    1 => ("Vidéos", &["mp4", "mkv", "mov", "avi", "m2ts", "mts", "ts", "webm", "wmv", "m4v", "mpg", "mpeg"]),
+                    _ => ("Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]),
+                };
+                if let Some(f) = rfd::FileDialog::new().add_filter(name, exts).pick_file() {
+                    let rel = self.relative(&f);
+                    if let Some(d) = info.design_mut(&mut self.model.designs) {
+                        use bdauthor_core::design::{PageMusic, PageVisual};
+                        match k {
+                            0 => d.bg.visual = PageVisual::Image(rel),
+                            1 => d.bg.visual = PageVisual::Video(rel, matches!(d.bg.visual, PageVisual::Video(_, true))),
+                            _ => d.bg.music = PageMusic::File(rel),
+                        }
+                        changed = true;
+                    }
+                }
+            }
+            if changed { self.bump(); }
         }
 
         // fenetre du style des boutons du projet
@@ -964,4 +1009,41 @@ impl App {
             }
         }
     }
+}
+
+/// Reglages du fond d'une page. `pick` : fichier a choisir (0 image, 1 video, 2 musique). Retourne vrai si quelque chose a change.
+fn page_bg_ui(ui: &mut egui::Ui, bg: &mut bdauthor_core::design::PageBg, pick: &mut Option<u8>) -> bool {
+    use bdauthor_core::design::{PageMusic, PageVisual};
+    let before = bg.clone();
+    ui.strong("Image ou vidéo");
+    let kind = match bg.visual { PageVisual::Project => 0, PageVisual::Image(_) => 1, PageVisual::Video(..) => 2 };
+    ui.horizontal(|ui| {
+        if ui.selectable_label(kind == 0, "Comme le projet").clicked() { bg.visual = PageVisual::Project; }
+        if ui.selectable_label(kind == 1, "Image").clicked() && kind != 1 { *pick = Some(0); }
+        if ui.selectable_label(kind == 2, "Vidéo").clicked() && kind != 2 { *pick = Some(1); }
+    });
+    match &mut bg.visual {
+        PageVisual::Image(f) => {
+            ui.horizontal(|ui| { ui.label("Image :"); ui.text_edit_singleline(f); if ui.button("Choisir…").clicked() { *pick = Some(0); } });
+        }
+        PageVisual::Video(f, son) => {
+            ui.horizontal(|ui| { ui.label("Vidéo :"); ui.text_edit_singleline(f); if ui.button("Choisir…").clicked() { *pick = Some(1); } });
+            ui.checkbox(son, "Garder le son de la vidéo (s'il n'y a pas de musique)");
+            ui.label(egui::RichText::new("Jouée en boucle, 2 minutes au plus ; les textes et images de la page sont posés dessus.").weak());
+        }
+        PageVisual::Project => {}
+    }
+    ui.separator();
+    ui.strong("Musique");
+    let mk = match bg.music { PageMusic::Project => 0, PageMusic::Silent => 1, PageMusic::File(_) => 2 };
+    ui.horizontal(|ui| {
+        if ui.selectable_label(mk == 0, "Comme le projet").clicked() { bg.music = PageMusic::Project; }
+        if ui.selectable_label(mk == 1, "Aucune").clicked() { bg.music = PageMusic::Silent; }
+        if ui.selectable_label(mk == 2, "Autre musique").clicked() && mk != 2 { *pick = Some(2); }
+    });
+    if let PageMusic::File(f) = &mut bg.music {
+        ui.horizontal(|ui| { ui.label("Fichier :"); ui.text_edit_singleline(f); if ui.button("Choisir…").clicked() { *pick = Some(2); } });
+    }
+    ui.label(egui::RichText::new("Chaque page au fond différent a son propre clip sur le disque (encodé une fois, puis gardé en cache).").weak());
+    *bg != before
 }

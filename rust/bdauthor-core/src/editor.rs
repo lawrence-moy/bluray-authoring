@@ -194,7 +194,7 @@ pub fn copy_decor(src: &PageDesign, target: PageDesign, target_default: &PageDes
             }
         }
     }
-    PageDesign { items }
+    PageDesign { items, bg: src.bg.clone() }
 }
 
 /// Ajoute une page libre vierge a la fin du menu principal et retourne son indice. La page precedente (automatique non

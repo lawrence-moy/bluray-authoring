@@ -245,6 +245,16 @@ impl ProjectModel {
         if !self.intro.is_empty() && !abs(&self.intro).is_file() { p.push(format!("Séquence d'ouverture introuvable ({}).", self.intro)); }
         if !self.bg_video.is_empty() && !abs(&self.bg_video).is_file() { p.push(format!("Vidéo de fond introuvable ({}).", self.bg_video)); }
         if !self.music.is_empty() && !abs(&self.music).is_file() { p.push(format!("Musique du menu introuvable ({}).", self.music)); }
+        {
+            use crate::design::{PageMusic, PageVisual};
+            let d = &self.designs;
+            for pg in d.main.values().chain(d.chapters.values()).chain(d.free.iter()) {
+                let files = [match &pg.bg.visual { PageVisual::Image(f) | PageVisual::Video(f, _) => Some(f), _ => None }, match &pg.bg.music { PageMusic::File(f) => Some(f), _ => None }];
+                for f in files.into_iter().flatten() {
+                    if !abs(f).is_file() { p.push(format!("Fond d'une page : fichier introuvable ({f}).")); }
+                }
+            }
+        }
         if let Some(h) = self.designs.home {
             let total = crate::project::paginate(self.videos.len().max(1), self.par_page).map(|g| g.len()).unwrap_or(1) + self.designs.free.len();
             let bad = match h { crate::design::Target::Main(q) => q >= total, crate::design::Target::Chapters(v, _) => v >= self.videos.len(), crate::design::Target::Video(_) => true };
