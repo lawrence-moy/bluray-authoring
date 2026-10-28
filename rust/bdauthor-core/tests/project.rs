@@ -2,6 +2,7 @@
 use bdauthor_core::ffmpeg::Tools;
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::*;
+use bdauthor_core::style::ButtonStyle;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
@@ -15,17 +16,23 @@ fn fill(w: u32, h: u32, c: [u8; 3]) -> Arc<RgbaImage> {
     Arc::new(im)
 }
 impl Renderer for Flat {
-    fn thumb_button(&self, thumb: &RgbaImage, _label: &str, w: u32, h_total: u32, h_thumb: u32) -> [Arc<RgbaImage>; 2] {
+    fn thumb_button(&self, thumb: &RgbaImage, _label: &str, w: u32, h_total: u32, h_thumb: u32, st: &ButtonStyle) -> [Arc<RgbaImage>; 3] {
         let mk = |bg: [u8; 3]| {
             let mut im = RgbaImage::new(w, h_total);
             for y in 0..h_total { for x in 0..w { im.set(x, y, if y < h_thumb { thumb.pixel(x, y) } else { [bg[0], bg[1], bg[2], 255] }); } }
             Arc::new(im)
         };
-        [mk([24, 32, 58]), mk([60, 100, 190])]
+        let s = mk(st.sel_bg);
+        [mk(st.normal_bg), s.clone(), if st.activated { mk(st.act_bg) } else { s }]
     }
-    fn text_button(&self, _label: &str, w: u32, h: u32) -> [Arc<RgbaImage>; 2] { [fill(w, h, [24, 32, 58]), fill(w, h, [60, 100, 190])] }
+    fn text_button(&self, _label: &str, w: u32, h: u32, st: &ButtonStyle) -> [Arc<RgbaImage>; 3] {
+        let (m, _) = st.margins(w as i32, h as i32);
+        let (w, h) = (w + 2 * m as u32, h + 2 * st.margins(w as i32, h as i32).1 as u32);
+        let s = fill(w, h, st.sel_bg);
+        [fill(w, h, st.normal_bg), s.clone(), if st.activated { fill(w, h, st.act_bg) } else { s }]
+    }
     fn background(&self, _t: &str, size: (u32, u32)) -> RgbaImage { (*fill(size.0, size.1, [20, 30, 80])).clone() }
-    fn overlay(&self, states: [Arc<RgbaImage>; 2], decor: &[Decor]) -> [Arc<RgbaImage>; 2] {
+    fn overlay(&self, states: [Arc<RgbaImage>; 3], decor: &[Decor]) -> [Arc<RgbaImage>; 3] {
         assert!(!decor.is_empty());
         OVERLAYS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         states
@@ -35,6 +42,12 @@ impl Renderer for Flat {
         let mut im = RgbaImage::new(w, h);
         for y in 0..h { for x in 0..w { im.set(x, y, [255, 0, 255, 255]); } }
         Some(im)
+    }
+    fn skin_button(&self, skin: &[Option<std::path::PathBuf>; 3], w: u32, h: u32, st: &ButtonStyle) -> Result<[Arc<RgbaImage>; 3], String> {
+        assert!(skin[0].as_ref().map_or(false, |p| p.is_absolute()), "chemin complet attendu");
+        let (mx, my) = st.margins(w as i32, h as i32);
+        let (w, h) = (w + 2 * mx as u32, h + 2 * my as u32);
+        Ok([fill(w, h, [200, 0, 0]), fill(w, h, [0, 200, 0]), fill(w, h, [0, 0, 200])])
     }
     fn compose_background(&self, _base: Option<&std::path::Path>, size: (u32, u32), decor: &[Decor]) -> Result<RgbaImage, String> {
         let mut im = (*fill(size.0, size.1, [40, 20, 80])).clone();
@@ -224,5 +237,60 @@ fn project_with_subtitles() {
     // second passage : encodage en cache, sous-titres refaits
     let (_, logs2) = build("out2");
     assert!(logs2.iter().any(|l| l.contains("cache")) && logs2.iter().any(|l| l.contains("2 piste(s) de sous-titres")), "{logs2:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn styled_buttons_project() {
+    let Ok(tools) = Tools::locate() else { return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_style_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in ["a", "b"] {
+        assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3",
+            "-f", "lavfi", "-i", "sine=duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
+            .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
+    }
+    // halo + agrandissement + etat active ; une vignette collee au bord gauche (son halo doit etre rogne) ; un bouton dessine
+    let proj = r##"{ "titre": "Style", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
+      "mise_en_page": { "style_boutons": {"halo": 24, "agrandir": 10, "etat_active": true},
+        "principal": { "1": { "elements": [
+          {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"style":{"halo":0,"agrandir":0}},
+          {"type":"navigation","action":"aller_a","texte":"B","cible":{"lire":"video","video":2},"x":800,"y":900,"w":300,"h":90,
+           "images_etats":{"normal":"btn.png"}} ] } } } }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let mut logs = Vec::new();
+    let info = {
+        let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
+    };
+    assert!(info.report.ok(), "{}", info.report.render());
+    // relecture du menu : positions et tailles des boutons
+    let data = std::fs::read(dir.join("out/BDMV/STREAM/80002.m2ts")).unwrap();
+    let mut segs = Vec::new();
+    for e in bdauthor_core::m2ts::reassemble(&data, 0x1400).unwrap() { segs.extend(bdauthor_core::m2ts::split_segments(&e.data).unwrap()); }
+    let ics = bdauthor_core::ig::Ics::parse(&segs.iter().find(|s| s.name() == "ICS").unwrap().payload).unwrap();
+    let ods: Vec<bdauthor_core::ig::Ods> = segs.iter().filter(|s| s.name() == "ODS").map(|s| bdauthor_core::ig::Ods::parse(&s.payload).unwrap()).collect();
+    let size = |id: u16| { let o = ods.iter().find(|o| o.object_id == id).unwrap(); (o.width as i32, o.height as i32) };
+    let btns: Vec<&bdauthor_core::ig::Button> = ics.pages[0].bogs.iter().flat_map(|g| g.buttons.iter()).collect();
+    assert_eq!(btns.len(), 3);
+    // video encodee en 720p : echelle 2/3. Vignette 1 : 373x237, halo 16 + 5 % -> marges (16+19, 16+12) ; rognee a gauche
+    let b0 = btns.iter().min_by_key(|b| b.x).unwrap();
+    assert_eq!(b0.x, 0);
+    let (w0, h0) = size(b0.normal.0);
+    assert_eq!((w0, h0), (373 + 35, 237 + 2 * 28));
+    assert_eq!(b0.y as i32, 200 - 28);
+    // etat active distinct (style du projet) : trois images ; la vignette 2 a son propre style, sans etat active : deux images
+    let distinct = |b: &bdauthor_core::ig::Button| [b.normal.0, b.selected.1, b.activated.1].iter().collect::<std::collections::BTreeSet<_>>().len();
+    let mut d: Vec<usize> = btns.iter().map(|b| distinct(b)).collect();
+    d.sort();
+    assert_eq!(d, vec![2, 3, 3]);
+    // vignette 2 : style propre sans effet -> taille exacte, position exacte
+    let b1 = btns.iter().find(|b| b.x == 667).expect("vignette 2 a x = 1000 x 2/3");
+    assert_eq!(size(b1.normal.0), (373, 237));
     let _ = std::fs::remove_dir_all(&dir);
 }

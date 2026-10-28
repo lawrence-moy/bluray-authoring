@@ -27,7 +27,7 @@ fn page_list() {
 
 #[test]
 fn drag_and_hit() {
-    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, assign: None, video: None, link: None } };
+    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, assign: None, video: None, link: None }, look: Default::default() };
     let items = vec![it(100, 100, 300, 200), it(250, 150, 300, 200)];
     assert_eq!(hit_test(&items, 260.0, 160.0, None, 8.0), Some((1, Handle::Body)), "l'element du dessus gagne");
     assert_eq!(hit_test(&items, 120.0, 120.0, None, 8.0), Some((0, Handle::Body)));
@@ -57,7 +57,7 @@ fn ordering_and_decor_copy() {
     assert_eq!(to_back(&mut d, 4), 0);
     assert!(matches!(d.items[0].kind, Kind::Text { .. }));
     let mut src = PageDesign::starting_point(MenuType::Main, 3, 0, 2, "Titre commun").unwrap();
-    src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into(), link: None } });
+    src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default() });
     let target = PageDesign::default_main(2, 1, 2).unwrap();
     let out = copy_decor(&src, target.clone(), &target);
     assert!(out.items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Prev, .. })), "Precedent repris de la page cible");

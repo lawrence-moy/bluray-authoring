@@ -5,6 +5,7 @@
 //! pagination au-dela de 12 elements (voir `paginate`), menus de chapitres, cache d'encodage.
 //! Le dessin (vignettes, libelles, fond) est delegue a un `Renderer` : le crate `bdauthor-render` en fournit un complet.
 use crate::check::{check_bdmv, Report};
+use crate::style::ButtonStyle;
 use crate::design::{nav_applicable, Align, Designs, Item, Kind, MenuType, NavAction, PageDesign, Target};
 use crate::disc::write_bdmv;
 use crate::ffmpeg::{self, EncodeOpts, Error, Tools};
@@ -29,26 +30,36 @@ type Result<T> = std::result::Result<T, Error>;
 fn bad<T>(m: impl Into<String>) -> Result<T> { Err(Error::Format(m.into())) }
 
 /// Dessin des elements de menu. Les images sont en RGBA 8 bits.
+///
+/// Les boutons sont rendus en trois etats (normal, selectionne, active) selon un `ButtonStyle` deja a l'echelle du menu. Chaque image
+/// d'etat mesure (w + 2·mx) x (h + 2·my), ou (mx, my) = `style.margins(w, h)` (place du halo et de l'agrandissement), l'element
+/// occupant le centre. Un etat identique a un autre peut etre le meme `Arc` (l'image n'est alors stockee qu'une fois).
+/// Une image d'une autre taille est recentree par le constructeur.
 pub trait Renderer {
-    /// (normal, selectionne) d'un bouton « vignette + libelle » ; l'etat active reutilise le selectionne.
-    fn thumb_button(&self, thumb: &RgbaImage, label: &str, w: u32, h_total: u32, h_thumb: u32) -> [Arc<RgbaImage>; 2];
-    /// (normal, selectionne) d'un bouton uniquement textuel (« Tout lire », « Retour »...).
-    fn text_button(&self, label: &str, w: u32, h: u32) -> [Arc<RgbaImage>; 2];
+    /// Bouton « vignette + libelle » (`h_thumb` = hauteur de la vignette, le reste porte le libelle).
+    fn thumb_button(&self, thumb: &RgbaImage, label: &str, w: u32, h_total: u32, h_thumb: u32, style: &ButtonStyle) -> [Arc<RgbaImage>; 3];
+    /// Bouton uniquement textuel (« Tout lire », « Retour »...).
+    fn text_button(&self, label: &str, w: u32, h: u32, style: &ButtonStyle) -> [Arc<RgbaImage>; 3];
     /// Fond de menu par defaut avec le titre.
     fn background(&self, title: &str, size: (u32, u32)) -> RgbaImage;
     /// Fond d'une page personnalisee : image `base` (ou degrade par defaut, sans titre) + textes et images, en pixels du fond.
     fn compose_background(&self, base: Option<&Path>, size: (u32, u32), decor: &[Decor]) -> std::result::Result<RgbaImage, String>;
-    /// Pose `decor` (coordonnees relatives a l'image du bouton) par-dessus les deux etats d'un bouton : textes et images
+    /// Pose `decor` (coordonnees relatives a l'image du bouton) par-dessus les etats d'un bouton : textes et images
     /// places au-dessus de ce bouton dans l'ordre de superposition. Par defaut, les etats sont rendus tels quels.
-    fn overlay(&self, states: [Arc<RgbaImage>; 2], decor: &[Decor]) -> [Arc<RgbaImage>; 2] {
+    fn overlay(&self, states: [Arc<RgbaImage>; 3], decor: &[Decor]) -> [Arc<RgbaImage>; 3] {
         let _ = decor;
         states
     }
-    /// (normal, selectionne) d'un texte ou d'une image cliquable : `decor` est deja place dans un cadre de `w` x `h` (coordonnees relatives).
-    /// Par defaut : un bouton sans libelle.
-    fn decor_button(&self, decor: &Decor, w: u32, h: u32) -> [Arc<RgbaImage>; 2] {
+    /// Texte ou image cliquable : `decor` est deja place dans un cadre de `w` x `h` (coordonnees relatives). Par defaut : un bouton sans libelle.
+    fn decor_button(&self, decor: &Decor, w: u32, h: u32, style: &ButtonStyle) -> [Arc<RgbaImage>; 3] {
         let _ = decor;
-        self.text_button("", w, h)
+        self.text_button("", w, h, style)
+    }
+    /// Bouton dessine par l'utilisateur : images (chemins complets) des etats normal, selectionne, active ; un etat sans image est
+    /// derive de l'image normale avec les effets du style. Erreur si ce moteur ne sait pas charger d'images.
+    fn skin_button(&self, skin: &[Option<PathBuf>; 3], w: u32, h: u32, style: &ButtonStyle) -> std::result::Result<[Arc<RgbaImage>; 3], String> {
+        let _ = (skin, w, h, style);
+        Err("images d'etats non gerees par ce moteur de dessin".into())
     }
     /// Image (fond transparent) d'une replique de sous-titre : texte centre, contour compris, aux tailles du style (deja a l'echelle de
     /// la video). `max_w` : largeur disponible (le texte est reduit s'il deborde). `None` si ce moteur ne sait pas dessiner de sous-titres.
@@ -102,22 +113,84 @@ fn resolve_design(ov: Option<&PageDesign>, expected: usize, menu: MenuType, page
     Ok((d.map_err(Error::Format)?, false))
 }
 
-/// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page ; `s` = echelle du plan 1920 vers le menu.
+/// Image `img` centree dans un cadre transparent de `w` x `h` (rognee si plus grande).
+fn recenter(img: &RgbaImage, w: u32, h: u32) -> RgbaImage {
+    if img.width == w && img.height == h {
+        return img.clone();
+    }
+    let mut out = RgbaImage::new(w, h);
+    let (dx, dy) = ((w as i64 - img.width as i64) / 2, (h as i64 - img.height as i64) / 2);
+    for y in 0..img.height as i64 {
+        for x in 0..img.width as i64 {
+            let (tx, ty) = (x + dx, y + dy);
+            if tx >= 0 && ty >= 0 && tx < w as i64 && ty < h as i64 {
+                out.set(tx as u32, ty as u32, img.pixel(x as u32, y as u32));
+            }
+        }
+    }
+    out
+}
+
+/// Morceau (x0, y0, w, h) d'une image.
+fn sub_image(img: &RgbaImage, x0: u32, y0: u32, w: u32, h: u32) -> RgbaImage {
+    let mut out = RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            out.set(x, y, img.pixel(x0 + x, y0 + y));
+        }
+    }
+    out
+}
+
+/// Applique `f` a chaque etat en conservant le partage des etats identiques ; retourne aussi le nombre d'images distinctes.
+fn map_states(st: [Arc<RgbaImage>; 3], f: &dyn Fn(&RgbaImage) -> RgbaImage) -> ([Arc<RgbaImage>; 3], u64) {
+    let n = Arc::new(f(&st[0]));
+    let s = if Arc::ptr_eq(&st[1], &st[0]) { n.clone() } else { Arc::new(f(&st[1])) };
+    let a = if Arc::ptr_eq(&st[2], &st[1]) { s.clone() } else if Arc::ptr_eq(&st[2], &st[0]) { n.clone() } else { Arc::new(f(&st[2])) };
+    let distinct = 1 + (!Arc::ptr_eq(&s, &n)) as u64 + (!Arc::ptr_eq(&a, &s) && !Arc::ptr_eq(&a, &n)) as u64;
+    ([n, s, a], distinct)
+}
+
+/// Ce dont `page_buttons` a besoin en plus de la page elle-meme.
+struct ButtonEnv<'a> {
+    tools: &'a Tools,
+    renderer: &'a dyn Renderer,
+    /// style des boutons du projet
+    style: &'a ButtonStyle,
+    /// chemin complet d'un fichier du projet
+    abs: &'a dyn Fn(&str) -> PathBuf,
+    /// dessin d'un texte ou d'une image a une echelle donnee (textes et images cliquables)
+    to_decor: &'a dyn Fn(&Item, f64) -> Option<Decor>,
+    /// une entree par video du projet (vignettes montrant une video choisie)
+    videos: &'a [SlotSpec],
+    /// echelle du plan 1920 vers le menu, taille du menu
+    s: f64,
+    plane: (u32, u32),
+}
+
+/// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page.
+/// `decor` : textes et images non cliquables a l'echelle du menu ; `slots` : elements de la page.
 #[allow(clippy::too_many_arguments)]
-/// `decor` : textes et images non cliquables a l'echelle `s` ; `to_decor` : dessin d'un element texte/image a une echelle donnee
-/// (sert aux textes et images cliquables, qui deviennent des boutons).
-/// `slots` : elements de la page ; `videos` : une entree par video du projet (vignettes montrant une video choisie).
-fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], to_decor: &dyn Fn(&Item, f64) -> Option<Decor>, menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], videos: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> u32, s: f64) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> u32) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+    let (renderer, s) = (e.renderer, e.s);
     let (mut buttons, mut pix, mut k) = (Vec::new(), Vec::new(), 0usize);
     for (idx, it) in design.items.iter().enumerate() {
         let (x, y, w, h) = it.scaled(s);
+        let st = it.look.style.as_ref().unwrap_or(e.style).scaled(s);
+        let (mx, my) = st.margins(w, h);
+        let (bx, by, bw, bh) = (x - mx, y - my, w + 2 * mx, h + 2 * my);
         // textes et images places au-dessus de ce bouton dans l'ordre de superposition : poses sur ses images
-        let above: Vec<Decor> = decor.iter().filter(|(i, d)| *i > idx && d.intersects((x, y, w, h))).map(|(_, d)| d.shifted(-x, -y)).collect();
-        let over = |st: [Arc<RgbaImage>; 2]| if above.is_empty() { st } else { renderer.overlay(st, &above) };
-        match &it.kind {
+        let above: Vec<Decor> = decor.iter().filter(|(i, d)| *i > idx && d.intersects((bx, by, bw, bh))).map(|(_, d)| d.shifted(-bx, -by)).collect();
+        let skin = &it.look.skin;
+        let skinned = !skin.normal.is_empty() && !matches!(it.kind, Kind::Slot { .. });
+        let skin_states = || -> Result<[Arc<RgbaImage>; 3]> {
+            let one = |p: &str| if p.is_empty() { None } else { Some((e.abs)(p)) };
+            renderer.skin_button(&[one(&skin.normal), one(&skin.selected), one(&skin.activated)], w as u32, h as u32, &st).map_err(Error::Format)
+        };
+        let (states, go, commands) = match &it.kind {
             Kind::Slot { thumb_h, video, link, .. } => {
                 let sp = match video {
-                    Some(Some(v)) => videos.get(*v).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?,
+                    Some(Some(v)) => e.videos.get(*v).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?,
                     Some(None) => continue, // vignette sans video : absente du disque
                     None => {
                         let a = assignment.get(k).copied().unwrap_or(usize::MAX);
@@ -126,31 +199,43 @@ fn page_buttons(tools: &Tools, renderer: &dyn Renderer, design: &PageDesign, ass
                     }
                 };
                 let th = py_round(*thumb_h as f64 * s) as i32;
-                let thumb = ffmpeg::extract_thumbnail_rgba(tools, &sp.source, (w as u32, th as u32), sp.at, sp.duration)?;
-                let [nrm, sel] = over(renderer.thumb_button(&thumb, &sp.label, w as u32, h as u32, th as u32));
-                let mut b = MenuButton::new("", sp.go, x, y, vec![nrm, sel.clone(), sel]);
-                b.commands = sp.commands.clone();
-                if let Some(t) = link {
-                    // destination choisie : remplace le comportement habituel de la vignette
-                    b.title = target(NavAction::Goto, Some(*t));
-                    b.commands.clear();
+                let thumb = ffmpeg::extract_thumbnail_rgba(e.tools, &sp.source, (w as u32, th as u32), sp.at, sp.duration)?;
+                let states = renderer.thumb_button(&thumb, &sp.label, w as u32, h as u32, th as u32, &st);
+                // destination choisie : remplace le comportement habituel de la vignette
+                match link {
+                    Some(t) => (states, target(NavAction::Goto, Some(*t)), vec![]),
+                    None => (states, sp.go, sp.commands.clone()),
                 }
-                buttons.push(b);
-                pix.push(2 * w as u64 * h as u64);
             }
             Kind::Nav { action, text, target: tg } if nav_applicable(*action, menu, page, pages) => {
-                let [nrm, sel] = over(renderer.text_button(text, w as u32, h as u32));
-                buttons.push(MenuButton::new("", target(*action, *tg), x, y, vec![nrm, sel.clone(), sel]));
-                pix.push(2 * w as u64 * h as u64);
+                let states = if skinned { skin_states()? } else { renderer.text_button(text, w as u32, h as u32, &st) };
+                (states, target(*action, *tg), vec![])
             }
             Kind::Text { .. } | Kind::Image { .. } if it.link().is_some() => {
-                let Some(d) = to_decor(it, s) else { continue };
-                let [nrm, sel] = over(renderer.decor_button(&d.shifted(-x, -y), w as u32, h as u32));
-                buttons.push(MenuButton::new("", target(NavAction::Goto, it.link()), x, y, vec![nrm, sel.clone(), sel]));
-                pix.push(2 * w as u64 * h as u64);
+                let states = if skinned {
+                    skin_states()?
+                } else {
+                    let Some(d) = (e.to_decor)(it, s) else { continue };
+                    renderer.decor_button(&d.shifted(-x, -y), w as u32, h as u32, &st)
+                };
+                (states, target(NavAction::Goto, it.link()), vec![])
             }
-            _ => {}
-        }
+            _ => continue,
+        };
+        let states = if above.is_empty() { states } else { renderer.overlay(states, &above) };
+        // taille attendue, puis rognage aux bords du menu (le halo ne doit pas deborder du plan graphique)
+        let (l, t) = ((-bx).max(0), (-by).max(0));
+        let (r, b) = ((bx + bw - e.plane.0 as i32).max(0), (by + bh - e.plane.1 as i32).max(0));
+        let (cw, ch) = ((bw - l - r).max(1) as u32, (bh - t - b).max(1) as u32);
+        let (states, distinct) = map_states(states, &|im| {
+            let full = recenter(im, bw.max(1) as u32, bh.max(1) as u32);
+            if (l, t, r, b) == (0, 0, 0, 0) { full } else { sub_image(&full, l as u32, t as u32, cw, ch) }
+        });
+        let [nrm, sel, act] = states;
+        let mut btn = MenuButton::new("", go, bx + l, by + t, vec![nrm, sel, act]);
+        btn.commands = commands;
+        buttons.push(btn);
+        pix.push(distinct * cw as u64 * ch as u64);
     }
     Ok((buttons, pix))
 }
@@ -623,6 +708,15 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         });
     }
 
+    let benv = ButtonEnv {
+        tools: env.tools, renderer: env.renderer, style: &designs.style, abs: &p, to_decor: &to_decor, videos: &video_specs, s: sc_,
+        plane: (menu_size.0, menu_size.1),
+    };
+    let weight_note = |pix: &[u64], what: &str| -> Option<String> {
+        let total: u64 = pix.iter().sum();
+        (total > crate::style::DECODED_LIMIT).then(|| format!("avertissement : {what} : images de boutons de {:.1} Mo, au-dela des {:.0} Mo qu'un lecteur garantit (allegez halos, agrandissements, etats actives ou nombre de boutons)", total as f64 / 1048576.0, crate::style::DECODED_LIMIT as f64 / 1048576.0))
+    };
+
     // 3. menu principal : une page par groupe de videos (page 1 = clip IG 80002, playlist N)
     let main_pls: Vec<u32> = std::iter::once(n as u32).chain((1..total_main).map(|q| (n + q) as u32)).collect();
     let mut next_pl = (n + total_main) as u32;
@@ -646,7 +740,8 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             _ => 0,
         };
         let decor_r = scale_decor(&design, sc_);
-        let (buttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, &to_decor, MenuType::Main, pg, total_main, &slots, &video_specs, &target, sc_)?;
+        let (buttons, pix) = page_buttons(&benv, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Main, pg, total_main, &slots, &target)?;
+        if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
         let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
         let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
             let num = next_bg;
@@ -673,7 +768,8 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         };
         let decor_r = scale_decor(design, sc_);
         let identity: Vec<usize> = (0..slots.len()).collect();
-        let (buttons, pix) = page_buttons(env.tools, env.renderer, design, &identity, &decor_r, &to_decor, MenuType::Main, pg, total_main, &slots, &video_specs, &target, sc_)?;
+        let (buttons, pix) = page_buttons(&benv, design, &identity, &decor_r, MenuType::Main, pg, total_main, &slots, &target)?;
+        if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
         let decor: Vec<Decor> = scale_decor(design, sd).into_iter().map(|(_, d)| d).collect();
         for l in design.validate_free(pg, total_main, n).iter().filter(|x| !x.error) { (env.log)(&format!("{what} : {}", l.msg)); }
         let (bg_num, pscan) = if custom_fond.is_some() && decor.is_empty() {
@@ -723,7 +819,8 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 NavAction::Goto => t.and_then(&goto).unwrap_or(0),
             };
             let decor_r = scale_decor(&design, sc_);
-            let (cbuttons, pix) = page_buttons(env.tools, env.renderer, &design, &design.slot_assignment(slots.len()), &decor_r, &to_decor, MenuType::Chapters, q, npg, &slots, &video_specs, &target, sc_)?;
+            let (cbuttons, pix) = page_buttons(&benv, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Chapters, q, npg, &slots, &target)?;
+            if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
             let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
             let (bg_num, pscan) = if custom && !(custom_fond.is_some() && decor.is_empty()) {
                 let num = next_bg;

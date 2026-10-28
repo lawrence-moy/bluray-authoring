@@ -21,6 +21,7 @@ pub mod pgs;
 pub mod project;
 pub mod png;
 pub mod reader;
+pub mod style;
 pub mod subtitle;
 pub mod tsclip;
 pub mod vmux;

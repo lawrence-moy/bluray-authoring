@@ -3,6 +3,7 @@
 
 mod editor_ui;
 mod subs_ui;
+mod style_ui;
 
 use bdauthor_core::check::Kind;
 use bdauthor_core::editor::{History, PageRef};
@@ -75,6 +76,10 @@ struct App {
     render_ms: f32,
     cfg: Config,
     show_config: bool,
+    /// fenetre « Style des boutons »
+    show_style: bool,
+    /// element montre selectionne dans l'apercu courant
+    preview_sel: Option<usize>,
     sel_item: Option<usize>,
     drag: Option<editor_ui::DragState>,
     snap: bool,
@@ -83,6 +88,8 @@ struct App {
     preview_tex: Option<egui::TextureHandle>,
     base_cache: Option<(PathBuf, RgbaImage)>,
     durations: HashMap<String, f64>,
+    /// (hauteur, cadence) de chaque video sondee
+    video_sizes: HashMap<String, (u32, f64)>,
     sub_probes: subs_ui::Probes,
     thumbs: HashMap<(String, i64), Arc<RgbaImage>>,
     requested: HashSet<String>,
@@ -103,8 +110,8 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, sel_item: None, drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
-            durations: HashMap::new(), sub_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, preview_sel: None, sel_item: None, drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            durations: HashMap::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
 }

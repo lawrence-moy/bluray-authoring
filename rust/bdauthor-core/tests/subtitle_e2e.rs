@@ -12,8 +12,8 @@ use std::sync::Arc;
 
 struct Flat;
 impl Renderer for Flat {
-    fn thumb_button(&self, _: &RgbaImage, _: &str, _: u32, _: u32, _: u32) -> [Arc<RgbaImage>; 2] { unimplemented!() }
-    fn text_button(&self, _: &str, _: u32, _: u32) -> [Arc<RgbaImage>; 2] { unimplemented!() }
+    fn thumb_button(&self, _: &RgbaImage, _: &str, _: u32, _: u32, _: u32, _: &bdauthor_core::style::ButtonStyle) -> [Arc<RgbaImage>; 3] { unimplemented!() }
+    fn text_button(&self, _: &str, _: u32, _: u32, _: &bdauthor_core::style::ButtonStyle) -> [Arc<RgbaImage>; 3] { unimplemented!() }
     fn background(&self, _: &str, _: (u32, u32)) -> RgbaImage { unimplemented!() }
     fn compose_background(&self, _: Option<&Path>, _: (u32, u32), _: &[bdauthor_core::project::Decor]) -> std::result::Result<RgbaImage, String> { unimplemented!() }
     fn subtitle(&self, text: &str, style: &SubStyle, max_w: u32) -> Option<RgbaImage> {

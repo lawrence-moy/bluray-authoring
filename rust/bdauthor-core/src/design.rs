@@ -4,6 +4,7 @@
 //! Sans mise en page personnalisee, une page garde la grille automatique (`default_main` / `default_chapter`), identique a celle de Python.
 use crate::ig::py_round;
 use crate::json::Value;
+use crate::style::{ButtonStyle, Look, Skin, Weight};
 use crate::project::{layout, MAX_PER_PAGE};
 use std::collections::BTreeMap;
 
@@ -93,7 +94,15 @@ pub enum Kind {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Item { pub x: i32, pub y: i32, pub w: i32, pub h: i32, pub kind: Kind }
+pub struct Item {
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub kind: Kind,
+    /// Apparence propre a ce bouton (style, images d'etats) ; par defaut celle du projet.
+    pub look: Look,
+}
 
 impl Item {
     pub fn is_button(&self) -> bool { matches!(self.kind, Kind::Slot { .. } | Kind::Nav { .. }) || self.link().is_some() }
@@ -109,7 +118,7 @@ impl Item {
     pub fn fixed_video(&self) -> Option<usize> { if let Kind::Slot { video: Some(v), .. } = self.kind { v } else { None } }
     /// Vignette vierge (elements de la page dans l'ordre, comportement habituel).
     pub fn slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: None, link: None } }
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: None, link: None }, look: Look::default() }
     }
     /// Destinations modifiables de l'element : cible d'un bouton « Aller a », lien d'un texte ou d'une image.
     pub fn targets_mut(&mut self) -> Option<&mut Option<Target>> {
@@ -126,10 +135,10 @@ impl Item {
         (r(self.x), r(self.y), r(self.w), r(self.h))
     }
     pub fn text(text: &str, x: i32, y: i32, w: i32, h: i32, size: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None } }
+        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default() }
     }
     pub fn nav(action: NavAction, x: i32, y: i32, w: i32, h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } } }
+        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default() }
     }
 }
 
@@ -317,6 +326,31 @@ impl PageDesign {
         p
     }
 
+    /// Poids estime de la page : images de boutons a decoder et delai d'affichage. `count` = elements de la page, `base` = style du
+    /// projet, `plane` = taille du menu en pixels.
+    pub fn weight(&self, count: usize, base: &ButtonStyle, menu: MenuType, page: usize, pages: usize, plane: (u32, u32)) -> Weight {
+        let k = plane.0 as f64 / PLANE.0 as f64;
+        let asg = self.slot_assignment(count);
+        let (mut bytes, mut buttons, mut e) = (0u64, 0usize, 0usize);
+        for it in &self.items {
+            let shown = match &it.kind {
+                Kind::Slot { video: None, .. } => { let a = asg.get(e).copied().unwrap_or(usize::MAX); e += 1; a != usize::MAX }
+                Kind::Slot { video: Some(v), .. } => v.is_some(),
+                Kind::Nav { action, .. } => nav_applicable(*action, menu, page, pages),
+                _ => it.link().is_some(),
+            };
+            if !shown { continue; }
+            let st = it.look.style.as_ref().unwrap_or(base).scaled(k);
+            let (_, _, w, h) = it.scaled(k);
+            let (mx, my) = st.margins(w, h);
+            let states = if !it.look.skin.activated.is_empty() { 3 } else { st.state_count() };
+            bytes += ((w + 2 * mx).max(1) as u64) * ((h + 2 * my).max(1) as u64) * states;
+            buttons += 1;
+        }
+        let plane_px = plane.0 as u64 * plane.1 as u64;
+        Weight { bytes, seconds: (plane_px + bytes) as f64 / crate::style::DECODE_RATE, buttons }
+    }
+
     /// Page libre vierge : seulement le bouton « Précédent ».
     pub fn blank_free(page: usize) -> Self {
         let mut items = Vec::new();
@@ -356,6 +390,8 @@ impl PageDesign {
                 }
             }
             put("x", num(it.x)); put("y", num(it.y)); put("w", num(it.w)); put("h", num(it.h));
+            if let Some(st) = &it.look.style { put("style", st.to_value()); }
+            if !it.look.skin.is_empty() { put("images_etats", it.look.skin.to_value()); }
             Value::Obj(o)
         }).collect();
         Value::Obj(vec![("elements".into(), Value::Arr(items))])
@@ -392,7 +428,11 @@ impl PageDesign {
                 "image" => Kind::Image { path: st("fichier").ok_or_else(|| format!("élément {} : « fichier » manquant", k + 1))?.to_string(), link: link()? },
                 t => return Err(format!("élément {} : type « {t} » inconnu", k + 1)),
             };
-            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind });
+            let look = Look {
+                style: match e.get("style") { Some(v @ Value::Obj(_)) => Some(ButtonStyle::from_value(v).map_err(|m| format!("élément {} : {m}", k + 1))?), _ => None },
+                skin: e.get("images_etats").map(Skin::from_value).unwrap_or_default(),
+            };
+            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look });
         }
         Ok(PageDesign { items })
     }
@@ -408,10 +448,12 @@ pub struct Designs {
     /// Pages libres du menu principal, apres les pages automatiques : leurs vignettes montrent n'importe quelle video du projet
     /// (`assign` = indice de la video, obligatoire).
     pub free: Vec<PageDesign>,
+    /// Apparence des boutons de tout le projet (chaque element peut avoir la sienne, voir `Item::look`).
+    pub style: ButtonStyle,
 }
 
 impl Designs {
-    pub fn is_empty(&self) -> bool { self.main.is_empty() && self.chapters.is_empty() && self.free.is_empty() }
+    pub fn is_empty(&self) -> bool { self.main.is_empty() && self.chapters.is_empty() && self.free.is_empty() && self.style == ButtonStyle::default() }
 
     /// Echange deux videos (les menus de chapitres suivent leur video).
     pub fn swap_videos(&mut self, a: usize, b: usize) {
@@ -488,6 +530,7 @@ impl Designs {
         let ch = by_video.into_iter().map(|(v, pages)| ((v + 1).to_string(), Value::Obj(pages))).collect();
         let mut o = vec![("principal".into(), Value::Obj(main)), ("chapitres".into(), Value::Obj(ch))];
         if !self.free.is_empty() { o.push(("libres".into(), Value::Arr(self.free.iter().map(PageDesign::to_value).collect()))); }
+        if self.style != ButtonStyle::default() { o.push(("style_boutons".into(), self.style.to_value())); }
         Value::Obj(o)
     }
 
@@ -515,6 +558,7 @@ impl Designs {
                 d.free.push(pd);
             }
         }
+        if let Some(st) = v.get("style_boutons") { d.style = ButtonStyle::from_value(st).map_err(|e| format!("style des boutons : {e}"))?; }
         Ok(d)
     }
 }

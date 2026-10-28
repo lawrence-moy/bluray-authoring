@@ -5,6 +5,7 @@ use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont};
 use bdauthor_core::design::{nav_applicable, Align, Kind, MenuType, PageDesign};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::Decor;
+use bdauthor_core::style::{BtnState, ButtonStyle};
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -244,24 +245,6 @@ fn fill_rect(w: u32, h: u32, rgb: [u8; 3]) -> RgbaImage {
     im
 }
 
-fn border(im: &mut RgbaImage, selected: bool) {
-    let w = im.width;
-    let bw = if selected { (w / 60).max(3) } else { 1 };
-    let col = if selected { [255, 255, 255, 255] } else { [70, 85, 120, 255] };
-    for k in 0..bw.min(im.width / 2).min(im.height / 2) {
-        for x in k..im.width - k {
-            im.set(x, k, col);
-            im.set(x, im.height - 1 - k, col);
-        }
-        for y in k..im.height - k {
-            im.set(k, y, col);
-            im.set(im.width - 1 - k, y, col);
-        }
-    }
-}
-
-const NORMAL_BG: [u8; 3] = [24, 32, 58];
-const SELECTED_BG: [u8; 3] = [60, 100, 190];
 
 /// Moteur de dessin complet pour `bdauthor_core::project` (police systeme, voir `find_font`).
 pub struct FontRenderer {
@@ -315,50 +298,252 @@ impl FontRenderer {
     }
 }
 
+// ------------------------------------------------------------------ apparence des boutons (styles)
+/// Couverture (0..1) du pixel (x, y) par un rectangle arrondi de `w` x `h` (rayon `r`) decale de (ox, oy).
+fn rr_cover(x: f32, y: f32, ox: f32, oy: f32, w: f32, h: f32, r: f32) -> f32 {
+    if w <= 0.0 || h <= 0.0 {
+        return 0.0;
+    }
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    let (hw, hh) = (w / 2.0, h / 2.0);
+    let (px, py) = (x + 0.5 - ox - hw, y + 0.5 - oy - hh);
+    let (qx, qy) = (px.abs() - (hw - r), py.abs() - (hh - r));
+    let d = (qx.max(0.0).powi(2) + qy.max(0.0).powi(2)).sqrt() + qx.max(qy).min(0.0) - r;
+    (0.5 - d).clamp(0.0, 1.0)
+}
+
+/// Coins arrondis : l'alpha de `im` est multiplie par la couverture du rectangle arrondi.
+fn round_corners(im: &mut RgbaImage, r: i32) {
+    if r <= 0 {
+        return;
+    }
+    let (w, h) = (im.width as f32, im.height as f32);
+    for y in 0..im.height {
+        for x in 0..im.width {
+            let c = rr_cover(x as f32, y as f32, 0.0, 0.0, w, h, r as f32);
+            if c < 1.0 {
+                let mut p = im.pixel(x, y);
+                p[3] = (p[3] as f32 * c).round() as u8;
+                im.set(x, y, p);
+            }
+        }
+    }
+}
+
+/// Cadre d'epaisseur `bw` (interieur au bouton), arrondi `r`, couleur `rgb`.
+fn draw_frame(im: &mut RgbaImage, r: i32, bw: i32, rgb: [u8; 3]) {
+    if bw <= 0 {
+        return;
+    }
+    let (w, h, b) = (im.width as f32, im.height as f32, bw as f32);
+    for y in 0..im.height {
+        for x in 0..im.width {
+            let (fx, fy) = (x as f32, y as f32);
+            let outer = rr_cover(fx, fy, 0.0, 0.0, w, h, r as f32);
+            let inner = rr_cover(fx, fy, b, b, w - 2.0 * b, h - 2.0 * b, (r as f32 - b).max(0.0));
+            let a = outer * (1.0 - inner);
+            if a > 0.0 {
+                let d = im.pixel(x, y);
+                let mix = |dc: u8, sc: u8| (dc as f32 * (1.0 - a) + sc as f32 * a).round() as u8;
+                let na = (d[3] as f32 + (255.0 - d[3] as f32) * a).round() as u8;
+                im.set(x, y, [mix(d[0], rgb[0]), mix(d[1], rgb[1]), mix(d[2], rgb[2]), na]);
+            }
+        }
+    }
+}
+
+/// Assombrit les couleurs de `pct` %.
+fn darken(im: &mut RgbaImage, pct: i32) {
+    if pct <= 0 {
+        return;
+    }
+    let k = (100 - pct.clamp(0, 100)) as u32;
+    for p in im.data.chunks_exact_mut(4) {
+        for c in &mut p[..3] {
+            *c = (*c as u32 * k / 100) as u8;
+        }
+    }
+}
+
+/// Flou rapide d'un canal (moyenne glissante horizontale puis verticale), rayon `r`.
+fn box_blur(a: &mut [f32], w: usize, h: usize, r: usize) {
+    if r == 0 || w == 0 || h == 0 {
+        return;
+    }
+    let mut tmp = vec![0.0f32; a.len()];
+    let n = (2 * r + 1) as f32;
+    for y in 0..h {
+        let row = &a[y * w..(y + 1) * w];
+        let mut acc: f32 = (0..=r).map(|i| row[i.min(w - 1)]).sum::<f32>() + r as f32 * row[0];
+        for x in 0..w {
+            tmp[y * w + x] = acc / n;
+            acc += row[(x + r + 1).min(w - 1)] - row[x.saturating_sub(r)];
+        }
+    }
+    for x in 0..w {
+        let col = |y: usize| tmp[y.min(h - 1) * w + x];
+        let mut acc: f32 = (0..=r).map(col).sum::<f32>() + r as f32 * col(0);
+        for y in 0..h {
+            a[y * w + x] = acc / n;
+            acc += col(y + r + 1) - col(y.saturating_sub(r));
+        }
+    }
+}
+
+/// Image d'un etat a partir de la face du bouton (`w` x `h`) : arrondi et cadre (`framed`), assombrissement (normal), agrandissement
+/// et halo (selectionne / active), le tout centre dans une image elargie des marges du style.
+fn finish_state(face: RgbaImage, st: &ButtonStyle, state: BtnState, framed: bool) -> RgbaImage {
+    let (w, h) = (face.width as i32, face.height as i32);
+    let (_, _, border, bw) = st.colors(state);
+    let mut f = face;
+    if framed {
+        round_corners(&mut f, st.radius);
+        draw_frame(&mut f, st.radius, bw, border);
+    }
+    if state == BtnState::Normal {
+        darken(&mut f, st.dim);
+    }
+    let (mx, my) = st.margins(w, h);
+    let (cw, ch) = ((w + 2 * mx).max(1) as u32, (h + 2 * my).max(1) as u32);
+    let mut canvas = RgbaImage::new(cw, ch);
+    let lit = state != BtnState::Normal;
+    if lit && st.zoom > 0 {
+        let z = 100 + st.zoom.clamp(0, 20);
+        f = resize(&f, ((w * z + 50) / 100).max(1) as u32, ((h * z + 50) / 100).max(1) as u32);
+    }
+    let (fx, fy) = ((cw as i32 - f.width as i32) / 2, (ch as i32 - f.height as i32) / 2);
+    if lit && st.glow > 0 {
+        // halo : silhouette du bouton elargie puis floutee, dans la couleur du halo
+        let (ww, hh) = (cw as usize, ch as usize);
+        let mut a = vec![0.0f32; ww * hh];
+        for y in 0..f.height as i32 {
+            for x in 0..f.width as i32 {
+                let (tx, ty) = (x + fx, y + fy);
+                if tx >= 0 && ty >= 0 && (tx as usize) < ww && (ty as usize) < hh {
+                    a[ty as usize * ww + tx as usize] = f.pixel(x as u32, y as u32)[3] as f32 / 255.0;
+                }
+            }
+        }
+        let r = (st.glow as usize / 2).max(1);
+        box_blur(&mut a, ww, hh, r);
+        box_blur(&mut a, ww, hh, r);
+        let c = st.glow_color;
+        for (i, v) in a.iter().enumerate() {
+            let al = (v * 1.8).min(1.0) * 230.0;
+            if al >= 1.0 {
+                canvas.data[i * 4..i * 4 + 4].copy_from_slice(&[c[0], c[1], c[2], al.round() as u8]);
+            }
+        }
+    }
+    blit(&mut canvas, &f, fx, fy, 1.0);
+    canvas
+}
+
+/// Trois etats : l'etat active partage l'image selectionnee quand le style ne le distingue pas (et que `own_act` est faux).
+fn three(make: &dyn Fn(BtnState) -> RgbaImage, st: &ButtonStyle, own_act: bool) -> [Arc<RgbaImage>; 3] {
+    let n = Arc::new(make(BtnState::Normal));
+    let s = Arc::new(make(BtnState::Selected));
+    let a = if st.activated || own_act { Arc::new(make(BtnState::Activated)) } else { s.clone() };
+    [n, s, a]
+}
+
+/// Ajuste `src` (sans deformation) au centre d'un cadre transparent de `w` x `h`.
+fn contain(src: &RgbaImage, w: u32, h: u32) -> RgbaImage {
+    let k = (w as f64 / src.width.max(1) as f64).min(h as f64 / src.height.max(1) as f64);
+    let (nw, nh) = (((src.width as f64 * k).round() as u32).max(1), ((src.height as f64 * k).round() as u32).max(1));
+    let mut out = RgbaImage::new(w, h);
+    blit(&mut out, &resize(src, nw, nh), (w as i32 - nw as i32) / 2, (h as i32 - nh as i32) / 2, 1.0);
+    out
+}
+
+impl FontRenderer {
+    /// Face d'un texte ou d'une image cliquable : l'element seul a l'etat normal ; ensuite fond translucide, cadre ou soulignement.
+    fn decor_face(&self, content: &RgbaImage, st: &ButtonStyle, state: BtnState) -> RgbaImage {
+        let (w, h) = (content.width, content.height);
+        if state == BtnState::Normal {
+            return content.clone();
+        }
+        let (bg, _, border, bw) = st.colors(state);
+        let mut im = if st.backdrop > 0 {
+            let mut b = rounded_rect(w, h, st.radius as f32, bg);
+            for p in b.data.chunks_exact_mut(4) {
+                p[3] = (p[3] as u32 * st.backdrop.clamp(0, 100) as u32 / 100) as u8;
+            }
+            b
+        } else {
+            RgbaImage::new(w, h)
+        };
+        blit(&mut im, content, 0, 0, 1.0);
+        if st.underline {
+            let t = bw.max(2) as u32;
+            for y in h.saturating_sub(t)..h {
+                for x in 0..w {
+                    im.set(x, y, [border[0], border[1], border[2], 255]);
+                }
+            }
+        } else {
+            draw_frame(&mut im, st.radius, bw, border);
+        }
+        im
+    }
+}
+
 impl bdauthor_core::project::Renderer for FontRenderer {
-    fn thumb_button(&self, thumb: &RgbaImage, label: &str, w: u32, h_total: u32, h_thumb: u32) -> [Arc<RgbaImage>; 2] {
-        let mk = |selected: bool| {
-            let mut im = fill_rect(w, h_total, if selected { SELECTED_BG } else { NORMAL_BG });
+    fn thumb_button(&self, thumb: &RgbaImage, label: &str, w: u32, h_total: u32, h_thumb: u32, st: &ButtonStyle) -> [Arc<RgbaImage>; 3] {
+        let face = |state: BtnState| {
+            let (bg, fg, _, _) = st.colors(state);
+            let mut im = fill_rect(w, h_total, bg);
             for y in 0..h_thumb.min(thumb.height).min(h_total) {
                 for x in 0..w.min(thumb.width) {
                     im.set(x, y, thumb.pixel(x, y));
                 }
             }
             let (txt, sz) = fit_text(&self.font, label, w, ((h_total - h_thumb) as f32 * 0.55).max(14.0));
-            draw_text_in(&mut im, &self.font, &txt, sz, [255, 255, 255], (0, h_thumb, w, h_total - h_thumb));
-            border(&mut im, selected);
-            Arc::new(im)
+            draw_text_in(&mut im, &self.font, &txt, sz, fg, (0, h_thumb, w, h_total - h_thumb));
+            finish_state(im, st, state, true)
         };
-        [mk(false), mk(true)]
+        three(&face, st, false)
     }
 
-    fn text_button(&self, label: &str, w: u32, h: u32) -> [Arc<RgbaImage>; 2] {
-        let mk = |selected: bool| {
-            let mut im = fill_rect(w, h, if selected { SELECTED_BG } else { NORMAL_BG });
+    fn text_button(&self, label: &str, w: u32, h: u32, st: &ButtonStyle) -> [Arc<RgbaImage>; 3] {
+        let face = |state: BtnState| {
+            let (bg, fg, _, _) = st.colors(state);
+            let mut im = fill_rect(w, h, bg);
             let (txt, sz) = fit_text(&self.font, label, w, (h as f32 * 0.5).max(14.0));
-            draw_text_centered(&mut im, &self.font, &txt, sz, [255, 255, 255]);
-            border(&mut im, selected);
-            Arc::new(im)
+            draw_text_centered(&mut im, &self.font, &txt, sz, fg);
+            finish_state(im, st, state, true)
         };
-        [mk(false), mk(true)]
+        three(&face, st, false)
     }
 
-    fn decor_button(&self, decor: &Decor, w: u32, h: u32) -> [Arc<RgbaImage>; 2] {
-        let one = std::slice::from_ref(decor);
-        // normal : l'element seul sur fond transparent ; selectionne : sur un cadre bleu translucide borde de blanc
-        let normal = self.compose_on(RgbaImage::new(w, h), one).unwrap_or_else(|_| RgbaImage::new(w, h));
-        let mut back = rounded_rect(w, h, (w.min(h) as f32 * 0.15).min(16.0), SELECTED_BG);
-        for p in back.data.chunks_exact_mut(4) {
-            p[3] = (p[3] as u32 * 150 / 255) as u8;
-        }
-        let mut sel = self.compose_on(back.clone(), one).unwrap_or(back);
-        border(&mut sel, true);
-        [Arc::new(normal), Arc::new(sel)]
+    fn decor_button(&self, decor: &Decor, w: u32, h: u32, st: &ButtonStyle) -> [Arc<RgbaImage>; 3] {
+        let content = self.compose_on(RgbaImage::new(w, h), std::slice::from_ref(decor)).unwrap_or_else(|_| RgbaImage::new(w, h));
+        let face = |state: BtnState| finish_state(self.decor_face(&content, st, state), st, state, false);
+        three(&face, st, false)
     }
 
-    fn overlay(&self, states: [Arc<RgbaImage>; 2], decor: &[Decor]) -> [Arc<RgbaImage>; 2] {
+    fn skin_button(&self, skin: &[Option<PathBuf>; 3], w: u32, h: u32, st: &ButtonStyle) -> std::result::Result<[Arc<RgbaImage>; 3], String> {
+        let normal_path = skin[0].as_ref().ok_or("image de l'etat normal manquante")?;
+        let ni = self.cached_image(normal_path)?;
+        let normal = contain(&ni, w, h);
+        let own: Vec<Option<RgbaImage>> = skin[1..].iter().map(|p| p.as_ref().map(|p| self.cached_image(p).map(|i| contain(&i, w, h)))).map(|r| r.transpose()).collect::<Result<_>>()?;
+        let face = |state: BtnState| {
+            let mine = match state { BtnState::Normal => None, BtnState::Selected => own[0].as_ref(), BtnState::Activated => own[1].as_ref().or(own[0].as_ref()) };
+            match mine {
+                // image fournie pour cet etat : prise telle quelle (seuls halo et agrandissement s'appliquent)
+                Some(im) => finish_state(im.clone(), st, state, false),
+                None => finish_state(self.decor_face(&normal, st, state), st, state, false),
+            }
+        };
+        Ok(three(&face, st, own[1].is_some()))
+    }
+
+    fn overlay(&self, states: [Arc<RgbaImage>; 3], decor: &[Decor]) -> [Arc<RgbaImage>; 3] {
         let one = |a: &Arc<RgbaImage>| Arc::new(self.compose_on(a.as_ref().clone(), decor).unwrap_or_else(|_| a.as_ref().clone()));
-        [one(&states[0]), one(&states[1])]
+        let n = one(&states[0]);
+        let s = if Arc::ptr_eq(&states[1], &states[0]) { n.clone() } else { one(&states[1]) };
+        let a = if Arc::ptr_eq(&states[2], &states[1]) { s.clone() } else { one(&states[2]) };
+        [n, s, a]
     }
 
     fn subtitle(&self, text: &str, style: &bdauthor_core::subtitle::SubStyle, max_w: u32) -> Option<RgbaImage> {
@@ -589,8 +774,9 @@ impl FontRenderer {
     /// `base` : fond deja redimensionne a `size` (ou `None` pour le degrade par defaut).
     /// Apercu fidele d'une page (meme code de dessin que la construction du disque), a la taille `size`.
     /// `project_dir` sert a resoudre les chemins relatifs des images. Les boutons de navigation sans objet sur cette page sont attenues.
+    /// `style` : apparence des boutons du projet ; `selected` : element (indice dans la page) montre dans son etat selectionne.
     #[allow(clippy::too_many_arguments)]
-    pub fn render_page_preview(&self, design: &PageDesign, menu: MenuType, page: usize, pages: usize, slots: &[PreviewSlot], base: Option<&RgbaImage>, size: (u32, u32), project_dir: &Path) -> RgbaImage {
+    pub fn render_page_preview(&self, design: &PageDesign, menu: MenuType, page: usize, pages: usize, slots: &[PreviewSlot], base: Option<&RgbaImage>, size: (u32, u32), project_dir: &Path, style: &ButtonStyle, selected: Option<usize>) -> RgbaImage {
         use bdauthor_core::project::Renderer;
         let s = size.0 as f64 / 1920.0;
         let r = |v: i32| (v as f64 * s).round() as i32;
@@ -602,43 +788,76 @@ impl FontRenderer {
         // dans l'ordre de superposition de la mise en page (le dernier est au premier plan)
         let assignment = design.slot_assignment(slots.len());
         let mut k = 0;
-        for it in &design.items {
+        for (idx, it) in design.items.iter().enumerate() {
             let (x, y, w, h) = (r(it.x), r(it.y), r(it.w).max(1), r(it.h).max(1));
+            let st = it.look.style.as_ref().unwrap_or(style).scaled(s);
+            let (mx, my) = st.margins(w, h);
+            let state = if selected == Some(idx) { 1usize } else { 0 };
+            let skin = &it.look.skin;
+            let skinned = !skin.normal.is_empty() && !matches!(it.kind, Kind::Slot { .. });
+            // etat choisi d'un bouton dessine par l'utilisateur ; None si ses images sont illisibles
+            let skin_state = || -> Option<Arc<RgbaImage>> {
+                let key = hkey(|hh| ("habillage", skin, project_dir, w, h, &st, state).hash(hh));
+                let one = |p: &str| if p.is_empty() { None } else { Some(abs(p)) };
+                let states = self.skin_button(&[one(&skin.normal), one(&skin.selected), one(&skin.activated)], w as u32, h as u32, &st).ok()?;
+                Some(self.cached_sprite(key, || states[state].as_ref().clone()))
+            };
             match &it.kind {
-                Kind::Text { text, size: sz, color, align, font, .. } => {
-                    let (spr, px, py) = self.text_sprite(text, r(*sz), *color, *align, font, project_dir, w, h);
-                    blit(&mut im, &spr, x - px, y - py, 1.0);
+                Kind::Text { text, size: sz, color, align, font, link } => {
+                    if link.is_none() {
+                        let (spr, px, py) = self.text_sprite(text, r(*sz), *color, *align, font, project_dir, w, h);
+                        blit(&mut im, &spr, x - px, y - py, 1.0);
+                        continue;
+                    }
+                    let spr = if skinned { skin_state() } else { None }.unwrap_or_else(|| {
+                        let key = hkey(|hh| ("texte cliquable", text, r(*sz), color, align.name(), font, project_dir, w, h, &st, state).hash(hh));
+                        self.cached_sprite(key, || {
+                            let f = if font.is_empty() { String::new() } else { let c = abs(font); if c.is_file() { c.to_string_lossy().into_owned() } else { font.clone() } };
+                            let d = Decor::Text { text: text.clone(), x: 0, y: 0, w, h, size: r(*sz), color: *color, align: *align, font: f };
+                            self.decor_button(&d, w as u32, h as u32, &st)[state].as_ref().clone()
+                        })
+                    });
+                    blit(&mut im, &spr, x - mx, y - my, 1.0);
                 }
-                Kind::Image { path, .. } => {
+                Kind::Image { path, link } => {
                     let Ok(src) = self.cached_image(&abs(path)) else { continue };
-                    let sc = (w as f64 / src.width as f64).min(h as f64 / src.height as f64);
-                    let (nw, nh) = (((src.width as f64 * sc).round() as u32).max(1), ((src.height as f64 * sc).round() as u32).max(1));
-                    let rs = self.cached_sprite(hkey(|hh| ("image", Arc::as_ptr(&src) as usize, nw, nh).hash(hh)), || resize(&src, nw, nh));
-                    blit(&mut im, &rs, x + (w - nw as i32) / 2, y + (h - nh as i32) / 2, 1.0);
+                    if link.is_none() {
+                        let sc = (w as f64 / src.width as f64).min(h as f64 / src.height as f64);
+                        let (nw, nh) = (((src.width as f64 * sc).round() as u32).max(1), ((src.height as f64 * sc).round() as u32).max(1));
+                        let rs = self.cached_sprite(hkey(|hh| ("image", Arc::as_ptr(&src) as usize, nw, nh).hash(hh)), || resize(&src, nw, nh));
+                        blit(&mut im, &rs, x + (w - nw as i32) / 2, y + (h - nh as i32) / 2, 1.0);
+                        continue;
+                    }
+                    let spr = if skinned { skin_state() } else { None }.unwrap_or_else(|| {
+                        let key = hkey(|hh| ("image cliquable", Arc::as_ptr(&src) as usize, w, h, &st, state).hash(hh));
+                        self.cached_sprite(key, || {
+                            let d = Decor::Image { path: abs(path), x: 0, y: 0, w, h };
+                            self.decor_button(&d, w as u32, h as u32, &st)[state].as_ref().clone()
+                        })
+                    });
+                    blit(&mut im, &spr, x - mx, y - my, 1.0);
                 }
-                Kind::Slot { thumb_h, .. } => {
+                Kind::Slot { thumb_h, video, .. } => {
                     let th = r(*thumb_h).clamp(1, h);
-                    let element = assignment.get(k).copied().unwrap_or(k);
+                    let element = if video.is_some() { usize::MAX } else { assignment.get(k).copied().unwrap_or(usize::MAX) };
+                    if video.is_none() { k += 1; }
                     let slot = slots.get(element);
-                    let key = hkey(|hh| ("vignette", slot.map(|s| (&s.label, s.key)), element, w, h, th).hash(hh));
+                    let key = hkey(|hh| ("vignette", slot.map(|s| (&s.label, s.key)), element, w, h, th, &st, state).hash(hh));
                     let n = self.cached_sprite(key, || {
                         let (label, thumb) = match slot {
                             Some(sl) => (sl.label.clone(), sl.thumb.as_ref().map(|t| cover_resize(t, w as u32, th as u32))),
                             None => (if element == usize::MAX { "(vide)".to_string() } else { format!("Élément {}", element + 1) }, None),
                         };
-                        let thumb = thumb.unwrap_or_else(|| placeholder_thumb(w as u32, th as u32, element + 1, &self.font));
-                        let [n, _] = self.thumb_button(&thumb, &label, w as u32, h as u32, th as u32);
-                        n.as_ref().clone()
+                        let thumb = thumb.unwrap_or_else(|| placeholder_thumb(w as u32, th as u32, element.wrapping_add(1), &self.font));
+                        self.thumb_button(&thumb, &label, w as u32, h as u32, th as u32, &st)[state].as_ref().clone()
                     });
-                    blit(&mut im, &n, x, y, 1.0);
-                    k += 1;
+                    blit(&mut im, &n, x - mx, y - my, 1.0);
                 }
                 Kind::Nav { action, text, .. } => {
-                    let n = self.cached_sprite(hkey(|hh| ("bouton", text, w, h).hash(hh)), || {
-                        let [n, _] = self.text_button(text, w as u32, h as u32);
-                        n.as_ref().clone()
+                    let n = if skinned { skin_state() } else { None }.unwrap_or_else(|| {
+                        self.cached_sprite(hkey(|hh| ("bouton", text, w, h, &st, state).hash(hh)), || self.text_button(text, w as u32, h as u32, &st)[state].as_ref().clone())
                     });
-                    blit(&mut im, &n, x, y, if nav_applicable(*action, menu, page, pages) { 1.0 } else { 0.35 });
+                    blit(&mut im, &n, x - mx, y - my, if nav_applicable(*action, menu, page, pages) { 1.0 } else { 0.35 });
                 }
             }
         }

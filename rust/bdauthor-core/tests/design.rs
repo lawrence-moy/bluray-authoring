@@ -35,7 +35,7 @@ fn validation() {
 fn json_roundtrip_and_remap() {
     let mut ds = Designs::default();
     let mut p = PageDesign::starting_point(MenuType::Chapters, 3, 0, 1, "Chapitres").unwrap();
-    p.items.push(Item { x: 50, y: 60, w: 300, h: 200, kind: Kind::Image { path: "logo.png".into(), link: None } });
+    p.items.push(Item { x: 50, y: 60, w: 300, h: 200, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default() });
     if let Kind::Text { color, align, font, .. } = &mut p.items[0].kind { *color = [10, 200, 30]; *align = Align::Left; *font = "georgia.ttf".into(); }
     ds.main.insert(1, PageDesign::default_main(4, 1, 3).unwrap());
     ds.chapters.insert((2, 0), p.clone());
@@ -58,8 +58,8 @@ fn json_roundtrip_and_remap() {
 fn free_pages_json_swap_remove_validate() {
     let mut ds = Designs::default();
     let mut f = PageDesign::blank_free(1);
-    f.items.push(Item { x: 100, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(2)), link: None } });
-    f.items.push(Item { x: 600, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(0)), link: None } });
+    f.items.push(Item { x: 100, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(2)), link: None }, look: Default::default() });
+    f.items.push(Item { x: 600, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(0)), link: None }, look: Default::default() });
     ds.free.push(f);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("\"libres\""));
@@ -94,7 +94,7 @@ fn goto_buttons_json_remap_and_check() {
     let mut ds = Designs::default();
     let mut p = PageDesign::default_main(2, 0, 2).unwrap();
     p.items.push(Item::nav(NavAction::Goto, 100, 900, 300, 80)); // cible par defaut : page 1 du menu principal
-    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "Chapitres".into(), target: Some(Target::Chapters(2, 1)) } });
+    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "Chapitres".into(), target: Some(Target::Chapters(2, 1)) }, look: Default::default() });
     ds.main.insert(0, p);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("aller_a") && text.contains("\"cible\""));
@@ -112,7 +112,7 @@ fn goto_buttons_json_remap_and_check() {
     assert!(y.main[&0].validate(2, MenuType::Main, 0, 2).iter().any(|p| p.error && p.msg.contains("cible")));
     // suppression de la page 1 : le bouton qui y menait perd sa cible, les pages suivantes sont decalees
     let mut z = ds.clone();
-    z.main.get_mut(&0).unwrap().items.push(Item { x: 900, y: 900, w: 200, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "p3".into(), target: Some(Target::Main(2)) } });
+    z.main.get_mut(&0).unwrap().items.push(Item { x: 900, y: 900, w: 200, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "p3".into(), target: Some(Target::Main(2)) }, look: Default::default() });
     z.page_removed(0);
     assert_eq!(targets(&z), vec![None, Some(Target::Chapters(2, 1)), Some(Target::Main(1))]);
     // verification des cibles
@@ -127,9 +127,9 @@ fn clickable_text_image_and_video_targets() {
     let mut t = Item::text("Lire", 100, 900, 300, 80, 50);
     if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Video(2)); }
     p.items.push(t);
-    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Image { path: "logo.png".into(), link: Some(Target::Main(1)) } });
-    p.items.push(Item { x: 900, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "b".into(), target: Some(Target::Video(1)) } });
-    p.items.push(Item { x: 1300, y: 900, w: 300, h: 80, kind: Kind::Image { path: "deco.png".into(), link: None } });
+    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Image { path: "logo.png".into(), link: Some(Target::Main(1)) }, look: Default::default() });
+    p.items.push(Item { x: 900, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "b".into(), target: Some(Target::Video(1)) }, look: Default::default() });
+    p.items.push(Item { x: 1300, y: 900, w: 300, h: 80, kind: Kind::Image { path: "deco.png".into(), link: None }, look: Default::default() });
     ds.main.insert(0, p);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("\"lire\": \"video\""), "{text}");
@@ -151,7 +151,7 @@ fn clickable_text_image_and_video_targets() {
     assert_eq!(links(&z)[1], None);
     // chevauchement : un texte cliquable compte comme un bouton
     let mut o = PageDesign::default();
-    o.items.push(Item { x: 0, y: 0, w: 400, h: 100, kind: Kind::Image { path: "a.png".into(), link: Some(Target::Video(0)) } });
+    o.items.push(Item { x: 0, y: 0, w: 400, h: 100, kind: Kind::Image { path: "a.png".into(), link: Some(Target::Video(0)) }, look: Default::default() });
     o.items.push(Item::nav(NavAction::Goto, 100, 50, 300, 80));
     assert!(o.validate(0, MenuType::Main, 0, 1).iter().any(|p| p.msg.contains("chevauchent")));
     // destinations inexistantes
@@ -171,7 +171,7 @@ fn fixed_video_slots_with_destination() {
     // page automatique : 2 elements + une vignette de la video 3 qui ouvre la page 2
     let mut p = PageDesign::default_main(2, 0, 2).unwrap();
     let before = p.slot_count();
-    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, assign: Some(0), video: Some(Some(2)), link: Some(Target::Main(1)) } });
+    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, assign: Some(0), video: Some(Some(2)), link: Some(Target::Main(1)) }, look: Default::default() });
     assert_eq!(p.slot_count(), before, "une vignette de video choisie ne compte pas parmi les elements");
     assert_eq!(p.all_slot_count(), before + 1);
     assert!(p.validate(2, MenuType::Main, 0, 2).iter().all(|x| !x.error), "{:?}", p.validate(2, MenuType::Main, 0, 2));
@@ -193,4 +193,44 @@ fn fixed_video_slots_with_destination() {
     assert_eq!(fixed(&z), Some((Some(2), None)));
     let ok = |t: Target| matches!(t, Target::Main(0..=1) | Target::Video(0..=1));
     assert!(back.main[&0].check_targets(&ok).iter().any(|p| p.error && p.msg.contains("vidéo 3")));
+}
+
+#[test]
+fn button_style_json_scale_weight() {
+    use bdauthor_core::style::*;
+    let mut st = ButtonStyle::default();
+    st.glow = 20; st.zoom = 10; st.activated = true; st.sel_border = [1, 2, 3]; st.underline = true; st.dim = 30;
+    let back = ButtonStyle::from_value(&parse(&st.to_value().to_pretty()).unwrap()).unwrap();
+    assert_eq!(back, st);
+    // valeurs hors plage bornees, champs absents = defaut
+    let b = ButtonStyle::from_value(&parse(r#"{"halo": 999, "agrandir": -4}"#).unwrap()).unwrap();
+    assert_eq!((b.glow, b.zoom, b.sel_bg), (60, 0, ButtonStyle::default().sel_bg));
+    assert!(ButtonStyle::from_value(&parse(r##"{"fond": "#12"}"##).unwrap()).is_err());
+    // echelle 720 : 20 px -> 13 px ; une epaisseur de 1 reste 1
+    let k = st.scaled(1280.0 / 1920.0);
+    assert_eq!((k.glow, k.normal_border_w), (13, 1));
+    assert_eq!(st.margins(400, 200), (40, 30)); // halo 20 + 5 % de 400 / de 200
+    assert_eq!(st.state_count(), 3);
+    // style du projet et style/images propres a un element : aller-retour JSON
+    let mut ds = Designs::default();
+    ds.style = st.clone();
+    let mut p = PageDesign::default_main(2, 0, 1).unwrap();
+    p.items[0].look.style = Some(ButtonStyle { glow: 0, ..ButtonStyle::default() });
+    p.items.push(Item::nav(NavAction::Goto, 100, 900, 300, 80));
+    p.items.last_mut().unwrap().look.skin = Skin { normal: "b.png".into(), selected: "".into(), activated: "c.svg".into() };
+    ds.main.insert(0, p.clone());
+    let text = ds.to_value().to_pretty();
+    assert!(text.contains("style_boutons") && text.contains("images_etats"));
+    assert_eq!(Designs::from_value(&parse(&text).unwrap()).unwrap(), ds);
+    assert!(!Designs { style: st.clone(), ..Default::default() }.is_empty(), "un style seul doit etre enregistre");
+    // poids : 2 vignettes (style propre sans halo, l'autre avec) + « Aller a » (images : 3 etats)
+    let w = p.weight(2, &st, MenuType::Main, 0, 1, (1920, 1080));
+    assert_eq!(w.buttons, 3);
+    let plain = p.weight(2, &ButtonStyle::default(), MenuType::Main, 0, 1, (1920, 1080));
+    assert!(w.bytes > plain.bytes && w.seconds > plain.seconds);
+    let (a, b2) = (&p.items[0], &p.items[1]);
+    let sz = |it: &Item, s: &ButtonStyle, n: u64| { let (mx, my) = s.margins(it.w, it.h); (it.w + 2 * mx) as u64 * (it.h + 2 * my) as u64 * n };
+    let own = ButtonStyle { glow: 0, ..ButtonStyle::default() };
+    assert_eq!(plain.bytes, sz(a, &own, 2) + sz(b2, &ButtonStyle::default(), 2) + 300 * 80 * 3);
+    assert!(DECODED_LIMIT > w.bytes);
 }

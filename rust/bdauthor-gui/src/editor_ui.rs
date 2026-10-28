@@ -29,7 +29,8 @@ pub(crate) enum Job {
 }
 
 pub(crate) enum Event {
-    Duration(String, f64),
+    /// (fichier, duree, hauteur, cadence)
+    Duration(String, f64, u32, f64),
     Thumb(String, i64, RgbaImage),
     Error(String),
 }
@@ -50,7 +51,7 @@ impl Worker {
                 let ev = match (&tools, job) {
                     (Err(e), _) => Event::Error(format!("ffmpeg introuvable : {e}")),
                     (Ok(t), Job::Probe { key, path }) => match probe(t, &path) {
-                        Ok(i) => Event::Duration(key, i.duration_s),
+                        Ok(i) => Event::Duration(key, i.duration_s, i.height, i.fps()),
                         Err(e) => Event::Error(format!("Lecture de {key} impossible : {e}")),
                     },
                     (Ok(t), Job::Thumb { key, path, at, duration }) => {
@@ -137,6 +138,17 @@ impl App {
     fn current_info(&self) -> Option<PageInfo> {
         let pages = self.pages();
         self.cur.and_then(|c| pages.iter().find(|p| p.r == c).cloned()).or_else(|| pages.first().cloned())
+    }
+
+    /// Taille du menu sans l'option 1080 : celle de la premiere video une fois encodee (1080 si sa hauteur depasse 800, sinon 720).
+    fn menu_plane(&self) -> (u32, u32) {
+        let first = self.model.videos.first().map(|v| v.file.clone()).unwrap_or_default();
+        // meme regle que ffmpeg::pick_target : 1080 seulement pour une source haute definition a 25 i/s au plus
+        match self.video_sizes.get(&first) {
+            Some(&(h, fps)) if h > 800 && fps < 26.0 => (1920, 1080),
+            Some(_) => (1280, 720),
+            None => (1920, 1080),
+        }
     }
 
     fn base_dir(&self) -> PathBuf {
@@ -284,7 +296,9 @@ impl App {
             }
             self.base_cache.as_ref().map(|(_, i)| i.clone())
         };
-        let img = renderer.render_page_preview(&design, info.menu, info.page, info.pages, &slots, base.as_ref(), PREVIEW, &base_dir);
+        let sel = if info.custom(&self.model.designs) { self.sel_item } else { None };
+        let img = renderer.render_page_preview(&design, info.menu, info.page, info.pages, &slots, base.as_ref(), PREVIEW, &base_dir, &self.model.designs.style, sel);
+        self.preview_sel = self.sel_item;
         let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data);
         match &mut self.preview_tex {
             Some(t) => t.set(ci, egui::TextureOptions::LINEAR),
@@ -343,6 +357,8 @@ impl App {
             if ui.add_enabled(self.history.can_undo(), egui::Button::new("↶ Annuler")).on_hover_text("Ctrl+Z").clicked() { self.undo_action(); }
             if ui.add_enabled(self.history.can_redo(), egui::Button::new("↷ Rétablir")).on_hover_text("Ctrl+Y ou Ctrl+Maj+Z").clicked() { self.redo_action(); }
             ui.separator();
+            if ui.button("Style des boutons…").on_hover_text("Couleurs, cadre, halo, agrandissement des boutons de tout le projet").clicked() { self.show_style = true; }
+            ui.separator();
             ui.strong(info.label(&self.model));
             if !custom {
                 if ui.button("Personnaliser cette page").clicked() {
@@ -373,14 +389,14 @@ impl App {
                         if ui.button(a.label()).clicked() { add = Some(Item::nav(a, 760, 940, 360, 80)); ui.close_menu(); }
                     }
                 });
-                if ui.button("+ Vignette").clicked() { add = Some(Item { x: 100, y: 300, w: 400, h: 250, kind: Kind::Slot { thumb_h: 200, assign: None, video: if info.is_free() { Some(None) } else { None }, link: None } }); }
+                if ui.button("+ Vignette").clicked() { add = Some(Item { x: 100, y: 300, w: 400, h: 250, kind: Kind::Slot { thumb_h: 200, assign: None, video: if info.is_free() { Some(None) } else { None }, link: None }, look: Default::default() }); }
                 ui.separator();
                 ui.checkbox(&mut self.snap, "Aimantation 10 px");
             });
             if pick_image {
                 if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                     let rel = self.relative(&f);
-                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None } });
+                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None }, look: Default::default() });
                 }
             }
             if let Some(it) = add {
@@ -392,10 +408,22 @@ impl App {
             }
         }
 
+        // fenetre du style des boutons du projet
+        let mut open = self.show_style;
+        let mut style_changed = false;
+        egui::Window::new("Style des boutons").open(&mut open).resizable(false).show(ctx, |ui| {
+            egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
+                style_changed = crate::style_ui::style_ui(ui, &mut self.model.designs.style, "projet");
+            });
+            ui.label(egui::RichText::new("S'applique à tous les boutons du projet, sauf ceux qui ont leur propre style (inspecteur).").weak());
+        });
+        self.show_style = open;
+        if style_changed { self.bump(); }
+
         // aperçu régénéré hors glissement
         let min_gap = if self.cfg.adaptive_preview { (self.render_ms * 1.25).clamp(16.0, 200.0) } else { 0.0 };
         let due = self.drag.is_none() || self.last_preview.elapsed().as_secs_f32() * 1000.0 >= min_gap;
-        if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() {
+        if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() || (self.preview_sel != self.sel_item && self.drag.is_none()) {
             let t = std::time::Instant::now();
             self.refresh_preview(ctx, &info);
             self.render_ms = t.elapsed().as_secs_f32() * 1000.0;
@@ -403,6 +431,13 @@ impl App {
             self.last_preview = std::time::Instant::now();
         } else if self.preview_gen != self.edit_gen {
             ctx.request_repaint();
+        }
+
+        // poids de la page (images de boutons a decoder)
+        if let Some(d) = info.design(&self.model.designs).cloned().or_else(|| info.starting_point(&self.model).ok()) {
+            let plane = if self.model.menu_1080 { (1920, 1080) } else { self.menu_plane() };
+            let wt = d.weight(info.count(), &self.model.designs.style, info.menu, info.page, info.pages, plane);
+            crate::style_ui::weight_ui(ui, &wt, plane);
         }
 
         let avail = ui.available_size();
@@ -595,6 +630,8 @@ impl App {
         let is_free = info.is_free();
         let page_targets = self.page_targets();
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
+        let proj_style = self.model.designs.style.clone();
+        let mut pick_skin: Option<usize> = None;
         {
             let Some(d) = info.design_mut(&mut self.model.designs) else { return };
             let eff = d.slot_assignment(count);
@@ -717,6 +754,23 @@ impl App {
                     ui.label(egui::RichText::new("L'image est ajustée dans le cadre sans déformation.").weak());
                 }
             }
+            // apparence propre a ce bouton
+            if it.is_button() {
+                ui.separator();
+                let mut own = it.look.style.is_some();
+                if ui.checkbox(&mut own, "Apparence propre à cet élément").on_hover_text("Sinon : le style des boutons du projet").changed() {
+                    it.look.style = if own { Some(proj_style.clone()) } else { None };
+                    changed = true;
+                }
+                if let Some(st) = &mut it.look.style {
+                    egui::CollapsingHeader::new("Réglages de cet élément").default_open(true).show(ui, |ui| {
+                        changed |= crate::style_ui::style_ui(ui, st, "element");
+                    });
+                }
+                if !matches!(it.kind, Kind::Slot { .. }) {
+                    changed |= crate::style_ui::skin_ui(ui, &mut it.look.skin, &mut pick_skin);
+                }
+            }
             ui.separator();
             ui.horizontal_wrapped(|ui| {
                 if ui.button("Dupliquer").clicked() { op = Some(Op::Duplicate); }
@@ -735,6 +789,16 @@ impl App {
                 let rel = self.relative(&f);
                 if let Some(Kind::Text { font, .. }) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).map(|it| &mut it.kind) {
                     *font = rel;
+                    changed = true;
+                }
+            }
+        }
+        if let Some(state) = pick_skin {
+            if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
+                let rel = self.relative(&f);
+                if let Some(it) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)) {
+                    let sk = &mut it.look.skin;
+                    *[&mut sk.normal, &mut sk.selected, &mut sk.activated][state.min(2)] = rel;
                     changed = true;
                 }
             }
@@ -836,7 +900,7 @@ impl App {
         }
         for e in evs {
             match e {
-                Event::Duration(k, d) => { self.durations.insert(k, d); self.edit_gen += 1; }
+                Event::Duration(k, d, h, f) => { self.video_sizes.insert(k.clone(), (h, f)); self.durations.insert(k, d); self.edit_gen += 1; }
                 Event::Thumb(k, ms, im) => { self.thumbs.insert((k, ms), std::sync::Arc::new(im)); self.edit_gen += 1; }
                 Event::Error(m) => self.notice = m,
             }
