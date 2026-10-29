@@ -109,6 +109,44 @@ fn item_menu(ui: &mut egui::Ui) -> Option<bool> {
     out
 }
 
+/// Element a ajouter depuis la palette (glisser-deposer sur l'apercu).
+#[derive(Clone, Copy, PartialEq)]
+enum NewWidget { Text, Image, VideoSlot, ChapterSlot, Nav(NavAction) }
+
+/// Icones de la palette : (element, icone, nom).
+fn palette(generic: bool) -> Vec<(NewWidget, &'static str, String)> {
+    let mut v = vec![
+        (NewWidget::Text, "🔤", "Texte".to_string()),
+        (NewWidget::Image, "🖼", "Image (PNG, JPEG, SVG…)".to_string()),
+        (NewWidget::VideoSlot, "🎬", "Vignette vidéo (lecture depuis le début)".to_string()),
+        (NewWidget::ChapterSlot, "🎞", "Vignette de chapitre (lecture depuis un instant)".to_string()),
+    ];
+    for a in NavAction::ALL {
+        // « Retour » n'existe que dans les anciens menus de chapitres
+        if generic && a == NavAction::Back { continue; }
+        let icon = match a { NavAction::Prev => "⏮", NavAction::Next => "⏭", NavAction::PlayAll => "▶", NavAction::Back => "↩", NavAction::Goto => "➡" };
+        v.push((NewWidget::Nav(a), icon, format!("Bouton « {} »", a.label())));
+    }
+    v
+}
+
+/// Nouvel element a sa place par defaut (une image n'a pas encore de fichier).
+fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
+    match w {
+        NewWidget::Text => Item::text("Texte", 660, 470, 600, 120, 60),
+        NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0 },
+        NewWidget::VideoSlot | NewWidget::ChapterSlot => {
+            let mut it = Item::slot(100, 300, 400, 250, 200);
+            if let Kind::Slot { video, start, .. } = &mut it.kind {
+                *video = Some(first_video);
+                if w == NewWidget::ChapterSlot { *start = Some(0.0); }
+            }
+            it
+        }
+        NewWidget::Nav(a) => Item::nav(a, 760, 940, 360, 80),
+    }
+}
+
 /// Ligne glissee dans la liste des calques.
 #[derive(Clone, Copy, PartialEq)]
 enum DragRow {
@@ -625,29 +663,19 @@ impl App {
         if custom {
             let mut add: Option<Item> = None;
             let mut pick_image = false;
+            // palette : glisser une icone sur l'apercu pour placer l'element, ou cliquer pour l'ajouter a sa place par defaut
+            let first = (!self.model.videos.is_empty()).then_some(0);
+            let palette = palette(self.model.designs.generic);
             ui.horizontal_wrapped(|ui| {
-                if ui.button("+ Texte").clicked() { add = Some(Item::text("Texte", 660, 470, 600, 120, 60)); }
-                if ui.button("+ Image…").clicked() { pick_image = true; }
-                ui.menu_button("+ Bouton", |ui| {
-                    for a in NavAction::ALL {
-                        if ui.button(a.label()).clicked() { add = Some(Item::nav(a, 760, 940, 360, 80)); ui.close_menu(); }
+                for (w, icon, name) in &palette {
+                    let b = ui.add(egui::Button::new(egui::RichText::new(*icon).size(22.0)).min_size(vec2(40.0, 40.0)).sense(Sense::click_and_drag()))
+                        .on_hover_text(format!("{name}\nGlisser sur la page pour le placer, ou cliquer pour l'ajouter"));
+                    if b.drag_started() { egui::DragAndDrop::set_payload(ui.ctx(), *w); }
+                    if b.dragged() { ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing); }
+                    if b.clicked() {
+                        if *w == NewWidget::Image { pick_image = true; } else { add = Some(new_widget(*w, first)); }
                     }
-                });
-                ui.menu_button("+ Vignette", |ui| {
-                    let first = (!self.model.videos.is_empty()).then_some(0);
-                    if ui.button("Vidéo (lecture depuis le début)").clicked() {
-                        let mut it = Item::slot(100, 300, 400, 250, 200);
-                        if let Kind::Slot { video, .. } = &mut it.kind { *video = Some(first); }
-                        add = Some(it);
-                        ui.close_menu();
-                    }
-                    if ui.button("Chapitre (lecture depuis un instant)").clicked() {
-                        let mut it = Item::slot(100, 300, 400, 250, 200);
-                        if let Kind::Slot { video, start, .. } = &mut it.kind { *video = Some(first); *start = Some(0.0); }
-                        add = Some(it);
-                        ui.close_menu();
-                    }
-                });
+                }
                 ui.separator();
                 ui.checkbox(&mut self.snap, "Aimantation 10 px");
             });
@@ -750,6 +778,42 @@ impl App {
         };
         let to_screen = |x: f32, y: f32| pos2(rect.min.x + x * k, rect.min.y + y * k);
         let to_plane = |p: egui::Pos2| ((p.x - rect.min.x) / k, (p.y - rect.min.y) / k);
+
+        // depot d'un element de la palette : apercu de sa place sous la souris, ajout au relachement
+        if self.sim.is_none() && custom {
+            if let Some(w) = egui::DragAndDrop::payload::<NewWidget>(ctx) {
+                if let Some(pos) = ctx.pointer_hover_pos().filter(|p| rect.contains(*p)) {
+                    let mut it = new_widget(*w, (!self.model.videos.is_empty()).then_some(0));
+                    let (px, py) = to_plane(pos);
+                    let g = |v: i32| if self.snap { (v + 5).div_euclid(10) * 10 } else { v };
+                    it.x = g(px.round() as i32 - it.w / 2).clamp(0, 1920 - it.w);
+                    it.y = g(py.round() as i32 - it.h / 2).clamp(0, 1080 - it.h);
+                    let r = Rect::from_min_max(to_screen(it.x as f32, it.y as f32), to_screen((it.x + it.w) as f32, (it.y + it.h) as f32));
+                    painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(90, 170, 255, 40));
+                    painter.rect_stroke(r, 0.0, Stroke::new(2.0_f32, Color32::from_rgb(90, 170, 255)));
+                    if ctx.input(|i| i.pointer.any_released()) {
+                        egui::DragAndDrop::clear_payload(ctx);
+                        // une image demande son fichier au moment du depot
+                        let dropped = if *w == NewWidget::Image {
+                            rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file().map(|f| {
+                                let mut it = it;
+                                it.kind = Kind::Image { path: self.relative(&f), link: None };
+                                it
+                            })
+                        } else {
+                            Some(it)
+                        };
+                        if let Some(it) = dropped {
+                            let layer = self.target_layer(&info);
+                            if let Some(d) = info.design_mut(&mut self.model.designs) {
+                                self.sel_item = Some(insert_item(d, it, layer));
+                                self.bump();
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         if self.sim.is_some() {
             self.sim_ui(ctx, &info, &resp, &painter, rect, k);
