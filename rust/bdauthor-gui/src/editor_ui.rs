@@ -628,9 +628,6 @@ impl App {
         let custom = info.custom(&self.model.designs);
 
         ui.horizontal_wrapped(|ui| {
-            if ui.add_enabled(self.history.can_undo(), egui::Button::new("↶ Annuler")).on_hover_text("Ctrl+Z").clicked() { self.undo_action(); }
-            if ui.add_enabled(self.history.can_redo(), egui::Button::new("↷ Rétablir")).on_hover_text("Ctrl+Y ou Ctrl+Maj+Z").clicked() { self.redo_action(); }
-            ui.separator();
             if ui.button("Style des boutons…").on_hover_text("Couleurs, cadre, halo, agrandissement des boutons de tout le projet").clicked() { self.show_style = true; }
             if self.sim.is_none() {
                 if ui.button("▶ Simuler la télécommande").on_hover_text("Parcourir le menu comme sur un lecteur : flèches, Entrée, Échap").clicked() {

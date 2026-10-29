@@ -316,6 +316,15 @@ impl eframe::App for App {
                     ui.separator();
                     if ui.button("Configuration…").clicked() { self.show_config = true; ui.close_menu(); }
                 });
+                // annuler / retablir : modifications de la mise en page
+                ui.menu_button("Édition", |ui| {
+                    let edit = !busy && self.mode == Mode::MiseEnPage;
+                    if ui.add_enabled(edit && self.history.can_undo(), egui::Button::new("↶ Annuler").shortcut_text("Ctrl+Z")).clicked() { self.undo_action(); ui.close_menu(); }
+                    if ui.add_enabled(edit && self.history.can_redo(), egui::Button::new("↷ Rétablir").shortcut_text("Ctrl+Y")).clicked() { self.redo_action(); ui.close_menu(); }
+                    if self.mode != Mode::MiseEnPage {
+                        ui.label(egui::RichText::new("Concerne l'onglet « Mise en page »").weak());
+                    }
+                });
                 ui.separator();
                 ui.selectable_value(&mut self.mode, Mode::Projet, "Projet");
                 ui.selectable_value(&mut self.mode, Mode::MiseEnPage, "Mise en page");
