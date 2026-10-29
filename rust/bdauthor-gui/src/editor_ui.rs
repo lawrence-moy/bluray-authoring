@@ -565,15 +565,6 @@ impl App {
             }
             ui.separator();
             ui.strong(info.label(&self.model));
-            if custom && ui.button("Fond de cette page…").on_hover_text("Image, vidéo ou musique propres à cette page").clicked() { self.show_page_bg = true; }
-            let this = match info.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(info.page) };
-            let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
-            if is_home {
-                ui.label(egui::RichText::new("Page d'accueil").strong());
-            } else if ui.button("Définir comme page d'accueil").on_hover_text("Page affichée à l'ouverture du disque et par la touche TOP MENU").clicked() {
-                self.model.designs.home = if this == Target::Main(0) { None } else { Some(this) };
-                self.bump();
-            }
         });
         if custom {
             let mut add: Option<Item> = None;
@@ -917,8 +908,22 @@ impl App {
             ui.label(egui::RichText::new("Les lectures de vidéo sont simulées par un écran noir ; à la fin, le menu revient là où le disque reviendrait.").weak());
             return;
         }
-        ui.heading("Élément");
         let Some(info) = self.current_info() else { return };
+        // la page affichee : fond et page d'accueil
+        ui.heading("Page");
+        ui.horizontal_wrapped(|ui| {
+            if info.custom(&self.model.designs) && ui.button("Fond de cette page…").on_hover_text("Image, vidéo ou musique propres à cette page").clicked() { self.show_page_bg = true; }
+            let this = match info.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(info.page) };
+            let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
+            if is_home {
+                ui.label(egui::RichText::new("⌂ Page d'accueil").strong());
+            } else if ui.button("⌂ Définir comme page d'accueil").on_hover_text("Page affichée à l'ouverture du disque et par la touche TOP MENU").clicked() {
+                self.model.designs.home = if this == Target::Main(0) { None } else { Some(this) };
+                self.bump();
+            }
+        });
+        ui.separator();
+        ui.heading("Élément");
         if !info.custom(&self.model.designs) {
             ui.label("Personnalisez la page pour modifier ses éléments.");
             return;
