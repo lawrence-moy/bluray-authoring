@@ -1,6 +1,6 @@
 //! Editeur visuel de mise en page (onglet « Mise en page ») : apercu fidele, glisser/redimensionner, inspecteur.
 use crate::App;
-use bdauthor_core::design::{Align, Item, Kind, MenuType, NavAction, PageDesign, Target};
+use bdauthor_core::design::{Align, Item, Kind, MenuType, NavAction, PageDesign, SlotReturn, Target};
 use bdauthor_core::editor::{copy_decor, dragged_rect, hit_test, list_pages, move_in_list, set_rect, to_back, to_front, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
@@ -76,10 +76,32 @@ impl Worker {
 }
 
 /// Contenu d'une vignette.
-#[derive(Clone, Copy)]
-enum SlotShow { Video(usize), Element(usize), Missing }
+#[derive(Clone)]
+enum SlotShow {
+    /// video, instant de la miniature (sinon celui de la video), libelle (vide : titre de la video)
+    Video(usize, Option<f64>, String),
+    Element(usize),
+    Missing,
+}
 
-enum Op { Delete, Duplicate, Up, Down, Front, Back, Assign(Option<usize>) }
+enum Op { Delete, Duplicate, Up, Down, Front, Back }
+
+fn mmss(t: f64) -> String {
+    let s = t.max(0.0);
+    let whole = s.floor() as i64;
+    let tenth = ((s - whole as f64) * 10.0).round() as i64;
+    if tenth == 0 || tenth == 10 { let w = s.round() as i64; format!("{}:{:02}", w / 60, w % 60) } else { format!("{}:{:02}.{tenth}", whole / 60, whole % 60) }
+}
+
+/// « m:ss », « h:mm:ss » ou des secondes (virgule ou point) -> secondes.
+fn parse_mmss(s: &str) -> Option<f64> {
+    let s = s.trim().replace(',', ".");
+    let mut t = 0.0;
+    for part in s.split(':') {
+        t = t * 60.0 + part.trim().parse::<f64>().ok()?;
+    }
+    (t >= 0.0).then_some(t)
+}
 
 fn kind_color(k: &Kind) -> Color32 {
     match k {
@@ -206,9 +228,12 @@ impl App {
         let mut k = 0;
         let mut out = Vec::new();
         for it in &d.items {
-            if !matches!(it.kind, Kind::Slot { .. }) { continue; }
+            let Kind::Slot { start, label, thumb_at, .. } = &it.kind else { continue };
             out.push(match it.fixed_video() {
-                Some(v) if v < n => SlotShow::Video(v),
+                Some(v) if v < n => {
+                    let label = if !label.is_empty() { label.clone() } else if let Some(t) = start { mmss(*t) } else { String::new() };
+                    SlotShow::Video(v, thumb_at.or(*start), label)
+                }
                 Some(_) => SlotShow::Missing,
                 None if info.is_free() || it.is_video_slot() => SlotShow::Missing,
                 None => {
@@ -310,7 +335,7 @@ impl App {
     fn slot_sources(&self, info: &PageInfo) -> Vec<(String, f64)> {
         let elems = self.element_sources(info);
         self.slot_plan(info).into_iter().filter_map(|s| match s {
-            SlotShow::Video(v) => Some(self.video_thumb(v)),
+            SlotShow::Video(v, at, _) => { let (f, a) = self.video_thumb(v); Some((f, at.unwrap_or(a))) }
             SlotShow::Element(e) => elems.get(e).cloned(),
             SlotShow::Missing => None,
         }).collect()
@@ -321,7 +346,10 @@ impl App {
         let (sources, labels) = (self.element_sources(info), self.element_labels(info));
         self.slot_plan(info).into_iter().map(|s| {
             let (label, src) = match s {
-                SlotShow::Video(v) => (video_title(&self.model, v), Some(self.video_thumb(v))),
+                SlotShow::Video(v, at, label) => {
+                    let (f, a) = self.video_thumb(v);
+                    (if label.is_empty() { video_title(&self.model, v) } else { label }, Some((f, at.unwrap_or(a))))
+                }
                 SlotShow::Element(e) => (labels.get(e).cloned().unwrap_or_default(), sources.get(e).cloned()),
                 SlotShow::Missing => ("(choisir une vidéo)".to_string(), None),
             };
@@ -376,32 +404,107 @@ impl App {
         }
     }
 
+    // ------------------------------------------------------------------ pages generiques
+    /// Convertit un ancien projet (pages automatiques, pages libres, menus de chapitres) en pages generiques, une fois connues les
+    /// durees utiles (chapitres automatiques). `false` tant que la conversion n'est pas faite (ou sans video).
+    pub(crate) fn ensure_generic(&mut self) -> bool {
+        if self.model.designs.generic { return true; }
+        if self.model.videos.is_empty() { return false; }
+        let waiting: Vec<String> = self.model.videos.iter().filter(|v| v.chapters.is_empty() && v.auto_s.is_some()).map(|v| v.file.clone()).collect();
+        for f in &waiting { let _ = self.media_duration(f, false); }
+        match bdauthor_core::editor::convert_to_generic(&mut self.model, &self.durations) {
+            Ok(()) => {
+                self.history.reset(&self.model.designs);
+                self.cur = None;
+                self.sel_item = None;
+                self.dirty = true;
+                self.edit_gen += 1;
+                self.notice = format!("Menus mis en pages génériques : {} page(s), toutes modifiables.", self.model.designs.free.len());
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     // ------------------------------------------------------------------ liste des pages (panneau de gauche)
     pub(crate) fn page_list_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Pages de menu");
-        if !self.model.videos.is_empty() && ui.button("+ Page libre").on_hover_text("Ajoute une page vierge à la suite du menu principal ; ses vignettes peuvent montrer n'importe quelle vidéo.").clicked() {
-            let f = bdauthor_core::editor::add_free_page(&mut self.model);
-            self.cur = Some(bdauthor_core::editor::PageRef::Free(f));
-            self.sel_item = None;
-            self.bump();
+        if self.model.videos.is_empty() {
+            ui.label("Ajoutez des vidéos dans l'onglet « Projet ».");
+            return;
         }
+        if !self.ensure_generic() {
+            ui.label("Préparation des pages (lecture de la durée des vidéos à chapitres automatiques)…\nSi cela dure, vérifiez dans l'onglet « Projet » que ces vidéos sont bien trouvées.");
+            return;
+        }
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("+ Page").on_hover_text("Ajoute une page vierge à la fin ; placez-y vignettes de vidéo ou de chapitre, boutons, textes et images.").clicked() {
+                let f = bdauthor_core::editor::add_free_page(&mut self.model);
+                self.cur = Some(PageRef::Free(f));
+                self.sel_item = None;
+                self.bump();
+            }
+            if ui.button("+ Pages générées").on_hover_text("Ajoute à la fin une grille de toutes les vidéos et, pour chaque vidéo à chapitres, des pages de vignettes de chapitre.").clicked() {
+                match bdauthor_core::editor::append_generated_pages(&mut self.model, &self.durations) {
+                    Ok(n) => {
+                        let first = self.model.designs.free.len() - n;
+                        self.cur = Some(PageRef::Free(first));
+                        self.sel_item = None;
+                        self.notice = format!("{n} page(s) ajoutée(s) à la fin.");
+                        self.bump();
+                    }
+                    Err(e) => self.notice = format!("Pages non générées : {e} (réessayez dans un instant)."),
+                }
+            }
+        });
         let pages = self.pages();
         if pages.is_empty() {
-            ui.label("Ajoutez des vidéos dans l'onglet « Projet ».");
+            ui.label("Aucune page : ajoutez-en une.");
             return;
         }
         let cur = self.current_info().map(|p| p.r);
         let home_ref = self.home_page();
         let mut pick = None;
-        egui::ScrollArea::vertical().show(ui, |ui| {
+        egui::ScrollArea::vertical().max_height((ui.available_height() - 170.0).max(120.0)).show(ui, |ui| {
             for p in &pages {
-                let mark = if p.is_free() { "◆ " } else if p.custom(&self.model.designs) { "● " } else { "○ " };
-                let home = if home_ref == Some(p.r) { "  (accueil)" } else { "" };
-                if ui.selectable_label(cur == Some(p.r), format!("{mark}{}{home}", p.label(&self.model))).clicked() { pick = Some(p.r); }
+                let home = if home_ref == Some(p.r) { "  ⌂" } else { "" };
+                if ui.selectable_label(cur == Some(p.r), format!("{}{home}", p.label(&self.model))).clicked() { pick = Some(p.r); }
             }
         });
+        // page selectionnee : nom, place, suppression
+        if let Some(PageRef::Free(k)) = cur {
+            ui.separator();
+            let np = self.model.designs.free.len();
+            let mut changed = false;
+            let mut moved: Option<usize> = None;
+            let mut delete = false;
+            if let Some(d) = self.model.designs.free.get_mut(k) {
+                ui.horizontal(|ui| {
+                    ui.label("Nom :");
+                    changed |= ui.add(egui::TextEdit::singleline(&mut d.name).hint_text(format!("Page {}", k + 1))).changed();
+                });
+            }
+            ui.horizontal_wrapped(|ui| {
+                if ui.add_enabled(k > 0, egui::Button::new("▲ Monter")).clicked() { moved = Some(k - 1); }
+                if ui.add_enabled(k + 1 < np, egui::Button::new("▼ Descendre")).clicked() { moved = Some(k + 1); }
+                if ui.button("Supprimer").on_hover_text("Supprime la page ; les liens qui y menaient sont à rechoisir").clicked() { delete = true; }
+            });
+            ui.label(egui::RichText::new("« Précédent » et « Suivant » mènent à la page d'avant et d'après dans cette liste.").weak());
+            if let Some(to) = moved {
+                bdauthor_core::editor::swap_pages(&mut self.model, k, to);
+                self.cur = Some(PageRef::Free(to));
+                changed = true;
+            }
+            if delete {
+                if let Some(info) = pages.iter().find(|p| p.r == PageRef::Free(k)) { info.remove_design(&mut self.model.designs); }
+                self.cur = (k > 0).then(|| PageRef::Free(k - 1));
+                self.sel_item = None;
+                changed = true;
+            }
+            if changed { self.edit_gen += 1; self.bump(); }
+        }
         ui.separator();
-        ui.label(egui::RichText::new("● mise en page personnalisée\n○ grille automatique\n◆ page libre\n(accueil) : page d'accueil (touche TOP MENU, ouverture du disque)").weak());
+        ui.label(egui::RichText::new("⌂ : page d'accueil (touche TOP MENU, ouverture du disque)").weak());
         if let Some(r) = pick {
             if self.cur != Some(r) {
                 self.cur = Some(r);
@@ -414,8 +517,12 @@ impl App {
 
     // ------------------------------------------------------------------ zone centrale : barre d'outils + apercu
     pub(crate) fn layout_central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        let Some(info) = self.current_info() else {
+        if !self.ensure_generic() {
             ui.label("Ajoutez des vidéos dans l'onglet « Projet » pour composer les pages de menu.");
+            return;
+        }
+        let Some(info) = self.current_info() else {
+            ui.label("Aucune page : « + Page » (à gauche) en ajoute une.");
             return;
         };
         if let Err(e) = &self.renderer {
@@ -453,23 +560,6 @@ impl App {
                 self.model.designs.home = if this == Target::Main(0) { None } else { Some(this) };
                 self.bump();
             }
-            if !custom {
-                if ui.button("Personnaliser cette page").clicked() {
-                    if let Ok(d) = info.starting_point(&self.model) {
-                        info.set_design(&mut self.model.designs, d);
-                        self.sel_item = None;
-                        self.bump();
-                    }
-                }
-            } else if info.is_free() {
-                // une page personnalisee ne revient pas a la grille automatique ; seule une page libre peut etre supprimee
-                if ui.button("Supprimer cette page").clicked() {
-                    info.remove_design(&mut self.model.designs);
-                    self.sel_item = None;
-                    self.cur = None;
-                    self.bump();
-                }
-            }
         });
         if custom {
             let mut add: Option<Item> = None;
@@ -482,7 +572,21 @@ impl App {
                         if ui.button(a.label()).clicked() { add = Some(Item::nav(a, 760, 940, 360, 80)); ui.close_menu(); }
                     }
                 });
-                if ui.button("+ Vignette").clicked() { add = Some(Item { x: 100, y: 300, w: 400, h: 250, kind: Kind::Slot { thumb_h: 200, assign: None, video: if info.is_free() { Some(None) } else { None }, link: None }, look: Default::default() }); }
+                ui.menu_button("+ Vignette", |ui| {
+                    let first = (!self.model.videos.is_empty()).then_some(0);
+                    if ui.button("Vidéo (lecture depuis le début)").clicked() {
+                        let mut it = Item::slot(100, 300, 400, 250, 200);
+                        if let Kind::Slot { video, .. } = &mut it.kind { *video = Some(first); }
+                        add = Some(it);
+                        ui.close_menu();
+                    }
+                    if ui.button("Chapitre (lecture depuis un instant)").clicked() {
+                        let mut it = Item::slot(100, 300, 400, 250, 200);
+                        if let Kind::Slot { video, start, .. } = &mut it.kind { *video = Some(first); *start = Some(0.0); }
+                        add = Some(it);
+                        ui.close_menu();
+                    }
+                });
                 ui.separator();
                 ui.checkbox(&mut self.snap, "Aimantation 10 px");
             });
@@ -665,9 +769,9 @@ impl App {
                     } else {
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, col));
                     }
-                    if matches!(it.kind, Kind::Slot { .. }) {
+                    if let Kind::Slot { start, .. } = it.kind {
                         let shown = match it.fixed_video() {
-                            Some(v) => format!("V{}", v + 1),
+                            Some(v) => match start { Some(t) => format!("V{} @{}", v + 1, mmss(t)), None => format!("V{}", v + 1) },
                             None if info.is_free() || it.is_video_slot() => "?".to_string(),
                             None => {
                                 let e = eff.get(slot_no).copied().unwrap_or(usize::MAX);
@@ -712,8 +816,6 @@ impl App {
             if others > 0 && ui.button("Reprendre le décor et les boutons sur les autres pages de ce menu").clicked() {
                 self.copy_decor_to_others(&info);
             }
-        } else {
-            ui.label(egui::RichText::new("Cette page utilise la grille automatique. « Personnaliser » permet de placer librement vignettes, boutons, textes et images.").weak());
         }
     }
 
@@ -771,17 +873,14 @@ impl App {
         let mut pick_font = false;
         let base_dir = self.base_dir();
         let font_check = self.renderer.as_ref();
-        let count = info.count();
-        let labels: Vec<String> = self.element_labels(&info);
-        let is_free = info.is_free();
         let page_targets = self.page_targets();
+        let page_names: Vec<String> = self.pages().iter().map(|p| p.label(&self.model)).collect();
+        let video_durations: Vec<Option<f64>> = self.model.videos.iter().map(|v| self.durations.get(&v.file).copied()).collect();
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
         let proj_style = self.model.designs.style.clone();
         let mut pick_skin: Option<usize> = None;
         {
             let Some(d) = info.design_mut(&mut self.model.designs) else { return };
-            let eff = d.slot_assignment(count);
-            let slot_pos = d.items.iter().take(i).filter(|x| x.is_element_slot()).count();
             let Some(it) = d.items.get_mut(i) else { self.sel_item = None; return };
             ui.colored_label(kind_color(&it.kind), kind_name(&it.kind));
             egui::Grid::new("geometrie").num_columns(4).show(ui, |ui| {
@@ -794,7 +893,7 @@ impl App {
             });
             let h = it.h;
             match &mut it.kind {
-                Kind::Slot { thumb_h, assign, video, link } => {
+                Kind::Slot { thumb_h, video, link, start, label, thumb_at, ret, .. } => {
                     let mut lab = (h - *thumb_h).max(0);
                     ui.horizontal(|ui| {
                         ui.label("Hauteur du libellé :");
@@ -803,49 +902,71 @@ impl App {
                             changed = true;
                         }
                     });
-                    // contenu : un element de la page (pages automatiques) ou n'importe quelle video du projet
+                    // video montree
                     let vname = |v: usize| format!("Vidéo {}. {}", v + 1, video_labels.get(v).cloned().unwrap_or_default());
-                    let ename = |e: usize| if e == usize::MAX { "(aucun élément : à choisir)".to_string() } else { format!("{}. {}", e + 1, labels.get(e).cloned().unwrap_or_default()) };
-                    let cur = eff.get(slot_pos).copied().unwrap_or(usize::MAX);
-                    let shown = match *video {
-                        Some(Some(v)) => vname(v),
-                        Some(None) => "(aucune vidéo : à choisir)".to_string(),
-                        None if is_free => "(choisir une vidéo)".to_string(),
-                        None => ename(cur),
-                    };
                     let old_video = (*video).flatten();
-                    egui::ComboBox::from_label("Contenu").selected_text(shown).show_ui(ui, |ui| {
-                        if !is_free {
-                            ui.label(egui::RichText::new("Éléments de cette page").weak());
-                            if ui.selectable_label(video.is_none() && assign.is_none(), "Automatique (dans l'ordre)").clicked() { *video = None; op = Some(Op::Assign(None)); }
-                            for e in 0..count {
-                                if ui.selectable_label(video.is_none() && assign.is_some() && cur == e, ename(e)).clicked() { *video = None; op = Some(Op::Assign(Some(e))); }
-                            }
-                            ui.separator();
-                        }
-                        ui.label(egui::RichText::new("N'importe quelle vidéo du projet").weak());
+                    let shown = match *video { Some(Some(v)) => vname(v), _ => "(aucune vidéo : à choisir)".to_string() };
+                    egui::ComboBox::from_label("Vidéo").selected_text(shown).show_ui(ui, |ui| {
                         for v in 0..video_labels.len() {
                             if ui.selectable_label(*video == Some(Some(v)), vname(v)).clicked() { *video = Some(Some(v)); changed = true; }
                         }
                     });
-                    // « lire la video associee » suit le changement de video
                     if let (Some(o), Some(nv)) = (old_video, (*video).flatten()) {
                         if o != nv && *link == Some(Target::Video(o)) { *link = Some(Target::Video(nv)); }
                     }
-                    if !is_free && video.is_none() {
-                        ui.label(egui::RichText::new("Plusieurs vignettes peuvent montrer le même élément ou la même vidéo.").weak());
+                    let dur = (*video).flatten().and_then(|v| video_durations.get(v).copied().flatten());
+                    // depart : debut de la video ou instant (vignette de chapitre)
+                    let mut chapter = start.is_some();
+                    ui.horizontal(|ui| {
+                        if ui.radio_value(&mut chapter, false, "Depuis le début").changed() { *start = None; changed = true; }
+                        if ui.radio_value(&mut chapter, true, "Chapitre, à partir de :").changed() { *start = Some(0.0); changed = true; }
+                    });
+                    if let Some(t) = start {
+                        ui.horizontal(|ui| {
+                            let max = dur.unwrap_or(f64::MAX);
+                            changed |= ui.add(egui::DragValue::new(t).range(0.0..=max).speed(0.5)
+                                .custom_formatter(|v, _| mmss(v)).custom_parser(parse_mmss)).on_hover_text("Glissez, ou tapez « m:ss » (ex. 12:30) ou des secondes").changed();
+                            if let Some(d) = dur { ui.label(egui::RichText::new(format!("sur {}", mmss(d))).weak()); }
+                        });
+                        if dur.map_or(false, |d| *t >= d) { ui.colored_label(Color32::from_rgb(230, 100, 90), "Après la fin de la vidéo."); }
+                        ui.label(egui::RichText::new("Le lecteur démarre à l'image clé la plus proche avant cet instant (au plus 1 s plus tôt).").weak());
                     }
-                    let habit = if info.menu == MenuType::Chapters && video.is_none() { "Habituel : lire depuis ce chapitre" } else { "Habituel : menu de chapitres s'il existe, sinon lecture" };
-                    let mut opts: Vec<(Target, String)> = Vec::new();
-                    if let Some(Some(v)) = *video { opts.push((Target::Video(v), "Lire la vidéo associée".to_string())); }
-                    opts.extend(page_targets.iter().cloned());
-                    let shown = link.and_then(|t| opts.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| if link.is_some() { "(destination introuvable)".into() } else { habit.to_string() });
+                    // libelle et image
+                    ui.horizontal(|ui| {
+                        ui.label("Libellé :");
+                        let hint = match start { Some(t) => mmss(*t), None => (*video).flatten().and_then(|v| video_labels.get(v).cloned()).unwrap_or_default() };
+                        changed |= ui.add(egui::TextEdit::singleline(label).hint_text(hint)).changed();
+                    });
+                    let mut own_img = thumb_at.is_some();
+                    if ui.checkbox(&mut own_img, "Image de la vignette prise à un autre instant").changed() {
+                        *thumb_at = if own_img { Some(start.unwrap_or(0.0)) } else { None };
+                        changed = true;
+                    }
+                    if let Some(a) = thumb_at {
+                        changed |= ui.add(egui::DragValue::new(a).range(0.0..=dur.unwrap_or(f64::MAX)).speed(0.5).custom_formatter(|v, _| mmss(v)).custom_parser(parse_mmss)).changed();
+                    }
+                    // au clic : lecture (habituel) ou autre destination
+                    let habit = if start.is_some() { "Lire la vidéo depuis ce chapitre" } else { "Lire la vidéo" };
+                    let shown = link.and_then(|t| page_targets.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| if link.is_some() { "(destination introuvable)".into() } else { habit.to_string() });
                     egui::ComboBox::from_label("Au clic").selected_text(shown).show_ui(ui, |ui| {
                         if ui.selectable_label(link.is_none(), habit).clicked() { *link = None; changed = true; }
-                        for (t, l) in &opts {
+                        for (t, l) in &page_targets {
                             if ui.selectable_label(*link == Some(*t), l).clicked() { *link = Some(*t); changed = true; }
                         }
                     });
+                    // apres la lecture
+                    if matches!(link, None | Some(Target::Video(_))) {
+                        let rname = |r: SlotReturn| match r {
+                            SlotReturn::Origin => "Revenir à cette page".to_string(),
+                            SlotReturn::Home => "Aller à la page d'accueil".to_string(),
+                            SlotReturn::Page(p) => format!("Aller à la page {}", page_names.get(p).cloned().unwrap_or_else(|| format!("{} (introuvable)", p + 1))),
+                        };
+                        egui::ComboBox::from_label("Après la lecture").selected_text(rname(*ret)).show_ui(ui, |ui| {
+                            for r in [SlotReturn::Origin, SlotReturn::Home].into_iter().chain((0..page_names.len()).map(SlotReturn::Page)) {
+                                if ui.selectable_label(*ret == r, rname(r)).clicked() { *ret = r; changed = true; }
+                            }
+                        });
+                    }
                 }
                 Kind::Nav { action, text, target } => {
                     egui::ComboBox::from_label("Action").selected_text(action.label()).show_ui(ui, |ui| {
@@ -973,7 +1094,6 @@ impl App {
                     Op::Down => self.sel_item = Some(move_in_list(d, i, false)),
                     Op::Front => self.sel_item = Some(to_front(d, i)),
                     Op::Back => self.sel_item = Some(to_back(d, i)),
-                    Op::Assign(e) => d.assign_slot(i, e, count),
                 }
             }
             changed = true;
@@ -995,7 +1115,8 @@ impl App {
                 Kind::Text { text, link, .. } => format!("Texte « {} »{}", text.lines().next().unwrap_or("").chars().take(24).collect::<String>(), if link.is_some() { " (cliquable)" } else { "" }),
                 Kind::Image { path, link } => format!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { " (cliquable)" } else { "" }),
                 Kind::Nav { action, text, .. } => if *action == NavAction::Goto { format!("Bouton « {text} »") } else { format!("Bouton {}", action.label()) },
-                Kind::Slot { video, link, .. } => format!("Vignette{}{}", match video { Some(Some(v)) => format!(" (vidéo {})", v + 1), Some(None) => " (sans vidéo)".to_string(), None => String::new() }, if link.is_some() { " →" } else { "" }),
+                Kind::Slot { video, link, start, .. } => format!("Vignette{}{}{}", match video { Some(Some(v)) => format!(" (vidéo {})", v + 1), Some(None) => " (sans vidéo)".to_string(), None => String::new() },
+                    start.map(|t| format!(" à {}", mmss(t))).unwrap_or_default(), if link.is_some() { " →" } else { "" }),
             };
             let text = egui::RichText::new(what).color(kind_color(&it.kind));
             if ui.selectable_label(self.sel_item == Some(idx), text).clicked() { pick = Some(idx); }

@@ -74,6 +74,35 @@ impl Align {
     pub fn from_name(s: &str) -> Option<Self> { [Align::Left, Align::Center, Align::Right].into_iter().find(|a| a.name() == s) }
 }
 
+/// Ou revenir a la fin de la video lancee par une vignette.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum SlotReturn {
+    /// la page ou se trouve la vignette
+    #[default]
+    Origin,
+    /// la page d'accueil (touche TOP MENU)
+    Home,
+    /// une page donnee (indice dans la liste des pages)
+    Page(usize),
+}
+
+impl SlotReturn {
+    fn to_value(self) -> Option<Value> {
+        match self {
+            SlotReturn::Origin => None,
+            SlotReturn::Home => Some(Value::Str("accueil".into())),
+            SlotReturn::Page(p) => Some(Value::Obj(vec![("page".into(), Value::Num((p + 1) as f64))])),
+        }
+    }
+    fn from_value(v: Option<&Value>) -> SlotReturn {
+        match v {
+            Some(Value::Str(s)) if s == "accueil" => SlotReturn::Home,
+            Some(o @ Value::Obj(_)) => o.get("page").and_then(Value::as_f64).map_or(SlotReturn::Origin, |p| SlotReturn::Page((p.round() as i64 - 1).max(0) as usize)),
+            _ => SlotReturn::Origin,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum Kind {
     /// Vignette cliquable + libelle ; `thumb_h` = hauteur de la vignette (le reste de `h` porte le libelle). Les vignettes se remplissent dans l'ordre de la liste.
@@ -83,7 +112,10 @@ pub enum Kind {
     /// n'apparait pas sur le disque. Toutes les vignettes des pages libres sont de ce type. Une meme video peut etre sur plusieurs vignettes.
     /// `link` : destination au clic ; `None` = comportement habituel (video : son menu de chapitres s'il existe, sinon la lecture ;
     /// chapitre : lecture depuis ce chapitre).
-    Slot { thumb_h: i32, assign: Option<usize>, video: Option<Option<usize>>, link: Option<Target> },
+    /// `start` : vignette de chapitre — la video demarre a cet instant (secondes) ; `None` = depuis le debut.
+    /// `label` : libelle (vide = titre de la video, ou « mm:ss » pour un chapitre) ; `thumb_at` : instant de l'image montree
+    /// (`None` = depart du chapitre, ou image habituelle de la video) ; `ret` : ou revenir a la fin de la video.
+    Slot { thumb_h: i32, assign: Option<usize>, video: Option<Option<usize>>, link: Option<Target>, start: Option<f64>, label: String, thumb_at: Option<f64>, ret: SlotReturn },
     /// `target` : page visee par une action `Goto` (ignore pour les autres actions).
     Nav { action: NavAction, text: String, target: Option<Target> },
     /// `font` : vide = police par defaut ; sinon fichier .ttf/.otf (chemin absolu ou relatif au projet) ou nom d'un fichier de police installe.
@@ -118,7 +150,15 @@ impl Item {
     pub fn fixed_video(&self) -> Option<usize> { if let Kind::Slot { video: Some(v), .. } = self.kind { v } else { None } }
     /// Vignette vierge (elements de la page dans l'ordre, comportement habituel).
     pub fn slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: None, link: None }, look: Look::default() }
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default() }
+    }
+    /// Vignette d'une video du projet (`start` : instant de depart pour une vignette de chapitre).
+    pub fn video_slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32, video: usize, start: Option<f64>, label: &str) -> Item {
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: Some(Some(video)), link: None, start, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default() }
+    }
+    /// Instant de depart d'une vignette de chapitre.
+    pub fn chapter_start(&self) -> Option<f64> {
+        if let Kind::Slot { start, .. } = self.kind { start } else { None }
     }
     /// Destinations modifiables de l'element : cible d'un bouton « Aller a », lien d'un texte ou d'une image.
     pub fn targets_mut(&mut self) -> Option<&mut Option<Target>> {
@@ -211,6 +251,8 @@ impl PageBg {
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PageDesign {
     pub items: Vec<Item>,
+    /// Nom de la page dans l'editeur (facultatif).
+    pub name: String,
     /// Fond propre a cette page ; par defaut celui du projet.
     pub bg: PageBg,
 }
@@ -374,8 +416,13 @@ impl PageDesign {
                 }
             }
         }
-        if !self.items.iter().any(|i| matches!(i.kind, Kind::Nav { action: NavAction::Prev, .. })) && page > 0 {
-            p.push(Problem { error: false, msg: "Aucun bouton « Précédent » : cette page serait une impasse.".into() });
+        // impasse : aucun bouton ni lien ne mene a une autre page (la touche Menu ramene toujours a l'accueil)
+        let exits = self.items.iter().any(|i| match &i.kind {
+            Kind::Nav { action: NavAction::Prev | NavAction::Next | NavAction::Goto, .. } => true,
+            _ => matches!(i.link(), Some(Target::Main(_) | Target::Chapters(..))),
+        });
+        if !exits && page > 0 {
+            p.push(Problem { error: false, msg: "Aucun bouton vers une autre page : on n'en sortira qu'avec la touche Menu de la télécommande.".into() });
         }
         p
     }
@@ -434,7 +481,7 @@ impl PageDesign {
             let mut o: Vec<(String, Value)> = Vec::new();
             let mut put = |k: &str, v: Value| o.push((k.to_string(), v));
             match &it.kind {
-                Kind::Slot { thumb_h, assign, video, link } => {
+                Kind::Slot { thumb_h, assign, video, link, start, label, thumb_at, ret } => {
                     put("type", Value::Str("vignette".into())); put("vignette_h", num(*thumb_h));
                     match video {
                         Some(Some(v)) => put("video", num(*v as i32 + 1)),
@@ -442,6 +489,10 @@ impl PageDesign {
                         None => if let Some(a) = assign { put("element", num(*a as i32 + 1)); },
                     }
                     if let Some(t) = link { put("cible", t.to_value()); }
+                    if let Some(t) = start { put("depart_s", Value::Num(*t)); }
+                    if !label.is_empty() { put("libelle", Value::Str(label.clone())); }
+                    if let Some(t) = thumb_at { put("image_s", Value::Num(*t)); }
+                    if let Some(r) = ret.to_value() { put("retour", r); }
                 }
                 Kind::Nav { action, text, target } => {
                     put("type", Value::Str("navigation".into())); put("action", Value::Str(action.name().into())); put("texte", Value::Str(text.clone()));
@@ -464,6 +515,7 @@ impl PageDesign {
             Value::Obj(o)
         }).collect();
         let mut o = vec![("elements".into(), Value::Arr(items))];
+        if !self.name.is_empty() { o.push(("nom".into(), Value::Str(self.name.clone()))); }
         if !self.bg.is_default() { o.push(("fond_page".into(), self.bg.to_value())); }
         Value::Obj(o)
     }
@@ -480,7 +532,9 @@ impl PageDesign {
                 "vignette" => {
                     let one = |key: &str| e.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
                     let video = match e.get("video") { None => None, Some(Value::Null) => Some(None), Some(_) => Some(one("video")) };
-                    Kind::Slot { thumb_h: at("vignette_h")?, assign: one("element"), video, link: link()? }
+                    let num = |key: &str| e.get(key).and_then(Value::as_f64).map(|x| x.max(0.0));
+                    Kind::Slot { thumb_h: at("vignette_h")?, assign: one("element"), video, link: link()?, start: num("depart_s"), label: st("libelle").unwrap_or("").to_string(),
+                                 thumb_at: num("image_s"), ret: SlotReturn::from_value(e.get("retour")) }
                 }
                 "navigation" => {
                     let action = st("action").and_then(NavAction::from_name).ok_or_else(|| format!("élément {} : action inconnue", k + 1))?;
@@ -505,7 +559,7 @@ impl PageDesign {
             };
             items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look });
         }
-        Ok(PageDesign { items, bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default() })
+        Ok(PageDesign { items, name: v.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default() })
     }
 }
 
@@ -523,10 +577,16 @@ pub struct Designs {
     pub style: ButtonStyle,
     /// Page d'accueil (touche TOP MENU et ouverture du disque) ; `None` = page 1 du menu principal.
     pub home: Option<Target>,
+    /// Menu en pages generiques : `free` est la liste de toutes les pages (dans l'ordre), `main` et `chapters` sont vides.
+    /// Faux pour un ancien projet (pages automatiques et menus de chapitres), converti par `convert::generate_pages`.
+    pub generic: bool,
 }
 
 impl Designs {
-    pub fn is_empty(&self) -> bool { self.main.is_empty() && self.chapters.is_empty() && self.free.is_empty() && self.style == ButtonStyle::default() && self.home.is_none() }
+    pub fn is_empty(&self) -> bool { !self.generic && self.main.is_empty() && self.chapters.is_empty() && self.free.is_empty() && self.style == ButtonStyle::default() && self.home.is_none() }
+
+    /// Pages du menu generique (vide pour un ancien projet non converti).
+    pub fn pages(&self) -> &[PageDesign] { if self.generic { &self.free } else { &[] } }
 
     /// Echange deux videos (les menus de chapitres suivent leur video).
     pub fn swap_videos(&mut self, a: usize, b: usize) {
@@ -552,6 +612,17 @@ impl Designs {
     /// La page `page` (rang dans le menu principal, pages automatiques puis libres) vient d'etre supprimee : les boutons qui y
     /// menaient perdent leur cible, les suivants sont decales.
     pub fn page_removed(&mut self, page: usize) {
+        for d in self.all_mut() {
+            for it in &mut d.items {
+                if let Kind::Slot { ret, .. } = &mut it.kind {
+                    match *ret {
+                        SlotReturn::Page(p) if p == page => *ret = SlotReturn::Origin,
+                        SlotReturn::Page(p) if p > page => *ret = SlotReturn::Page(p - 1),
+                        _ => {}
+                    }
+                }
+            }
+        }
         match self.home {
             Some(Target::Main(p)) if p == page => self.home = None,
             Some(Target::Main(p)) if p > page => self.home = Some(Target::Main(p - 1)),
@@ -607,6 +678,12 @@ impl Designs {
     }
 
     pub fn to_value(&self) -> Value {
+        if self.generic {
+            let mut o = vec![("pages".to_string(), Value::Arr(self.free.iter().map(PageDesign::to_value).collect()))];
+            if self.style != ButtonStyle::default() { o.push(("style_boutons".into(), self.style.to_value())); }
+            if let Some(h) = self.home { o.push(("accueil".into(), h.to_value())); }
+            return Value::Obj(o);
+        }
         let mut main = Vec::new();
         for (p, d) in &self.main { main.push(((p + 1).to_string(), d.to_value())); }
         let mut by_video: BTreeMap<usize, Vec<(String, Value)>> = BTreeMap::new();
@@ -622,6 +699,12 @@ impl Designs {
     pub fn from_value(v: &Value) -> Result<Self, String> {
         let mut d = Designs::default();
         let idx = |k: &str| k.parse::<usize>().ok().filter(|n| *n >= 1).map(|n| n - 1).ok_or_else(|| format!("numéro de page ou de vidéo invalide : « {k} »"));
+        if let Some(pages) = v.get("pages").and_then(Value::as_array) {
+            d.generic = true;
+            for (k, page) in pages.iter().enumerate() {
+                d.free.push(PageDesign::from_value(page).map_err(|e| format!("page {} : {e}", k + 1))?);
+            }
+        }
         if let Some(Value::Obj(m)) = v.get("principal") {
             for (k, page) in m { d.main.insert(idx(k)?, PageDesign::from_value(page).map_err(|e| format!("menu principal, page {k} : {e}"))?); }
         }

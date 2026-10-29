@@ -357,3 +357,24 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Plus de repli silencieux sur la grille automatique : `resolve_design` arrete la construction (`layout_failure` : chaque erreur dans le journal, prefixe « ERREUR de mise en page », puis erreur globale).
 - Menu principal et pages libres verifies avant tout encodage ; menus de chapitres a leur construction (le nombre de chapitres depend des videos encodees).
 - Tests : custom_layout_project (page de chapitres invalide -> arret, puis succes sans elle), invalid_main_layout_stops_before_encoding.
+
+## Pages generiques (fin des pages automatiques et des menus de chapitres)
+- Un menu = une liste de pages generiques, toutes personnalisees (JSON `mise_en_page.pages`, `Designs.generic`). Plus de grille
+  automatique ni de « menu de chapitres » : une vignette montre une video choisie (`video`), lue depuis le debut ou, pour une
+  vignette de chapitre, depuis `depart_s` ; options `libelle`, `image_s` (instant de la miniature), `retour` (absent = page
+  d'origine, "accueil", ou {"page": n}).
+- Conversion automatique des anciens projets (`convert::generate_pages`) : pages du menu principal (personnalisees ou grille),
+  pages libres, puis pages de chapitres de chaque video (vignettes de chapitre, « Tout lire » -> lire la video, « Retour » -> page
+  de la video). Faite par le constructeur (avec les chapitres reels) et par l'editeur a l'ouverture de « Mise en page »
+  (`editor::convert_to_generic`, attend la duree des videos a chapitres automatiques). Un ancien menu de chapitres invalide bloque
+  toujours la construction (verifie avant conversion).
+- Disque : titres 1..n videos, n+1..n+P pages, puis un titre « lecture depuis un repere » par video ayant des vignettes de chapitre
+  (MOVE r10<-r0 ; r0<-0 ; PLAY_PL_PM v, r10 ; JUMP_TITLE r1), puis « Tout lire ». Le registre r1 porte le titre de retour (mis par
+  chaque bouton qui lance une lecture) ; les videos finissent par JUMP_TITLE r1. Reperes = chapitres de la video + departs des
+  vignettes, cales sur l'image d'acces precedente.
+- Editeur : « + Page », « + Pages generees » (grille + chapitres ajoutes a la fin), nom, monter/descendre (`swap_pages`, liens
+  suivis), supprimer ; « + Vignette » video ou chapitre ; inspecteur : video, depart m:ss, libelle, image, au clic, apres la lecture.
+  Simulation : `SimAction::PlayFrom`, retour par vignette. Option « revenir au menu de chapitres » retiree ; `par_page` ne sert plus
+  qu'aux pages generees.
+- Tests : tests/generic.rs (conversion, edition, simulation), project.rs `generic_pages_with_chapter_thumbnails` (registres,
+  reperes, commandes des boutons). Interface non compilee dans le conteneur.

@@ -6,15 +6,16 @@
 //! Le dessin (vignettes, libelles, fond) est delegue a un `Renderer` : le crate `bdauthor-render` en fournit un complet.
 use crate::check::{check_bdmv, Report};
 use crate::style::ButtonStyle;
-use crate::design::{nav_applicable, Align, Designs, Item, Kind, MenuType, NavAction, PageDesign, PageMusic, PageVisual, Target};
+use crate::design::{nav_applicable, Align, Designs, Item, Kind, MenuType, NavAction, PageDesign, PageMusic, PageVisual, SlotReturn, Target};
 use crate::disc::write_bdmv;
 use crate::ffmpeg::{self, EncodeOpts, Error, Tools};
 use crate::film::{make_film_m2ts, make_still_m2ts};
 use crate::ig::py_round;
 use crate::json::{self, Value};
 use crate::menu::{build_menu_clip, required_ics_pts, MenuButton, MenuOptions};
-use crate::mobj::{Command, MovieObject, MovieObjectBdmv, GOTO_INSN, JUMP_TITLE_INSN, MOVE_RI_INSN, NOP_INSN, PLAY_PL_INSN};
-use crate::nav::{make_index, make_movie_objects_paged, make_playlist, make_playlist_multi, plan_navigation, AudioStn, PlaylistParams, VideoStn};
+use crate::mobj::{Command, MovieObject, MovieObjectBdmv, GOTO_INSN, JUMP_TITLE_INSN, JUMP_TITLE_REG_INSN, MOVE_RI_INSN, MOVE_RR_INSN, NOP_INSN, PLAY_PL_INSN, PLAY_PL_PM_INSN};
+use crate::convert::{generate_pages, GenVideo};
+use crate::nav::{make_index, make_playlist, make_playlist_multi, AudioStn, PlaylistParams, VideoStn};
 use crate::palette::RgbaImage;
 use crate::tsclip::{make_clip_clpi, make_clip_clpi_pg, py_floordiv, scan_clip, ClipScan, FRAME_RATES};
 use std::collections::{BTreeMap, BTreeSet};
@@ -98,31 +99,31 @@ impl Decor {
     }
 }
 
+/// Registre ou une vignette (ou un lien vers une video) range le titre auquel revenir a la fin de la video.
+const R_RETURN: u32 = 1;
+
+/// « m:ss »
+fn mmss(t: f64) -> String {
+    let s = t.round().max(0.0) as i64;
+    format!("{}:{:02}", s / 60, s % 60)
+}
+
+/// Repere (45 kHz) d'un instant `t` (secondes depuis le debut) d'une video : debut exact pour 0, sinon image d'acces qui precede.
+fn snap_mark(sc: &ClipScan, t: f64) -> u32 {
+    if t <= 0.0 {
+        return (sc.start90 / 2) as u32;
+    }
+    let target = sc.start90 as i64 + py_round(t * 90000.0) as i64;
+    let best = sc.eps.iter().map(|e| e.0).filter(|&p| p as i64 <= target).max().or_else(|| sc.eps.iter().map(|e| e.0).min()).unwrap_or(sc.start90);
+    (best / 2) as u32
+}
+
 struct SlotSpec { label: String, source: PathBuf, at: Option<f64>, duration: f64, commands: Vec<Command>, go: u32 }
 
 /// Arrete la construction sur des erreurs de mise en page : chaque erreur est ecrite dans le journal, puis l'ensemble est renvoye.
 fn layout_failure<T>(errs: &[String], log: &mut dyn FnMut(&str)) -> Result<T> {
     for e in errs { log(&format!("ERREUR de mise en page : {e}")); }
     bad(format!("{} erreur(s) de mise en page, a corriger dans l'editeur : {}", errs.len(), errs.join(" | ")))
-}
-
-/// Mise en page personnalisee de la page si elle existe (la construction s'arrete si elle contient une erreur), sinon la grille
-/// automatique. Retourne (mise en page, personnalisee ?).
-fn resolve_design(ov: Option<&PageDesign>, expected: usize, menu: MenuType, page: usize, pages: usize, what: &str, log: &mut dyn FnMut(&str)) -> Result<(PageDesign, bool)> {
-    if let Some(d) = ov {
-        let probs = d.validate(expected, menu, page, pages);
-        let errs: Vec<String> = probs.iter().filter(|x| x.error).map(|x| format!("{what} : {}", x.msg)).collect();
-        if !errs.is_empty() {
-            return layout_failure(&errs, log);
-        }
-        for w in probs.iter().filter(|x| !x.error) { log(&format!("{what} : {}", w.msg)); }
-        return Ok((d.clone(), true));
-    }
-    let d = match menu {
-        MenuType::Main => PageDesign::default_main(expected, page, pages),
-        MenuType::Chapters => PageDesign::default_chapter(expected, page, pages),
-    };
-    Ok((d.map_err(Error::Format)?, false))
 }
 
 /// Image `img` centree dans un cadre transparent de `w` x `h` (rognee si plus grande).
@@ -173,8 +174,8 @@ struct ButtonEnv<'a> {
     abs: &'a dyn Fn(&str) -> PathBuf,
     /// dessin d'un texte ou d'une image a une echelle donnee (textes et images cliquables)
     to_decor: &'a dyn Fn(&Item, f64) -> Option<Decor>,
-    /// une entree par video du projet (vignettes montrant une video choisie)
-    videos: &'a [SlotSpec],
+    /// contenu et commandes d'une vignette montrant une video choisie (video ou chapitre)
+    slot_spec: &'a dyn Fn(&Item) -> Option<SlotSpec>,
     /// echelle du plan 1920 vers le menu, taille du menu
     s: f64,
     plane: (u32, u32),
@@ -183,7 +184,7 @@ struct ButtonEnv<'a> {
 /// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page.
 /// `decor` : textes et images non cliquables a l'echelle du menu ; `slots` : elements de la page.
 #[allow(clippy::too_many_arguments)]
-fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> u32) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> (u32, Vec<Command>)) -> Result<(Vec<MenuButton>, Vec<u64>)> {
     let (renderer, s) = (e.renderer, e.s);
     let (mut buttons, mut pix, mut k) = (Vec::new(), Vec::new(), 0usize);
     for (idx, it) in design.items.iter().enumerate() {
@@ -201,8 +202,12 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         };
         let (states, go, commands) = match &it.kind {
             Kind::Slot { thumb_h, video, link, .. } => {
+                let own;
                 let sp = match video {
-                    Some(Some(v)) => e.videos.get(*v).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?,
+                    Some(Some(v)) => {
+                        own = (e.slot_spec)(it).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?;
+                        &own
+                    }
                     Some(None) => continue, // vignette sans video : absente du disque
                     None => {
                         let a = assignment.get(k).copied().unwrap_or(usize::MAX);
@@ -213,15 +218,16 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
                 let th = py_round(*thumb_h as f64 * s) as i32;
                 let thumb = ffmpeg::extract_thumbnail_rgba(e.tools, &sp.source, (w as u32, th as u32), sp.at, sp.duration)?;
                 let states = renderer.thumb_button(&thumb, &sp.label, w as u32, h as u32, th as u32, &st);
-                // destination choisie : remplace le comportement habituel de la vignette
-                match link {
-                    Some(t) => (states, target(NavAction::Goto, Some(*t)), vec![]),
-                    None => (states, sp.go, sp.commands.clone()),
+                // destination choisie : remplace le comportement habituel de la vignette (deja pris en compte par `slot_spec`)
+                match (link, video) {
+                    (Some(t), None) => { let (g, c) = target(NavAction::Goto, Some(*t)); (states, g, c) }
+                    _ => (states, sp.go, sp.commands.clone()),
                 }
             }
             Kind::Nav { action, text, target: tg } if nav_applicable(*action, menu, page, pages) => {
                 let states = if skinned { skin_states()? } else { renderer.text_button(text, w as u32, h as u32, &st) };
-                (states, target(*action, *tg), vec![])
+                let (g, c) = target(*action, *tg);
+                (states, g, c)
             }
             Kind::Text { .. } | Kind::Image { .. } if it.link().is_some() => {
                 let states = if skinned {
@@ -230,7 +236,8 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
                     let Some(d) = (e.to_decor)(it, s) else { continue };
                     renderer.decor_button(&d.shifted(-x, -y), w as u32, h as u32, &st)
                 };
-                (states, target(NavAction::Goto, it.link()), vec![])
+                let (g, c) = target(NavAction::Goto, it.link());
+                (states, g, c)
             }
             _ => continue,
         };
@@ -615,7 +622,6 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let title = proj.get("titre").and_then(Value::as_str).unwrap_or("Menu").to_string();
     let boucle = menu_cfg.get("boucle").and_then(Value::as_bool).unwrap_or(false);
     let fond_s = menu_cfg.get("fond_secondes").and_then(Value::as_f64).unwrap_or(5.0);
-    let retour_ch = menu_cfg.get("retour").and_then(Value::as_str).unwrap_or("chapitres") == "chapitres";
     let p = |f: &str| -> PathBuf { let q = Path::new(f); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
     let vfile = |v: &Value| -> Result<String> { v.get("fichier").and_then(Value::as_str).map(String::from).ok_or_else(|| Error::Format("video sans champ « fichier »".into())) };
     let vtitle = |v: &Value| -> String {
@@ -627,6 +633,23 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     // chapitres depend des videos encodees, sont verifies a leur construction)
     if let Some(v) = proj.get("mise_en_page") {
         let ds = Designs::from_value(v).map_err(|e| Error::Format(format!("mise_en_page : {e}")))?;
+        if ds.generic {
+            // pages generiques : verifiees entierement avant tout encodage (sauf les instants des chapitres, compares plus tard a la
+            // duree reelle des videos)
+            let np = ds.free.len();
+            let mut errs = Vec::new();
+            for (k, d) in ds.free.iter().enumerate() {
+                errs.extend(d.validate_free(k, np, n).into_iter().filter(|x| x.error).map(|x| format!("page {} : {}", k + 1, x.msg)));
+                for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Chapters(..) => false }) {
+                    errs.push(format!("page {} : {}", k + 1, pr.msg));
+                }
+            }
+            if np == 0 { errs.push("aucune page de menu : ajoutez au moins une page dans l'editeur".into()); }
+            if !errs.is_empty() {
+                return layout_failure(&errs, &mut *env.log);
+            }
+        } else {
+        // ancien projet : pages du menu principal et pages libres (les menus de chapitres sont verifies apres conversion)
         let mp = paginate(n, par_page)?;
         let tm = mp.len() + ds.free.len();
         let mut errs = Vec::new();
@@ -639,6 +662,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
         if !errs.is_empty() {
             return layout_failure(&errs, &mut *env.log);
+        }
         }
     }
     let cache_dir = if menu_cfg.get("cache").and_then(Value::as_bool).unwrap_or(true) { Some(base.join(".cache_bdauthor")) } else { None };
@@ -693,71 +717,107 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         scans.push(sc);
     }
     (env.progress)(0.86);
-    let mut chapters: Vec<Vec<Chapter>> = Vec::new();
+    // 2. pages du menu : pages generiques ; un ancien projet est d'abord converti (avec les chapitres reels de ses videos)
+    let mut legacy_chapters: Vec<Vec<Chapter>> = Vec::new();
     for (v, sc) in vids.iter().zip(&scans) {
-        chapters.push(parse_chapters(v, sc)?);
+        legacy_chapters.push(parse_chapters(v, sc)?);
     }
-    let with_ch: Vec<usize> = (0..n).filter(|&i| !chapters[i].is_empty()).collect();
-    let designs = match proj.get("mise_en_page") {
+    let mut designs = match proj.get("mise_en_page") {
         Some(v) => Designs::from_value(v).map_err(|e| Error::Format(format!("mise_en_page : {e}")))?,
         None => Designs::default(),
     };
-    let main_pg = paginate(n, par_page)?;
-    // pages libres (apres les pages automatiques) : chacune doit etre valide, sinon la construction s'arrete
-    let free_pages: &[PageDesign] = &designs.free;
-    let total_main = main_pg.len() + free_pages.len();
-    for (f, d) in free_pages.iter().enumerate() {
-        let errs: Vec<String> = d.validate_free(main_pg.len() + f, total_main, n).into_iter().filter(|x| x.error).map(|x| x.msg).collect();
-        if !errs.is_empty() { return bad(format!("page libre {} : {}", f + 1, errs.join(" "))); }
+    if !designs.generic {
+        // menus de chapitres personnalises de l'ancien projet : verifies avec le nombre reel de chapitres avant la conversion
+        let mut errs = Vec::new();
+        for (&(v, q), d) in &designs.chapters {
+            let Some(ch) = legacy_chapters.get(v) else { continue };
+            if ch.len() < 2 { continue }
+            let pg = paginate(ch.len(), par_page)?;
+            let Some(idxs) = pg.get(q) else { continue };
+            errs.extend(d.validate(idxs.len(), MenuType::Chapters, q, pg.len()).into_iter().filter(|x| x.error)
+                .map(|x| format!("menu de chapitres {} (page {}) : {}", v + 1, q + 1, x.msg)));
+        }
+        if !errs.is_empty() {
+            return layout_failure(&errs, &mut *env.log);
+        }
+        let gv: Vec<GenVideo> = vids.iter().zip(&legacy_chapters)
+            .map(|(v, ch)| GenVideo { title: vtitle(v), chapters: ch.iter().map(|c| (c.t_rel, c.name.clone())).collect() })
+            .collect();
+        designs = generate_pages(&gv, par_page, &title, &designs).map_err(Error::Format)?;
+        (env.log)(&format!("ancien projet : menus convertis en {} page(s) generique(s)", designs.free.len()));
     }
-    let mut ch_pg: BTreeMap<usize, Vec<Vec<usize>>> = BTreeMap::new();
-    for &i in &with_ch {
-        ch_pg.insert(i, paginate(chapters[i].len(), par_page)?);
+    let pages: Vec<PageDesign> = designs.free.clone();
+    let np = pages.len();
+    if np == 0 {
+        return bad("aucune page de menu : ajoutez au moins une page dans l'editeur");
     }
-    let mut video_page = vec![0usize; n];
-    for (pg, idxs) in main_pg.iter().enumerate() {
-        for &i in idxs { video_page[i] = pg; }
+    {
+        let mut errs = Vec::new();
+        for (k, d) in pages.iter().enumerate() {
+            for pr in d.validate_free(k, np, n) {
+                if pr.error { errs.push(format!("page {} : {}", k + 1, pr.msg)); } else { (env.log)(&format!("page {} : {}", k + 1, pr.msg)); }
+            }
+            for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Chapters(..) => false }) {
+                errs.push(format!("page {} : {}", k + 1, pr.msg));
+            }
+        }
+        if !errs.is_empty() {
+            return layout_failure(&errs, &mut *env.log);
+        }
     }
-    let ch_counts: BTreeMap<usize, usize> = ch_pg.iter().map(|(&i, g)| (i, g.len())).collect();
-    let mut plan = plan_navigation(n, total_main, &ch_counts);
-    // titres ajoutes apres ceux du plan : la page 1 quand l'accueil est une autre page (le titre 0, « Top Menu », mene alors a
-    // l'accueil), et « Tout lire » du menu principal s'il est utilise
-    let home = designs.home;
-    if matches!(home, Some(Target::Video(_))) { return bad("page d'accueil : choisissez une page du menu, pas une video"); }
-    let custom_home = home.map_or(false, |h| h != Target::Main(0));
-    let base_titles = plan.total_titles;
-    let page1_title = if custom_home {
-        plan.total_titles += 1;
-        plan.main_titles[0] = plan.total_titles;
-        Some(plan.total_titles)
-    } else {
-        None
+
+    // 3. reperes de chapitre de chaque video : ses chapitres (touches chapitre suivant / precedent) et les departs des vignettes
+    //    de chapitre ; chaque repere est cale sur l'image d'acces qui precede
+    let mut marks: Vec<Vec<u32>> = Vec::with_capacity(n);
+    for (i, sc) in scans.iter().enumerate() {
+        let dur = (sc.end90 - sc.start90) as f64 / 90000.0;
+        let mut set: BTreeSet<u32> = legacy_chapters[i].iter().map(|c| c.mark45).collect();
+        for (k, d) in pages.iter().enumerate() {
+            for it in &d.items {
+                if let (Some(v), Some(t)) = (it.fixed_video(), it.chapter_start()) {
+                    if v != i { continue; }
+                    if t >= dur {
+                        return bad(format!("page {} : vignette de chapitre a {} au-dela de la fin de la video {} ({})", k + 1, mmss(t), i + 1, mmss(dur)));
+                    }
+                    set.insert(snap_mark(sc, t));
+                }
+            }
+        }
+        if !set.is_empty() { set.insert((sc.start90 / 2) as u32); }
+        if set.len() > MAX_CHAPTERS { return bad(format!("video {} : {} reperes de chapitre, {MAX_CHAPTERS} au maximum", i + 1, set.len())); }
+        marks.push(set.into_iter().collect());
+    }
+    let mark_index = |v: usize, t: f64| -> u32 { let m = snap_mark(&scans[v], t); marks[v].iter().position(|&x| x == m).unwrap_or(0) as u32 };
+
+    // 4. titres : videos 1..n, pages n+1..n+P, puis « lecture depuis un repere » des videos qui en ont besoin, puis « Tout lire ».
+    //    Le registre R1 garde le titre ou revenir a la fin d'une video (0 = Top Menu, donc l'accueil).
+    let page_title = |k: usize| (n + 1 + k) as u32;
+    let mut t_next = (n + np) as u32;
+    let mut pfm: BTreeMap<usize, u32> = BTreeMap::new();
+    for v in 0..n {
+        if pages.iter().any(|d| d.items.iter().any(|it| it.fixed_video() == Some(v) && it.chapter_start().is_some())) {
+            t_next += 1;
+            pfm.insert(v, t_next);
+        }
+    }
+    let uses_play_all = pages.iter().any(|d| d.items.iter().any(|it| matches!(it.kind, Kind::Nav { action: NavAction::PlayAll, .. })));
+    let play_all_title = if uses_play_all { t_next += 1; Some(t_next) } else { None };
+    let total_titles = t_next;
+    let home_idx = match designs.home {
+        None => 0,
+        Some(Target::Main(q)) if q < np => q,
+        Some(_) => return bad("page d'accueil inexistante (page supprimee ?)"),
     };
-    let uses_play_all = designs.main.values().chain(designs.free.iter()).any(|d| d.items.iter().any(|it| matches!(it.kind, Kind::Nav { action: NavAction::PlayAll, .. })));
-    let play_all_title = if uses_play_all { plan.total_titles += 1; Some(plan.total_titles) } else { None };
-    // titre visé par un bouton « Aller a » ; None si la page n'existe pas
-    let goto = |t: Target| -> Option<u32> {
+    let set_ret = |r: u32| Command::new(MOVE_RI_INSN, R_RETURN, r);
+    // destination d'un lien : (titre, commandes) ; `origin` : titre ou revenir apres une video
+    let goto = |t: Target, origin: u32| -> (u32, Vec<Command>) {
         match t {
-            Target::Main(p) => plan.main_titles.get(p).copied(),
-            Target::Chapters(v, q) => plan.chapters.get(&v).and_then(|c| c.pages.get(q).copied()),
-            Target::Video(v) => (v < n).then_some(v as u16 + 1),
+            Target::Video(v) => (0, vec![set_ret(origin), Command::new(JUMP_TITLE_INSN, v as u32 + 1, 0)]),
+            Target::Main(q) => (page_title(q.min(np - 1)), vec![]),
+            Target::Chapters(..) => (page_title(home_idx), vec![]),
         }
-        .map(|x| x as u32)
     };
-    for d in designs.main.values().chain(designs.chapters.values()).chain(designs.free.iter()) {
-        for it in &d.items {
-            if let Kind::Nav { action: NavAction::Goto, text, target } = &it.kind {
-                if target.and_then(&goto).is_none() { return bad(format!("bouton « {text} » : destination inexistante ou non choisie")); }
-            }
-            if let Some(t) = it.link() {
-                if goto(t).is_none() { return bad("texte ou image cliquable : destination inexistante (page ou video supprimee ?)"); }
-            }
-        }
-    }
-    let home_title = match home {
-        Some(h) if custom_home => Some(goto(h).ok_or_else(|| Error::Format("page d'accueil inexistante (page supprimee ?)".into()))?),
-        _ => None,
-    };
+
     let first = &scans[0];
     let fmt = (first.width, first.height, first.fps);
     for (i, sc) in scans.iter().enumerate().skip(1) {
@@ -803,8 +863,6 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
         Ok(Some((MenuBg { video, video_audio, music, seconds, lang, cache: cache_dir.clone() }, base)))
     };
-    // fond commun a toutes les pages sans decor propre : image du projet, video du projet
-    let common_visual = custom_fond.is_some() || bg_video.is_some();
     let sd = size.0 as f64 / 1920.0; // echelle des textes/images poses sur le fond (qui a la taille de la video)
     // (rang dans l'ordre de superposition, decor) : le rang sert a poser sur les boutons ce qui est au-dessus d'eux
     // dessin d'un texte ou d'une image a l'echelle `k`
@@ -869,168 +927,71 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let bg_sc = menu_bg_clip(env, &mb, Some(&bg_png), None, &tmp.0, "fond", fond_s, size, fps, &still_opts, &mut files, n as u32)?;
     (env.progress)(0.9);
 
-    // vignette montrant une video choisie (sur n'importe quelle page) : comme une vignette du menu principal
-    let mut video_specs = Vec::with_capacity(n);
-    for (i, v) in vids.iter().enumerate() {
-        video_specs.push(SlotSpec {
-            label: vtitle(v), source: p(&vfile(v)?), at: v.get("vignette_s").and_then(Value::as_f64), duration: durations[i], commands: vec![],
-            go: plan.chapters.get(&i).map_or(i as u32 + 1, |c| c.pages[0] as u32),
-        });
-    }
 
-    let benv = ButtonEnv {
-        tools: env.tools, renderer: env.renderer, style: &designs.style, abs: &p, to_decor: &to_decor, videos: &video_specs, s: sc_,
-        plane: (menu_size.0, menu_size.1),
-    };
     let weight_note = |pix: &[u64], what: &str| -> Option<String> {
         let total: u64 = pix.iter().sum();
         (total > crate::style::DECODED_LIMIT).then(|| format!("avertissement : {what} : images de boutons de {:.1} Mo, au-dela des {:.0} Mo qu'un lecteur garantit (allegez halos, agrandissements, etats actives ou nombre de boutons)", total as f64 / 1048576.0, crate::style::DECODED_LIMIT as f64 / 1048576.0))
     };
 
-    // 3. menu principal : une page par groupe de videos (page 1 = clip IG 80002, playlist N)
-    let main_pls: Vec<u32> = std::iter::once(n as u32).chain((1..total_main).map(|q| (n + q) as u32)).collect();
-    let mut next_pl = (n + total_main) as u32;
-    let (mut next_ig, mut next_bg) = (80003u32, (n + 1) as u32);
+    // 5. une page de menu par page generique : titre n+1+k, playlist n+k, clip de menu 80002+k
+    let mut next_pl = (n + np) as u32;
+    let mut next_bg = (n + 1) as u32;
     let mut first_page: Option<MenuStats> = None;
-    for (pg, idxs) in main_pg.iter().enumerate() {
-        let what = format!("menu principal, page {}", pg + 1);
-        let (design, custom) = resolve_design(designs.main.get(&pg), idxs.len(), MenuType::Main, pg, total_main, &what, &mut *env.log)?;
-        let mut slots = Vec::new();
-        for &i in idxs {
-            let v = &vids[i];
-            slots.push(SlotSpec {
-                label: vtitle(v), source: p(&vfile(v)?), at: v.get("vignette_s").and_then(Value::as_f64), duration: durations[i], commands: vec![],
-                go: plan.chapters.get(&i).map_or(i as u32 + 1, |c| c.pages[0] as u32), // video a chapitres : le bouton ouvre le menu de chapitres
-            });
-        }
-        let target = |a: NavAction, t: Option<Target>| match a {
-            NavAction::Prev => plan.main_titles[pg.saturating_sub(1)] as u32,
-            NavAction::Next => plan.main_titles[(pg + 1).min(total_main - 1)] as u32,
-            NavAction::Goto => t.and_then(&goto).unwrap_or(0),
-            NavAction::PlayAll => play_all_title.map_or(0, u32::from),
-            _ => 0,
+    for (k, d) in pages.iter().enumerate() {
+        let what = format!("page {}{}", k + 1, if d.name.is_empty() { String::new() } else { format!(" ({})", d.name) });
+        let origin = page_title(k);
+        // vignettes : video depuis le debut ou depuis un repere, ou destination choisie ; retour selon la vignette
+        let slot_spec = |it: &Item| -> Option<SlotSpec> {
+            let Kind::Slot { video: Some(Some(v)), link, start, label, thumb_at, ret, .. } = &it.kind else { return None };
+            let v = *v;
+            let vj = vids.get(v)?;
+            let back = match ret { SlotReturn::Origin => origin, SlotReturn::Home => 0, SlotReturn::Page(q) if *q < np => page_title(*q), SlotReturn::Page(_) => origin };
+            let (go, commands) = match (link, start) {
+                (Some(t), _) => goto(*t, back),
+                (None, Some(t)) => (0, vec![set_ret(back), Command::new(MOVE_RI_INSN, 0, mark_index(v, *t)), Command::new(JUMP_TITLE_INSN, *pfm.get(&v)?, 0)]),
+                (None, None) => (0, vec![set_ret(back), Command::new(JUMP_TITLE_INSN, v as u32 + 1, 0)]),
+            };
+            let label = if !label.is_empty() { label.clone() } else if let Some(t) = start { mmss(*t) } else { vtitle(vj) };
+            let at = thumb_at.or(*start).or_else(|| vj.get("vignette_s").and_then(Value::as_f64));
+            Some(SlotSpec { label, source: p(&vfile(vj).ok()?), at, duration: durations[v], commands, go })
         };
-        let decor_r = scale_decor(&design, sc_);
-        let (buttons, pix) = page_buttons(&benv, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Main, pg, total_main, &slots, &target)?;
+        let target = |a: NavAction, t: Option<Target>| -> (u32, Vec<Command>) {
+            match a {
+                NavAction::Prev => (page_title(k.saturating_sub(1)), vec![]),
+                NavAction::Next => (page_title((k + 1).min(np - 1)), vec![]),
+                NavAction::PlayAll => (0, vec![set_ret(origin), Command::new(JUMP_TITLE_INSN, play_all_title.unwrap_or(0), 0)]),
+                NavAction::Goto => t.map(|t| goto(t, origin)).unwrap_or((page_title(home_idx), vec![])),
+                NavAction::Back => (page_title(home_idx), vec![]),
+            }
+        };
+        let benv = ButtonEnv {
+            tools: env.tools, renderer: env.renderer, style: &designs.style, abs: &p, to_decor: &to_decor, slot_spec: &slot_spec, s: sc_,
+            plane: (menu_size.0, menu_size.1),
+        };
+        let decor_r = scale_decor(d, sc_);
+        let (buttons, pix) = page_buttons(&benv, d, &[], &decor_r, MenuType::Main, k, np, &[], &target)?;
+        if buttons.is_empty() { return bad(format!("{what} : aucun bouton (le lecteur ne pourrait pas en sortir)")); }
         if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
-        let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
-        let pbg = if custom { page_bg(&design)? } else { None };
+        let decor: Vec<Decor> = scale_decor(d, sd).into_iter().map(|(_, d)| d).collect();
+        let pbg = page_bg(d)?;
         let (bg_num, pscan, looping) = if let Some((pmb, pbase)) = &pbg {
             let num = next_bg;
             next_bg += 1;
-            (num, own_background(env, pmb, pbase, size, &decor, &tmp.0, &format!("fond_p{pg}.png"), fond_s, fps, &still_opts, &mut files, num)?, pmb.animated())
-        } else if custom && !(common_visual && decor.is_empty()) {
-            let num = next_bg;
-            next_bg += 1;
-            let sc = own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_p{pg}.png"), fond_s, fps, &still_opts, &mut files, num)?;
-            (num, sc, animated)
-        } else {
-            (n as u32, bg_sc.clone(), animated)
-        };
-        let ig_num = if pg == 0 { 80002 } else { let k = next_ig; next_ig += 1; k };
-        let res = add_menu_page(&mut files, &buttons, &pix, ig_num, main_pls[pg], bg_num, &pscan, &what, looping)?;
-        if pg == 0 { first_page = Some(res); }
-    }
-    // pages libres du menu principal : vignettes de n'importe quelle video, fond propre a chaque page
-    for (f, design) in free_pages.iter().enumerate() {
-        let pg = main_pg.len() + f;
-        let what = format!("menu principal, page libre {}", f + 1);
-        let slots: Vec<SlotSpec> = Vec::new(); // page libre : toutes ses vignettes montrent une video choisie
-        let target = |a: NavAction, t: Option<Target>| match a {
-            NavAction::Prev => plan.main_titles[pg.saturating_sub(1)] as u32,
-            NavAction::Next => plan.main_titles[(pg + 1).min(total_main - 1)] as u32,
-            NavAction::Goto => t.and_then(&goto).unwrap_or(0),
-            NavAction::PlayAll => play_all_title.map_or(0, u32::from),
-            _ => 0,
-        };
-        let decor_r = scale_decor(design, sc_);
-        let identity: Vec<usize> = (0..slots.len()).collect();
-        let (buttons, pix) = page_buttons(&benv, design, &identity, &decor_r, MenuType::Main, pg, total_main, &slots, &target)?;
-        if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
-        let decor: Vec<Decor> = scale_decor(design, sd).into_iter().map(|(_, d)| d).collect();
-        for l in design.validate_free(pg, total_main, n).iter().filter(|x| !x.error) { (env.log)(&format!("{what} : {}", l.msg)); }
-        let pbg = page_bg(design)?;
-        let (bg_num, pscan, looping) = if let Some((pmb, pbase)) = &pbg {
-            let num = next_bg;
-            next_bg += 1;
-            (num, own_background(env, pmb, pbase, size, &decor, &tmp.0, &format!("fond_libre{f}.png"), fond_s, fps, &still_opts, &mut files, num)?, pmb.animated())
-        } else if common_visual && decor.is_empty() {
+            (num, own_background(env, pmb, pbase, size, &decor, &tmp.0, &format!("fond_page{k}.png"), fond_s, fps, &still_opts, &mut files, num)?, pmb.animated())
+        } else if decor.is_empty() {
             (n as u32, bg_sc.clone(), animated)
         } else {
             let num = next_bg;
             next_bg += 1;
-            let sc = own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_libre{f}.png"), fond_s, fps, &still_opts, &mut files, num)?;
-            (num, sc, animated)
+            (num, own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_page{k}.png"), fond_s, fps, &still_opts, &mut files, num)?, animated)
         };
-        let ig_num = { let k = next_ig; next_ig += 1; k };
-        add_menu_page(&mut files, &buttons, &pix, ig_num, main_pls[pg], bg_num, &pscan, &what, looping)?;
+        let res = add_menu_page(&mut files, &buttons, &pix, 80002 + k as u32, (n + k) as u32, bg_num, &pscan, &what, looping)?;
+        if k == 0 { first_page = Some(res); }
     }
     let first_page = first_page.expect("au moins une page");
     (env.progress)(0.95);
 
-    // 4. menus de chapitres (un fond par video si pas de fond commun ; une page par groupe de chapitres)
-    let mut ch_pls: BTreeMap<usize, Vec<u16>> = BTreeMap::new();
-    for (k, &i) in with_ch.iter().enumerate() {
-        (env.log)(&format!("menu de chapitres de la video {} ({} chapitres, {} page(s)) ...", i + 1, chapters[i].len(), ch_pg[&i].len()));
-        let npg = ch_pg[&i].len();
-        let retour_t = plan.main_titles[video_page[i]] as u32;
-        let titles = &plan.chapters[&i];
-        let mut shared: Option<(u32, ClipScan)> = if common_visual { Some((n as u32, bg_sc.clone())) } else { None };
-        let mut pls = Vec::new();
-        for (q, idxs) in ch_pg[&i].iter().enumerate() {
-            let what = format!("menu de chapitres {} (page {})", i + 1, q + 1);
-            let (design, custom) = resolve_design(designs.chapters.get(&(i, q)), idxs.len(), MenuType::Chapters, q, npg, &what, &mut *env.log)?;
-            let (pl_num, ig_num) = (next_pl, next_ig);
-            next_pl += 1;
-            next_ig += 1;
-            pls.push(pl_num as u16);
-            let mut slots = Vec::new();
-            for &j in idxs {
-                let ch = &chapters[i][j];
-                let secs = py_round(ch.t_rel) as i64;
-                slots.push(SlotSpec {
-                    label: format!("{} ({}:{:02})", ch.name, secs / 60, secs % 60), source: p(&vfile(&vids[i])?), at: Some(ch.t_rel), duration: durations[i],
-                    commands: vec![Command::new(MOVE_RI_INSN, 0, j as u32), Command::new(JUMP_TITLE_INSN, titles.play as u32, 0)], go: 0,
-                });
-            }
-            let target = |a: NavAction, t: Option<Target>| match a {
-                NavAction::Prev => titles.pages[q.saturating_sub(1)] as u32,
-                NavAction::Next => titles.pages[(q + 1).min(npg - 1)] as u32,
-                NavAction::PlayAll => i as u32 + 1,
-                NavAction::Back => retour_t,
-                NavAction::Goto => t.and_then(&goto).unwrap_or(0),
-            };
-            let decor_r = scale_decor(&design, sc_);
-            let (cbuttons, pix) = page_buttons(&benv, &design, &design.slot_assignment(slots.len()), &decor_r, MenuType::Chapters, q, npg, &slots, &target)?;
-            if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
-            let decor: Vec<Decor> = scale_decor(&design, sd).into_iter().map(|(_, d)| d).collect();
-            let pbg = if custom { page_bg(&design)? } else { None };
-            let (bg_num, pscan, looping) = if let Some((pmb, pbase)) = &pbg {
-                let num = next_bg;
-                next_bg += 1;
-                (num, own_background(env, pmb, pbase, size, &decor, &tmp.0, &format!("fond_ch{k}_{q}.png"), fond_s, fps, &still_opts, &mut files, num)?, pmb.animated())
-            } else if custom && !(common_visual && decor.is_empty()) {
-                let num = next_bg;
-                next_bg += 1;
-                let sc = own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_ch{k}_{q}.png"), fond_s, fps, &still_opts, &mut files, num)?;
-                (num, sc, animated)
-            } else {
-                if shared.is_none() {
-                    let num = next_bg;
-                    next_bg += 1;
-                    let cbg = tmp.0.join(format!("fond_ch{k}.png"));
-                    std::fs::write(&cbg, crate::png::write_png(&env.renderer.background(&format!("{} - chapitres", vtitle(&vids[i])), size)))?;
-                    shared = Some((num, menu_bg_clip(env, &mb, Some(&cbg), None, &tmp.0, &format!("fond_ch{k}"), fond_s, size, fps, &still_opts, &mut files, num)?));
-                }
-                let (num, sc) = shared.clone().unwrap();
-                (num, sc, animated)
-            };
-            add_menu_page(&mut files, &cbuttons, &pix, ig_num, pl_num, bg_num, &pscan, &what, looping)?;
-        }
-        ch_pls.insert(i, pls);
-    }
-
-    // 5. playlists des videos et navigation
+    // 6. playlists des videos (avec leurs reperes), « Tout lire », sequence d'ouverture, navigation
     let mut video_params = Vec::new();
     for (i, sc) in scans.iter().enumerate() {
         let Some(&(pid_a, type_a, code_a)) = sc.audio_codes.first() else { return bad(format!("la video {} n'a pas de piste audio exploitable", i + 1)) };
@@ -1038,13 +999,12 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             clip: format!("{i:05}"), in_time: (sc.start90 / 2) as u32, out_time: (sc.end90 / 2) as u32,
             video: VideoStn { pid: sc.video.0, coding: sc.video.1, fmt_rate: sc.video_code },
             audio: Some(AudioStn { pid: pid_a, coding: type_a, fmt_rate: code_a, lang }),
-            with_menu: false, pg: pg_info[i].clone(), marks: if chapters[i].is_empty() { None } else { Some(chapters[i].iter().map(|c| c.mark45).collect()) },
+            with_menu: false, pg: pg_info[i].clone(), marks: if marks[i].is_empty() { None } else { Some(marks[i].clone()) },
             ..Default::default()
         };
         files.insert(format!("PLAYLIST/{i:05}.mpls"), make_playlist(&pp));
         video_params.push(pp);
     }
-    // « Tout lire » : toutes les videos a la suite
     let play_all_pl = if play_all_title.is_some() {
         let pl = next_pl;
         next_pl += 1;
@@ -1096,46 +1056,44 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let bytes: usize = anim.iter().filter_map(|num| files.get(&format!("STREAM/{num:05}.m2ts"))).map(Vec::len).sum();
         (env.log)(&format!("fonds de menu animes ou sonores : {} clip(s), {:.0} Mo au total", anim.len(), bytes as f64 / 1e6));
     }
-    let main_pls16: Vec<u16> = main_pls.iter().map(|&x| x as u16).collect();
-    let mo = make_movie_objects_paged(n, &main_pls16, &plan.main_titles, &ch_pls, &plan.chapters, &video_page, retour_ch);
-    let title_objs: Vec<u16> = (1..=plan.total_titles).collect();
-    if page1_title.is_none() && play_all_pl.is_none() && intro_pl.is_none() {
-        files.insert("MovieObject.bdmv".into(), mo);
-        files.insert("index.bdmv".into(), make_index(0, 0, &title_objs, b"bdauthor"));
-    } else {
-        // objets des titres ajoutes (meme ordre que leur numero), puis objet d'ouverture
-        let mut m = MovieObjectBdmv::parse(&mo)?;
-        if m.objects.len() != base_titles as usize + 1 { return bad("objets de navigation : numerotation inattendue"); }
-        let jump = |t: u32| Command::new(JUMP_TITLE_INSN, t, 0);
-        if page1_title.is_some() {
-            // la page 1 recoit son propre titre ; l'objet 0 (Top Menu) mene a l'accueil
-            m.objects.push(MovieObject::new(vec![
-                Command::new(PLAY_PL_INSN, main_pls[0], 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0),
-                Command::new(GOTO_INSN, 0, 0),
-            ]));
-            m.objects[0] = MovieObject::new(vec![jump(home_title.unwrap_or(0))]);
-        }
-        if let Some(pl) = play_all_pl {
-            // toutes les videos puis retour a l'accueil (titre 0 = Top Menu)
-            m.objects.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, pl, 0), jump(0)]));
-        }
-        let fp = match intro_pl {
-            Some(pl) => {
-                m.objects.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, pl, 0), jump(0)]));
-                (m.objects.len() - 1) as u16
-            }
-            None => 0,
-        };
-        files.insert("MovieObject.bdmv".into(), m.pack());
-        files.insert("index.bdmv".into(), make_index(fp, 0, &title_objs, b"bdauthor"));
+    let jump_back = Command::new(JUMP_TITLE_REG_INSN, R_RETURN, 0);
+    let mut objs = vec![MovieObject::new(vec![Command::new(JUMP_TITLE_INSN, page_title(home_idx), 0)])]; // 0 : Top Menu -> accueil
+    for v in 0..n {
+        objs.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, v as u32, 0), jump_back]));
     }
+    for k in 0..np {
+        objs.push(MovieObject::new(vec![
+            Command::new(PLAY_PL_INSN, (n + k) as u32, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0),
+            Command::new(GOTO_INSN, 0, 0),
+        ]));
+    }
+    for &v in pfm.keys() {
+        objs.push(MovieObject::new(vec![
+            Command::new(MOVE_RR_INSN, 10, 0), Command::new(MOVE_RI_INSN, 0, 0), Command::new(PLAY_PL_PM_INSN, v as u32, 10), jump_back,
+        ]));
+    }
+    if let Some(pl) = play_all_pl {
+        objs.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, pl, 0), jump_back]));
+    }
+    if objs.len() != total_titles as usize + 1 { return bad("objets de navigation : numerotation inattendue"); }
+    let fp = match intro_pl {
+        Some(pl) => {
+            objs.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, pl, 0), Command::new(JUMP_TITLE_INSN, 0, 0)]));
+            (objs.len() - 1) as u16
+        }
+        None => 0,
+    };
+    files.insert("MovieObject.bdmv".into(), MovieObjectBdmv { version: "0100".into(), objects: objs }.pack());
+    let title_objs: Vec<u16> = (1..=total_titles as u16).collect();
+    files.insert("index.bdmv".into(), make_index(fp, 0, &title_objs, b"bdauthor"));
+
     write_bdmv(out_dir, &files)?;
     let report = check_bdmv(&out_dir.join("BDMV"));
     (env.progress)(1.0);
     Ok(BuildInfo {
-        videos: n, main_pages: total_main,
-        chapters: chapters.iter().enumerate().filter(|(_, c)| !c.is_empty()).map(|(i, c)| (i + 1, c.len())).collect(),
-        chapter_pages: ch_pg.iter().map(|(i, g)| (i + 1, g.len())).collect(),
+        videos: n, main_pages: np,
+        chapters: marks.iter().enumerate().filter(|(_, m)| m.len() > 1).map(|(i, m)| (i + 1, m.len())).collect(),
+        chapter_pages: BTreeMap::new(),
         format: fmt, menu_size, ics_pts_s: first_page.pts as f64 / 90000.0, menu_bytes: first_page.bytes,
         menu_objects: first_page.objects, palette_entries: first_page.palette,
         total_stream_bytes: files.iter().filter(|(k, _)| k.starts_with("STREAM")).map(|(_, v)| v.len()).sum(),

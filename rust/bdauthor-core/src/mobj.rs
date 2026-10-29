@@ -8,6 +8,8 @@ pub const GRP_SET: u32 = 2;
 // mots d'instruction releves dans la reference (voir nav.py)
 pub const PLAY_PL_INSN: u32 = 0x2280_0000;
 pub const JUMP_TITLE_INSN: u32 = 0x2181_0000;
+/// JUMP_TITLE vers le titre contenu dans un registre (operande `dst` = numero du registre).
+pub const JUMP_TITLE_REG_INSN: u32 = 0x2101_0000;
 pub const JUMP_OBJECT_INSN: u32 = 0x2180_0000;
 pub const GOTO_INSN: u32 = 0x2081_0000;
 pub const NOP_INSN: u32 = 0;

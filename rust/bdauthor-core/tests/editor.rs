@@ -27,7 +27,7 @@ fn page_list() {
 
 #[test]
 fn drag_and_hit() {
-    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, assign: None, video: None, link: None }, look: Default::default() };
+    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, assign: None, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default() };
     let items = vec![it(100, 100, 300, 200), it(250, 150, 300, 200)];
     assert_eq!(hit_test(&items, 260.0, 160.0, None, 8.0), Some((1, Handle::Body)), "l'element du dessus gagne");
     assert_eq!(hit_test(&items, 120.0, 120.0, None, 8.0), Some((0, Handle::Body)));
@@ -42,7 +42,7 @@ fn drag_and_hit() {
     // vignette : la hauteur du libelle est conservee
     let mut a = items[0].clone();
     set_rect(&mut a, &items[0], (100, 100, 300, 300));
-    assert_eq!(a.kind, Kind::Slot { thumb_h: 260, assign: None, video: None, link: None });
+    assert_eq!(a.kind, Kind::Slot { thumb_h: 260, assign: None, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() });
 }
 
 #[test]
@@ -163,7 +163,7 @@ fn remote_simulation() {
     let mut t = Item::text("Chapitres de 3", 100, 60, 400, 80, 40);
     if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Chapters(2, 0)); }
     d.items.push(t);
-    d.items.push(Item { x: 1500, y: 60, w: 200, h: 120, kind: Kind::Slot { thumb_h: 100, assign: None, video: Some(None), link: None }, look: Default::default() });
+    d.items.push(Item { x: 1500, y: 60, w: 200, h: 120, kind: Kind::Slot { thumb_h: 100, assign: None, video: Some(None), link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default() });
     let st = ButtonStyle::default();
     let b = sim_buttons(&info, &d, &st, 4, &|v| v == 1);
     let acts: Vec<SimAction> = b.iter().map(|x| x.action).collect();

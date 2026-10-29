@@ -61,6 +61,10 @@ impl PageInfo {
     }
     /// Texte du selecteur de pages.
     pub fn label(&self, m: &ProjectModel) -> String {
+        if m.designs.generic {
+            let name = m.designs.free.get(self.page).map(|d| d.name.clone()).unwrap_or_default();
+            return if name.is_empty() { format!("Page {}", self.page + 1) } else { format!("{}. {name}", self.page + 1) };
+        }
         match (self.menu, self.video) {
             (MenuType::Chapters, Some(v)) => format!("Chapitres de « {} » — page {}/{}", video_title(m, v), self.page + 1, self.pages),
             _ if self.is_free() => format!("Page libre — page {}/{}", self.page + 1, self.pages),
@@ -78,6 +82,11 @@ pub fn video_title(m: &ProjectModel, i: usize) -> String {
 /// Pages de menu du projet. `durations` : duree (secondes) des fichiers deja sondes ; sans elle, les chapitres automatiques sont ignores.
 pub fn list_pages(m: &ProjectModel, durations: &HashMap<String, f64>) -> Vec<PageInfo> {
     let mut out = Vec::new();
+    if m.designs.generic {
+        // pages generiques : toutes personnalisees, dans l'ordre de la liste
+        let np = m.designs.free.len();
+        return (0..np).map(|k| PageInfo { r: PageRef::Free(k), menu: MenuType::Main, page: k, pages: np, items: vec![], video: None }).collect();
+    }
     if m.videos.is_empty() { return out; }
     let main = paginate(m.videos.len(), m.par_page).unwrap_or_else(|_| vec![(0..m.videos.len()).collect()]);
     let auto = main.len();
@@ -177,10 +186,11 @@ pub fn to_back(d: &mut PageDesign, idx: usize) -> usize {
 /// Les boutons de navigation absents de `src` mais presents dans `target_default` (grille automatique de la page cible, par exemple
 /// « Precedent » qui n'existe pas en page 1) sont ajoutes a leur place par defaut.
 pub fn copy_decor(src: &PageDesign, target: PageDesign, target_default: &PageDesign) -> PageDesign {
-    let mut slots = target.items.into_iter().filter(|i| i.is_element_slot());
+    let target_name = target.name.clone();
+    let mut slots = target.items.into_iter().filter(|i| matches!(i.kind, Kind::Slot { .. }));
     let mut items = Vec::new();
     for it in &src.items {
-        if it.is_element_slot() {
+        if matches!(it.kind, Kind::Slot { .. }) {
             if let Some(s) = slots.next() { items.push(s); }
         } else {
             items.push(it.clone());
@@ -194,12 +204,24 @@ pub fn copy_decor(src: &PageDesign, target: PageDesign, target_default: &PageDes
             }
         }
     }
-    PageDesign { items, bg: src.bg.clone() }
+    PageDesign { items, bg: src.bg.clone(), name: target_name }
 }
 
 /// Ajoute une page libre vierge a la fin du menu principal et retourne son indice. La page precedente (automatique non
 /// personnalisee : deja geree par la grille ; personnalisee ou libre : on ajoute un bouton « Suivant » s'il manque) mene a la nouvelle.
 pub fn add_free_page(m: &mut ProjectModel) -> usize {
+    if m.designs.generic {
+        let k = m.designs.free.len();
+        if let Some(prev) = m.designs.free.last_mut() {
+            if !prev.items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Next, .. })) {
+                prev.items.push(Item::nav(NavAction::Next, 1000, 1080 - 60 - 80, 360, 80));
+            }
+        }
+        let mut d = PageDesign::blank_free(k);
+        d.name = format!("Page {}", k + 1);
+        m.designs.free.push(d);
+        return k;
+    }
     let auto = paginate(m.videos.len(), m.par_page).map(|g| g.len()).unwrap_or(1);
     let f = m.designs.free.len();
     let page = auto + f;
@@ -278,6 +300,8 @@ pub enum SimAction {
     Play(usize),
     /// Lit une video depuis un chapitre : (video, chapitre).
     PlayChapter(usize, usize),
+    /// Lit une video depuis un instant (vignette de chapitre d'une page generique) : (video, secondes).
+    PlayFrom(usize, f64),
     /// Lit toutes les videos a la suite (« Tout lire » du menu principal), puis revient a l'accueil.
     PlayAllVideos,
     /// Page precedente / suivante du meme menu.
@@ -293,6 +317,8 @@ pub struct SimButton {
     pub item: usize,
     pub rect: (i32, i32, i32, i32),
     pub action: SimAction,
+    /// Page affichee a la fin de la lecture lancee par ce bouton (vignettes des pages generiques).
+    pub ret: crate::design::SlotReturn,
     /// indices (dans la liste des boutons) des voisins (haut, bas, gauche, droite)
     pub neighbors: (usize, usize, usize, usize),
 }
@@ -305,10 +331,12 @@ pub fn sim_buttons(info: &PageInfo, design: &PageDesign, style: &crate::style::B
     let mut out: Vec<SimButton> = Vec::new();
     let mut e = 0;
     for (idx, it) in design.items.iter().enumerate() {
+        let mut ret = crate::design::SlotReturn::Origin;
         let action = match &it.kind {
-            Kind::Slot { video, link, .. } => {
+            Kind::Slot { video, link, start, ret: r, .. } => {
+                ret = *r;
                 let usual = match video {
-                    Some(Some(v)) if *v < n_videos => Some(open_video(*v)),
+                    Some(Some(v)) if *v < n_videos => Some(match start { Some(t) => SimAction::PlayFrom(*v, *t), None => open_video(*v) }),
                     Some(_) => None,
                     None => {
                         let a = asg.get(e).copied().unwrap_or(usize::MAX);
@@ -334,7 +362,7 @@ pub fn sim_buttons(info: &PageInfo, design: &PageDesign, style: &crate::style::B
         let Some(action) = action else { continue };
         let st = it.look.style.as_ref().unwrap_or(style);
         let (mx, my) = st.margins(it.w, it.h);
-        out.push(SimButton { item: idx, rect: (it.x - mx, it.y - my, it.w + 2 * mx, it.h + 2 * my), action, neighbors: (0, 0, 0, 0) });
+        out.push(SimButton { item: idx, rect: (it.x - mx, it.y - my, it.w + 2 * mx, it.h + 2 * my), action, ret, neighbors: (0, 0, 0, 0) });
     }
     let rects: Vec<(i32, i32, i32, i32)> = out.iter().map(|b| b.rect).collect();
     for (b, n) in out.iter_mut().zip(crate::menu::auto_neighbors(&rects)) {
@@ -355,4 +383,62 @@ pub fn page_of_target(pages: &[PageInfo], t: Target) -> Option<PageRef> {
 /// Page du menu principal ou se trouve la video `v` (pages automatiques).
 pub fn main_page_of_video(pages: &[PageInfo], v: usize) -> Option<PageRef> {
     pages.iter().find(|i| matches!(i.r, PageRef::Main(_)) && i.items.contains(&v)).map(|i| i.r)
+}
+
+// ------------------------------------------------------------------ pages generiques
+/// Echange les pages `a` et `b` (pages generiques) ; les destinations, retours et l'accueil suivent leur page.
+pub fn swap_pages(m: &mut ProjectModel, a: usize, b: usize) {
+    let d = &mut m.designs;
+    if a == b || a >= d.free.len() || b >= d.free.len() { return; }
+    d.free.swap(a, b);
+    let sw = |p: usize| if p == a { b } else if p == b { a } else { p };
+    for pg in d.free.iter_mut() {
+        for it in &mut pg.items {
+            if let Some(Some(Target::Main(p))) = it.targets_mut() { *p = sw(*p); }
+            if let Kind::Slot { ret: crate::design::SlotReturn::Page(p), .. } = &mut it.kind { *p = sw(*p); }
+        }
+    }
+    if let Some(Target::Main(p)) = &mut d.home { *p = sw(*p); }
+}
+
+/// Chapitres de chaque video pour la conversion (instants en secondes, noms) ; `Err` tant qu'une duree utile n'est pas connue
+/// (chapitres automatiques).
+fn gen_videos(m: &ProjectModel, durations: &HashMap<String, f64>) -> Result<Vec<crate::convert::GenVideo>, String> {
+    let mut out = Vec::new();
+    for (i, v) in m.videos.iter().enumerate() {
+        let d = durations.get(&v.file).copied();
+        if v.chapters.is_empty() && v.auto_s.is_some() && d.is_none() {
+            return Err(format!("duree de la video {} inconnue", i + 1));
+        }
+        out.push(crate::convert::GenVideo { title: video_title(m, i), chapters: v.chapter_list(d) });
+    }
+    Ok(out)
+}
+
+/// Convertit un ancien projet (pages automatiques, pages libres, menus de chapitres) en pages generiques.
+/// `Err` si une duree necessaire n'est pas encore connue (reessayer plus tard).
+pub fn convert_to_generic(m: &mut ProjectModel, durations: &HashMap<String, f64>) -> Result<(), String> {
+    if m.designs.generic { return Ok(()); }
+    let gv = gen_videos(m, durations)?;
+    m.designs = crate::convert::generate_pages(&gv, m.par_page, &m.title, &m.designs)?;
+    Ok(())
+}
+
+/// Ajoute a la fin les pages d'un menu complet genere automatiquement (grille de toutes les videos, menus de chapitres).
+/// Retourne le nombre de pages ajoutees.
+pub fn append_generated_pages(m: &mut ProjectModel, durations: &HashMap<String, f64>) -> Result<usize, String> {
+    convert_to_generic(m, durations)?;
+    let gv = gen_videos(m, durations)?;
+    let gen = crate::convert::generate_pages(&gv, m.par_page, &m.title, &Designs::default())?;
+    let off = m.designs.free.len();
+    let mut pages = gen.free;
+    for pg in &mut pages {
+        for it in &mut pg.items {
+            if let Some(Some(Target::Main(p))) = it.targets_mut() { *p += off; }
+            if let Kind::Slot { ret: crate::design::SlotReturn::Page(p), .. } = &mut it.kind { *p += off; }
+        }
+    }
+    let n = pages.len();
+    m.designs.free.extend(pages);
+    Ok(n)
 }

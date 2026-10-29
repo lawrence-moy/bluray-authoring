@@ -216,7 +216,19 @@ impl ProjectModel {
                 }
             }
         }
-        if !self.designs.free.is_empty() && !self.videos.is_empty() {
+        // pages generiques : toutes les pages sont dans la liste, sans pages automatiques
+        let gen = self.designs.generic;
+        let auto_pages = |m: &Self| if gen { 0 } else { crate::project::paginate(m.videos.len().max(1), m.par_page).map(|g| g.len()).unwrap_or(1) };
+        if gen {
+            if self.designs.free.is_empty() { p.push("Aucune page de menu : ajoutez au moins une page.".into()); }
+            let np = self.designs.free.len();
+            for (k, d) in self.designs.free.iter().enumerate() {
+                for pr in d.validate_free(k, np, self.videos.len()).into_iter().filter(|x| x.error) {
+                    p.push(format!("Page {} : {}", k + 1, pr.msg));
+                }
+            }
+        }
+        if !gen && !self.designs.free.is_empty() && !self.videos.is_empty() {
             let auto = crate::project::paginate(self.videos.len(), self.par_page).map(|g| g.len()).unwrap_or(1);
             let total = auto + self.designs.free.len();
             for (f, d) in self.designs.free.iter().enumerate() {
@@ -227,7 +239,7 @@ impl ProjectModel {
         }
         if !self.videos.is_empty() {
             use crate::design::{Kind, NavAction, Target};
-            let total = crate::project::paginate(self.videos.len(), self.par_page).map(|g| g.len()).unwrap_or(1) + self.designs.free.len();
+            let total = auto_pages(self) + self.designs.free.len();
             let d = &self.designs;
             for pg in d.main.values().chain(d.chapters.values()).chain(d.free.iter()) {
                 for it in &pg.items {
@@ -256,7 +268,7 @@ impl ProjectModel {
             }
         }
         if let Some(h) = self.designs.home {
-            let total = crate::project::paginate(self.videos.len().max(1), self.par_page).map(|g| g.len()).unwrap_or(1) + self.designs.free.len();
+            let total = auto_pages(self) + self.designs.free.len();
             let bad = match h { crate::design::Target::Main(q) => q >= total, crate::design::Target::Chapters(v, _) => v >= self.videos.len(), crate::design::Target::Video(_) => true };
             if bad { p.push("Page d'accueil invalide : choisissez une page existante.".into()); }
         }

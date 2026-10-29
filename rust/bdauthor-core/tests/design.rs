@@ -58,8 +58,8 @@ fn json_roundtrip_and_remap() {
 fn free_pages_json_swap_remove_validate() {
     let mut ds = Designs::default();
     let mut f = PageDesign::blank_free(1);
-    f.items.push(Item { x: 100, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(2)), link: None }, look: Default::default() });
-    f.items.push(Item { x: 600, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(0)), link: None }, look: Default::default() });
+    f.items.push(Item { x: 100, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(2)), link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default() });
+    f.items.push(Item { x: 600, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(0)), link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default() });
     ds.free.push(f);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("\"libres\""));
@@ -171,7 +171,7 @@ fn fixed_video_slots_with_destination() {
     // page automatique : 2 elements + une vignette de la video 3 qui ouvre la page 2
     let mut p = PageDesign::default_main(2, 0, 2).unwrap();
     let before = p.slot_count();
-    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, assign: Some(0), video: Some(Some(2)), link: Some(Target::Main(1)) }, look: Default::default() });
+    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, assign: Some(0), video: Some(Some(2)), link: Some(Target::Main(1)), start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default() });
     assert_eq!(p.slot_count(), before, "une vignette de video choisie ne compte pas parmi les elements");
     assert_eq!(p.all_slot_count(), before + 1);
     assert!(p.validate(2, MenuType::Main, 0, 2).iter().all(|x| !x.error), "{:?}", p.validate(2, MenuType::Main, 0, 2));

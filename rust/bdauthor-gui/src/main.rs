@@ -503,10 +503,9 @@ impl eframe::App for App {
                     changed |= file_row(ui, "Séquence d'ouverture :", &mut m.intro, "(aucune : le menu s'ouvre directement)", "Vidéos", VIDEO_EXTS);
                     changed |= ui.checkbox(&mut m.menu_1080, "Menu en 1920x1080 (sinon : taille de la vidéo)").changed();
                     changed |= ui.checkbox(&mut m.loop_menu, "Rejouer le fond en boucle (sinon : arrêt sur la dernière image)").changed();
-                    changed |= ui.checkbox(&mut m.back_to_chapters, "Après une vidéo à chapitres, revenir à son menu de chapitres").changed();
                     ui.horizontal(|ui| {
                         let mut on = m.par_page.is_some();
-                        if ui.checkbox(&mut on, "Éléments par page de menu :").changed() {
+                        if ui.checkbox(&mut on, "Vignettes par page générée :").on_hover_text("Pour les pages créées automatiquement (premier passage dans « Mise en page », bouton « + Pages générées »)").changed() {
                             m.par_page = if on { Some(8) } else { None };
                             changed = true;
                         }

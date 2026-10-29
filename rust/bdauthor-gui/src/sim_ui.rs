@@ -1,7 +1,7 @@
 //! Simulation de la telecommande dans l'editeur : fleches pour passer d'un bouton a l'autre (meme regle de voisinage que le disque),
 //! Entree pour valider (etat « active » visible un instant), puis ouverture de la page visee ou lecture simulee de la video.
 use crate::App;
-use bdauthor_core::design::Target;
+use bdauthor_core::design::{SlotReturn, Target};
 use bdauthor_core::editor::{main_page_of_video, page_of_target, sim_buttons, video_title, PageInfo, PageRef, SimAction, SimButton};
 use eframe::egui::{self, Color32, Key, Rect};
 use std::time::{Duration, Instant};
@@ -27,7 +27,9 @@ impl App {
     pub(crate) fn sim_page_buttons(&self, info: &PageInfo) -> Vec<SimButton> {
         let Some(d) = info.design(&self.model.designs).cloned().or_else(|| info.starting_point(&self.model).ok()) else { return vec![] };
         let pages = self.pages();
-        sim_buttons(info, &d, &self.model.designs.style, self.model.videos.len(), &|v| self.has_chapters(&pages, v))
+        // pages generiques : une vignette lit sa video (les pages de chapitres sont des liens choisis)
+        let generic = self.model.designs.generic;
+        sim_buttons(info, &d, &self.model.designs.style, self.model.videos.len(), &|v| !generic && self.has_chapters(&pages, v))
     }
 
     /// Page d'accueil (touche TOP MENU) : celle choisie, sinon la page 1 du menu principal.
@@ -52,10 +54,18 @@ impl App {
     }
 
     /// Execute l'action d'un bouton valide.
-    fn sim_do(&mut self, info: &PageInfo, a: SimAction) {
+    fn sim_do(&mut self, info: &PageInfo, a: SimAction, ret: SlotReturn) {
         let pages = self.pages();
+        let generic = self.model.designs.generic;
+        // pages generiques : retour choisi par la vignette (page d'origine par defaut)
+        let generic_back = match ret {
+            SlotReturn::Origin => Some(info.r),
+            SlotReturn::Home => self.home_page(),
+            SlotReturn::Page(p) => page_of_target(&pages, Target::Main(p)).or(Some(info.r)),
+        };
         // a la fin d'une video : son menu de chapitres (si l'option est active et qu'il existe), sinon sa page du menu principal
         let back_of = |v: usize| -> Option<PageRef> {
+            if generic { return generic_back; }
             if self.model.back_to_chapters && self.has_chapters(&pages, v) { Some(PageRef::Chapters(v, 0)) } else { main_page_of_video(&pages, v) }
         };
         let mut play: Option<(String, Option<PageRef>)> = None;
@@ -68,8 +78,13 @@ impl App {
                 let name = self.model.videos.get(v).and_then(|x| x.chapter_list(self.durations.get(&x.file).copied()).get(c).map(|t| t.1.clone())).unwrap_or_else(|| format!("chapitre {}", c + 1));
                 play = Some((format!("Lecture de « {} » à partir de « {name} »", video_title(&self.model, v)), back_of(v)));
             }
+            SimAction::PlayFrom(v, t) => {
+                let s = t.round().max(0.0) as i64;
+                play = Some((format!("Lecture de « {} » à partir de {}:{:02}", video_title(&self.model, v), s / 60, s % 60), back_of(v)));
+            }
             SimAction::PlayAllVideos => {
-                play = Some(("Lecture de toutes les vidéos à la suite".to_string(), self.home_page()));
+                // le disque revient a la page d'ou « Tout lire » a ete lance
+                play = Some(("Lecture de toutes les vidéos à la suite".to_string(), if generic { Some(info.r) } else { self.home_page() }));
             }
             SimAction::Go(t) => go = page_of_target(&pages, t),
             SimAction::Prev | SimAction::Next => {
@@ -141,7 +156,7 @@ impl App {
         if let Some(t) = sim.pressed {
             if t.elapsed() >= PRESS {
                 sim.pressed = None;
-                action = Some(buttons[sim.btn].action);
+                action = Some((buttons[sim.btn].action, buttons[sim.btn].ret));
             } else {
                 ctx.request_repaint_after(PRESS.saturating_sub(t.elapsed()));
             }
@@ -169,8 +184,8 @@ impl App {
         self.sel_item = Some(buttons[sim.btn].item);
         self.sim = Some(sim);
         help(painter, &format!("Simulation · bouton {} sur {} · Flèches : se déplacer · Entrée : valider · M : TOP MENU · Échap : quitter", self.sim.as_ref().map_or(0, |s| s.btn) + 1, buttons.len()));
-        if let Some(a) = action {
-            self.sim_do(info, a);
+        if let Some((a, ret)) = action {
+            self.sim_do(info, a, ret);
         }
     }
 }

@@ -106,7 +106,8 @@ fn full_project() {
     assert_eq!(last, 1.0);
     println!("{info:#?}");
     assert!(info.report.ok(), "{}", info.report.render());
-    assert_eq!(info.main_pages, 2);
+    // ancien projet converti : 2 pages pour les videos + 1 page de chapitres de la video 1
+    assert_eq!(info.main_pages, 3);
     assert!(info.chapters.contains_key(&1));
     // second passage : tout vient du cache
     let mut logs2 = Vec::new();
@@ -183,7 +184,7 @@ fn custom_layout_project() {
         build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
     };
     assert!(info.report.ok(), "{}", info.report.render());
-    assert_eq!(info.main_pages, 3, "2 pages automatiques + 1 page libre");
+    assert_eq!(info.main_pages, 5, "2 pages de videos + 1 page libre + 2 pages de chapitres (pages generiques apres conversion)");
     assert_eq!(OVERLAYS.load(std::sync::atomic::Ordering::SeqCst), 1, "seule la 2e vignette est recouverte par l'image placee devant elle");
     // page libre : 3 vignettes (dont la video 3 deux fois ; celle sans video est absente), « Precedent », 2 boutons « Aller a »,
     // un texte et une image cliquables
@@ -341,12 +342,13 @@ fn home_intro_and_play_all() {
     let mo = bdauthor_core::mobj::MovieObjectBdmv::parse(&std::fs::read(root.join("MovieObject.bdmv")).unwrap()).unwrap();
     let idx = bdauthor_core::index::IndexBdmv::parse(&std::fs::read(root.join("index.bdmv")).unwrap()).unwrap();
     let text = |o: usize| mo.objects[o].commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; ");
-    // titres : 2 videos, page 2 du menu principal (= page libre), chapitres de a (1 page + lecture depuis un repere) = 5 ;
-    // puis la page 1 (titre 6) et « Tout lire » (titre 7)
+    // ancien projet converti : pages 1 (videos), 2 (page libre = accueil), 3 (chapitres de a) -> titres 3, 4, 5 ;
+    // lecture depuis un repere de a (titre 6), « Tout lire » (titre 7)
     assert_eq!(idx.titles.len(), 7);
-    assert!(text(0).contains("JUMP_TITLE 3"), "Top Menu -> accueil (titre de la page libre) : {}", text(0));
-    assert!(text(6).starts_with("PLAY_PL"), "titre 6 = page 1 du menu : {}", text(6));
-    assert!(text(7).starts_with("PLAY_PL") && text(7).contains("JUMP_TITLE 0"), "{}", text(7));
+    assert!(text(0).contains("JUMP_TITLE 4"), "Top Menu -> accueil (titre de la page libre) : {}", text(0));
+    assert!(text(3).starts_with("PLAY_PL"), "titre 3 = page 1 du menu : {}", text(3));
+    // « Tout lire » revient a la page d'ou il a ete lance (registre de retour)
+    assert!(text(7).starts_with("PLAY_PL") && text(7).contains("JUMP_TITLE r1"), "{}", text(7));
     // ouverture : objet dedie, lecture de l'intro puis accueil
     let fp = idx.first_playback.id_ref as usize;
     assert_eq!(fp, mo.objects.len() - 1);
@@ -493,5 +495,70 @@ fn invalid_main_layout_stops_before_encoding() {
     assert!(e.contains("menu principal (page 1)") && e.contains("sans élément"), "{e}");
     assert!(!logs.iter().any(|l| l.contains("encodage")), "aucun encodage avant l'erreur : {logs:?}");
     assert!(!dir.join(".cache_bdauthor").exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn generic_pages_with_chapter_thumbnails() {
+    let Ok(tools) = Tools::locate() else { return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_generic_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in ["a", "b"] {
+        assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=6",
+            "-f", "lavfi", "-i", "sine=duration=6", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
+            .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
+    }
+    // page 1 : vignette de la video a, vignette de chapitre de a a 3 s (retour a l'accueil), « Suivant » ;
+    // page 2 (accueil) : vignette de chapitre de b a 2 s (retour en page 1), « Precedent »
+    let proj = r##"{ "titre": "Generique", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
+      "mise_en_page": { "accueil": {"menu": "principal", "page": 2}, "pages": [
+        { "nom": "Videos", "elements": [
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1,"depart_s":3,"libelle":"Milieu","retour":"accueil"},
+          {"type":"navigation","action":"suivant","texte":"Suite","x":800,"y":900,"w":300,"h":90} ] },
+        { "nom": "Chapitres", "elements": [
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2,"depart_s":2,"retour":{"page":1}},
+          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let info = {
+        let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
+    };
+    assert!(info.report.ok(), "{}", info.report.render());
+    assert_eq!(info.main_pages, 2);
+    let root = dir.join("out/BDMV");
+    let mo = bdauthor_core::mobj::MovieObjectBdmv::parse(&std::fs::read(root.join("MovieObject.bdmv")).unwrap()).unwrap();
+    let text = |o: usize| mo.objects[o].commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; ");
+    // titres : videos 1-2, pages 3-4, lecture depuis un repere de a (5) et de b (6)
+    assert!(text(0).contains("JUMP_TITLE 4"), "Top Menu -> page 2 : {}", text(0));
+    assert_eq!(text(1), "PLAY_PL 0 ; JUMP_TITLE r1");
+    for o in [5, 6] { assert!(text(o).contains("PLAY_PL_PM") && text(o).ends_with("JUMP_TITLE r1"), "{}", text(o)); }
+    // reperes : debut + depart de la vignette, cales sur une image d'acces au plus a 1 s avant
+    for (v, t) in [(0usize, 3.0f64), (1, 2.0)] {
+        let m = bdauthor_core::mpls::Mpls::parse(&std::fs::read(root.join(format!("PLAYLIST/{v:05}.mpls"))).unwrap()).unwrap();
+        assert_eq!(m.marks.len(), 2, "video {v}");
+        let rel = (m.marks[1].time - m.marks[0].time) as f64 / 45000.0;
+        assert!(rel <= t + 1e-6 && rel > t - 1.01, "video {v} : repere a {rel} s");
+    }
+    // boutons de la page 1 : video a (retour page 1 = titre 3) ; chapitre de a (retour accueil = titre 0, repere 1, titre 5)
+    let ig_cmds = |clip: u32| -> Vec<String> {
+        let data = std::fs::read(root.join(format!("STREAM/{clip}.m2ts"))).unwrap();
+        let mut segs = Vec::new();
+        for e in bdauthor_core::m2ts::reassemble(&data, 0x1400).unwrap() { segs.extend(bdauthor_core::m2ts::split_segments(&e.data).unwrap()); }
+        let ics = bdauthor_core::ig::Ics::parse(&segs.iter().find(|s| s.name() == "ICS").unwrap().payload).unwrap();
+        let mut b: Vec<&bdauthor_core::ig::Button> = ics.pages[0].bogs.iter().flat_map(|g| g.buttons.iter()).collect();
+        b.sort_by_key(|b| (b.y, b.x));
+        b.iter().map(|b| b.commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; ")).collect()
+    };
+    let p1 = ig_cmds(80002);
+    assert_eq!(p1.len(), 3, "{p1:?}");
+    assert!(p1[0].contains("r1, 3") && p1[0].contains("JUMP_TITLE 1"), "{p1:?}");
+    assert!(p1[1].contains("r1, 0") && p1[1].contains("r0, 1") && p1[1].contains("JUMP_TITLE 5"), "{p1:?}");
+    let p2 = ig_cmds(80003);
+    assert!(p2[0].contains("r1, 3") && p2[0].contains("r0, 1") && p2[0].contains("JUMP_TITLE 6"), "{p2:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
