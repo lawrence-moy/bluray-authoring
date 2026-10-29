@@ -1262,7 +1262,7 @@ impl App {
                     DragRow::Item(_) => r,
                 };
                 let y = if line_at < rows.len() { rows[line_at].1.top() } else { rows.last().map_or(area.bottom(), |x| x.1.bottom()) };
-                ui.painter().hline(area.x_range(), y, Stroke::new(2.5, Color32::from_rgb(90, 170, 255)));
+                ui.painter().hline(area.x_range(), y, Stroke::new(2.5_f32, Color32::from_rgb(90, 170, 255)));
                 if ui.input(|i| i.pointer.any_released()) {
                     egui::DragAndDrop::clear_payload(ui.ctx());
                     match *drag {
