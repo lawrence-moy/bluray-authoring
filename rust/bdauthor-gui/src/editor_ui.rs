@@ -114,19 +114,15 @@ fn item_menu(ui: &mut egui::Ui) -> Option<bool> {
 enum NewWidget { Text, Image, VideoSlot, ChapterSlot, Nav(NavAction) }
 
 /// Icones de la palette : (element, icone, nom).
-fn palette(generic: bool) -> Vec<(NewWidget, &'static str, String)> {
+fn palette() -> Vec<(NewWidget, &'static str, String)> {
     let mut v = vec![
         (NewWidget::Text, "🔤", "Texte".to_string()),
         (NewWidget::Image, "🖼", "Image (PNG, JPEG, SVG…)".to_string()),
         (NewWidget::VideoSlot, "🎬", "Vignette vidéo (lecture depuis le début)".to_string()),
         (NewWidget::ChapterSlot, "🎞", "Vignette de chapitre (lecture depuis un instant)".to_string()),
     ];
-    for a in NavAction::ALL {
-        // « Retour » n'existe que dans les anciens menus de chapitres
-        if generic && a == NavAction::Back { continue; }
-        let icon = match a { NavAction::Prev => "⏮", NavAction::Next => "⏭", NavAction::PlayAll => "▶", NavAction::Back => "↩", NavAction::Goto => "➡" };
-        v.push((NewWidget::Nav(a), icon, format!("Bouton « {} »", a.label())));
-    }
+    // un seul bouton de navigation : son action (Aller a, Precedent, Suivant, Tout lire) se choisit dans l'inspecteur
+    v.push((NewWidget::Nav(NavAction::Goto), "🔘", "Bouton de navigation (« Aller à… » ; action modifiable dans l'inspecteur : Précédent, Suivant, Tout lire…)".to_string()));
     v
 }
 
@@ -665,7 +661,7 @@ impl App {
             let mut pick_image = false;
             // palette : glisser une icone sur l'apercu pour placer l'element, ou cliquer pour l'ajouter a sa place par defaut
             let first = (!self.model.videos.is_empty()).then_some(0);
-            let palette = palette(self.model.designs.generic);
+            let palette = palette();
             ui.horizontal_wrapped(|ui| {
                 for (w, icon, name) in &palette {
                     let b = ui.add(egui::Button::new(egui::RichText::new(*icon).size(27.0)).min_size(vec2(48.0, 48.0)).sense(Sense::click_and_drag()))
@@ -1021,6 +1017,7 @@ impl App {
         let base_dir = self.base_dir();
         let font_check = self.renderer.as_ref();
         let page_targets = self.page_targets();
+        let generic = self.model.designs.generic;
         let page_names: Vec<String> = self.pages().iter().map(|p| p.label(&self.model)).collect();
         let video_durations: Vec<Option<f64>> = self.model.videos.iter().map(|v| self.durations.get(&v.file).copied()).collect();
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
@@ -1126,10 +1123,15 @@ impl App {
                     }
                 }
                 Kind::Nav { action, text, target } => {
+                    let old = *action;
                     egui::ComboBox::from_label("Action").selected_text(action.label()).show_ui(ui, |ui| {
                         for a in NavAction::ALL {
+                            // « Retour » n'existe que dans les anciens menus de chapitres
+                            if generic && a == NavAction::Back && old != NavAction::Back { continue; }
                             if ui.selectable_value(action, a, a.label()).changed() {
                                 changed = true;
+                                // texte encore par defaut : il suit l'action
+                                if *text == old.default_text() { *text = a.default_text().to_string(); }
                                 if a == NavAction::Goto && target.is_none() { *target = Some(Target::Main(0)); }
                             }
                         }
