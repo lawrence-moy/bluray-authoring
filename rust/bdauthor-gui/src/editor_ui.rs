@@ -143,16 +143,18 @@ fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
     }
 }
 
-/// Ligne glissee dans la liste des calques.
+/// Ligne glissee dans l'arborescence des pages (calques et elements : ceux de la page affichee).
 #[derive(Clone, Copy, PartialEq)]
 enum DragRow {
-    /// element (indice dans la liste de la page)
+    /// page generique (indice)
+    Page(usize),
+    /// element (indice dans la liste de la page affichee)
     Item(usize),
-    /// calque (position, de l'arriere-plan au premier plan)
+    /// calque de la page affichee (position, de l'arriere-plan au premier plan)
     Layer(usize),
 }
 
-/// Changement demande depuis la liste des calques.
+/// Changement demande depuis l'arborescence.
 enum LayerOp {
     Add,
     Remove(u32, bool),
@@ -161,6 +163,11 @@ enum LayerOp {
     Rename(u32, String),
     MoveItem { from: usize, before: usize, layer: u32 },
     MoveLayer { from: usize, to: usize },
+    PageRename(usize, String),
+    PageDelete(usize),
+    PageMove { from: usize, to: usize },
+    /// element ou calque (`DragRow`) de la page affichee envoye vers une autre page ; `copy` : copie
+    Transfer { what: DragRow, to: usize, copy: bool },
 }
 
 fn mmss(t: f64) -> String {
@@ -518,83 +525,6 @@ impl App {
                 true
             }
             Err(_) => false,
-        }
-    }
-
-    // ------------------------------------------------------------------ liste des pages (panneau de gauche)
-    pub(crate) fn page_list_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Pages de menu");
-        if self.model.videos.is_empty() {
-            ui.label("Ajoutez des vidéos dans l'onglet « Projet ».");
-            return;
-        }
-        if !self.ensure_generic() {
-            ui.label("Préparation des pages (lecture de la durée des vidéos à chapitres automatiques)…\nSi cela dure, vérifiez dans l'onglet « Projet » que ces vidéos sont bien trouvées.");
-            return;
-        }
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("+ Page").on_hover_text("Ajoute une page vierge à la fin ; placez-y vignettes de vidéo ou de chapitre, boutons, textes et images.").clicked() {
-                let f = bdauthor_core::editor::add_free_page(&mut self.model);
-                self.cur = Some(PageRef::Free(f));
-                self.sel_item = None;
-                self.bump();
-            }
-        });
-        let pages = self.pages();
-        if pages.is_empty() {
-            ui.label("Aucune page : ajoutez-en une.");
-            return;
-        }
-        let cur = self.current_info().map(|p| p.r);
-        let home_ref = self.home_page();
-        let mut pick = None;
-        egui::ScrollArea::vertical().max_height((ui.available_height() - 170.0).max(120.0)).show(ui, |ui| {
-            for p in &pages {
-                let home = if home_ref == Some(p.r) { "  ⌂" } else { "" };
-                if ui.selectable_label(cur == Some(p.r), format!("{}{home}", p.label(&self.model))).clicked() { pick = Some(p.r); }
-            }
-        });
-        // page selectionnee : nom, place, suppression
-        if let Some(PageRef::Free(k)) = cur {
-            ui.separator();
-            let np = self.model.designs.free.len();
-            let mut changed = false;
-            let mut moved: Option<usize> = None;
-            let mut delete = false;
-            if let Some(d) = self.model.designs.free.get_mut(k) {
-                ui.horizontal(|ui| {
-                    ui.label("Nom :");
-                    changed |= ui.add(egui::TextEdit::singleline(&mut d.name).hint_text(format!("Page {}", k + 1))).changed();
-                });
-            }
-            ui.horizontal_wrapped(|ui| {
-                if ui.add_enabled(k > 0, egui::Button::new("▲ Monter")).clicked() { moved = Some(k - 1); }
-                if ui.add_enabled(k + 1 < np, egui::Button::new("▼ Descendre")).clicked() { moved = Some(k + 1); }
-                if ui.button("Supprimer").on_hover_text("Supprime la page ; les liens qui y menaient sont à rechoisir").clicked() { delete = true; }
-            });
-            ui.label(egui::RichText::new("« Précédent » et « Suivant » mènent à la page d'avant et d'après dans cette liste.").weak());
-            if let Some(to) = moved {
-                bdauthor_core::editor::swap_pages(&mut self.model, k, to);
-                self.cur = Some(PageRef::Free(to));
-                changed = true;
-            }
-            if delete {
-                if let Some(info) = pages.iter().find(|p| p.r == PageRef::Free(k)) { info.remove_design(&mut self.model.designs); }
-                self.cur = (k > 0).then(|| PageRef::Free(k - 1));
-                self.sel_item = None;
-                changed = true;
-            }
-            if changed { self.edit_gen += 1; self.bump(); }
-        }
-        ui.separator();
-        ui.label(egui::RichText::new("⌂ : page d'accueil (touche TOP MENU, ouverture du disque)").weak());
-        if let Some(r) = pick {
-            if self.cur != Some(r) {
-                self.cur = Some(r);
-                self.sel_item = None;
-                self.drag = None;
-                self.edit_gen += 1;
-            }
         }
     }
 
@@ -990,9 +920,7 @@ impl App {
             return;
         }
         let Some(i) = self.sel_item else {
-            ui.label("Cliquez sur un élément de l'aperçu pour le modifier.\n\nGlissez pour déplacer, tirez un coin pour redimensionner, flèches du clavier pour ajuster (Maj : 10 px), Suppr pour retirer.");
-            ui.separator();
-            self.layers_ui(ui, &info);
+            ui.label("Cliquez sur un élément de l'aperçu ou de la liste de gauche pour le modifier.\n\nGlissez pour déplacer, tirez un coin pour redimensionner, flèches du clavier pour ajuster (Maj : 10 px), Suppr pour retirer.");
             return;
         };
         let mut op: Option<Op> = None;
@@ -1231,8 +1159,6 @@ impl App {
         if changed {
             self.bump();
         }
-        ui.separator();
-        self.layers_ui(ui, &info);
     }
 
     /// Calque des nouveaux elements : le calque actif s'il existe sur la page, sinon celui de l'element selectionne, sinon le
@@ -1244,126 +1170,234 @@ impl App {
         d.layers.last().map_or(0, |l| l.id)
     }
 
-    /// Liste des calques et des elements de la page, du premier plan (en haut) a l'arriere-plan. Un clic selectionne, un
-    /// glisser-deposer change l'ordre ou le calque d'un element, ou l'ordre des calques.
-    fn layers_ui(&mut self, ui: &mut egui::Ui, info: &PageInfo) {
-        let Some(d) = info.design(&self.model.designs).cloned() else { return };
-        let layered = !d.layers.is_empty();
-        let active = self.target_layer(info);
+    // ------------------------------------------------------------------ arborescence pages / calques / elements (panneau de gauche)
+    /// Pages du menu, et sous la page affichee ses calques et ses elements (du premier plan, en haut, a l'arriere-plan).
+    /// La poignee ☰ de chaque ligne se glisse : pages reordonnees ; elements et calques reordonnes, changes de calque, ou
+    /// envoyes sur une autre page en les deposant sur son nom (Ctrl : copie).
+    pub(crate) fn page_list_ui(&mut self, ui: &mut egui::Ui) {
+        ui.heading("Pages et calques");
+        if self.model.videos.is_empty() {
+            ui.label("Ajoutez des vidéos dans l'onglet « Projet ».");
+            return;
+        }
+        if !self.ensure_generic() {
+            ui.label("Préparation des pages (lecture de la durée des vidéos à chapitres automatiques)…\nSi cela dure, vérifiez dans l'onglet « Projet » que ces vidéos sont bien trouvées.");
+            return;
+        }
         let mut op: Option<LayerOp> = None;
+        let info = self.current_info();
+        let cur_k = match info.as_ref().map(|i| i.r) { Some(PageRef::Free(k)) => Some(k), _ => None };
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("+ Page").on_hover_text("Ajoute une page vierge à la fin").clicked() {
+                let f = bdauthor_core::editor::add_free_page(&mut self.model);
+                self.cur = Some(PageRef::Free(f));
+                self.sel_item = None;
+                self.bump();
+            }
+            if cur_k.is_some() && ui.button("+ Calque").on_hover_text("Nouveau calque au premier plan de la page affichée ; les nouveaux éléments vont dans le calque actif").clicked() {
+                op = Some(LayerOp::Add);
+            }
+        });
+        ui.label(egui::RichText::new("Glissez la poignée ☰ : pages, calques et éléments changent d'ordre ; un élément ou un calque déposé sur le nom d'une autre page y est déplacé (Ctrl : copié).").weak());
+        let np = self.model.designs.free.len();
+        if np == 0 {
+            ui.label("Aucune page : ajoutez-en une.");
+            return;
+        }
+        let home_k = match self.model.designs.home { Some(Target::Main(p)) if p < np => p, _ => 0 };
+        let names: Vec<String> = self.model.designs.free.iter().enumerate().map(|(k, d)| if d.name.is_empty() { format!("Page {}", k + 1) } else { d.name.clone() }).collect();
+        let d: Option<PageDesign> = info.as_ref().and_then(|i| i.design(&self.model.designs).cloned());
+        let active = info.as_ref().map_or(0, |i| self.target_layer(i));
+        let mut pick_page: Option<usize> = None;
         let mut pick: Option<usize> = None;
         let mut activate: Option<u32> = None;
         let mut edit_done = false;
+        let mut page_edit_done = false;
         let mut item_act: Option<(usize, bool)> = None;
-        ui.horizontal(|ui| {
-            ui.strong("Calques et éléments");
-            if ui.button("+ Calque").on_hover_text("Nouveau calque au premier plan ; les nouveaux éléments vont dans le calque actif").clicked() { op = Some(LayerOp::Add); }
-        });
-        ui.label(egui::RichText::new("Du premier plan (en haut) à l'arrière-plan. Glissez la poignée ☰ d'une ligne pour changer l'ordre ou le calque. ✏ renomme un calque, 🗑 le supprime.").weak());
-        // lignes affichees (contenu, rectangle a l'ecran)
         let mut rows: Vec<(DragRow, Rect)> = Vec::new();
-        let list = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
-            ui.set_min_width(ui.available_width());
-            let positions: Vec<usize> = if layered { (0..d.layers.len()).rev().collect() } else { vec![0] };
-            for pos in positions {
-                if layered {
-                    let l = d.layers[pos].clone();
-                    let id = egui::Id::new(("calque", info.r, l.id));
-                    // seule la poignee ☰ se glisse : le reste de la ligne recoit les clics
+
+        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+            let list = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                for k in 0..np {
+                    // ---- ligne de page
+                    let open = cur_k == Some(k);
                     let r = ui.horizontal(|ui| {
-                        let _ = ui.dnd_drag_source(id, DragRow::Layer(pos), |ui| ui.label(egui::RichText::new("☰").strong())).response.on_hover_text("Glisser pour déplacer le calque (avec ses éléments)");
-                        if ui.small_button(if l.hidden { "◌" } else { "👁" }).on_hover_text(if l.hidden { "Calque masqué dans l'aperçu (il reste sur le disque) : afficher" } else { "Masquer dans l'aperçu (le calque reste sur le disque)" }).clicked() { op = Some(LayerOp::Hidden(l.id)); }
-                        if ui.small_button(if l.locked { "🔒" } else { "🔓" }).on_hover_text(if l.locked { "Verrouillé : ses éléments ne se sélectionnent plus dans l'aperçu ; déverrouiller" } else { "Verrouiller (plus de sélection ni de déplacement dans l'aperçu)" }).clicked() { op = Some(LayerOp::Locked(l.id)); }
-                        let editing = matches!(&self.layer_edit, Some((eid, _)) if *eid == l.id);
+                        let _ = ui.dnd_drag_source(egui::Id::new(("page", k)), DragRow::Page(k), |ui| ui.label(egui::RichText::new("☰").strong()))
+                            .response.on_hover_text("Glisser pour changer l'ordre des pages");
+                        ui.label(if open { "▾" } else { "▸" });
+                        let editing = matches!(&self.page_edit, Some((e, _)) if *e == k);
                         if editing {
-                            if let Some((_, text)) = &mut self.layer_edit {
-                                let te = ui.add(egui::TextEdit::singleline(text).desired_width(140.0));
+                            if let Some((_, text)) = &mut self.page_edit {
+                                let te = ui.add(egui::TextEdit::singleline(text).desired_width(150.0));
                                 if !te.has_focus() && !te.lost_focus() { te.request_focus(); }
-                                if te.lost_focus() { edit_done = true; }
+                                if te.lost_focus() { page_edit_done = true; }
                             }
                         } else {
-                            let n = d.layer_range(pos).len();
-                            let name = egui::RichText::new(format!("{}  ({n})", l.name)).strong();
-                            let resp = ui.selectable_label(active == l.id, name).on_hover_text("Calque actif : reçoit les nouveaux éléments. Double-clic : renommer");
-                            if resp.clicked() { activate = Some(l.id); }
-                            if resp.double_clicked() { self.layer_edit = Some((l.id, l.name.clone())); }
-                            if ui.small_button("✏").on_hover_text("Renommer le calque").clicked() { self.layer_edit = Some((l.id, l.name.clone())); }
+                            let home = if k == home_k { "  ⌂" } else { "" };
+                            let label = egui::RichText::new(format!("{}. {}{home}", k + 1, names[k])).strong();
+                            let resp = ui.selectable_label(open, label).on_hover_text("Afficher la page. Double-clic : renommer. ⌂ : page d'accueil");
+                            if resp.clicked() { pick_page = Some(k); }
+                            if resp.double_clicked() { self.page_edit = Some((k, self.model.designs.free[k].name.clone())); }
+                            if ui.small_button("✏").on_hover_text("Renommer la page").clicked() { self.page_edit = Some((k, self.model.designs.free[k].name.clone())); }
                             let _ = ui.menu_button("🗑", |ui| {
-                                if ui.button("Supprimer le calque (ses éléments vont au calque voisin)").clicked() { op = Some(LayerOp::Remove(l.id, true)); ui.close_menu(); }
-                                if ui.button("Supprimer le calque et ses éléments").clicked() { op = Some(LayerOp::Remove(l.id, false)); ui.close_menu(); }
-                            }).response.on_hover_text("Supprimer le calque");
+                                ui.label("Les liens qui menaient à cette page seront à rechoisir.");
+                                if ui.button("Supprimer la page").clicked() { op = Some(LayerOp::PageDelete(k)); ui.close_menu(); }
+                            }).response.on_hover_text("Supprimer la page");
                         }
                     }).response;
-                    rows.push((DragRow::Layer(pos), r.rect));
-                }
-                for i in d.layer_range(pos).rev() {
-                    let it = &d.items[i];
-                    let what = match &it.kind {
-                        Kind::Text { text, link, .. } => format!("Texte « {} »{}", text.lines().next().unwrap_or("").chars().take(24).collect::<String>(), if link.is_some() { " (cliquable)" } else { "" }),
-                        Kind::Image { path, link } => format!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { " (cliquable)" } else { "" }),
-                        Kind::Nav { action, text, .. } => if *action == NavAction::Goto { format!("Bouton « {text} »") } else { format!("Bouton {}", action.label()) },
-                        Kind::Slot { video, link, start, .. } => format!("Vignette{}{}{}", match video { Some(Some(v)) => format!(" (vidéo {})", v + 1), Some(None) => " (sans vidéo)".to_string(), None => String::new() },
-                            start.map(|t| format!(" à {}", mmss(t))).unwrap_or_default(), if link.is_some() { " →" } else { "" }),
-                    };
-                    let mut col = kind_color(&it.kind);
-                    if d.item_hidden(i) { col = col.gamma_multiply(0.45); }
-                    let id = egui::Id::new(("element", info.r, i));
-                    let r = ui.horizontal(|ui| {
-                        if layered { ui.add_space(18.0); }
-                        let _ = ui.dnd_drag_source(id, DragRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak())).response.on_hover_text("Glisser pour changer l'ordre ou le calque");
-                        let lr = ui.selectable_label(self.sel_item == Some(i), egui::RichText::new(what).color(col));
-                        if lr.clicked() || lr.secondary_clicked() { pick = Some(i); }
-                        lr.context_menu(|ui| if let Some(dup) = item_menu(ui) { item_act = Some((i, dup)); });
-                    }).response;
-                    rows.push((DragRow::Item(i), r.rect));
-                }
-                if layered && d.layer_range(pos).is_empty() {
-                    ui.horizontal(|ui| { ui.add_space(18.0); ui.label(egui::RichText::new("(vide : glissez-y des éléments)").weak().italics()); });
-                }
-            }
-        });
-        // glisser-deposer : point d'insertion sous la souris (entre deux lignes)
-        let area = list.response.rect;
-        if let (Some(drag), Some(pos)) = (egui::DragAndDrop::payload::<DragRow>(ui.ctx()), ui.ctx().pointer_hover_pos()) {
-            if area.expand(8.0).contains(pos) && !rows.is_empty() {
-                let r = rows.iter().filter(|(_, rect)| rect.center().y < pos.y).count();
-                let header_rows: Vec<usize> = rows.iter().enumerate().filter(|(_, (row, _))| matches!(row, DragRow::Layer(_))).map(|(k, _)| k).collect();
-                let headers_above = header_rows.iter().filter(|&&k| k < r).count();
-                // une ligne de calque s'insere entre deux calques
-                let line_at = match *drag {
-                    DragRow::Layer(_) => header_rows.get(headers_above).copied().unwrap_or(rows.len()),
-                    DragRow::Item(_) => r,
-                };
-                let y = if line_at < rows.len() { rows[line_at].1.top() } else { rows.last().map_or(area.bottom(), |x| x.1.bottom()) };
-                ui.painter().hline(area.x_range(), y, Stroke::new(2.5_f32, Color32::from_rgb(90, 170, 255)));
-                if ui.input(|i| i.pointer.any_released()) {
-                    egui::DragAndDrop::clear_payload(ui.ctx());
-                    match *drag {
-                        DragRow::Item(from) => {
-                            let lid = |p: usize| d.layers.get(p).map_or(0, |l| l.id);
-                            let (layer, before) = if r == 0 {
-                                let top = d.layers.len().saturating_sub(1);
-                                (lid(top), if layered { d.layer_range(top).end } else { d.items.len() })
-                            } else {
-                                match rows[r - 1].0 {
-                                    DragRow::Layer(p) => (lid(p), d.layer_range(p).end),
-                                    DragRow::Item(j) => (lid(d.layer_pos(j)), j),
+                    rows.push((DragRow::Page(k), r.rect));
+                    if !open { continue; }
+                    let Some(d) = d.as_ref() else { continue };
+                    let Some(info) = info.as_ref() else { continue };
+                    // ---- calques et elements de la page affichee
+                    let layered = !d.layers.is_empty();
+                    let positions: Vec<usize> = if layered { (0..d.layers.len()).rev().collect() } else { vec![0] };
+                    for pos in positions {
+                        if layered {
+                            let l = d.layers[pos].clone();
+                            let id = egui::Id::new(("calque", info.r, l.id));
+                            let r = ui.horizontal(|ui| {
+                                ui.add_space(18.0);
+                                let _ = ui.dnd_drag_source(id, DragRow::Layer(pos), |ui| ui.label(egui::RichText::new("☰").strong())).response.on_hover_text("Glisser pour déplacer le calque (avec ses éléments), ou le déposer sur une autre page");
+                                if ui.small_button(if l.hidden { "◌" } else { "👁" }).on_hover_text(if l.hidden { "Calque masqué dans l'aperçu (il reste sur le disque) : afficher" } else { "Masquer dans l'aperçu (le calque reste sur le disque)" }).clicked() { op = Some(LayerOp::Hidden(l.id)); }
+                                if ui.small_button(if l.locked { "🔒" } else { "🔓" }).on_hover_text(if l.locked { "Verrouillé : ses éléments ne se sélectionnent plus dans l'aperçu ; déverrouiller" } else { "Verrouiller (plus de sélection ni de déplacement dans l'aperçu)" }).clicked() { op = Some(LayerOp::Locked(l.id)); }
+                                let editing = matches!(&self.layer_edit, Some((eid, _)) if *eid == l.id);
+                                if editing {
+                                    if let Some((_, text)) = &mut self.layer_edit {
+                                        let te = ui.add(egui::TextEdit::singleline(text).desired_width(130.0));
+                                        if !te.has_focus() && !te.lost_focus() { te.request_focus(); }
+                                        if te.lost_focus() { edit_done = true; }
+                                    }
+                                } else {
+                                    let n = d.layer_range(pos).len();
+                                    let resp = ui.selectable_label(active == l.id, egui::RichText::new(format!("{}  ({n})", l.name))).on_hover_text("Calque actif : reçoit les nouveaux éléments. Double-clic : renommer");
+                                    if resp.clicked() { activate = Some(l.id); }
+                                    if resp.double_clicked() { self.layer_edit = Some((l.id, l.name.clone())); }
+                                    if ui.small_button("✏").on_hover_text("Renommer le calque").clicked() { self.layer_edit = Some((l.id, l.name.clone())); }
+                                    let _ = ui.menu_button("🗑", |ui| {
+                                        if ui.button("Supprimer le calque (ses éléments vont au calque voisin)").clicked() { op = Some(LayerOp::Remove(l.id, true)); ui.close_menu(); }
+                                        if ui.button("Supprimer le calque et ses éléments").clicked() { op = Some(LayerOp::Remove(l.id, false)); ui.close_menu(); }
+                                    }).response.on_hover_text("Supprimer le calque");
                                 }
-                            };
-                            if !(before == from || before == from + 1) || layer != d.items[from].layer {
-                                op = Some(LayerOp::MoveItem { from, before, layer });
-                            }
+                            }).response;
+                            rows.push((DragRow::Layer(pos), r.rect));
                         }
-                        DragRow::Layer(from) => {
-                            let n = d.layers.len();
-                            let disp_from = n - 1 - from;
-                            let disp_to = if headers_above > disp_from { headers_above - 1 } else { headers_above };
-                            let to = n - 1 - disp_to.min(n - 1);
-                            if to != from { op = Some(LayerOp::MoveLayer { from, to }); }
+                        let indent = if layered { 40.0 } else { 18.0 };
+                        for i in d.layer_range(pos).rev() {
+                            let it = &d.items[i];
+                            let what = match &it.kind {
+                                Kind::Text { text, link, .. } => format!("Texte « {} »{}", text.lines().next().unwrap_or("").chars().take(24).collect::<String>(), if link.is_some() { " (cliquable)" } else { "" }),
+                                Kind::Image { path, link } => format!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { " (cliquable)" } else { "" }),
+                                Kind::Nav { action, text, .. } => if *action == NavAction::Goto { format!("Bouton « {text} »") } else { format!("Bouton {}", action.label()) },
+                                Kind::Slot { video, link, start, .. } => format!("Vignette{}{}{}", match video { Some(Some(v)) => format!(" (vidéo {})", v + 1), Some(None) => " (sans vidéo)".to_string(), None => String::new() },
+                                    start.map(|t| format!(" à {}", mmss(t))).unwrap_or_default(), if link.is_some() { " →" } else { "" }),
+                            };
+                            let mut col = kind_color(&it.kind);
+                            if d.item_hidden(i) { col = col.gamma_multiply(0.45); }
+                            let id = egui::Id::new(("element", info.r, i));
+                            let r = ui.horizontal(|ui| {
+                                ui.add_space(indent);
+                                let _ = ui.dnd_drag_source(id, DragRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak())).response.on_hover_text("Glisser pour changer l'ordre ou le calque, ou déposer sur une autre page");
+                                let lr = ui.selectable_label(self.sel_item == Some(i), egui::RichText::new(what).color(col));
+                                if lr.clicked() || lr.secondary_clicked() { pick = Some(i); }
+                                lr.context_menu(|ui| if let Some(dup) = item_menu(ui) { item_act = Some((i, dup)); });
+                            }).response;
+                            rows.push((DragRow::Item(i), r.rect));
+                        }
+                        if layered && d.layer_range(pos).is_empty() {
+                            ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new("(vide : glissez-y des éléments)").weak().italics()); });
+                        }
+                    }
+                }
+            });
+
+            // ---- glisser-deposer
+            let area = list.response.rect;
+            let (Some(drag), Some(pos)) = (egui::DragAndDrop::payload::<DragRow>(ui.ctx()), ui.ctx().pointer_hover_pos()) else { return };
+            if !area.expand(8.0).contains(pos) || rows.is_empty() { return; }
+            let released = ui.input(|i| i.pointer.any_released());
+            let copy = ui.input(|i| i.modifiers.command);
+            let blue = Stroke::new(2.5_f32, Color32::from_rgb(90, 170, 255));
+            match *drag {
+                DragRow::Page(from) => {
+                    // une page s'insere entre deux pages
+                    let page_rows: Vec<usize> = rows.iter().enumerate().filter(|(_, (row, _))| matches!(row, DragRow::Page(_))).map(|(k, _)| k).collect();
+                    let r = rows.iter().filter(|(_, rect)| rect.center().y < pos.y).count();
+                    let above = page_rows.iter().filter(|&&k| k < r).count();
+                    let line_at = page_rows.get(above).copied().unwrap_or(rows.len());
+                    let y = if line_at < rows.len() { rows[line_at].1.top() } else { rows.last().map_or(area.bottom(), |x| x.1.bottom()) };
+                    ui.painter().hline(area.x_range(), y, blue);
+                    if released {
+                        egui::DragAndDrop::clear_payload(ui.ctx());
+                        let to = if above > from { above - 1 } else { above };
+                        if to != from { op = Some(LayerOp::PageMove { from, to }); }
+                    }
+                }
+                what @ (DragRow::Item(_) | DragRow::Layer(_)) => {
+                    let (Some(d), Some(ck)) = (d.as_ref(), cur_k) else { return };
+                    // depose sur le nom d'une autre page : envoi sur cette page
+                    let over_page = rows.iter().find(|(row, rect)| matches!(row, DragRow::Page(q) if *q != ck) && rect.y_range().contains(pos.y));
+                    if let Some((DragRow::Page(q), rect)) = over_page {
+                        ui.painter().rect_stroke(rect.expand(2.0), 3.0, blue);
+                        if released {
+                            egui::DragAndDrop::clear_payload(ui.ctx());
+                            op = Some(LayerOp::Transfer { what, to: *q, copy });
+                        }
+                        return;
+                    }
+                    // dans la page affichee : lignes de ses calques et elements
+                    let sub: Vec<(DragRow, Rect)> = rows.iter().copied().filter(|(row, _)| !matches!(row, DragRow::Page(_))).collect();
+                    if sub.is_empty() { return; }
+                    let top = rows.iter().find(|(row, _)| *row == DragRow::Page(ck)).map_or(area.top(), |x| x.1.top());
+                    let bottom = sub.last().map_or(area.bottom(), |x| x.1.bottom()) + 10.0;
+                    if pos.y < top || pos.y > bottom { return; }
+                    let layered = !d.layers.is_empty();
+                    let r = sub.iter().filter(|(_, rect)| rect.center().y < pos.y).count();
+                    let header_rows: Vec<usize> = sub.iter().enumerate().filter(|(_, (row, _))| matches!(row, DragRow::Layer(_))).map(|(k, _)| k).collect();
+                    let headers_above = header_rows.iter().filter(|&&k| k < r).count();
+                    // un calque s'insere entre deux calques
+                    let line_at = if matches!(what, DragRow::Layer(_)) { header_rows.get(headers_above).copied().unwrap_or(sub.len()) } else { r };
+                    let y = if line_at < sub.len() { sub[line_at].1.top() } else { sub.last().map_or(area.bottom(), |x| x.1.bottom()) };
+                    ui.painter().hline(area.x_range(), y, blue);
+                    if released {
+                        egui::DragAndDrop::clear_payload(ui.ctx());
+                        match what {
+                            DragRow::Item(from) if from < d.items.len() => {
+                                let lid = |p: usize| d.layers.get(p).map_or(0, |l| l.id);
+                                let (layer, before) = if r == 0 {
+                                    let top = d.layers.len().saturating_sub(1);
+                                    (lid(top), if layered { d.layer_range(top).end } else { d.items.len() })
+                                } else {
+                                    match sub[r - 1].0 {
+                                        DragRow::Layer(p) => (lid(p), d.layer_range(p).end),
+                                        DragRow::Item(j) => (lid(d.layer_pos(j)), j),
+                                        DragRow::Page(_) => (lid(d.layers.len().saturating_sub(1)), d.items.len()),
+                                    }
+                                };
+                                if !(before == from || before == from + 1) || layer != d.items[from].layer {
+                                    op = Some(LayerOp::MoveItem { from, before, layer });
+                                }
+                            }
+                            DragRow::Layer(from) if from < d.layers.len() => {
+                                let n = d.layers.len();
+                                let disp_from = n - 1 - from;
+                                let disp_to = if headers_above > disp_from { headers_above - 1 } else { headers_above };
+                                let to = n - 1 - disp_to.min(n - 1);
+                                if to != from { op = Some(LayerOp::MoveLayer { from, to }); }
+                            }
+                            _ => {}
                         }
                     }
                 }
             }
+        });
+        ui.separator();
+        ui.label(egui::RichText::new("⌂ : page d'accueil (touche TOP MENU, ouverture du disque). « Précédent » et « Suivant » suivent l'ordre de cette liste.").weak());
+
+        // ---- application des changements
+        if page_edit_done {
+            if let Some((k, name)) = self.page_edit.take() { op = Some(LayerOp::PageRename(k, name.trim().to_string())); }
         }
         if edit_done {
             if let Some((id, name)) = self.layer_edit.take() {
@@ -1371,11 +1405,20 @@ impl App {
                 if !name.is_empty() { op = Some(LayerOp::Rename(id, name)); }
             }
         }
+        if let Some(k) = pick_page {
+            if self.cur != Some(PageRef::Free(k)) {
+                self.cur = Some(PageRef::Free(k));
+                self.sel_item = None;
+                self.drag = None;
+                self.edit_gen += 1;
+            }
+        }
         if let Some(a) = activate { self.active_layer = a; }
         if let Some(p) = pick {
             self.sel_item = Some(p);
-            if let Some(it) = d.items.get(p) { if layered { self.active_layer = it.layer; } }
+            if let Some(it) = d.as_ref().and_then(|d| d.items.get(p)) { if it.layer != 0 { self.active_layer = it.layer; } }
         }
+        let Some(info) = info else { return };
         if let Some((i, dup)) = item_act {
             if let Some(dm) = info.design_mut(&mut self.model.designs) {
                 self.sel_item = item_edit(dm, i, dup);
@@ -1384,6 +1427,54 @@ impl App {
             }
         }
         let Some(op) = op else { return };
+        // operations sur les pages
+        match op {
+            LayerOp::PageRename(k, name) => {
+                if let Some(p) = self.model.designs.free.get_mut(k) { p.name = name; }
+                self.edit_gen += 1;
+                self.bump();
+                return;
+            }
+            LayerOp::PageDelete(k) => {
+                if let Some(pi) = self.pages().into_iter().find(|p| p.r == PageRef::Free(k)) { pi.remove_design(&mut self.model.designs); }
+                if let Some(ck) = cur_k {
+                    self.cur = if ck == k { Some(PageRef::Free(k.saturating_sub(1))) } else if ck > k { Some(PageRef::Free(ck - 1)) } else { self.cur };
+                    if ck == k { self.sel_item = None; }
+                }
+                self.edit_gen += 1;
+                self.bump();
+                return;
+            }
+            LayerOp::PageMove { from, to } => {
+                bdauthor_core::editor::move_page(&mut self.model, from, to);
+                if let Some(ck) = cur_k {
+                    let nk = if ck == from { to } else if from < to && ck > from && ck <= to { ck - 1 } else if to < from && ck >= to && ck < from { ck + 1 } else { ck };
+                    self.cur = Some(PageRef::Free(nk));
+                }
+                self.edit_gen += 1;
+                self.bump();
+                return;
+            }
+            LayerOp::Transfer { what, to, copy } => {
+                let Some(ck) = cur_k else { return };
+                let dname = names.get(to).cloned().unwrap_or_default();
+                let done = match what {
+                    DragRow::Item(i) => bdauthor_core::editor::transfer_item(&mut self.model.designs, ck, i, to, copy).is_some(),
+                    DragRow::Layer(pos) => {
+                        let lid = self.model.designs.free.get(ck).and_then(|p| p.layers.get(pos)).map(|l| l.id);
+                        lid.and_then(|l| bdauthor_core::editor::transfer_layer(&mut self.model.designs, ck, l, to, copy)).is_some()
+                    }
+                    DragRow::Page(_) => false,
+                };
+                if done {
+                    if !copy { self.sel_item = None; }
+                    self.notice = format!("{} vers la page « {dname} ».", if copy { "Copié" } else { "Déplacé" });
+                    self.bump();
+                }
+                return;
+            }
+            _ => {}
+        }
         let sel = self.sel_item;
         let Some(dm) = info.design_mut(&mut self.model.designs) else { return };
         match op {
@@ -1407,6 +1498,7 @@ impl App {
                 move_layer(dm, from, to);
                 self.sel_item = selected.and_then(|it| dm.items.iter().position(|x| *x == it));
             }
+            _ => {}
         }
         self.bump();
     }

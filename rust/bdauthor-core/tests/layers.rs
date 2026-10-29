@@ -77,3 +77,58 @@ fn unknown_layers_are_regrouped() {
     assert_eq!(names(&d), ["f1", "z", "b1", "b2"]);
     assert_eq!(d.items[1].layer, 4);
 }
+
+#[test]
+fn pages_reorder_and_transfers() {
+    use bdauthor_core::model::*;
+    let mut m = ProjectModel::default();
+    m.videos.push(VideoEntry::new("a.mp4"));
+    m.designs.generic = true;
+    for k in 0..3 {
+        let mut p = PageDesign::blank_free(k);
+        p.name = format!("P{}", k + 1);
+        p.items.push(txt(&format!("t{}", k + 1)));
+        m.designs.free.push(p);
+    }
+    // lien de P1 vers P3, retour d'une vignette de P2 vers P1, accueil = P3
+    let mut g = Item::nav(NavAction::Goto, 0, 0, 100, 50);
+    if let Kind::Nav { target, .. } = &mut g.kind { *target = Some(Target::Main(2)); }
+    m.designs.free[0].items.push(g);
+    let mut v = Item::video_slot(0, 0, 100, 80, 60, 0, None, "");
+    if let Kind::Slot { ret, .. } = &mut v.kind { *ret = SlotReturn::Page(0); }
+    m.designs.free[1].items.push(v);
+    m.designs.home = Some(Target::Main(2));
+    // P3 en tete : [P3, P1, P2]
+    move_page(&mut m, 2, 0);
+    let order: Vec<_> = m.designs.free.iter().map(|p| p.name.clone()).collect();
+    assert_eq!(order, ["P3", "P1", "P2"]);
+    assert_eq!(m.designs.home, Some(Target::Main(0)));
+    let goto = m.designs.free[1].items.iter().find_map(|i| match &i.kind { Kind::Nav { action: NavAction::Goto, target, .. } => *target, _ => None });
+    assert_eq!(goto, Some(Target::Main(0)));
+    let ret = m.designs.free[2].items.iter().find_map(|i| match &i.kind { Kind::Slot { ret, .. } => Some(*ret), _ => None });
+    assert_eq!(ret, Some(SlotReturn::Page(1)));
+    // retour a l'ordre initial
+    move_page(&mut m, 0, 2);
+    assert_eq!(m.designs.free.iter().map(|p| p.name.clone()).collect::<Vec<_>>(), ["P1", "P2", "P3"]);
+    assert_eq!(m.designs.home, Some(Target::Main(2)));
+    // element copie puis deplace vers une autre page
+    let d = &mut m.designs;
+    let n1 = d.free[1].items.len();
+    let k = transfer_item(d, 0, 0, 1, true).unwrap();
+    assert_eq!((k, d.free[1].items.len(), d.free[0].items.len()), (n1, n1 + 1, 2));
+    let k = transfer_item(d, 0, 0, 2, false).unwrap();
+    assert_eq!(d.free[0].items.len(), 1);
+    assert_eq!(names(&d.free[2])[k], "t1");
+    // calque deplace vers une page sans calques : elle en recoit (« Calque 1 » pour l'existant)
+    let lid = add_layer(&mut d.free[0]);
+    insert_item(&mut d.free[0], txt("haut"), lid);
+    let before = d.free[1].items.len();
+    let nid = transfer_layer(d, 0, lid, 1, false).unwrap();
+    assert_eq!(d.free[1].layers.len(), 2);
+    assert_eq!(d.free[1].layers[1].name, "Calque 2");
+    assert_eq!(d.free[1].layers[1].id, nid);
+    assert_eq!(names(&d.free[1]).last().unwrap(), "haut");
+    assert_eq!(d.free[1].items.len(), before + 1);
+    assert_eq!(d.free[0].layers.len(), 1);
+    assert!(!names(&d.free[0]).contains(&"haut".to_string()));
+}

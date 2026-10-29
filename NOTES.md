@@ -390,3 +390,9 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Interface : liste « Calques et elements » (glisser-deposer d'elements et de calques, calque actif, double-clic / clic droit
   pour renommer ou supprimer, oeil, cadenas), choix du calque dans l'inspecteur, duplication juste devant l'original.
   Tests : tests/layers.rs. Interface non compilee dans le conteneur.
+
+## Arborescence unique pages / calques / elements
+- Panneau de gauche « Pages et calques » : pages (☰ glisser pour reordonner, double-clic ou ✏ renommer, 🗑 supprimer, ⌂ accueil),
+  et sous la page affichee ses calques et elements (meme glisser-deposer qu'avant). Un element ou un calque depose sur le nom
+  d'une autre page y est deplace (Ctrl : copie). Le panneau de droite ne garde que l'inspecteur.
+- Coeur : `editor::move_page` (liens, retours, accueil suivent), `transfer_item`, `transfer_layer` (tests/layers.rs).

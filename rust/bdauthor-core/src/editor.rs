@@ -478,6 +478,72 @@ pub fn swap_pages(m: &mut ProjectModel, a: usize, b: usize) {
     if let Some(Target::Main(p)) = &mut d.home { *p = sw(*p); }
 }
 
+/// Deplace la page generique `from` a la place `to` (les autres glissent) ; destinations, retours et accueil suivent leur page.
+pub fn move_page(m: &mut ProjectModel, from: usize, to: usize) {
+    let d = &mut m.designs;
+    let n = d.free.len();
+    if from >= n || to >= n || from == to { return; }
+    let pg = d.free.remove(from);
+    d.free.insert(to, pg);
+    // ancienne place -> nouvelle place
+    let map = |p: usize| -> usize {
+        if p == from { to }
+        else if from < to && p > from && p <= to { p - 1 }
+        else if to < from && p >= to && p < from { p + 1 }
+        else { p }
+    };
+    for pg in d.free.iter_mut() {
+        for it in &mut pg.items {
+            if let Some(Some(Target::Main(p))) = it.targets_mut() { *p = map(*p); }
+            if let Kind::Slot { ret: crate::design::SlotReturn::Page(p), .. } = &mut it.kind { *p = map(*p); }
+        }
+    }
+    if let Some(Target::Main(p)) = &mut d.home { *p = map(*p); }
+}
+
+/// Met la page `to` en calques s'il lui en faut : ses elements actuels forment « Calque 1 ».
+fn ensure_layered(d: &mut PageDesign) {
+    if d.layers.is_empty() {
+        d.layers.push(Layer { id: 1, name: "Calque 1".into(), ..Default::default() });
+        for it in &mut d.items { it.layer = 1; }
+    }
+}
+
+/// Deplace (ou copie) l'element `i` de la page generique `from` vers la page `to`, au premier plan de son calque du dessus.
+/// Retourne son indice dans la page `to`.
+pub fn transfer_item(d: &mut Designs, from: usize, i: usize, to: usize, copy: bool) -> Option<usize> {
+    if from == to || to >= d.free.len() || i >= d.free.get(from)?.items.len() { return None; }
+    let it = if copy { d.free[from].items[i].clone() } else { d.free[from].items.remove(i) };
+    let dst = &mut d.free[to];
+    let top = dst.layers.last().map_or(0, |l| l.id);
+    Some(insert_item(dst, it, top))
+}
+
+/// Deplace (ou copie) le calque `layer` de la page `from`, avec ses elements, au premier plan de la page `to` (meme nom, nouvel
+/// identifiant). Retourne son identifiant dans la page `to`.
+pub fn transfer_layer(d: &mut Designs, from: usize, layer: u32, to: usize, copy: bool) -> Option<u32> {
+    if from == to || to >= d.free.len() { return None; }
+    let src = d.free.get(from)?;
+    let l = src.layers.iter().find(|l| l.id == layer)?.clone();
+    let items: Vec<Item> = src.items.iter().filter(|it| it.layer == layer).cloned().collect();
+    if !copy {
+        let s = &mut d.free[from];
+        s.items.retain(|it| it.layer != layer);
+        s.layers.retain(|x| x.id != layer);
+        s.normalize_layers();
+    }
+    let dst = &mut d.free[to];
+    ensure_layered(dst);
+    let id = dst.layers.iter().map(|x| x.id).max().unwrap_or(0) + 1;
+    dst.layers.push(Layer { id, ..l });
+    for mut it in items {
+        it.layer = id;
+        dst.items.push(it);
+    }
+    dst.normalize_layers();
+    Some(id)
+}
+
 /// Chapitres de chaque video pour la conversion (instants en secondes, noms) ; `Err` tant qu'une duree utile n'est pas connue
 /// (chapitres automatiques).
 fn gen_videos(m: &ProjectModel, durations: &HashMap<String, f64>) -> Result<Vec<crate::convert::GenVideo>, String> {

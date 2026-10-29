@@ -92,6 +92,8 @@ struct App {
     active_layer: u32,
     /// calque en cours de renommage : (identifiant, nom saisi)
     layer_edit: Option<(u32, String)>,
+    /// page en cours de renommage : (indice, nom saisi)
+    page_edit: Option<(usize, String)>,
     drag: Option<editor_ui::DragState>,
     snap: bool,
     edit_gen: u64,
@@ -121,7 +123,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_page_bg: false, preview_sel: None, preview_act: false, sim: None, sel_item: None, active_layer: 0, layer_edit: None, drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_page_bg: false, preview_sel: None, preview_act: false, sim: None, sel_item: None, active_layer: 0, layer_edit: None, page_edit: None, drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -359,7 +361,7 @@ impl eframe::App for App {
 
         let layout_mode = self.mode == Mode::MiseEnPage;
         if layout_mode {
-            egui::SidePanel::left("pages").resizable(true).default_width(300.0).show(ctx, |ui| self.page_list_ui(ui));
+            egui::SidePanel::left("pages").resizable(true).default_width(360.0).show(ctx, |ui| self.page_list_ui(ui));
             egui::SidePanel::right("inspecteur").resizable(true).default_width(300.0).show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     ui.add_enabled_ui(!busy, |ui| self.inspector_ui(ui));
