@@ -248,7 +248,7 @@ impl App {
         for v in 0..self.model.videos.len() {
             out.push((Target::Video(v), format!("Lire la vidéo {}. {}", v + 1, video_title(&self.model, v))));
         }
-        out.insert(0, (Target::Stay, "Aucune : rester sur cette page".to_string()));
+        out.insert(0, (Target::Stay, "Régler les sous-titres (sans quitter la page)".to_string()));
         out
     }
 
@@ -1129,30 +1129,35 @@ impl App {
                     ui.label(egui::RichText::new("L'image est ajustée dans le cadre sans déformation.").weak());
                 }
             }
-            // sous-titres reglés par le clic (independamment de la destination : « Aucune » pour seulement les regler)
-            if it.is_button() {
+            // action « Regler les sous-titres » : destination « rester sur la page » + piste choisie ; aucune autre action
+            // ne touche aux sous-titres
+            {
                 use bdauthor_core::design::SubChoice;
-                ui.separator();
-                let name = |c: SubChoice| match c {
-                    SubChoice::Keep => "Ne pas modifier".to_string(),
-                    SubChoice::Off => "Masquer les sous-titres".to_string(),
-                    SubChoice::Track(k) => sub_tracks.get(k).cloned().unwrap_or_else(|| format!("Piste {} (aucune vidéo ne l'a)", k + 1)),
+                let stay = match &it.kind {
+                    Kind::Nav { action: NavAction::Goto, target, .. } => *target == Some(Target::Stay),
+                    _ => it.link() == Some(Target::Stay),
                 };
-                let cur_sub = it.sub;
-                egui::ComboBox::from_label("Sous-titres").selected_text(name(cur_sub)).show_ui(ui, |ui| {
-                    for c in [SubChoice::Keep, SubChoice::Off].into_iter().chain((0..sub_tracks.len()).map(SubChoice::Track)) {
-                        if ui.selectable_label(cur_sub == c, name(c)).clicked() { it.sub = c; changed = true; }
+                if !stay {
+                    if it.sub != SubChoice::Keep { it.sub = SubChoice::Keep; changed = true; }
+                } else {
+                    if it.sub == SubChoice::Keep {
+                        it.sub = if sub_tracks.is_empty() { SubChoice::Off } else { SubChoice::Track(0) };
+                        changed = true;
                     }
-                });
-                if sub_tracks.is_empty() {
-                    ui.label(egui::RichText::new("Aucune vidéo du projet n'a de sous-titres (à ajouter dans l'onglet « Projet »).").weak());
-                } else if cur_sub != SubChoice::Keep {
-                    ui.label(egui::RichText::new("Réglés au clic, puis valables pour toutes les vidéos lues ensuite (même numéro de piste) ; le spectateur peut toujours changer avec la touche SUBTITLE. Destination « Aucune » : le bouton ne fait que ce réglage.").weak());
-                }
-                // la video lancee par ce bouton n'a pas cette piste
-                if let (SubChoice::Track(k), Some(v)) = (cur_sub, it.played_video()) {
-                    if sub_labels.get(v).map_or(false, |t| k >= t.len()) {
-                        ui.colored_label(Color32::from_rgb(230, 190, 80), format!("La vidéo {} n'a pas de piste {} : le lecteur gardera sa piste actuelle.", v + 1, k + 1));
+                    let name = |c: SubChoice| match c {
+                        SubChoice::Keep | SubChoice::Off => "Masquer les sous-titres".to_string(),
+                        SubChoice::Track(k) => sub_tracks.get(k).cloned().unwrap_or_else(|| format!("Piste {} (aucune vidéo ne l'a)", k + 1)),
+                    };
+                    let cur_sub = it.sub;
+                    egui::ComboBox::from_label("Sous-titres").selected_text(name(cur_sub)).show_ui(ui, |ui| {
+                        for c in std::iter::once(SubChoice::Off).chain((0..sub_tracks.len()).map(SubChoice::Track)) {
+                            if ui.selectable_label(cur_sub == c, name(c)).clicked() { it.sub = c; changed = true; }
+                        }
+                    });
+                    if sub_tracks.is_empty() {
+                        ui.label(egui::RichText::new("Aucune vidéo du projet n'a de sous-titres (à ajouter dans l'onglet « Projet »).").weak());
+                    } else {
+                        ui.label(egui::RichText::new("Le clic règle les sous-titres et le menu reste affiché. Le réglage vaut pour toutes les vidéos lues ensuite (même numéro de piste) ; le spectateur peut toujours changer avec la touche SUBTITLE.").weak());
                     }
                 }
             }
