@@ -84,7 +84,7 @@ enum SlotShow {
     Missing,
 }
 
-enum Op { Delete, Duplicate, ToLayer(u32) }
+enum Op { ToLayer(u32) }
 
 /// Supprime (`dup` = false) ou duplique l'element `i` ; retourne l'element a selectionner ensuite. La copie se place juste devant
 /// l'original, dans le meme calque, decalee de 30 px.
@@ -924,7 +924,7 @@ impl App {
             return;
         }
         let Some(i) = self.sel_item else {
-            ui.label("Cliquez sur un élément de l'aperçu ou de la liste de gauche pour le modifier.\n\nGlissez pour déplacer, tirez un coin pour redimensionner, flèches du clavier pour ajuster (Maj : 10 px), Suppr pour retirer.");
+            ui.label("Cliquez sur un élément de l'aperçu ou de la liste ci-dessus pour le modifier.\n\nGlissez pour déplacer, tirez un coin pour redimensionner, flèches du clavier pour ajuster (Maj : 10 px). Clic droit : dupliquer ou supprimer (Suppr retire aussi l'élément sélectionné).");
             return;
         };
         let mut op: Option<Op> = None;
@@ -1114,11 +1114,6 @@ impl App {
                     changed |= crate::style_ui::skin_ui(ui, &mut it.look.skin, &mut pick_skin);
                 }
             }
-            ui.separator();
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Dupliquer").clicked() { op = Some(Op::Duplicate); }
-                if ui.button("Supprimer").clicked() { op = Some(Op::Delete); }
-            });
         }
         if pick_font {
             if let Some(f) = rfd::FileDialog::new().add_filter("Polices", &["ttf", "otf"]).pick_file() {
@@ -1151,7 +1146,6 @@ impl App {
         if let Some(op) = op {
             if let Some(d) = info.design_mut(&mut self.model.designs) {
                 match op {
-                    Op::Delete | Op::Duplicate => self.sel_item = item_edit(d, i, matches!(op, Op::Duplicate)),
                     Op::ToLayer(id) => {
                         let end = d.layers.iter().position(|l| l.id == id).map_or(d.items.len(), |p| d.layer_range(p).end);
                         self.sel_item = Some(move_item(d, i, end, id));
