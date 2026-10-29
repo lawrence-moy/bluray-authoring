@@ -518,7 +518,7 @@ impl eframe::App for App {
                     changed |= ui.checkbox(&mut m.loop_menu, "Rejouer le fond en boucle (sinon : arrêt sur la dernière image)").changed();
                     ui.horizontal(|ui| {
                         let mut on = m.par_page.is_some();
-                        if ui.checkbox(&mut on, "Vignettes par page générée :").on_hover_text("Pour les pages créées automatiquement (premier passage dans « Mise en page », bouton « + Pages générées »)").changed() {
+                        if ui.checkbox(&mut on, "Vignettes par page générée :").on_hover_text("Pour la conversion d'un ancien projet en pages personnalisées (premier passage dans « Mise en page »)").changed() {
                             m.par_page = if on { Some(8) } else { None };
                             changed = true;
                         }

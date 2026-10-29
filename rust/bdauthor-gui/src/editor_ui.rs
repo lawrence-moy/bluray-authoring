@@ -539,18 +539,6 @@ impl App {
                 self.sel_item = None;
                 self.bump();
             }
-            if ui.button("+ Pages générées").on_hover_text("Ajoute à la fin une grille de toutes les vidéos et, pour chaque vidéo à chapitres, des pages de vignettes de chapitre.").clicked() {
-                match bdauthor_core::editor::append_generated_pages(&mut self.model, &self.durations) {
-                    Ok(n) => {
-                        let first = self.model.designs.free.len() - n;
-                        self.cur = Some(PageRef::Free(first));
-                        self.sel_item = None;
-                        self.notice = format!("{n} page(s) ajoutée(s) à la fin.");
-                        self.bump();
-                    }
-                    Err(e) => self.notice = format!("Pages non générées : {e} (réessayez dans un instant)."),
-                }
-            }
         });
         let pages = self.pages();
         if pages.is_empty() {
