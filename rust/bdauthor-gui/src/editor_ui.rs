@@ -461,12 +461,12 @@ impl App {
                         self.bump();
                     }
                 }
-            } else {
-                let free = info.is_free();
-                if ui.button(if free { "Supprimer cette page" } else { "Revenir à la grille automatique" }).clicked() {
+            } else if info.is_free() {
+                // une page personnalisee ne revient pas a la grille automatique ; seule une page libre peut etre supprimee
+                if ui.button("Supprimer cette page").clicked() {
                     info.remove_design(&mut self.model.designs);
                     self.sel_item = None;
-                    if free { self.cur = None; }
+                    self.cur = None;
                     self.bump();
                 }
             }
