@@ -668,7 +668,7 @@ impl App {
             let palette = palette(self.model.designs.generic);
             ui.horizontal_wrapped(|ui| {
                 for (w, icon, name) in &palette {
-                    let b = ui.add(egui::Button::new(egui::RichText::new(*icon).size(32.0)).min_size(vec2(56.0, 56.0)).sense(Sense::click_and_drag()))
+                    let b = ui.add(egui::Button::new(egui::RichText::new(*icon).size(27.0)).min_size(vec2(48.0, 48.0)).sense(Sense::click_and_drag()))
                         .on_hover_text(format!("{name}\nGlisser sur la page pour le placer, ou cliquer pour l'ajouter"));
                     if b.drag_started() { egui::DragAndDrop::set_payload(ui.ctx(), *w); }
                     if b.dragged() { ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing); }
