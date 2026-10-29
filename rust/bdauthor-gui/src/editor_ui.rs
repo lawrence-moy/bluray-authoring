@@ -952,14 +952,6 @@ impl App {
         let generic = self.model.designs.generic;
         let page_names: Vec<String> = self.pages().iter().map(|p| p.label(&self.model)).collect();
         let video_durations: Vec<Option<f64>> = self.model.videos.iter().map(|v| self.durations.get(&v.file).copied()).collect();
-        // pistes de sous-titres de chaque video (dans l'ordre du disque)
-        let sub_labels: Vec<Vec<String>> = self.model.videos.iter().map(|v| v.subs.iter().enumerate().map(|(k, t)| {
-            let src = match &t.source {
-                bdauthor_core::subtitle::SubSource::File(f) => std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
-                _ => "piste intégrée".to_string(),
-            };
-            format!("Piste {} : {} ({src})", k + 1, t.lang)
-        }).collect()).collect();
         // pistes du projet par numero (le numero vaut pour toutes les videos) : langues rencontrees
         let n_tracks = self.model.videos.iter().map(|v| v.subs.len()).max().unwrap_or(0);
         let sub_tracks: Vec<String> = (0..n_tracks).map(|k| {
