@@ -1187,7 +1187,7 @@ impl App {
             ui.strong("Calques et éléments");
             if ui.button("+ Calque").on_hover_text("Nouveau calque au premier plan ; les nouveaux éléments vont dans le calque actif").clicked() { op = Some(LayerOp::Add); }
         });
-        ui.label(egui::RichText::new("Du premier plan (en haut) à l'arrière-plan. Glissez une ligne pour changer l'ordre ou le calque. Clic droit sur un calque : renommer, supprimer.").weak());
+        ui.label(egui::RichText::new("Du premier plan (en haut) à l'arrière-plan. Glissez la poignée ☰ d'une ligne pour changer l'ordre ou le calque. ✏ renomme un calque, 🗑 le supprime.").weak());
         // lignes affichees (contenu, rectangle a l'ecran)
         let mut rows: Vec<(DragRow, Rect)> = Vec::new();
         let list = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
@@ -1197,30 +1197,30 @@ impl App {
                 if layered {
                     let l = d.layers[pos].clone();
                     let id = egui::Id::new(("calque", info.r, l.id));
-                    let r = ui.dnd_drag_source(id, DragRow::Layer(pos), |ui| {
-                        ui.horizontal(|ui| {
-                            if ui.small_button(if l.hidden { "◌" } else { "👁" }).on_hover_text(if l.hidden { "Calque masqué dans l'aperçu (il reste sur le disque) : afficher" } else { "Masquer dans l'aperçu (le calque reste sur le disque)" }).clicked() { op = Some(LayerOp::Hidden(l.id)); }
-                            if ui.small_button(if l.locked { "🔒" } else { "🔓" }).on_hover_text(if l.locked { "Verrouillé : ses éléments ne se sélectionnent plus dans l'aperçu ; déverrouiller" } else { "Verrouiller (plus de sélection ni de déplacement dans l'aperçu)" }).clicked() { op = Some(LayerOp::Locked(l.id)); }
-                            let editing = matches!(&self.layer_edit, Some((eid, _)) if *eid == l.id);
-                            if editing {
-                                if let Some((_, text)) = &mut self.layer_edit {
-                                    let te = ui.add(egui::TextEdit::singleline(text).desired_width(140.0));
-                                    if !te.has_focus() && !te.lost_focus() { te.request_focus(); }
-                                    if te.lost_focus() { edit_done = true; }
-                                }
-                            } else {
-                                    let n = d.layer_range(pos).len();
-                                    let name = egui::RichText::new(format!("▾ {}  ({n})", l.name)).strong();
-                                    let resp = ui.selectable_label(active == l.id, name).on_hover_text("Calque actif : reçoit les nouveaux éléments. Double-clic : renommer");
-                                    if resp.clicked() { activate = Some(l.id); }
-                                    if resp.double_clicked() { self.layer_edit = Some((l.id, l.name.clone())); }
-                                    resp.context_menu(|ui| {
-                                        if ui.button("Renommer").clicked() { self.layer_edit = Some((l.id, l.name.clone())); ui.close_menu(); }
-                                        if ui.button("Supprimer le calque (ses éléments vont au calque voisin)").clicked() { op = Some(LayerOp::Remove(l.id, true)); ui.close_menu(); }
-                                        if ui.button("Supprimer le calque et ses éléments").clicked() { op = Some(LayerOp::Remove(l.id, false)); ui.close_menu(); }
-                                    });
+                    // seule la poignee ☰ se glisse : le reste de la ligne recoit les clics
+                    let r = ui.horizontal(|ui| {
+                        let _ = ui.dnd_drag_source(id, DragRow::Layer(pos), |ui| ui.label(egui::RichText::new("☰").strong())).response.on_hover_text("Glisser pour déplacer le calque (avec ses éléments)");
+                        if ui.small_button(if l.hidden { "◌" } else { "👁" }).on_hover_text(if l.hidden { "Calque masqué dans l'aperçu (il reste sur le disque) : afficher" } else { "Masquer dans l'aperçu (le calque reste sur le disque)" }).clicked() { op = Some(LayerOp::Hidden(l.id)); }
+                        if ui.small_button(if l.locked { "🔒" } else { "🔓" }).on_hover_text(if l.locked { "Verrouillé : ses éléments ne se sélectionnent plus dans l'aperçu ; déverrouiller" } else { "Verrouiller (plus de sélection ni de déplacement dans l'aperçu)" }).clicked() { op = Some(LayerOp::Locked(l.id)); }
+                        let editing = matches!(&self.layer_edit, Some((eid, _)) if *eid == l.id);
+                        if editing {
+                            if let Some((_, text)) = &mut self.layer_edit {
+                                let te = ui.add(egui::TextEdit::singleline(text).desired_width(140.0));
+                                if !te.has_focus() && !te.lost_focus() { te.request_focus(); }
+                                if te.lost_focus() { edit_done = true; }
                             }
-                        });
+                        } else {
+                            let n = d.layer_range(pos).len();
+                            let name = egui::RichText::new(format!("{}  ({n})", l.name)).strong();
+                            let resp = ui.selectable_label(active == l.id, name).on_hover_text("Calque actif : reçoit les nouveaux éléments. Double-clic : renommer");
+                            if resp.clicked() { activate = Some(l.id); }
+                            if resp.double_clicked() { self.layer_edit = Some((l.id, l.name.clone())); }
+                            if ui.small_button("✏").on_hover_text("Renommer le calque").clicked() { self.layer_edit = Some((l.id, l.name.clone())); }
+                            let _ = ui.menu_button("🗑", |ui| {
+                                if ui.button("Supprimer le calque (ses éléments vont au calque voisin)").clicked() { op = Some(LayerOp::Remove(l.id, true)); ui.close_menu(); }
+                                if ui.button("Supprimer le calque et ses éléments").clicked() { op = Some(LayerOp::Remove(l.id, false)); ui.close_menu(); }
+                            }).response.on_hover_text("Supprimer le calque");
+                        }
                     }).response;
                     rows.push((DragRow::Layer(pos), r.rect));
                 }
@@ -1236,11 +1236,10 @@ impl App {
                     let mut col = kind_color(&it.kind);
                     if d.item_hidden(i) { col = col.gamma_multiply(0.45); }
                     let id = egui::Id::new(("element", info.r, i));
-                    let r = ui.dnd_drag_source(id, DragRow::Item(i), |ui| {
-                        ui.horizontal(|ui| {
-                            if layered { ui.add_space(18.0); }
-                            if ui.selectable_label(self.sel_item == Some(i), egui::RichText::new(what).color(col)).clicked() { pick = Some(i); }
-                        });
+                    let r = ui.horizontal(|ui| {
+                        if layered { ui.add_space(18.0); }
+                        let _ = ui.dnd_drag_source(id, DragRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak())).response.on_hover_text("Glisser pour changer l'ordre ou le calque");
+                        if ui.selectable_label(self.sel_item == Some(i), egui::RichText::new(what).color(col)).clicked() { pick = Some(i); }
                     }).response;
                     rows.push((DragRow::Item(i), r.rect));
                 }
