@@ -97,6 +97,16 @@ impl App {
                 // le disque revient a la page d'ou « Tout lire » a ete lance
                 play = Some(("Lecture de toutes les vidéos à la suite".to_string(), if generic { Some(info.r) } else { self.home_page() }));
             }
+            SimAction::Go(Target::Stay) => {
+                // aucune navigation : seul le reglage des sous-titres a lieu
+                self.notice = match sub {
+                    SubChoice::Keep => "Simulation : ce bouton ne fait rien.".to_string(),
+                    SubChoice::Off => "Simulation : sous-titres masqués.".to_string(),
+                    SubChoice::Track(k) => format!("Simulation : sous-titres réglés sur la piste {}.", k + 1),
+                };
+                self.edit_gen += 1;
+                return;
+            }
             SimAction::Go(t) => go = page_of_target(&pages, t),
             SimAction::Prev | SimAction::Next => {
                 let d = if a == SimAction::Next { 1 } else { -1 };

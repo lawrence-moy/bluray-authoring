@@ -248,6 +248,7 @@ impl App {
         for v in 0..self.model.videos.len() {
             out.push((Target::Video(v), format!("Lire la vidéo {}. {}", v + 1, video_title(&self.model, v))));
         }
+        out.insert(0, (Target::Stay, "Aucune : rester sur cette page".to_string()));
         out
     }
 
@@ -959,6 +960,15 @@ impl App {
             };
             format!("Piste {} : {} ({src})", k + 1, t.lang)
         }).collect()).collect();
+        // pistes du projet par numero (le numero vaut pour toutes les videos) : langues rencontrees
+        let n_tracks = self.model.videos.iter().map(|v| v.subs.len()).max().unwrap_or(0);
+        let sub_tracks: Vec<String> = (0..n_tracks).map(|k| {
+            let mut langs: Vec<String> = Vec::new();
+            for v in &self.model.videos {
+                if let Some(t) = v.subs.get(k) { if !langs.contains(&t.lang) { langs.push(t.lang.clone()); } }
+            }
+            format!("Piste {} : {}", k + 1, langs.join(", "))
+        }).collect();
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
         let proj_style = self.model.designs.style.clone();
         let mut pick_skin: Option<usize> = None;
@@ -1119,26 +1129,31 @@ impl App {
                     ui.label(egui::RichText::new("L'image est ajustée dans le cadre sans déformation.").weak());
                 }
             }
-            // sous-titres reglés par le clic, quand l'element lance une video
-            if let Some(v) = it.played_video() {
+            // sous-titres reglés par le clic (independamment de la destination : « Aucune » pour seulement les regler)
+            if it.is_button() {
                 use bdauthor_core::design::SubChoice;
                 ui.separator();
-                let tracks = sub_labels.get(v).cloned().unwrap_or_default();
                 let name = |c: SubChoice| match c {
-                    SubChoice::Keep => "Garder le choix du spectateur".to_string(),
-                    SubChoice::Off => "Sans sous-titres".to_string(),
-                    SubChoice::Track(k) => tracks.get(k).cloned().unwrap_or_else(|| format!("Piste {} (absente de cette vidéo)", k + 1)),
+                    SubChoice::Keep => "Ne pas modifier".to_string(),
+                    SubChoice::Off => "Masquer les sous-titres".to_string(),
+                    SubChoice::Track(k) => sub_tracks.get(k).cloned().unwrap_or_else(|| format!("Piste {} (aucune vidéo ne l'a)", k + 1)),
                 };
                 let cur_sub = it.sub;
                 egui::ComboBox::from_label("Sous-titres").selected_text(name(cur_sub)).show_ui(ui, |ui| {
-                    for c in [SubChoice::Keep, SubChoice::Off].into_iter().chain((0..tracks.len()).map(SubChoice::Track)) {
+                    for c in [SubChoice::Keep, SubChoice::Off].into_iter().chain((0..sub_tracks.len()).map(SubChoice::Track)) {
                         if ui.selectable_label(cur_sub == c, name(c)).clicked() { it.sub = c; changed = true; }
                     }
                 });
-                if tracks.is_empty() {
-                    ui.label(egui::RichText::new("Cette vidéo n'a pas de sous-titres (à ajouter dans l'onglet « Projet »).").weak());
-                } else {
-                    ui.label(egui::RichText::new("Réglés au clic, juste avant la lecture ; le spectateur peut toujours changer avec la touche SUBTITLE.").weak());
+                if sub_tracks.is_empty() {
+                    ui.label(egui::RichText::new("Aucune vidéo du projet n'a de sous-titres (à ajouter dans l'onglet « Projet »).").weak());
+                } else if cur_sub != SubChoice::Keep {
+                    ui.label(egui::RichText::new("Réglés au clic, puis valables pour toutes les vidéos lues ensuite (même numéro de piste) ; le spectateur peut toujours changer avec la touche SUBTITLE. Destination « Aucune » : le bouton ne fait que ce réglage.").weak());
+                }
+                // la video lancee par ce bouton n'a pas cette piste
+                if let (SubChoice::Track(k), Some(v)) = (cur_sub, it.played_video()) {
+                    if sub_labels.get(v).map_or(false, |t| k >= t.len()) {
+                        ui.colored_label(Color32::from_rgb(230, 190, 80), format!("La vidéo {} n'a pas de piste {} : le lecteur gardera sa piste actuelle.", v + 1, k + 1));
+                    }
                 }
             }
             // apparence propre a ce bouton

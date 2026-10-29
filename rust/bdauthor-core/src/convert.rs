@@ -44,6 +44,7 @@ pub fn generate_pages(videos: &[GenVideo], par_page: Option<usize>, disc_title: 
             Target::Main(p) => (p < m + f).then_some(Target::Main(p)),
             Target::Chapters(v, q) => ch_first.get(v).copied().flatten().filter(|_| q < ch_pages[v].len()).map(|i| Target::Main(i + q)),
             Target::Video(v) => (v < n).then_some(Target::Video(v)),
+            Target::Stay => Some(Target::Stay),
         }
     };
     let fix_links = |d: &mut PageDesign| {

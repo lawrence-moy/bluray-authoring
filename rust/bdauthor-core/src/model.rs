@@ -244,15 +244,15 @@ impl ProjectModel {
             for pg in d.main.values().chain(d.chapters.values()).chain(d.free.iter()) {
                 for it in &pg.items {
                     if let Kind::Nav { action: NavAction::Goto, text, target } = &it.kind {
-                        let bad = match target { None => true, Some(Target::Main(q)) => *q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => *v >= self.videos.len() };
+                        let bad = match target { None => true, Some(Target::Main(q)) => *q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => *v >= self.videos.len(), Some(Target::Stay) => false };
                         if bad { p.push(format!("Bouton « {text} » : destination invalide ou non choisie.")); }
                     }
-                    let bad_link = match it.link() { Some(Target::Main(q)) => q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => v >= self.videos.len(), None => false };
+                    let bad_link = match it.link() { Some(Target::Main(q)) => q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => v >= self.videos.len(), Some(Target::Stay) | None => false };
                     if bad_link { p.push("Élément cliquable : destination invalide.".into()); }
                     if it.fixed_video().map_or(false, |v| v >= self.videos.len()) { p.push("Vignette : la vidéo choisie n'existe pas.".into()); }
-                    if let (crate::design::SubChoice::Track(k), Some(v)) = (it.sub, it.played_video()) {
-                        if self.videos.get(v).map_or(false, |ve| k >= ve.subs.len()) {
-                            p.push(format!("Élément cliquable : la vidéo {} n'a pas de piste de sous-titres {}.", v + 1, k + 1));
+                    if let crate::design::SubChoice::Track(k) = it.sub {
+                        if self.videos.iter().all(|ve| k >= ve.subs.len()) {
+                            p.push(format!("Élément cliquable : aucune vidéo n'a de piste de sous-titres {}.", k + 1));
                         }
                     }
                 }
@@ -274,7 +274,7 @@ impl ProjectModel {
         }
         if let Some(h) = self.designs.home {
             let total = auto_pages(self) + self.designs.free.len();
-            let bad = match h { crate::design::Target::Main(q) => q >= total, crate::design::Target::Chapters(v, _) => v >= self.videos.len(), crate::design::Target::Video(_) => true };
+            let bad = match h { crate::design::Target::Main(q) => q >= total, crate::design::Target::Chapters(v, _) => v >= self.videos.len(), crate::design::Target::Video(_) | crate::design::Target::Stay => true };
             if bad { p.push("Page d'accueil invalide : choisissez une page existante.".into()); }
         }
         p

@@ -647,7 +647,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             let mut errs = Vec::new();
             for (k, d) in ds.free.iter().enumerate() {
                 errs.extend(d.validate_free(k, np, n).into_iter().filter(|x| x.error).map(|x| format!("page {} : {}", k + 1, x.msg)));
-                for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Chapters(..) => false }) {
+                for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay => true, Target::Chapters(..) => false }) {
                     errs.push(format!("page {} : {}", k + 1, pr.msg));
                 }
             }
@@ -764,7 +764,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             for pr in d.validate_free(k, np, n) {
                 if pr.error { errs.push(format!("page {} : {}", k + 1, pr.msg)); } else { (env.log)(&format!("page {} : {}", k + 1, pr.msg)); }
             }
-            for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Chapters(..) => false }) {
+            for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay => true, Target::Chapters(..) => false }) {
                 errs.push(format!("page {} : {}", k + 1, pr.msg));
             }
         }
@@ -822,6 +822,8 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             Target::Video(v) => (0, vec![set_ret(origin), Command::new(JUMP_TITLE_INSN, v as u32 + 1, 0)]),
             Target::Main(q) => (page_title(q.min(np - 1)), vec![]),
             Target::Chapters(..) => (page_title(home_idx), vec![]),
+            // aucune navigation : une commande vide (sans elle, le bouton menerait au Top Menu)
+            Target::Stay => (0, vec![Command::new(NOP_INSN, 0, 0)]),
         }
     };
 

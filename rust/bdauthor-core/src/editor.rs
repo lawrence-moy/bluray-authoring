@@ -455,7 +455,7 @@ pub fn page_of_target(pages: &[PageInfo], t: Target) -> Option<PageRef> {
     match t {
         Target::Main(p) => pages.iter().find(|i| i.menu == MenuType::Main && i.page == p).map(|i| i.r),
         Target::Chapters(v, q) => pages.iter().find(|i| i.r == PageRef::Chapters(v, q)).map(|i| i.r),
-        Target::Video(_) => None,
+        Target::Video(_) | Target::Stay => None,
     }
 }
 

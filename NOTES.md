@@ -403,3 +403,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   (piste PG valide + affichage) ou 0 (affichage coupe, piste inchangee) — PSR2, conserve pour les lectures suivantes.
 - `Item::played_video()` : video lancee par le clic (Aller a / lien vers une video, vignette). Inspecteur : liste « Sous-titres »
   des pistes de cette video ; validation du modele si la piste n'existe pas ; simulation : rappel dans le texte de lecture.
+- Le reglage des sous-titres ne depend plus de la destination : liste « Sous-titres » sur tout element cliquable (pistes du
+  projet par numero, langues rencontrees). Nouvelle destination `Target::Stay` (JSON `{"rester": true}`, « Aucune : rester sur
+  cette page ») : commandes du bouton = [SET_STREAM, NOP], le menu reste affiche.

@@ -520,7 +520,8 @@ fn generic_pages_with_chapter_thumbnails() {
           {"type":"navigation","action":"suivant","texte":"Suite","x":800,"y":900,"w":300,"h":90} ] },
         { "nom": "Chapitres", "elements": [
           {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2,"depart_s":2,"retour":{"page":1},"soustitres":2},
-          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
+          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90},
+          {"type":"texte","texte":"Sous-titres FR","x":1300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":1} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
@@ -564,5 +565,8 @@ fn generic_pages_with_chapter_thumbnails() {
     let p2 = ig_cmds(80003);
     assert!(p2[0].contains("r1, 3") && p2[0].contains("r0, 1") && p2[0].contains("JUMP_TITLE 6"), "{p2:?}");
     assert!(p2[0].starts_with("SET_STREAM"), "{p2:?}");
+    // texte « Sous-titres FR » : reglage seul, sans navigation
+    let only = p2.iter().find(|c| c.starts_with("SET_STREAM") && !c.contains("JUMP")).expect("bouton de reglage seul");
+    assert!(only.contains("NOP"), "{p2:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

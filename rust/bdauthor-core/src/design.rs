@@ -19,6 +19,8 @@ pub enum Target {
     Chapters(usize, usize),
     /// Lecture d'une video (0-based) depuis le debut.
     Video(usize),
+    /// Aucune navigation : le menu reste affiche (bouton qui ne fait que regler les sous-titres, par exemple).
+    Stay,
 }
 
 impl Target {
@@ -29,11 +31,15 @@ impl Target {
             Target::Main(p) => vec![("menu".to_string(), Value::Str("principal".into())), ("page".to_string(), num(p))],
             Target::Chapters(v, p) => vec![("menu".to_string(), Value::Str("chapitres".into())), ("video".to_string(), num(v)), ("page".to_string(), num(p))],
             Target::Video(v) => vec![("lire".to_string(), Value::Str("video".into())), ("video".to_string(), num(v))],
+            Target::Stay => vec![("rester".to_string(), Value::Bool(true))],
         };
         Value::Obj(o)
     }
     pub fn from_value(c: &Value) -> Option<Target> {
         let n = |key: &str| c.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
+        if c.get("rester").and_then(Value::as_bool) == Some(true) {
+            return Some(Target::Stay);
+        }
         if c.get("lire").and_then(Value::as_str) == Some("video") {
             return n("video").map(Target::Video);
         }
@@ -46,7 +52,7 @@ impl Target {
     /// Renumerotation quand deux videos echangent leur place.
     fn swap_videos(&mut self, a: usize, b: usize) {
         let sw = |v: &mut usize| *v = if *v == a { b } else if *v == b { a } else { *v };
-        match self { Target::Chapters(v, _) | Target::Video(v) => sw(v), Target::Main(_) => {} }
+        match self { Target::Chapters(v, _) | Target::Video(v) => sw(v), Target::Main(_) | Target::Stay => {} }
     }
 }
 
