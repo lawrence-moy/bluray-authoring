@@ -1,7 +1,7 @@
 //! Editeur visuel de mise en page (onglet « Mise en page ») : apercu fidele, glisser/redimensionner, inspecteur.
 use crate::App;
 use bdauthor_core::design::{Align, Item, Kind, MenuType, NavAction, PageDesign, SlotReturn, Target};
-use bdauthor_core::editor::{add_layer, copy_decor, dragged_rect, hit_test_where, insert_item, list_pages, move_in_list, move_item, move_layer, remove_layer, set_rect, to_back, to_front, video_title, Handle, PageInfo, PageRef};
+use bdauthor_core::editor::{add_layer, copy_decor, dragged_rect, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -84,7 +84,7 @@ enum SlotShow {
     Missing,
 }
 
-enum Op { Delete, Duplicate, Up, Down, Front, Back, ToLayer(u32) }
+enum Op { Delete, Duplicate, ToLayer(u32) }
 
 /// Ligne glissee dans la liste des calques.
 #[derive(Clone, Copy, PartialEq)]
@@ -1097,13 +1097,6 @@ impl App {
                 if ui.button("Dupliquer").clicked() { op = Some(Op::Duplicate); }
                 if ui.button("Supprimer").clicked() { op = Some(Op::Delete); }
             });
-            ui.label("Plan (superposition) :");
-            ui.horizontal_wrapped(|ui| {
-                if ui.button("Tout derrière").on_hover_text("Dans son calque").clicked() { op = Some(Op::Back); }
-                if ui.button("Derrière").clicked() { op = Some(Op::Up); }
-                if ui.button("Devant").clicked() { op = Some(Op::Down); }
-                if ui.button("Tout devant").clicked() { op = Some(Op::Front); }
-            });
         }
         if pick_font {
             if let Some(f) = rfd::FileDialog::new().add_filter("Polices", &["ttf", "otf"]).pick_file() {
@@ -1149,10 +1142,6 @@ impl App {
                         let end = d.layers.iter().position(|l| l.id == id).map_or(d.items.len(), |p| d.layer_range(p).end);
                         self.sel_item = Some(move_item(d, i, end, id));
                     }
-                    Op::Up => self.sel_item = Some(move_in_list(d, i, true)),
-                    Op::Down => self.sel_item = Some(move_in_list(d, i, false)),
-                    Op::Front => self.sel_item = Some(to_front(d, i)),
-                    Op::Back => self.sel_item = Some(to_back(d, i)),
                 }
             }
             changed = true;
