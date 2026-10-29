@@ -143,30 +143,34 @@ fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
     }
 }
 
-/// Ligne glissee dans l'arborescence des pages (calques et elements : ceux de la page affichee).
+/// Ligne glissee dans l'arborescence des pages.
 #[derive(Clone, Copy, PartialEq)]
 enum DragRow {
     /// page generique (indice)
     Page(usize),
-    /// element (indice dans la liste de la page affichee)
-    Item(usize),
-    /// calque de la page affichee (position, de l'arriere-plan au premier plan)
-    Layer(usize),
+    /// element : (page, indice dans la liste de la page)
+    Item(usize, usize),
+    /// calque : (page, position de l'arriere-plan au premier plan)
+    Layer(usize, usize),
 }
 
-/// Changement demande depuis l'arborescence.
+impl DragRow {
+    fn page(self) -> usize { match self { DragRow::Page(p) | DragRow::Item(p, _) | DragRow::Layer(p, _) => p } }
+}
+
+/// Changement demande depuis l'arborescence (`p` : page concernee).
 enum LayerOp {
     Add,
-    Remove(u32, bool),
-    Hidden(u32),
-    Locked(u32),
-    Rename(u32, String),
-    MoveItem { from: usize, before: usize, layer: u32 },
-    MoveLayer { from: usize, to: usize },
+    Remove(usize, u32, bool),
+    Hidden(usize, u32),
+    Locked(usize, u32),
+    Rename(usize, u32, String),
+    MoveItem { p: usize, from: usize, before: usize, layer: u32 },
+    MoveLayer { p: usize, from: usize, to: usize },
     PageRename(usize, String),
     PageDelete(usize),
     PageMove { from: usize, to: usize },
-    /// element ou calque (`DragRow`) de la page affichee envoye vers une autre page ; `copy` : copie
+    /// element ou calque (`DragRow`) envoye vers une autre page ; `copy` : copie
     Transfer { what: DragRow, to: usize, copy: bool },
 }
 
@@ -1171,9 +1175,14 @@ impl App {
     }
 
     // ------------------------------------------------------------------ arborescence pages / calques / elements (panneau de gauche)
-    /// Pages du menu, et sous la page affichee ses calques et ses elements (du premier plan, en haut, a l'arriere-plan).
+    /// Page depliee dans l'arborescence ? (la page affichee l'est par defaut)
+    fn page_open(&self, k: usize) -> bool {
+        match self.tree_pages.get(&k) { Some(&o) => o, None => self.cur == Some(PageRef::Free(k)) }
+    }
+
+    /// Pages du menu, et sous chaque page depliee ses calques et ses elements (du premier plan, en haut, a l'arriere-plan).
     /// La poignee ☰ de chaque ligne se glisse : pages reordonnees ; elements et calques reordonnes, changes de calque, ou
-    /// envoyes sur une autre page en les deposant sur son nom (Ctrl : copie).
+    /// envoyes sur une autre page en les deposant sur elle (Ctrl : copie). + / − deplie ou replie une page ou un calque.
     pub(crate) fn page_list_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Pages et calques");
         if self.model.videos.is_empty() {
@@ -1197,8 +1206,15 @@ impl App {
             if cur_k.is_some() && ui.button("+ Calque").on_hover_text("Nouveau calque au premier plan de la page affichée ; les nouveaux éléments vont dans le calque actif").clicked() {
                 op = Some(LayerOp::Add);
             }
+            if ui.small_button("+ tout").on_hover_text("Déplier toutes les pages et tous les calques").clicked() {
+                for k in 0..self.model.designs.free.len() { self.tree_pages.insert(k, true); }
+                self.tree_layers_closed.clear();
+            }
+            if ui.small_button("− tout").on_hover_text("Replier toutes les pages").clicked() {
+                for k in 0..self.model.designs.free.len() { self.tree_pages.insert(k, false); }
+            }
         });
-        ui.label(egui::RichText::new("Glissez la poignée ☰ : pages, calques et éléments changent d'ordre ; un élément ou un calque déposé sur le nom d'une autre page y est déplacé (Ctrl : copié).").weak());
+        ui.label(egui::RichText::new("Glissez la poignée ☰ : pages, calques et éléments changent d'ordre ; un élément ou un calque déposé sur une autre page y est déplacé (Ctrl : copié).").weak());
         let np = self.model.designs.free.len();
         if np == 0 {
             ui.label("Aucune page : ajoutez-en une.");
@@ -1206,26 +1222,30 @@ impl App {
         }
         let home_k = match self.model.designs.home { Some(Target::Main(p)) if p < np => p, _ => 0 };
         let names: Vec<String> = self.model.designs.free.iter().enumerate().map(|(k, d)| if d.name.is_empty() { format!("Page {}", k + 1) } else { d.name.clone() }).collect();
-        let d: Option<PageDesign> = info.as_ref().and_then(|i| i.design(&self.model.designs).cloned());
+        let all: Vec<PageDesign> = self.model.designs.free.clone();
         let active = info.as_ref().map_or(0, |i| self.target_layer(i));
+        let opened: Vec<bool> = (0..np).map(|k| self.page_open(k)).collect();
+        let mut toggle_page: Option<usize> = None;
+        let mut toggle_layer: Option<(usize, u32)> = None;
         let mut pick_page: Option<usize> = None;
-        let mut pick: Option<usize> = None;
-        let mut activate: Option<u32> = None;
+        let mut pick: Option<(usize, usize)> = None;
+        let mut activate: Option<(usize, u32)> = None;
         let mut edit_done = false;
         let mut page_edit_done = false;
-        let mut item_act: Option<(usize, bool)> = None;
+        let mut item_act: Option<(usize, usize, bool)> = None;
         let mut rows: Vec<(DragRow, Rect)> = Vec::new();
+        let pm = |open: bool| if open { "−" } else { "+" };
 
         egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
             let list = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 for k in 0..np {
                     // ---- ligne de page
-                    let open = cur_k == Some(k);
+                    let shown = cur_k == Some(k);
                     let r = ui.horizontal(|ui| {
                         let _ = ui.dnd_drag_source(egui::Id::new(("page", k)), DragRow::Page(k), |ui| ui.label(egui::RichText::new("☰").strong()))
                             .response.on_hover_text("Glisser pour changer l'ordre des pages");
-                        ui.label(if open { "▾" } else { "▸" });
+                        if ui.small_button(pm(opened[k])).on_hover_text(if opened[k] { "Replier la page" } else { "Déplier la page" }).clicked() { toggle_page = Some(k); }
                         let editing = matches!(&self.page_edit, Some((e, _)) if *e == k);
                         if editing {
                             if let Some((_, text)) = &mut self.page_edit {
@@ -1236,10 +1256,10 @@ impl App {
                         } else {
                             let home = if k == home_k { "  ⌂" } else { "" };
                             let label = egui::RichText::new(format!("{}. {}{home}", k + 1, names[k])).strong();
-                            let resp = ui.selectable_label(open, label).on_hover_text("Afficher la page. Double-clic : renommer. ⌂ : page d'accueil");
+                            let resp = ui.selectable_label(shown, label).on_hover_text("Afficher la page. Double-clic : renommer. ⌂ : page d'accueil");
                             if resp.clicked() { pick_page = Some(k); }
-                            if resp.double_clicked() { self.page_edit = Some((k, self.model.designs.free[k].name.clone())); }
-                            if ui.small_button("✏").on_hover_text("Renommer la page").clicked() { self.page_edit = Some((k, self.model.designs.free[k].name.clone())); }
+                            if resp.double_clicked() { self.page_edit = Some((k, all[k].name.clone())); }
+                            if ui.small_button("✏").on_hover_text("Renommer la page").clicked() { self.page_edit = Some((k, all[k].name.clone())); }
                             let _ = ui.menu_button("🗑", |ui| {
                                 ui.label("Les liens qui menaient à cette page seront à rechoisir.");
                                 if ui.button("Supprimer la page").clicked() { op = Some(LayerOp::PageDelete(k)); ui.close_menu(); }
@@ -1247,42 +1267,48 @@ impl App {
                         }
                     }).response;
                     rows.push((DragRow::Page(k), r.rect));
-                    if !open { continue; }
-                    let Some(d) = d.as_ref() else { continue };
-                    let Some(info) = info.as_ref() else { continue };
-                    // ---- calques et elements de la page affichee
+                    if !opened[k] { continue; }
+                    // ---- calques et elements de la page
+                    let d = &all[k];
                     let layered = !d.layers.is_empty();
                     let positions: Vec<usize> = if layered { (0..d.layers.len()).rev().collect() } else { vec![0] };
+                    if d.items.is_empty() && !layered {
+                        ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new("(page vide)").weak().italics()); });
+                    }
                     for pos in positions {
+                        let mut layer_open = true;
                         if layered {
                             let l = d.layers[pos].clone();
-                            let id = egui::Id::new(("calque", info.r, l.id));
+                            layer_open = !self.tree_layers_closed.contains(&(k, l.id));
                             let r = ui.horizontal(|ui| {
                                 ui.add_space(18.0);
-                                let _ = ui.dnd_drag_source(id, DragRow::Layer(pos), |ui| ui.label(egui::RichText::new("☰").strong())).response.on_hover_text("Glisser pour déplacer le calque (avec ses éléments), ou le déposer sur une autre page");
-                                if ui.small_button(if l.hidden { "◌" } else { "👁" }).on_hover_text(if l.hidden { "Calque masqué dans l'aperçu (il reste sur le disque) : afficher" } else { "Masquer dans l'aperçu (le calque reste sur le disque)" }).clicked() { op = Some(LayerOp::Hidden(l.id)); }
-                                if ui.small_button(if l.locked { "🔒" } else { "🔓" }).on_hover_text(if l.locked { "Verrouillé : ses éléments ne se sélectionnent plus dans l'aperçu ; déverrouiller" } else { "Verrouiller (plus de sélection ni de déplacement dans l'aperçu)" }).clicked() { op = Some(LayerOp::Locked(l.id)); }
-                                let editing = matches!(&self.layer_edit, Some((eid, _)) if *eid == l.id);
+                                let _ = ui.dnd_drag_source(egui::Id::new(("calque", k, l.id)), DragRow::Layer(k, pos), |ui| ui.label(egui::RichText::new("☰").strong()))
+                                    .response.on_hover_text("Glisser pour déplacer le calque (avec ses éléments), ou le déposer sur une autre page");
+                                if ui.small_button(pm(layer_open)).on_hover_text(if layer_open { "Replier le calque" } else { "Déplier le calque" }).clicked() { toggle_layer = Some((k, l.id)); }
+                                if ui.small_button(if l.hidden { "◌" } else { "👁" }).on_hover_text(if l.hidden { "Calque masqué dans l'aperçu (il reste sur le disque) : afficher" } else { "Masquer dans l'aperçu (le calque reste sur le disque)" }).clicked() { op = Some(LayerOp::Hidden(k, l.id)); }
+                                if ui.small_button(if l.locked { "🔒" } else { "🔓" }).on_hover_text(if l.locked { "Verrouillé : ses éléments ne se sélectionnent plus dans l'aperçu ; déverrouiller" } else { "Verrouiller (plus de sélection ni de déplacement dans l'aperçu)" }).clicked() { op = Some(LayerOp::Locked(k, l.id)); }
+                                let editing = matches!(&self.layer_edit, Some((ep, eid, _)) if *ep == k && *eid == l.id);
                                 if editing {
-                                    if let Some((_, text)) = &mut self.layer_edit {
+                                    if let Some((_, _, text)) = &mut self.layer_edit {
                                         let te = ui.add(egui::TextEdit::singleline(text).desired_width(130.0));
                                         if !te.has_focus() && !te.lost_focus() { te.request_focus(); }
                                         if te.lost_focus() { edit_done = true; }
                                     }
                                 } else {
                                     let n = d.layer_range(pos).len();
-                                    let resp = ui.selectable_label(active == l.id, egui::RichText::new(format!("{}  ({n})", l.name))).on_hover_text("Calque actif : reçoit les nouveaux éléments. Double-clic : renommer");
-                                    if resp.clicked() { activate = Some(l.id); }
-                                    if resp.double_clicked() { self.layer_edit = Some((l.id, l.name.clone())); }
-                                    if ui.small_button("✏").on_hover_text("Renommer le calque").clicked() { self.layer_edit = Some((l.id, l.name.clone())); }
+                                    let resp = ui.selectable_label(shown && active == l.id, egui::RichText::new(format!("{}  ({n})", l.name))).on_hover_text("Calque actif : reçoit les nouveaux éléments. Double-clic : renommer");
+                                    if resp.clicked() { activate = Some((k, l.id)); }
+                                    if resp.double_clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
+                                    if ui.small_button("✏").on_hover_text("Renommer le calque").clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
                                     let _ = ui.menu_button("🗑", |ui| {
-                                        if ui.button("Supprimer le calque (ses éléments vont au calque voisin)").clicked() { op = Some(LayerOp::Remove(l.id, true)); ui.close_menu(); }
-                                        if ui.button("Supprimer le calque et ses éléments").clicked() { op = Some(LayerOp::Remove(l.id, false)); ui.close_menu(); }
+                                        if ui.button("Supprimer le calque (ses éléments vont au calque voisin)").clicked() { op = Some(LayerOp::Remove(k, l.id, true)); ui.close_menu(); }
+                                        if ui.button("Supprimer le calque et ses éléments").clicked() { op = Some(LayerOp::Remove(k, l.id, false)); ui.close_menu(); }
                                     }).response.on_hover_text("Supprimer le calque");
                                 }
                             }).response;
-                            rows.push((DragRow::Layer(pos), r.rect));
+                            rows.push((DragRow::Layer(k, pos), r.rect));
                         }
+                        if !layer_open { continue; }
                         let indent = if layered { 40.0 } else { 18.0 };
                         for i in d.layer_range(pos).rev() {
                             let it = &d.items[i];
@@ -1295,15 +1321,15 @@ impl App {
                             };
                             let mut col = kind_color(&it.kind);
                             if d.item_hidden(i) { col = col.gamma_multiply(0.45); }
-                            let id = egui::Id::new(("element", info.r, i));
                             let r = ui.horizontal(|ui| {
                                 ui.add_space(indent);
-                                let _ = ui.dnd_drag_source(id, DragRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak())).response.on_hover_text("Glisser pour changer l'ordre ou le calque, ou déposer sur une autre page");
-                                let lr = ui.selectable_label(self.sel_item == Some(i), egui::RichText::new(what).color(col));
-                                if lr.clicked() || lr.secondary_clicked() { pick = Some(i); }
-                                lr.context_menu(|ui| if let Some(dup) = item_menu(ui) { item_act = Some((i, dup)); });
+                                let _ = ui.dnd_drag_source(egui::Id::new(("element", k, i)), DragRow::Item(k, i), |ui| ui.label(egui::RichText::new("☰").weak()))
+                                    .response.on_hover_text("Glisser pour changer l'ordre ou le calque, ou déposer sur une autre page");
+                                let lr = ui.selectable_label(shown && self.sel_item == Some(i), egui::RichText::new(what).color(col));
+                                if lr.clicked() || lr.secondary_clicked() { pick = Some((k, i)); }
+                                lr.context_menu(|ui| if let Some(dup) = item_menu(ui) { item_act = Some((k, i, dup)); });
                             }).response;
-                            rows.push((DragRow::Item(i), r.rect));
+                            rows.push((DragRow::Item(k, i), r.rect));
                         }
                         if layered && d.layer_range(pos).is_empty() {
                             ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new("(vide : glissez-y des éléments)").weak().italics()); });
@@ -1319,6 +1345,7 @@ impl App {
             let released = ui.input(|i| i.pointer.any_released());
             let copy = ui.input(|i| i.modifiers.command);
             let blue = Stroke::new(2.5_f32, Color32::from_rgb(90, 170, 255));
+            let bottom_of = |rs: &[(DragRow, Rect)]| rs.last().map_or(area.bottom(), |x| x.1.bottom());
             match *drag {
                 DragRow::Page(from) => {
                     // une page s'insere entre deux pages
@@ -1326,7 +1353,7 @@ impl App {
                     let r = rows.iter().filter(|(_, rect)| rect.center().y < pos.y).count();
                     let above = page_rows.iter().filter(|&&k| k < r).count();
                     let line_at = page_rows.get(above).copied().unwrap_or(rows.len());
-                    let y = if line_at < rows.len() { rows[line_at].1.top() } else { rows.last().map_or(area.bottom(), |x| x.1.bottom()) };
+                    let y = if line_at < rows.len() { rows[line_at].1.top() } else { bottom_of(&rows) };
                     ui.painter().hline(area.x_range(), y, blue);
                     if released {
                         egui::DragAndDrop::clear_payload(ui.ctx());
@@ -1334,57 +1361,60 @@ impl App {
                         if to != from { op = Some(LayerOp::PageMove { from, to }); }
                     }
                 }
-                what @ (DragRow::Item(_) | DragRow::Layer(_)) => {
-                    let (Some(d), Some(ck)) = (d.as_ref(), cur_k) else { return };
-                    // depose sur le nom d'une autre page : envoi sur cette page
-                    let over_page = rows.iter().find(|(row, rect)| matches!(row, DragRow::Page(q) if *q != ck) && rect.y_range().contains(pos.y));
-                    if let Some((DragRow::Page(q), rect)) = over_page {
-                        ui.painter().rect_stroke(rect.expand(2.0), 3.0, blue);
+                what => {
+                    let p = what.page();
+                    // page sous la souris : celle de la derniere ligne au-dessus du pointeur
+                    let Some(q) = rows.iter().filter(|(_, rect)| rect.top() <= pos.y).last().map(|(row, _)| row.page()) else { return };
+                    let block: Vec<(DragRow, Rect)> = rows.iter().copied().filter(|(row, _)| row.page() == q).collect();
+                    let head = block.first().map_or(area.top(), |x| x.1.top());
+                    if q != p {
+                        // envoi sur une autre page : tout son bloc s'encadre
+                        let r = Rect::from_x_y_ranges(area.x_range(), head..=bottom_of(&block));
+                        ui.painter().rect_stroke(r.shrink(1.0), 3.0, blue);
                         if released {
                             egui::DragAndDrop::clear_payload(ui.ctx());
-                            op = Some(LayerOp::Transfer { what, to: *q, copy });
+                            op = Some(LayerOp::Transfer { what, to: q, copy });
                         }
                         return;
                     }
-                    // dans la page affichee : lignes de ses calques et elements
-                    let sub: Vec<(DragRow, Rect)> = rows.iter().copied().filter(|(row, _)| !matches!(row, DragRow::Page(_))).collect();
+                    // dans sa page : lignes de ses calques et elements
+                    let Some(d) = all.get(p) else { return };
+                    let sub: Vec<(DragRow, Rect)> = block.iter().copied().filter(|(row, _)| !matches!(row, DragRow::Page(_))).collect();
                     if sub.is_empty() { return; }
-                    let top = rows.iter().find(|(row, _)| *row == DragRow::Page(ck)).map_or(area.top(), |x| x.1.top());
-                    let bottom = sub.last().map_or(area.bottom(), |x| x.1.bottom()) + 10.0;
-                    if pos.y < top || pos.y > bottom { return; }
                     let layered = !d.layers.is_empty();
                     let r = sub.iter().filter(|(_, rect)| rect.center().y < pos.y).count();
-                    let header_rows: Vec<usize> = sub.iter().enumerate().filter(|(_, (row, _))| matches!(row, DragRow::Layer(_))).map(|(k, _)| k).collect();
+                    let header_rows: Vec<usize> = sub.iter().enumerate().filter(|(_, (row, _))| matches!(row, DragRow::Layer(..))).map(|(k, _)| k).collect();
                     let headers_above = header_rows.iter().filter(|&&k| k < r).count();
                     // un calque s'insere entre deux calques
-                    let line_at = if matches!(what, DragRow::Layer(_)) { header_rows.get(headers_above).copied().unwrap_or(sub.len()) } else { r };
-                    let y = if line_at < sub.len() { sub[line_at].1.top() } else { sub.last().map_or(area.bottom(), |x| x.1.bottom()) };
+                    let line_at = if matches!(what, DragRow::Layer(..)) { header_rows.get(headers_above).copied().unwrap_or(sub.len()) } else { r };
+                    let y = if line_at < sub.len() { sub[line_at].1.top() } else { bottom_of(&sub) };
                     ui.painter().hline(area.x_range(), y, blue);
                     if released {
                         egui::DragAndDrop::clear_payload(ui.ctx());
                         match what {
-                            DragRow::Item(from) if from < d.items.len() => {
-                                let lid = |p: usize| d.layers.get(p).map_or(0, |l| l.id);
+                            DragRow::Item(_, from) if from < d.items.len() => {
+                                let lid = |l: usize| d.layers.get(l).map_or(0, |x| x.id);
                                 let (layer, before) = if r == 0 {
                                     let top = d.layers.len().saturating_sub(1);
                                     (lid(top), if layered { d.layer_range(top).end } else { d.items.len() })
                                 } else {
                                     match sub[r - 1].0 {
-                                        DragRow::Layer(p) => (lid(p), d.layer_range(p).end),
-                                        DragRow::Item(j) => (lid(d.layer_pos(j)), j),
+                                        // calque replie ou deplie : au premier plan de ce calque
+                                        DragRow::Layer(_, l) => (lid(l), d.layer_range(l).end),
+                                        DragRow::Item(_, j) => (lid(d.layer_pos(j)), j),
                                         DragRow::Page(_) => (lid(d.layers.len().saturating_sub(1)), d.items.len()),
                                     }
                                 };
                                 if !(before == from || before == from + 1) || layer != d.items[from].layer {
-                                    op = Some(LayerOp::MoveItem { from, before, layer });
+                                    op = Some(LayerOp::MoveItem { p, from, before, layer });
                                 }
                             }
-                            DragRow::Layer(from) if from < d.layers.len() => {
+                            DragRow::Layer(_, from) if from < d.layers.len() => {
                                 let n = d.layers.len();
                                 let disp_from = n - 1 - from;
                                 let disp_to = if headers_above > disp_from { headers_above - 1 } else { headers_above };
                                 let to = n - 1 - disp_to.min(n - 1);
-                                if to != from { op = Some(LayerOp::MoveLayer { from, to }); }
+                                if to != from { op = Some(LayerOp::MoveLayer { p, from, to }); }
                             }
                             _ => {}
                         }
@@ -1396,109 +1426,112 @@ impl App {
         ui.label(egui::RichText::new("⌂ : page d'accueil (touche TOP MENU, ouverture du disque). « Précédent » et « Suivant » suivent l'ordre de cette liste.").weak());
 
         // ---- application des changements
+        if let Some(k) = toggle_page { let o = opened[k]; self.tree_pages.insert(k, !o); }
+        if let Some(key) = toggle_layer { if !self.tree_layers_closed.remove(&key) { self.tree_layers_closed.insert(key); } }
         if page_edit_done {
             if let Some((k, name)) = self.page_edit.take() { op = Some(LayerOp::PageRename(k, name.trim().to_string())); }
         }
         if edit_done {
-            if let Some((id, name)) = self.layer_edit.take() {
+            if let Some((k, id, name)) = self.layer_edit.take() {
                 let name = name.trim().to_string();
-                if !name.is_empty() { op = Some(LayerOp::Rename(id, name)); }
+                if !name.is_empty() { op = Some(LayerOp::Rename(k, id, name)); }
             }
         }
-        if let Some(k) = pick_page {
-            if self.cur != Some(PageRef::Free(k)) {
-                self.cur = Some(PageRef::Free(k));
-                self.sel_item = None;
-                self.drag = None;
-                self.edit_gen += 1;
+        let show = |me: &mut Self, k: usize| {
+            if me.cur != Some(PageRef::Free(k)) {
+                me.cur = Some(PageRef::Free(k));
+                me.sel_item = None;
+                me.drag = None;
+                me.edit_gen += 1;
             }
+        };
+        if let Some(k) = pick_page { show(self, k); }
+        if let Some((k, id)) = activate { show(self, k); self.active_layer = id; }
+        if let Some((k, i)) = pick {
+            show(self, k);
+            self.sel_item = Some(i);
+            if let Some(it) = all.get(k).and_then(|d| d.items.get(i)) { if it.layer != 0 { self.active_layer = it.layer; } }
         }
-        if let Some(a) = activate { self.active_layer = a; }
-        if let Some(p) = pick {
-            self.sel_item = Some(p);
-            if let Some(it) = d.as_ref().and_then(|d| d.items.get(p)) { if it.layer != 0 { self.active_layer = it.layer; } }
-        }
-        let Some(info) = info else { return };
-        if let Some((i, dup)) = item_act {
-            if let Some(dm) = info.design_mut(&mut self.model.designs) {
+        if let Some((k, i, dup)) = item_act {
+            show(self, k);
+            if let Some(dm) = self.model.designs.free.get_mut(k) {
                 self.sel_item = item_edit(dm, i, dup);
                 self.bump();
-                return;
             }
+            return;
         }
         let Some(op) = op else { return };
-        // operations sur les pages
+        // la page affichee apres l'operation (indice susceptible de changer)
+        let cur_now = match self.cur { Some(PageRef::Free(k)) => Some(k), _ => None };
         match op {
+            LayerOp::Add => {
+                if let Some(dm) = cur_k.and_then(|k| self.model.designs.free.get_mut(k)) { self.active_layer = add_layer(dm); }
+            }
             LayerOp::PageRename(k, name) => {
                 if let Some(p) = self.model.designs.free.get_mut(k) { p.name = name; }
                 self.edit_gen += 1;
-                self.bump();
-                return;
             }
             LayerOp::PageDelete(k) => {
                 if let Some(pi) = self.pages().into_iter().find(|p| p.r == PageRef::Free(k)) { pi.remove_design(&mut self.model.designs); }
-                if let Some(ck) = cur_k {
-                    self.cur = if ck == k { Some(PageRef::Free(k.saturating_sub(1))) } else if ck > k { Some(PageRef::Free(ck - 1)) } else { self.cur };
+                if let Some(ck) = cur_now {
                     if ck == k { self.sel_item = None; }
+                    self.cur = Some(PageRef::Free(if ck > k || (ck == k && k > 0) { ck - 1 } else { ck }));
                 }
+                // etats replie / deplie : indices decales
+                self.tree_pages = self.tree_pages.iter().filter(|e| *e.0 != k).map(|(&p, &o)| (if p > k { p - 1 } else { p }, o)).collect();
+                self.tree_layers_closed = self.tree_layers_closed.iter().filter(|e| e.0 != k).map(|&(p, l)| (if p > k { p - 1 } else { p }, l)).collect();
                 self.edit_gen += 1;
-                self.bump();
-                return;
             }
             LayerOp::PageMove { from, to } => {
                 bdauthor_core::editor::move_page(&mut self.model, from, to);
-                if let Some(ck) = cur_k {
-                    let nk = if ck == from { to } else if from < to && ck > from && ck <= to { ck - 1 } else if to < from && ck >= to && ck < from { ck + 1 } else { ck };
-                    self.cur = Some(PageRef::Free(nk));
-                }
+                let map = |c: usize| if c == from { to } else if from < to && c > from && c <= to { c - 1 } else if to < from && c >= to && c < from { c + 1 } else { c };
+                if let Some(ck) = cur_now { self.cur = Some(PageRef::Free(map(ck))); }
+                self.tree_pages = self.tree_pages.iter().map(|(&p, &o)| (map(p), o)).collect();
+                self.tree_layers_closed = self.tree_layers_closed.iter().map(|&(p, l)| (map(p), l)).collect();
                 self.edit_gen += 1;
-                self.bump();
-                return;
             }
             LayerOp::Transfer { what, to, copy } => {
-                let Some(ck) = cur_k else { return };
-                let dname = names.get(to).cloned().unwrap_or_default();
+                let p = what.page();
                 let done = match what {
-                    DragRow::Item(i) => bdauthor_core::editor::transfer_item(&mut self.model.designs, ck, i, to, copy).is_some(),
-                    DragRow::Layer(pos) => {
-                        let lid = self.model.designs.free.get(ck).and_then(|p| p.layers.get(pos)).map(|l| l.id);
-                        lid.and_then(|l| bdauthor_core::editor::transfer_layer(&mut self.model.designs, ck, l, to, copy)).is_some()
+                    DragRow::Item(_, i) => bdauthor_core::editor::transfer_item(&mut self.model.designs, p, i, to, copy).is_some(),
+                    DragRow::Layer(_, pos) => {
+                        let lid = self.model.designs.free.get(p).and_then(|d| d.layers.get(pos)).map(|l| l.id);
+                        lid.and_then(|l| bdauthor_core::editor::transfer_layer(&mut self.model.designs, p, l, to, copy)).is_some()
                     }
                     DragRow::Page(_) => false,
                 };
-                if done {
-                    if !copy { self.sel_item = None; }
-                    self.notice = format!("{} vers la page « {dname} ».", if copy { "Copié" } else { "Déplacé" });
-                    self.bump();
+                if !done { return; }
+                if !copy && cur_now == Some(p) { self.sel_item = None; }
+                self.tree_pages.insert(to, true);
+                self.notice = format!("{} vers la page « {} ».", if copy { "Copié" } else { "Déplacé" }, names.get(to).cloned().unwrap_or_default());
+            }
+            LayerOp::Remove(k, id, keep) => {
+                if let Some(dm) = self.model.designs.free.get_mut(k) {
+                    remove_layer(dm, id, keep);
+                    if cur_now == Some(k) { self.sel_item = None; }
                 }
-                return;
             }
-            _ => {}
-        }
-        let sel = self.sel_item;
-        let Some(dm) = info.design_mut(&mut self.model.designs) else { return };
-        match op {
-            LayerOp::Add => { self.active_layer = add_layer(dm); }
-            LayerOp::Remove(id, keep) => {
-                // l'element selectionne peut disparaitre ou changer de place
-                self.sel_item = None;
-                remove_layer(dm, id, keep);
+            LayerOp::Hidden(k, id) => if let Some(l) = self.model.designs.free.get_mut(k).and_then(|d| d.layers.iter_mut().find(|l| l.id == id)) { l.hidden = !l.hidden; },
+            LayerOp::Locked(k, id) => if let Some(l) = self.model.designs.free.get_mut(k).and_then(|d| d.layers.iter_mut().find(|l| l.id == id)) { l.locked = !l.locked; },
+            LayerOp::Rename(k, id, name) => if let Some(l) = self.model.designs.free.get_mut(k).and_then(|d| d.layers.iter_mut().find(|l| l.id == id)) { l.name = name; },
+            LayerOp::MoveItem { p, from, before, layer } => {
+                if let Some(dm) = self.model.designs.free.get_mut(p) {
+                    let k = move_item(dm, from, before, layer);
+                    if cur_now == Some(p) {
+                        self.sel_item = Some(k);
+                        if layer != 0 { self.active_layer = layer; }
+                    }
+                }
             }
-            LayerOp::Hidden(id) => if let Some(l) = dm.layers.iter_mut().find(|l| l.id == id) { l.hidden = !l.hidden; },
-            LayerOp::Locked(id) => if let Some(l) = dm.layers.iter_mut().find(|l| l.id == id) { l.locked = !l.locked; },
-            LayerOp::Rename(id, name) => if let Some(l) = dm.layers.iter_mut().find(|l| l.id == id) { l.name = name; },
-            LayerOp::MoveItem { from, before, layer } => {
-                let k = move_item(dm, from, before, layer);
-                self.sel_item = Some(k);
-                if layer != 0 { self.active_layer = layer; }
+            LayerOp::MoveLayer { p, from, to } => {
+                let sel = self.sel_item;
+                if let Some(dm) = self.model.designs.free.get_mut(p) {
+                    // l'element selectionne suit son calque : on le retrouve par son contenu
+                    let selected = if cur_now == Some(p) { sel.and_then(|s| dm.items.get(s).cloned()) } else { None };
+                    move_layer(dm, from, to);
+                    if cur_now == Some(p) { self.sel_item = selected.and_then(|it| dm.items.iter().position(|x| *x == it)); }
+                }
             }
-            LayerOp::MoveLayer { from, to } => {
-                // l'element selectionne suit son calque : on le retrouve par son contenu
-                let selected = sel.and_then(|s| dm.items.get(s).cloned());
-                move_layer(dm, from, to);
-                self.sel_item = selected.and_then(|it| dm.items.iter().position(|x| *x == it));
-            }
-            _ => {}
         }
         self.bump();
     }
