@@ -86,6 +86,29 @@ enum SlotShow {
 
 enum Op { Delete, Duplicate, ToLayer(u32) }
 
+/// Supprime (`dup` = false) ou duplique l'element `i` ; retourne l'element a selectionner ensuite. La copie se place juste devant
+/// l'original, dans le meme calque, decalee de 30 px.
+fn item_edit(d: &mut PageDesign, i: usize, dup: bool) -> Option<usize> {
+    if i >= d.items.len() { return None; }
+    if !dup {
+        d.items.remove(i);
+        return None;
+    }
+    let mut c = d.items[i].clone();
+    c.x = (c.x + 30).min(1920 - c.w);
+    c.y = (c.y + 30).min(1080 - c.h);
+    d.items.insert(i + 1, c);
+    Some(i + 1)
+}
+
+/// Menu contextuel d'un element (clic droit) : `Some(true)` dupliquer, `Some(false)` supprimer.
+fn item_menu(ui: &mut egui::Ui) -> Option<bool> {
+    let mut out = None;
+    if ui.button("Dupliquer").clicked() { out = Some(true); ui.close_menu(); }
+    if ui.button("Supprimer").clicked() { out = Some(false); ui.close_menu(); }
+    out
+}
+
 /// Ligne glissee dans la liste des calques.
 #[derive(Clone, Copy, PartialEq)]
 enum DragRow {
@@ -771,6 +794,22 @@ impl App {
                     self.sel_item = hit_test_where(&snapshot, px, py, None, 0.0, &can).map(|h| h.0);
                 }
             }
+            // clic droit : selection de l'element sous la souris et menu contextuel
+            if resp.secondary_clicked() {
+                if let Some(pos) = resp.interact_pointer_pos() {
+                    let (px, py) = to_plane(pos);
+                    self.sel_item = hit_test_where(&snapshot, px, py, None, 0.0, &can).map(|h| h.0);
+                    self.drag = None;
+                }
+            }
+            if let Some(s) = self.sel_item.filter(|&s| can(s)) {
+                let mut act = None;
+                resp.context_menu(|ui| act = item_menu(ui));
+                if let (Some(dup), Some(d)) = (act, info.design_mut(&mut self.model.designs)) {
+                    self.sel_item = item_edit(d, s, dup);
+                    self.bump();
+                }
+            }
             // clavier
             if self.sel_item.is_some() && !ctx.wants_keyboard_input() {
                 let (dx, dy, del) = ctx.input(|i| {
@@ -1129,15 +1168,7 @@ impl App {
         if let Some(op) = op {
             if let Some(d) = info.design_mut(&mut self.model.designs) {
                 match op {
-                    Op::Delete => { d.items.remove(i); self.sel_item = None; }
-                    Op::Duplicate => {
-                        // la copie se place juste devant l'original, dans le meme calque
-                        let mut c = d.items[i].clone();
-                        c.x = (c.x + 30).min(1920 - c.w);
-                        c.y = (c.y + 30).min(1080 - c.h);
-                        d.items.insert(i + 1, c);
-                        self.sel_item = Some(i + 1);
-                    }
+                    Op::Delete | Op::Duplicate => self.sel_item = item_edit(d, i, matches!(op, Op::Duplicate)),
                     Op::ToLayer(id) => {
                         let end = d.layers.iter().position(|l| l.id == id).map_or(d.items.len(), |p| d.layer_range(p).end);
                         self.sel_item = Some(move_item(d, i, end, id));
@@ -1172,6 +1203,7 @@ impl App {
         let mut pick: Option<usize> = None;
         let mut activate: Option<u32> = None;
         let mut edit_done = false;
+        let mut item_act: Option<(usize, bool)> = None;
         ui.horizontal(|ui| {
             ui.strong("Calques et éléments");
             if ui.button("+ Calque").on_hover_text("Nouveau calque au premier plan ; les nouveaux éléments vont dans le calque actif").clicked() { op = Some(LayerOp::Add); }
@@ -1228,7 +1260,9 @@ impl App {
                     let r = ui.horizontal(|ui| {
                         if layered { ui.add_space(18.0); }
                         let _ = ui.dnd_drag_source(id, DragRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak())).response.on_hover_text("Glisser pour changer l'ordre ou le calque");
-                        if ui.selectable_label(self.sel_item == Some(i), egui::RichText::new(what).color(col)).clicked() { pick = Some(i); }
+                        let lr = ui.selectable_label(self.sel_item == Some(i), egui::RichText::new(what).color(col));
+                        if lr.clicked() || lr.secondary_clicked() { pick = Some(i); }
+                        lr.context_menu(|ui| if let Some(dup) = item_menu(ui) { item_act = Some((i, dup)); });
                     }).response;
                     rows.push((DragRow::Item(i), r.rect));
                 }
@@ -1290,6 +1324,13 @@ impl App {
         if let Some(p) = pick {
             self.sel_item = Some(p);
             if let Some(it) = d.items.get(p) { if layered { self.active_layer = it.layer; } }
+        }
+        if let Some((i, dup)) = item_act {
+            if let Some(dm) = info.design_mut(&mut self.model.designs) {
+                self.sel_item = item_edit(dm, i, dup);
+                self.bump();
+                return;
+            }
         }
         let Some(op) = op else { return };
         let sel = self.sel_item;
