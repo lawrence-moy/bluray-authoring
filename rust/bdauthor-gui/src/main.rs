@@ -330,6 +330,13 @@ impl eframe::App for App {
                     if self.mode != Mode::MiseEnPage {
                         ui.label(egui::RichText::new("Concerne l'onglet « Mise en page »").weak());
                     }
+                    ui.separator();
+                    // la fenetre du style s'ouvre dans l'onglet « Mise en page »
+                    if ui.add_enabled(!busy, egui::Button::new("Style des boutons…")).on_hover_text("Couleurs, cadre, halo, agrandissement des boutons de tout le projet").clicked() {
+                        self.mode = Mode::MiseEnPage;
+                        self.show_style = true;
+                        ui.close_menu();
+                    }
                 });
                 ui.separator();
                 ui.selectable_value(&mut self.mode, Mode::Projet, "Projet");

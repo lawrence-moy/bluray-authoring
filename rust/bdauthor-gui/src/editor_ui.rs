@@ -550,7 +550,6 @@ impl App {
         let custom = info.custom(&self.model.designs);
 
         ui.horizontal_wrapped(|ui| {
-            if ui.button("Style des boutons…").on_hover_text("Couleurs, cadre, halo, agrandissement des boutons de tout le projet").clicked() { self.show_style = true; }
             if self.sim.is_none() {
                 if ui.button("▶ Simuler la télécommande").on_hover_text("Parcourir le menu comme sur un lecteur : flèches, Entrée, Échap").clicked() {
                     self.sim = Some(crate::sim_ui::Sim::default());
