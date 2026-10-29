@@ -161,9 +161,23 @@ fn custom_layout_project() {
           {"type":"vignette","vignette_h":200,"x":600,"y":300,"w":400,"h":250},
           {"type":"vignette","vignette_h":200,"x":1100,"y":300,"w":400,"h":250} ] } } } } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
+    // la page de chapitres invalide bloque la construction, avec l'erreur dans le journal
     let mut logs = Vec::new();
-    let info = {
+    let r = {
         let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env)
+    };
+    let e = r.expect_err("mise en page invalide : la construction doit s'arreter").to_string();
+    assert!(e.contains("menu de chapitres 1 (page 1)"), "{e}");
+    assert!(logs.iter().any(|l| l.starts_with("ERREUR de mise en page") && l.contains("chapitres")), "{logs:?}");
+    // sans la page fautive, la construction aboutit
+    let proj = proj.replace(r#""chapitres": { "1": { "1": { "elements": ["#, r#""chapitres_ignores": { "1": { "1": { "elements": ["#);
+    std::fs::write(dir.join("projet.json"), &proj).unwrap();
+    OVERLAYS.store(0, std::sync::atomic::Ordering::SeqCst);
+    let info = {
+        let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
         let cancel = AtomicBool::new(false);
         let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
         build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
@@ -177,7 +191,6 @@ fn custom_layout_project() {
     assert!(rep.contains(": 8 bouton(s)"), "{rep}");
     // page 1 : 2 vignettes d'elements, « Suivant », une vignette de la video 3 menant a la page libre
     assert!(rep.contains(": 4 bouton(s)"), "{rep}");
-    assert!(logs.iter().any(|l| l.contains("ignoree")), "la page de chapitres invalide doit etre signalee : {logs:?}");
     // la page 1 personnalisee a son propre fond : un clip de fond de plus que sans personnalisation
     let bgs = std::fs::read_dir(dir.join("out/BDMV/STREAM")).unwrap().filter(|e| { let n = e.as_ref().unwrap().file_name().into_string().unwrap(); n.starts_with("0000") || n.starts_with("0001") }).count();
     assert!(bgs >= 5, "{bgs}");
@@ -452,5 +465,33 @@ fn per_page_backgrounds() {
     assert_eq!((a2, d2), (true, 4), "page 2 : image propre + musique du projet (4 s)");
     assert_eq!((a3, d3), (true, 4), "page 3 : fond commun + musique du projet");
     assert!(c1 != c2 && c2 != c3 && c1 != c3);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn invalid_main_layout_stops_before_encoding() {
+    let Ok(tools) = Tools::locate() else { return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_badlayout_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=1", "-c:v", "libx264", "-pix_fmt", "yuv420p"])
+        .arg(dir.join("a.mp4")).status().unwrap().success());
+    // page 1 : 2 vignettes pour 1 seule video -> une vignette sans rien a montrer
+    let proj = r##"{ "videos": [ {"fichier": "a.mp4"} ], "encodage": {"preset": "ultrafast"},
+      "mise_en_page": { "principal": { "1": { "elements": [
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356} ] } } } }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let mut logs = Vec::new();
+    let r = {
+        let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env)
+    };
+    let e = r.expect_err("doit echouer").to_string();
+    assert!(e.contains("menu principal (page 1)") && e.contains("sans élément"), "{e}");
+    assert!(!logs.iter().any(|l| l.contains("encodage")), "aucun encodage avant l'erreur : {logs:?}");
+    assert!(!dir.join(".cache_bdauthor").exists());
     let _ = std::fs::remove_dir_all(&dir);
 }

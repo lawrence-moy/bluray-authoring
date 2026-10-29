@@ -352,3 +352,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Bouton « Revenir a la grille automatique » retire
 - A la demande de l'utilisateur : une page personnalisee le reste (Ctrl+Z reste possible juste apres la personnalisation). « Supprimer cette page » est conserve pour les pages libres. `PageInfo::remove_design` reste dans le coeur (pages libres, historique).
+
+## Mise en page invalide : construction bloquee
+- Plus de repli silencieux sur la grille automatique : `resolve_design` arrete la construction (`layout_failure` : chaque erreur dans le journal, prefixe « ERREUR de mise en page », puis erreur globale).
+- Menu principal et pages libres verifies avant tout encodage ; menus de chapitres a leur construction (le nombre de chapitres depend des videos encodees).
+- Tests : custom_layout_project (page de chapitres invalide -> arret, puis succes sans elle), invalid_main_layout_stops_before_encoding.

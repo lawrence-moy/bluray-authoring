@@ -100,16 +100,23 @@ impl Decor {
 
 struct SlotSpec { label: String, source: PathBuf, at: Option<f64>, duration: f64, commands: Vec<Command>, go: u32 }
 
-/// Utilise la mise en page personnalisee si elle est valide pour cette page, sinon la grille automatique. Retourne (mise en page, personnalisee ?).
+/// Arrete la construction sur des erreurs de mise en page : chaque erreur est ecrite dans le journal, puis l'ensemble est renvoye.
+fn layout_failure<T>(errs: &[String], log: &mut dyn FnMut(&str)) -> Result<T> {
+    for e in errs { log(&format!("ERREUR de mise en page : {e}")); }
+    bad(format!("{} erreur(s) de mise en page, a corriger dans l'editeur : {}", errs.len(), errs.join(" | ")))
+}
+
+/// Mise en page personnalisee de la page si elle existe (la construction s'arrete si elle contient une erreur), sinon la grille
+/// automatique. Retourne (mise en page, personnalisee ?).
 fn resolve_design(ov: Option<&PageDesign>, expected: usize, menu: MenuType, page: usize, pages: usize, what: &str, log: &mut dyn FnMut(&str)) -> Result<(PageDesign, bool)> {
     if let Some(d) = ov {
         let probs = d.validate(expected, menu, page, pages);
-        let errs: Vec<&str> = probs.iter().filter(|x| x.error).map(|x| x.msg.as_str()).collect();
-        if errs.is_empty() {
-            for w in probs.iter().filter(|x| !x.error) { log(&format!("{what} : {}", w.msg)); }
-            return Ok((d.clone(), true));
+        let errs: Vec<String> = probs.iter().filter(|x| x.error).map(|x| format!("{what} : {}", x.msg)).collect();
+        if !errs.is_empty() {
+            return layout_failure(&errs, log);
         }
-        log(&format!("{what} : mise en page personnalisee ignoree ({}) ; grille automatique utilisee", errs.join(" ")));
+        for w in probs.iter().filter(|x| !x.error) { log(&format!("{what} : {}", w.msg)); }
+        return Ok((d.clone(), true));
     }
     let d = match menu {
         MenuType::Main => PageDesign::default_main(expected, page, pages),
@@ -616,6 +623,24 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             Path::new(v.get("fichier").and_then(Value::as_str).unwrap_or("")).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
         })
     };
+    // mises en page du menu principal et pages libres verifiees avant tout encodage (les menus de chapitres, dont le nombre de
+    // chapitres depend des videos encodees, sont verifies a leur construction)
+    if let Some(v) = proj.get("mise_en_page") {
+        let ds = Designs::from_value(v).map_err(|e| Error::Format(format!("mise_en_page : {e}")))?;
+        let mp = paginate(n, par_page)?;
+        let tm = mp.len() + ds.free.len();
+        let mut errs = Vec::new();
+        for (&pg, d) in &ds.main {
+            let Some(items) = mp.get(pg) else { continue };
+            errs.extend(d.validate(items.len(), MenuType::Main, pg, tm).into_iter().filter(|x| x.error).map(|x| format!("menu principal (page {}) : {}", pg + 1, x.msg)));
+        }
+        for (f, d) in ds.free.iter().enumerate() {
+            errs.extend(d.validate_free(mp.len() + f, tm, n).into_iter().filter(|x| x.error).map(|x| format!("page libre {} : {}", f + 1, x.msg)));
+        }
+        if !errs.is_empty() {
+            return layout_failure(&errs, &mut *env.log);
+        }
+    }
     let cache_dir = if menu_cfg.get("cache").and_then(Value::as_bool).unwrap_or(true) { Some(base.join(".cache_bdauthor")) } else { None };
 
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
