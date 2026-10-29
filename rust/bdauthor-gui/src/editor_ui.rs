@@ -1236,7 +1236,7 @@ impl App {
         let mut rows: Vec<(DragRow, Rect)> = Vec::new();
         let pm = |open: bool| if open { "−" } else { "+" };
 
-        egui::ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
+        egui::ScrollArea::vertical().id_salt("defil_pages").auto_shrink([false, true]).max_height((ui.available_height() - 50.0).max(80.0)).show(ui, |ui| {
             let list = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
                 ui.set_min_width(ui.available_width());
                 for k in 0..np {

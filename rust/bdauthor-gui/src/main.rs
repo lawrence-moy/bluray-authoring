@@ -365,11 +365,15 @@ impl eframe::App for App {
 
         let layout_mode = self.mode == Mode::MiseEnPage;
         if layout_mode {
-            egui::SidePanel::left("pages").resizable(true).default_width(360.0).show(ctx, |ui| self.page_list_ui(ui));
-            egui::SidePanel::right("inspecteur").resizable(true).default_width(300.0).show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    ui.add_enabled_ui(!busy, |ui| self.inspector_ui(ui));
+            // panneau de gauche : arborescence en haut, details de l'element selectionne en dessous (separation reglable)
+            let h = ctx.screen_rect().height();
+            egui::SidePanel::left("pages").resizable(true).default_width(400.0).show(ctx, |ui| {
+                egui::TopBottomPanel::bottom("inspecteur").resizable(true).default_height(h * 0.45).min_height(120.0).show_inside(ui, |ui| {
+                    egui::ScrollArea::vertical().id_salt("defil_inspecteur").auto_shrink([false, false]).show(ui, |ui| {
+                        ui.add_enabled_ui(!busy, |ui| self.inspector_ui(ui));
+                    });
                 });
+                self.page_list_ui(ui);
             });
             egui::CentralPanel::default().show(ctx, |ui| {
                 ui.add_enabled_ui(!busy, |ui| self.layout_central(ui, ctx));
