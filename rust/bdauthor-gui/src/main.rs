@@ -350,7 +350,7 @@ impl eframe::App for App {
             }
         });
 
-        egui::TopBottomPanel::bottom("construction").min_height(160.0).resizable(true).show(ctx, |ui| {
+        egui::TopBottomPanel::bottom("construction").default_height(160.0).min_height(60.0).resizable(true).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if busy {
                     if ui.button("Annuler").clicked() { self.cancel.store(true, Ordering::Relaxed); }

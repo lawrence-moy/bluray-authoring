@@ -672,8 +672,19 @@ impl App {
             crate::style_ui::weight_ui(ui, &wt, plane);
         }
 
+        // vérifications de la page : calculees d'abord pour ne reserver sous l'apercu que la place necessaire
+        let probs: Vec<bdauthor_core::design::Problem> = match info.design(&self.model.designs).filter(|_| custom) {
+            Some(d) => {
+                let targets = self.page_targets();
+                let mut probs = if info.is_free() { d.validate_free(info.page, info.pages, self.model.videos.len()) } else { d.validate(info.count(), info.menu, info.page, info.pages) };
+                probs.extend(d.check_targets(&|t| targets.iter().any(|(x, _)| *x == t)));
+                probs
+            }
+            None => vec![],
+        };
+        let reserve = if probs.is_empty() { 6.0 } else { 10.0 + 20.0 * probs.len().min(4) as f32 };
         let avail = ui.available_size();
-        let w = avail.x.min((avail.y - 90.0).max(200.0) * 16.0 / 9.0).max(320.0);
+        let w = avail.x.min((avail.y - reserve).max(200.0) * 16.0 / 9.0).max(320.0);
         let (resp, painter) = ui.allocate_painter(vec2(w, w * 9.0 / 16.0), Sense::click_and_drag());
         let rect = resp.rect;
         let k = rect.width() / 1920.0;
@@ -855,14 +866,13 @@ impl App {
 
         // vérifications
         if custom {
-            if let Some(d) = info.design(&self.model.designs) {
-                let targets = self.page_targets();
-                let mut probs = if info.is_free() { d.validate_free(info.page, info.pages, self.model.videos.len()) } else { d.validate(info.count(), info.menu, info.page, info.pages) };
-                probs.extend(d.check_targets(&|t| targets.iter().any(|(x, _)| *x == t)));
-                for p in probs {
-                    let (c, t) = if p.error { (Color32::from_rgb(230, 100, 90), "Erreur") } else { (Color32::from_rgb(230, 190, 80), "Attention") };
-                    ui.colored_label(c, format!("{t} : {}", p.msg));
-                }
+            if !probs.is_empty() {
+                egui::ScrollArea::vertical().id_salt("defil_verifs").max_height(reserve).show(ui, |ui| {
+                    for p in &probs {
+                        let (c, t) = if p.error { (Color32::from_rgb(230, 100, 90), "Erreur") } else { (Color32::from_rgb(230, 190, 80), "Attention") };
+                        ui.colored_label(c, format!("{t} : {}", p.msg));
+                    }
+                });
             }
             let others = self.pages().into_iter().filter(|p| p.menu == info.menu && p.r != info.r && !p.is_free()).count();
             if others > 0 && ui.button("Reprendre le décor et les boutons sur les autres pages de ce menu").clicked() {
