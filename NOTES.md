@@ -378,3 +378,15 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   qu'aux pages generees.
 - Tests : tests/generic.rs (conversion, edition, simulation), project.rs `generic_pages_with_chapter_thumbnails` (registres,
   reperes, commandes des boutons). Interface non compilee dans le conteneur.
+
+## Calques de l'editeur
+- `PageDesign.layers: Vec<Layer {id, name, hidden, locked}>` (arriere -> premier plan, vide = liste simple) et `Item.layer` (id).
+  JSON : page `calques: [{id, nom, masque?, verrouille?}]`, element `calque: id`. Les elements d'un calque sont consecutifs
+  (`normalize_layers`, appele a la lecture et apres chaque operation) : l'ordre de la liste reste l'ordre de superposition sur
+  le disque. Masque / verrouille : editeur seulement (apercu, selection a la souris) ; le disque n'en depend pas.
+- `editor` : `insert_item` (premier plan d'un calque), `add_layer` (le 1er cree « Calque 1 » avec tout), `remove_layer`
+  (elements gardes au calque voisin ou supprimes), `move_layer`, `move_item` (glisser-deposer), `hit_test_where` ;
+  `to_front` / `to_back` / `move_in_list` restent dans le calque.
+- Interface : liste « Calques et elements » (glisser-deposer d'elements et de calques, calque actif, double-clic / clic droit
+  pour renommer ou supprimer, oeil, cadenas), choix du calque dans l'inspecteur, duplication juste devant l'original.
+  Tests : tests/layers.rs. Interface non compilee dans le conteneur.

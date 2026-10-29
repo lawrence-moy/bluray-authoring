@@ -134,6 +134,8 @@ pub struct Item {
     pub kind: Kind,
     /// Apparence propre a ce bouton (style, images d'etats) ; par defaut celle du projet.
     pub look: Look,
+    /// Calque de l'editeur (identifiant dans `PageDesign::layers`) ; 0 ou inconnu : premier calque. Sans effet sur le disque.
+    pub layer: u32,
 }
 
 impl Item {
@@ -150,11 +152,11 @@ impl Item {
     pub fn fixed_video(&self) -> Option<usize> { if let Kind::Slot { video: Some(v), .. } = self.kind { v } else { None } }
     /// Vignette vierge (elements de la page dans l'ordre, comportement habituel).
     pub fn slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default() }
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0 }
     }
     /// Vignette d'une video du projet (`start` : instant de depart pour une vignette de chapitre).
     pub fn video_slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32, video: usize, start: Option<f64>, label: &str) -> Item {
-        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: Some(Some(video)), link: None, start, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default() }
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: Some(Some(video)), link: None, start, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0 }
     }
     /// Instant de depart d'une vignette de chapitre.
     pub fn chapter_start(&self) -> Option<f64> {
@@ -175,10 +177,10 @@ impl Item {
         (r(self.x), r(self.y), r(self.w), r(self.h))
     }
     pub fn text(text: &str, x: i32, y: i32, w: i32, h: i32, size: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default() }
+        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default(), layer: 0 }
     }
     pub fn nav(action: NavAction, x: i32, y: i32, w: i32, h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default() }
+        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default(), layer: 0 }
     }
 }
 
@@ -250,7 +252,12 @@ impl PageBg {
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct PageDesign {
+    /// Elements, de l'arriere-plan au premier plan. Avec des calques, les elements d'un meme calque se suivent (voir
+    /// `normalize_layers`).
     pub items: Vec<Item>,
+    /// Calques de l'editeur, de l'arriere-plan au premier plan (vide : pas de calques). Ils regroupent les elements pour les
+    /// ranger, les masquer dans l'apercu ou les verrouiller ; le disque ne depend que de l'ordre des elements.
+    pub layers: Vec<Layer>,
     /// Nom de la page dans l'editeur (facultatif).
     pub name: String,
     /// Fond propre a cette page ; par defaut celui du projet.
@@ -467,6 +474,42 @@ impl PageDesign {
         Weight { bytes, seconds: (plane_px + bytes) as f64 / crate::style::DECODE_RATE, buttons }
     }
 
+    // ---------------------------------------------------------------- calques
+    /// Position (dans `layers`) du calque de l'element `i` ; 0 sans calques ou pour un calque inconnu.
+    pub fn layer_pos(&self, i: usize) -> usize {
+        let id = self.items.get(i).map_or(0, |it| it.layer);
+        self.layers.iter().position(|l| l.id == id).unwrap_or(0)
+    }
+    /// Indices (dans `items`) des elements du calque en position `pos` (consecutifs apres `normalize_layers`).
+    pub fn layer_range(&self, pos: usize) -> std::ops::Range<usize> {
+        let a = (0..self.items.len()).find(|&i| self.layer_pos(i) >= pos).unwrap_or(self.items.len());
+        let b = (a..self.items.len()).find(|&i| self.layer_pos(i) > pos).unwrap_or(self.items.len());
+        a..b
+    }
+    /// Element masque ou verrouille par son calque ?
+    pub fn item_hidden(&self, i: usize) -> bool { !self.layers.is_empty() && self.layers[self.layer_pos(i)].hidden }
+    pub fn item_locked(&self, i: usize) -> bool { !self.layers.is_empty() && self.layers[self.layer_pos(i)].locked }
+    /// Rattache chaque element a un calque existant (le premier par defaut) et regroupe les elements de chaque calque, dans
+    /// l'ordre des calques, sans changer leur ordre a l'interieur d'un calque. Retourne la nouvelle place de chaque element.
+    pub fn normalize_layers(&mut self) -> Vec<usize> {
+        if self.layers.is_empty() {
+            for it in &mut self.items { it.layer = 0; }
+            return (0..self.items.len()).collect();
+        }
+        let first = self.layers[0].id;
+        for it in &mut self.items {
+            if !self.layers.iter().any(|l| l.id == it.layer) { it.layer = first; }
+        }
+        let mut order: Vec<usize> = (0..self.items.len()).collect();
+        order.sort_by_key(|&i| self.layer_pos(i));
+        let mut place = vec![0; order.len()];
+        for (new, &old) in order.iter().enumerate() { place[old] = new; }
+        let items = std::mem::take(&mut self.items);
+        let mut slots: Vec<Option<Item>> = items.into_iter().map(Some).collect();
+        self.items = order.iter().map(|&i| slots[i].take().unwrap()).collect();
+        place
+    }
+
     /// Page libre vierge : seulement le bouton « Précédent ».
     pub fn blank_free(page: usize) -> Self {
         let mut items = Vec::new();
@@ -512,9 +555,19 @@ impl PageDesign {
             put("x", num(it.x)); put("y", num(it.y)); put("w", num(it.w)); put("h", num(it.h));
             if let Some(st) = &it.look.style { put("style", st.to_value()); }
             if !it.look.skin.is_empty() { put("images_etats", it.look.skin.to_value()); }
+            if !self.layers.is_empty() { put("calque", num(it.layer as i32)); }
             Value::Obj(o)
         }).collect();
         let mut o = vec![("elements".into(), Value::Arr(items))];
+        if !self.layers.is_empty() {
+            let ls = self.layers.iter().map(|l| {
+                let mut o = vec![("id".to_string(), num(l.id as i32)), ("nom".to_string(), Value::Str(l.name.clone()))];
+                if l.hidden { o.push(("masque".into(), Value::Bool(true))); }
+                if l.locked { o.push(("verrouille".into(), Value::Bool(true))); }
+                Value::Obj(o)
+            }).collect();
+            o.push(("calques".into(), Value::Arr(ls)));
+        }
         if !self.name.is_empty() { o.push(("nom".into(), Value::Str(self.name.clone()))); }
         if !self.bg.is_default() { o.push(("fond_page".into(), self.bg.to_value())); }
         Value::Obj(o)
@@ -557,10 +610,31 @@ impl PageDesign {
                 style: match e.get("style") { Some(v @ Value::Obj(_)) => Some(ButtonStyle::from_value(v).map_err(|m| format!("élément {} : {m}", k + 1))?), _ => None },
                 skin: e.get("images_etats").map(Skin::from_value).unwrap_or_default(),
             };
-            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look });
+            let layer = e.get("calque").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32);
+            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer });
         }
-        Ok(PageDesign { items, name: v.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default() })
+        let layers = v.get("calques").and_then(Value::as_array).map(|a| a.iter().enumerate().map(|(k, l)| Layer {
+            id: l.get("id").and_then(Value::as_f64).map_or(k as u32 + 1, |x| x.max(1.0) as u32),
+            name: l.get("nom").and_then(Value::as_str).unwrap_or("").to_string(),
+            hidden: l.get("masque").and_then(Value::as_bool).unwrap_or(false),
+            locked: l.get("verrouille").and_then(Value::as_bool).unwrap_or(false),
+        }).collect()).unwrap_or_default();
+        let mut d = PageDesign { items, layers, name: v.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default() };
+        d.normalize_layers();
+        Ok(d)
     }
+}
+
+/// Calque de l'editeur : un groupe d'elements d'une page.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Layer {
+    /// identifiant stable (>= 1) reference par `Item::layer`
+    pub id: u32,
+    pub name: String,
+    /// masque dans l'apercu de l'editeur (reste sur le disque)
+    pub hidden: bool,
+    /// verrouille : ni selection ni deplacement a la souris dans l'apercu
+    pub locked: bool,
 }
 
 /// Mises en page personnalisees du projet. Une page absente garde la grille automatique.

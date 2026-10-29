@@ -1,6 +1,6 @@
 //! Logique de l'editeur de mise en page, independante de l'interface : liste des pages, selection a la souris,
 //! deplacement et redimensionnement avec aimantation, reprise d'un decor sur d'autres pages.
-use crate::design::{Designs, Item, Kind, MenuType, NavAction, PageDesign, Target, PLANE};
+use crate::design::{Designs, Item, Kind, Layer, MenuType, NavAction, PageDesign, Target, PLANE};
 use crate::model::ProjectModel;
 use crate::project::paginate;
 use std::collections::HashMap;
@@ -117,14 +117,19 @@ pub enum Handle { Body, TopLeft, TopRight, BottomLeft, BottomRight }
 /// Element (et poignee) sous le point (x, y) du plan 1920x1080. Les poignees d'angle de l'element selectionne sont prioritaires ;
 /// `r` = rayon de saisie des poignees en unites du plan.
 pub fn hit_test(items: &[Item], x: f32, y: f32, selected: Option<usize>, r: f32) -> Option<(usize, Handle)> {
-    if let Some(s) = selected.and_then(|s| items.get(s).map(|it| (s, it))) {
+    hit_test_where(items, x, y, selected, r, &|_| true)
+}
+
+/// Comme `hit_test`, en ne considerant que les elements `usable` (calques visibles et non verrouilles).
+pub fn hit_test_where(items: &[Item], x: f32, y: f32, selected: Option<usize>, r: f32, usable: &dyn Fn(usize) -> bool) -> Option<(usize, Handle)> {
+    if let Some(s) = selected.filter(|&s| usable(s)).and_then(|s| items.get(s).map(|it| (s, it))) {
         let (i, it) = s;
         let (l, t, rr, b) = (it.x as f32, it.y as f32, (it.x + it.w) as f32, (it.y + it.h) as f32);
         for (hx, hy, h) in [(l, t, Handle::TopLeft), (rr, t, Handle::TopRight), (l, b, Handle::BottomLeft), (rr, b, Handle::BottomRight)] {
             if (x - hx).abs() <= r && (y - hy).abs() <= r { return Some((i, h)); }
         }
     }
-    items.iter().enumerate().rev().find(|(_, it)| x >= it.x as f32 && x < (it.x + it.w) as f32 && y >= it.y as f32 && y < (it.y + it.h) as f32).map(|(i, _)| (i, Handle::Body))
+    items.iter().enumerate().rev().find(|(i, it)| usable(*i) && x >= it.x as f32 && x < (it.x + it.w) as f32 && y >= it.y as f32 && y < (it.y + it.h) as f32).map(|(i, _)| (i, Handle::Body))
 }
 
 fn snap(v: f32, grid: i32) -> i32 { if grid > 1 { ((v / grid as f32).round() as i32) * grid } else { v.round() as i32 } }
@@ -159,26 +164,95 @@ pub fn set_rect(it: &mut Item, orig: &Item, rect: (i32, i32, i32, i32)) {
     }
 }
 
-/// Deplace un element dans la liste (ordre de superposition pour les decors) ; retourne son nouvel indice.
+/// Deplace un element d'un cran dans la liste (ordre de superposition), sans sortir de son calque ; retourne son nouvel indice.
+/// `up` : vers l'arriere-plan (debut de liste).
 pub fn move_in_list(d: &mut PageDesign, idx: usize, up: bool) -> usize {
-    let to = if up { idx.checked_sub(1) } else { Some(idx + 1).filter(|p| *p < d.items.len()) };
+    if idx >= d.items.len() { return idx; }
+    let r = d.layer_range(d.layer_pos(idx));
+    let to = if up { idx.checked_sub(1).filter(|t| *t >= r.start) } else { Some(idx + 1).filter(|t| *t < r.end) };
     match to { Some(t) => { d.items.swap(idx, t); t } None => idx }
 }
 
-/// Met l'element au premier plan (fin de liste) ; retourne son nouvel indice.
+/// Met l'element au premier plan de son calque (de la page, sans calques) ; retourne son nouvel indice.
 pub fn to_front(d: &mut PageDesign, idx: usize) -> usize {
     if idx >= d.items.len() { return idx; }
+    let end = d.layer_range(d.layer_pos(idx)).end;
     let it = d.items.remove(idx);
-    d.items.push(it);
-    d.items.len() - 1
+    d.items.insert(end - 1, it);
+    end - 1
 }
 
-/// Met l'element a l'arriere-plan (debut de liste) ; retourne son nouvel indice (0).
+/// Met l'element a l'arriere-plan de son calque (de la page, sans calques) ; retourne son nouvel indice.
 pub fn to_back(d: &mut PageDesign, idx: usize) -> usize {
     if idx >= d.items.len() { return idx; }
+    let start = d.layer_range(d.layer_pos(idx)).start;
     let it = d.items.remove(idx);
-    d.items.insert(0, it);
-    0
+    d.items.insert(start, it);
+    start
+}
+
+// ------------------------------------------------------------------ calques de l'editeur
+/// Ajoute un element au premier plan du calque `layer` (identifiant ; 0 : premier calque, ou fin de liste sans calques) ;
+/// retourne son indice.
+pub fn insert_item(d: &mut PageDesign, mut it: Item, layer: u32) -> usize {
+    if d.layers.is_empty() {
+        it.layer = 0;
+        d.items.push(it);
+        return d.items.len() - 1;
+    }
+    let pos = d.layers.iter().position(|l| l.id == layer).unwrap_or(0);
+    it.layer = d.layers[pos].id;
+    let end = d.layer_range(pos).end;
+    d.items.insert(end, it);
+    end
+}
+
+/// Ajoute un calque au premier plan et retourne son identifiant. Le premier calque cree recoit d'abord tous les elements existants
+/// (« Calque 1 »).
+pub fn add_layer(d: &mut PageDesign) -> u32 {
+    if d.layers.is_empty() {
+        d.layers.push(Layer { id: 1, name: "Calque 1".into(), ..Default::default() });
+        for it in &mut d.items { it.layer = 1; }
+    }
+    let id = d.layers.iter().map(|l| l.id).max().unwrap_or(0) + 1;
+    let mut k = d.layers.len() + 1;
+    while d.layers.iter().any(|l| l.name == format!("Calque {k}")) { k += 1; }
+    d.layers.push(Layer { id, name: format!("Calque {k}"), ..Default::default() });
+    id
+}
+
+/// Supprime le calque `id`. Avec `keep_items`, ses elements rejoignent le calque juste derriere (ou devant s'il etait au fond) ;
+/// sinon ils sont supprimes. Sans calque restant, la page revient a une liste simple.
+pub fn remove_layer(d: &mut PageDesign, id: u32, keep_items: bool) {
+    let Some(pos) = d.layers.iter().position(|l| l.id == id) else { return };
+    if !keep_items { d.items.retain(|it| it.layer != id); }
+    d.layers.remove(pos);
+    if let Some(dest) = d.layers.get(pos.saturating_sub(1)).map(|l| l.id) {
+        // derriere : ses elements passent au premier plan du calque de destination (ils gardent leur place a l'ecran)
+        for it in &mut d.items { if it.layer == id { it.layer = dest; } }
+    }
+    d.normalize_layers();
+}
+
+/// Deplace le calque en position `from` pour qu'il soit en position `to` (positions de l'arriere-plan au premier plan) ;
+/// ses elements suivent.
+pub fn move_layer(d: &mut PageDesign, from: usize, to: usize) {
+    if from >= d.layers.len() || from == to { return; }
+    let l = d.layers.remove(from);
+    d.layers.insert(to.min(d.layers.len()), l);
+    d.normalize_layers();
+}
+
+/// Glisser-deposer : met l'element `from` dans le calque `layer` (identifiant, ignore sans calques) juste devant l'element qui
+/// est en `before` dans la liste actuelle (`before` = indice ou s'inserer ; `items.len()` : fin). Retourne son nouvel indice.
+pub fn move_item(d: &mut PageDesign, from: usize, before: usize, layer: u32) -> usize {
+    if from >= d.items.len() { return from; }
+    let mut it = d.items.remove(from);
+    if !d.layers.is_empty() { it.layer = layer; }
+    let at = if before > from { before - 1 } else { before }.min(d.items.len());
+    d.items.insert(at, it);
+    let place = d.normalize_layers();
+    place[at]
 }
 
 /// Reprend sur `target` les textes, images et boutons de navigation de `src`, dans l'ordre de superposition de `src`
@@ -204,7 +278,9 @@ pub fn copy_decor(src: &PageDesign, target: PageDesign, target_default: &PageDes
             }
         }
     }
-    PageDesign { items, bg: src.bg.clone(), name: target_name }
+    let mut d = PageDesign { items, layers: src.layers.clone(), bg: src.bg.clone(), name: target_name };
+    d.normalize_layers();
+    d
 }
 
 /// Ajoute une page libre vierge a la fin du menu principal et retourne son indice. La page precedente (automatique non
@@ -214,7 +290,8 @@ pub fn add_free_page(m: &mut ProjectModel) -> usize {
         let k = m.designs.free.len();
         if let Some(prev) = m.designs.free.last_mut() {
             if !prev.items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Next, .. })) {
-                prev.items.push(Item::nav(NavAction::Next, 1000, 1080 - 60 - 80, 360, 80));
+                let front = prev.layers.last().map_or(0, |l| l.id);
+                insert_item(prev, Item::nav(NavAction::Next, 1000, 1080 - 60 - 80, 360, 80), front);
             }
         }
         let mut d = PageDesign::blank_free(k);

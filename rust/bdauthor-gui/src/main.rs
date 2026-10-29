@@ -88,6 +88,10 @@ struct App {
     /// simulation de la telecommande en cours
     sim: Option<sim_ui::Sim>,
     sel_item: Option<usize>,
+    /// calque ou vont les nouveaux elements (identifiant ; 0 : celui de l'element selectionne, sinon le premier plan)
+    active_layer: u32,
+    /// calque en cours de renommage : (identifiant, nom saisi)
+    layer_edit: Option<(u32, String)>,
     drag: Option<editor_ui::DragState>,
     snap: bool,
     edit_gen: u64,
@@ -117,7 +121,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_page_bg: false, preview_sel: None, preview_act: false, sim: None, sel_item: None, drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_page_bg: false, preview_sel: None, preview_act: false, sim: None, sel_item: None, active_layer: 0, layer_edit: None, drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
