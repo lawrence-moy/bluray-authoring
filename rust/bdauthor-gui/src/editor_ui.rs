@@ -1169,9 +1169,9 @@ impl App {
     }
 
     // ------------------------------------------------------------------ arborescence pages / calques / elements (panneau de gauche)
-    /// Page depliee dans l'arborescence ? (la page affichee l'est par defaut)
+    /// Page depliee dans l'arborescence ? (repliee tant qu'on ne l'a pas depliee avec +, meme affichee)
     fn page_open(&self, k: usize) -> bool {
-        match self.tree_pages.get(&k) { Some(&o) => o, None => self.cur == Some(PageRef::Free(k)) }
+        self.tree_pages.get(&k).copied().unwrap_or(false)
     }
 
     /// Pages du menu, et sous chaque page depliee ses calques et ses elements (du premier plan, en haut, a l'arriere-plan).
@@ -1250,7 +1250,7 @@ impl App {
                         } else {
                             let home = if k == home_k { "  ⌂" } else { "" };
                             let label = egui::RichText::new(format!("{}. {}{home}", k + 1, names[k])).strong();
-                            let resp = ui.selectable_label(shown, label).on_hover_text("Afficher la page. Double-clic : renommer. ⌂ : page d'accueil");
+                            let resp = ui.selectable_label(shown, label).on_hover_text("Afficher la page (+ pour déplier son contenu). Double-clic : renommer. ⌂ : page d'accueil");
                             if resp.clicked() { pick_page = Some(k); }
                             if resp.double_clicked() { self.page_edit = Some((k, all[k].name.clone())); }
                             if ui.small_button("✏").on_hover_text("Renommer la page").clicked() { self.page_edit = Some((k, all[k].name.clone())); }

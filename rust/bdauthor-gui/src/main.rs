@@ -92,7 +92,7 @@ struct App {
     active_layer: u32,
     /// calque en cours de renommage : (page, identifiant, nom saisi)
     layer_edit: Option<(usize, u32, String)>,
-    /// pages depliees (true) ou repliees (false) dans l'arborescence ; absente : depliee si c'est la page affichee
+    /// pages depliees (true) ou repliees (false) dans l'arborescence ; absente : repliee
     tree_pages: HashMap<usize, bool>,
     /// calques replies : (page, identifiant)
     tree_layers_closed: HashSet<(usize, u32)>,
