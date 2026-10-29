@@ -349,3 +349,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Les limites (video 2 min, musique 5 min) etaient un choix de bdauthor, pas une regle Blu-ray : retirees. La video ou la musique est utilisee en entier (au moins 1 s).
 - Journal : « fonds de menu animes ou sonores : N clip(s), X Mo au total ».
 - GUI : duree et place estimee (60 Mo/min en 1080, 30 en 720 ; ~2,5 Mo/min pour image + musique) sous les reglages du fond du projet et dans « Fond de cette page » ; job `ProbeAudio` (ffmpeg::probe_duration) pour la duree des musiques.
+
+## Bouton « Revenir a la grille automatique » retire
+- A la demande de l'utilisateur : une page personnalisee le reste (Ctrl+Z reste possible juste apres la personnalisation). « Supprimer cette page » est conserve pour les pages libres. `PageInfo::remove_design` reste dans le coeur (pages libres, historique).
