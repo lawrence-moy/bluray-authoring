@@ -396,6 +396,8 @@ pub struct SimButton {
     pub action: SimAction,
     /// Page affichee a la fin de la lecture lancee par ce bouton (vignettes des pages generiques).
     pub ret: crate::design::SlotReturn,
+    /// Sous-titres regles par le bouton.
+    pub sub: crate::design::SubChoice,
     /// indices (dans la liste des boutons) des voisins (haut, bas, gauche, droite)
     pub neighbors: (usize, usize, usize, usize),
 }
@@ -439,7 +441,7 @@ pub fn sim_buttons(info: &PageInfo, design: &PageDesign, style: &crate::style::B
         let Some(action) = action else { continue };
         let st = it.look.style.as_ref().unwrap_or(style);
         let (mx, my) = st.margins(it.w, it.h);
-        out.push(SimButton { item: idx, rect: (it.x - mx, it.y - my, it.w + 2 * mx, it.h + 2 * my), action, ret, neighbors: (0, 0, 0, 0) });
+        out.push(SimButton { item: idx, rect: (it.x - mx, it.y - my, it.w + 2 * mx, it.h + 2 * my), action, ret, sub: it.sub, neighbors: (0, 0, 0, 0) });
     }
     let rects: Vec<(i32, i32, i32, i32)> = out.iter().map(|b| b.rect).collect();
     for (b, n) in out.iter_mut().zip(crate::menu::auto_neighbors(&rects)) {

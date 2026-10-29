@@ -250,6 +250,11 @@ impl ProjectModel {
                     let bad_link = match it.link() { Some(Target::Main(q)) => q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => v >= self.videos.len(), None => false };
                     if bad_link { p.push("Élément cliquable : destination invalide.".into()); }
                     if it.fixed_video().map_or(false, |v| v >= self.videos.len()) { p.push("Vignette : la vidéo choisie n'existe pas.".into()); }
+                    if let (crate::design::SubChoice::Track(k), Some(v)) = (it.sub, it.played_video()) {
+                        if self.videos.get(v).map_or(false, |ve| k >= ve.subs.len()) {
+                            p.push(format!("Élément cliquable : la vidéo {} n'a pas de piste de sous-titres {}.", v + 1, k + 1));
+                        }
+                    }
                 }
             }
         }

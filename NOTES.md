@@ -396,3 +396,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   et sous la page affichee ses calques et elements (meme glisser-deposer qu'avant). Un element ou un calque depose sur le nom
   d'une autre page y est deplace (Ctrl : copie). Le panneau de droite ne garde que l'inspecteur.
 - Coeur : `editor::move_page` (liens, retours, accueil suivent), `transfer_item`, `transfer_layer` (tests/layers.rs).
+
+## Sous-titres choisis par un bouton
+- `Item.sub: SubChoice { Keep, Off, Track(k) }` (JSON element `soustitres` : "aucun" ou numero de piste 1-based ; absent = garder).
+  Le constructeur ajoute en tete des commandes du bouton `SET_STREAM` (0x51C0_0001, operandes immediats) : dst = 0xC000 | piste
+  (piste PG valide + affichage) ou 0 (affichage coupe, piste inchangee) — PSR2, conserve pour les lectures suivantes.
+- `Item::played_video()` : video lancee par le clic (Aller a / lien vers une video, vignette). Inspecteur : liste « Sous-titres »
+  des pistes de cette video ; validation du modele si la piste n'existe pas ; simulation : rappel dans le texte de lecture.

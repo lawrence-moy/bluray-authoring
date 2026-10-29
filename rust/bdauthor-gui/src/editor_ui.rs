@@ -130,7 +130,7 @@ fn palette() -> Vec<(NewWidget, &'static str, String)> {
 fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
     match w {
         NewWidget::Text => Item::text("Texte", 660, 470, 600, 120, 60),
-        NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0 },
+        NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0, sub: Default::default() },
         NewWidget::VideoSlot | NewWidget::ChapterSlot => {
             let mut it = Item::slot(100, 300, 400, 250, 200);
             if let Kind::Slot { video, start, .. } = &mut it.kind {
@@ -587,7 +587,7 @@ impl App {
             if pick_image {
                 if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                     let rel = self.relative(&f);
-                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None }, look: Default::default(), layer: 0 });
+                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None }, look: Default::default(), layer: 0, sub: Default::default() });
                 }
             }
             if let Some(it) = add {
@@ -951,6 +951,14 @@ impl App {
         let generic = self.model.designs.generic;
         let page_names: Vec<String> = self.pages().iter().map(|p| p.label(&self.model)).collect();
         let video_durations: Vec<Option<f64>> = self.model.videos.iter().map(|v| self.durations.get(&v.file).copied()).collect();
+        // pistes de sous-titres de chaque video (dans l'ordre du disque)
+        let sub_labels: Vec<Vec<String>> = self.model.videos.iter().map(|v| v.subs.iter().enumerate().map(|(k, t)| {
+            let src = match &t.source {
+                bdauthor_core::subtitle::SubSource::File(f) => std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+                _ => "piste intégrée".to_string(),
+            };
+            format!("Piste {} : {} ({src})", k + 1, t.lang)
+        }).collect()).collect();
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
         let proj_style = self.model.designs.style.clone();
         let mut pick_skin: Option<usize> = None;
@@ -1109,6 +1117,28 @@ impl App {
                     ui.horizontal(|ui| { ui.label("Fichier :"); changed |= ui.text_edit_singleline(path).changed(); });
                     if ui.button("Choisir…").clicked() { pick_image = true; }
                     ui.label(egui::RichText::new("L'image est ajustée dans le cadre sans déformation.").weak());
+                }
+            }
+            // sous-titres reglés par le clic, quand l'element lance une video
+            if let Some(v) = it.played_video() {
+                use bdauthor_core::design::SubChoice;
+                ui.separator();
+                let tracks = sub_labels.get(v).cloned().unwrap_or_default();
+                let name = |c: SubChoice| match c {
+                    SubChoice::Keep => "Garder le choix du spectateur".to_string(),
+                    SubChoice::Off => "Sans sous-titres".to_string(),
+                    SubChoice::Track(k) => tracks.get(k).cloned().unwrap_or_else(|| format!("Piste {} (absente de cette vidéo)", k + 1)),
+                };
+                let cur_sub = it.sub;
+                egui::ComboBox::from_label("Sous-titres").selected_text(name(cur_sub)).show_ui(ui, |ui| {
+                    for c in [SubChoice::Keep, SubChoice::Off].into_iter().chain((0..tracks.len()).map(SubChoice::Track)) {
+                        if ui.selectable_label(cur_sub == c, name(c)).clicked() { it.sub = c; changed = true; }
+                    }
+                });
+                if tracks.is_empty() {
+                    ui.label(egui::RichText::new("Cette vidéo n'a pas de sous-titres (à ajouter dans l'onglet « Projet »).").weak());
+                } else {
+                    ui.label(egui::RichText::new("Réglés au clic, juste avant la lecture ; le spectateur peut toujours changer avec la touche SUBTITLE.").weak());
                 }
             }
             // apparence propre a ce bouton

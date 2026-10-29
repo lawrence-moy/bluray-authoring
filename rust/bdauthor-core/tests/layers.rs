@@ -132,3 +132,27 @@ fn pages_reorder_and_transfers() {
     assert_eq!(d.free[0].layers.len(), 1);
     assert!(!names(&d.free[0]).contains(&"haut".to_string()));
 }
+
+#[test]
+fn subtitle_choice_per_button() {
+    use bdauthor_core::mobj::{set_pg_stream, SET_STREAM_INSN};
+    let mut d = PageDesign::default();
+    let mut b = Item::nav(NavAction::Goto, 0, 0, 100, 50);
+    if let Kind::Nav { target, .. } = &mut b.kind { *target = Some(Target::Video(1)); }
+    b.sub = SubChoice::Track(1);
+    d.items.push(b);
+    let mut t = txt("off");
+    if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Main(0)); }
+    t.sub = SubChoice::Off;
+    d.items.push(t);
+    let back = PageDesign::from_value(&d.to_value()).unwrap();
+    assert_eq!(back, d);
+    assert_eq!(d.items[0].played_video(), Some(1));
+    assert_eq!(d.items[1].played_video(), None);
+    // commande : piste 2 affichee, ou affichage coupe sans changer de piste
+    let c = set_pg_stream(Some(1));
+    assert_eq!((c.insn, c.dst, c.src), (SET_STREAM_INSN, 0xC002, 0));
+    assert!(c.text().starts_with("SET_STREAM"), "{}", c.text());
+    assert!(c.imm_op1() && c.imm_op2());
+    assert_eq!(set_pg_stream(None).dst, 0);
+}

@@ -515,11 +515,11 @@ fn generic_pages_with_chapter_thumbnails() {
       "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
       "mise_en_page": { "accueil": {"menu": "principal", "page": 2}, "pages": [
         { "nom": "Videos", "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1,"soustitres":"aucun"},
           {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1,"depart_s":3,"libelle":"Milieu","retour":"accueil"},
           {"type":"navigation","action":"suivant","texte":"Suite","x":800,"y":900,"w":300,"h":90} ] },
         { "nom": "Chapitres", "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2,"depart_s":2,"retour":{"page":1}},
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2,"depart_s":2,"retour":{"page":1},"soustitres":2},
           {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
@@ -557,8 +557,12 @@ fn generic_pages_with_chapter_thumbnails() {
     let p1 = ig_cmds(80002);
     assert_eq!(p1.len(), 3, "{p1:?}");
     assert!(p1[0].contains("r1, 3") && p1[0].contains("JUMP_TITLE 1"), "{p1:?}");
+    // sous-titres choisis par la vignette : SET_STREAM avant la lecture (masques ici, piste 2 affichee en page 2)
+    assert!(p1[0].starts_with("SET_STREAM"), "{p1:?}");
+    assert!(!p1[1].contains("SET_STREAM"), "{p1:?}");
     assert!(p1[1].contains("r1, 0") && p1[1].contains("r0, 1") && p1[1].contains("JUMP_TITLE 5"), "{p1:?}");
     let p2 = ig_cmds(80003);
     assert!(p2[0].contains("r1, 3") && p2[0].contains("r0, 1") && p2[0].contains("JUMP_TITLE 6"), "{p2:?}");
+    assert!(p2[0].starts_with("SET_STREAM"), "{p2:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }

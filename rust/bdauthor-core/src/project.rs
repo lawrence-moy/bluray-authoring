@@ -252,6 +252,13 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         });
         let [nrm, sel, act] = states;
         let mut btn = MenuButton::new("", go, bx + l, by + t, vec![nrm, sel, act]);
+        // sous-titres choisis par le bouton : regles avant ses autres commandes
+        let mut commands = commands;
+        match it.sub {
+            crate::design::SubChoice::Keep => {}
+            crate::design::SubChoice::Off => commands.insert(0, crate::mobj::set_pg_stream(None)),
+            crate::design::SubChoice::Track(k) => commands.insert(0, crate::mobj::set_pg_stream(Some(k))),
+        }
         btn.commands = commands;
         buttons.push(btn);
         pix.push(distinct * cw as u64 * ch as u64);

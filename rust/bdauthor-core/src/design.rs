@@ -136,6 +136,37 @@ pub struct Item {
     pub look: Look,
     /// Calque de l'editeur (identifiant dans `PageDesign::layers`) ; 0 ou inconnu : premier calque. Sans effet sur le disque.
     pub layer: u32,
+    /// Sous-titres regles par le clic sur cet element (avant la lecture qu'il lance).
+    pub sub: SubChoice,
+}
+
+/// Sous-titres choisis par un bouton.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub enum SubChoice {
+    /// rien ne change : choix du spectateur (touche SUBTITLE ou autre bouton)
+    #[default]
+    Keep,
+    /// sous-titres masques
+    Off,
+    /// piste de sous-titres affichee (indice 0-based dans les sous-titres de la video)
+    Track(usize),
+}
+
+impl SubChoice {
+    fn to_value(self) -> Option<Value> {
+        match self {
+            SubChoice::Keep => None,
+            SubChoice::Off => Some(Value::Str("aucun".into())),
+            SubChoice::Track(k) => Some(Value::Num((k + 1) as f64)),
+        }
+    }
+    fn from_value(v: Option<&Value>) -> SubChoice {
+        match v {
+            Some(Value::Str(s)) if s == "aucun" => SubChoice::Off,
+            Some(Value::Num(n)) if *n >= 1.0 => SubChoice::Track(n.round() as usize - 1),
+            _ => SubChoice::Keep,
+        }
+    }
 }
 
 impl Item {
@@ -152,15 +183,25 @@ impl Item {
     pub fn fixed_video(&self) -> Option<usize> { if let Kind::Slot { video: Some(v), .. } = self.kind { v } else { None } }
     /// Vignette vierge (elements de la page dans l'ordre, comportement habituel).
     pub fn slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0 }
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0, sub: Default::default() }
     }
     /// Vignette d'une video du projet (`start` : instant de depart pour une vignette de chapitre).
     pub fn video_slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32, video: usize, start: Option<f64>, label: &str) -> Item {
-        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: Some(Some(video)), link: None, start, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0 }
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, assign: None, video: Some(Some(video)), link: None, start, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0, sub: Default::default() }
     }
     /// Instant de depart d'une vignette de chapitre.
     pub fn chapter_start(&self) -> Option<f64> {
         if let Kind::Slot { start, .. } = self.kind { start } else { None }
+    }
+    /// Video que lance un clic sur l'element (bouton « Aller a » ou lien vers une video, vignette sans autre destination).
+    pub fn played_video(&self) -> Option<usize> {
+        match &self.kind {
+            Kind::Nav { action: NavAction::Goto, target: Some(Target::Video(v)), .. } => Some(*v),
+            Kind::Text { link: Some(Target::Video(v)), .. } | Kind::Image { link: Some(Target::Video(v)), .. } => Some(*v),
+            Kind::Slot { link: Some(Target::Video(v)), .. } => Some(*v),
+            Kind::Slot { link: None, .. } => self.fixed_video(),
+            _ => None,
+        }
     }
     /// Destinations modifiables de l'element : cible d'un bouton « Aller a », lien d'un texte ou d'une image.
     pub fn targets_mut(&mut self) -> Option<&mut Option<Target>> {
@@ -177,10 +218,10 @@ impl Item {
         (r(self.x), r(self.y), r(self.w), r(self.h))
     }
     pub fn text(text: &str, x: i32, y: i32, w: i32, h: i32, size: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default(), layer: 0 }
+        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default(), layer: 0, sub: Default::default() }
     }
     pub fn nav(action: NavAction, x: i32, y: i32, w: i32, h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default(), layer: 0 }
+        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default(), layer: 0, sub: Default::default() }
     }
 }
 
@@ -556,6 +597,7 @@ impl PageDesign {
             if let Some(st) = &it.look.style { put("style", st.to_value()); }
             if !it.look.skin.is_empty() { put("images_etats", it.look.skin.to_value()); }
             if !self.layers.is_empty() { put("calque", num(it.layer as i32)); }
+            if let Some(v) = it.sub.to_value() { put("soustitres", v); }
             Value::Obj(o)
         }).collect();
         let mut o = vec![("elements".into(), Value::Arr(items))];
@@ -611,7 +653,7 @@ impl PageDesign {
                 skin: e.get("images_etats").map(Skin::from_value).unwrap_or_default(),
             };
             let layer = e.get("calque").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32);
-            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer });
+            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer, sub: SubChoice::from_value(e.get("soustitres")) });
         }
         let layers = v.get("calques").and_then(Value::as_array).map(|a| a.iter().enumerate().map(|(k, l)| Layer {
             id: l.get("id").and_then(Value::as_f64).map_or(k as u32 + 1, |x| x.max(1.0) as u32),

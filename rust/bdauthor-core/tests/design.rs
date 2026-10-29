@@ -35,7 +35,7 @@ fn validation() {
 fn json_roundtrip_and_remap() {
     let mut ds = Designs::default();
     let mut p = PageDesign::starting_point(MenuType::Chapters, 3, 0, 1, "Chapitres").unwrap();
-    p.items.push(Item { x: 50, y: 60, w: 300, h: 200, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default(), layer: 0 });
+    p.items.push(Item { x: 50, y: 60, w: 300, h: 200, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default() });
     if let Kind::Text { color, align, font, .. } = &mut p.items[0].kind { *color = [10, 200, 30]; *align = Align::Left; *font = "georgia.ttf".into(); }
     ds.main.insert(1, PageDesign::default_main(4, 1, 3).unwrap());
     ds.chapters.insert((2, 0), p.clone());
@@ -58,8 +58,8 @@ fn json_roundtrip_and_remap() {
 fn free_pages_json_swap_remove_validate() {
     let mut ds = Designs::default();
     let mut f = PageDesign::blank_free(1);
-    f.items.push(Item { x: 100, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(2)), link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0 });
-    f.items.push(Item { x: 600, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(0)), link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0 });
+    f.items.push(Item { x: 100, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(2)), link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() });
+    f.items.push(Item { x: 600, y: 200, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, assign: None, video: Some(Some(0)), link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() });
     ds.free.push(f);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("\"libres\""));
@@ -94,7 +94,7 @@ fn goto_buttons_json_remap_and_check() {
     let mut ds = Designs::default();
     let mut p = PageDesign::default_main(2, 0, 2).unwrap();
     p.items.push(Item::nav(NavAction::Goto, 100, 900, 300, 80)); // cible par defaut : page 1 du menu principal
-    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "Chapitres".into(), target: Some(Target::Chapters(2, 1)) }, look: Default::default(), layer: 0 });
+    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "Chapitres".into(), target: Some(Target::Chapters(2, 1)) }, look: Default::default(), layer: 0, sub: Default::default() });
     ds.main.insert(0, p);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("aller_a") && text.contains("\"cible\""));
@@ -112,7 +112,7 @@ fn goto_buttons_json_remap_and_check() {
     assert!(y.main[&0].validate(2, MenuType::Main, 0, 2).iter().any(|p| p.error && p.msg.contains("cible")));
     // suppression de la page 1 : le bouton qui y menait perd sa cible, les pages suivantes sont decalees
     let mut z = ds.clone();
-    z.main.get_mut(&0).unwrap().items.push(Item { x: 900, y: 900, w: 200, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "p3".into(), target: Some(Target::Main(2)) }, look: Default::default(), layer: 0 });
+    z.main.get_mut(&0).unwrap().items.push(Item { x: 900, y: 900, w: 200, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "p3".into(), target: Some(Target::Main(2)) }, look: Default::default(), layer: 0, sub: Default::default() });
     z.page_removed(0);
     assert_eq!(targets(&z), vec![None, Some(Target::Chapters(2, 1)), Some(Target::Main(1))]);
     // verification des cibles
@@ -127,9 +127,9 @@ fn clickable_text_image_and_video_targets() {
     let mut t = Item::text("Lire", 100, 900, 300, 80, 50);
     if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Video(2)); }
     p.items.push(t);
-    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Image { path: "logo.png".into(), link: Some(Target::Main(1)) }, look: Default::default(), layer: 0 });
-    p.items.push(Item { x: 900, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "b".into(), target: Some(Target::Video(1)) }, look: Default::default(), layer: 0 });
-    p.items.push(Item { x: 1300, y: 900, w: 300, h: 80, kind: Kind::Image { path: "deco.png".into(), link: None }, look: Default::default(), layer: 0 });
+    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Image { path: "logo.png".into(), link: Some(Target::Main(1)) }, look: Default::default(), layer: 0, sub: Default::default() });
+    p.items.push(Item { x: 900, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "b".into(), target: Some(Target::Video(1)) }, look: Default::default(), layer: 0, sub: Default::default() });
+    p.items.push(Item { x: 1300, y: 900, w: 300, h: 80, kind: Kind::Image { path: "deco.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default() });
     ds.main.insert(0, p);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("\"lire\": \"video\""), "{text}");
@@ -151,7 +151,7 @@ fn clickable_text_image_and_video_targets() {
     assert_eq!(links(&z)[1], None);
     // chevauchement : un texte cliquable compte comme un bouton
     let mut o = PageDesign::default();
-    o.items.push(Item { x: 0, y: 0, w: 400, h: 100, kind: Kind::Image { path: "a.png".into(), link: Some(Target::Video(0)) }, look: Default::default(), layer: 0 });
+    o.items.push(Item { x: 0, y: 0, w: 400, h: 100, kind: Kind::Image { path: "a.png".into(), link: Some(Target::Video(0)) }, look: Default::default(), layer: 0, sub: Default::default() });
     o.items.push(Item::nav(NavAction::Goto, 100, 50, 300, 80));
     assert!(o.validate(0, MenuType::Main, 0, 1).iter().any(|p| p.msg.contains("chevauchent")));
     // destinations inexistantes
@@ -171,7 +171,7 @@ fn fixed_video_slots_with_destination() {
     // page automatique : 2 elements + une vignette de la video 3 qui ouvre la page 2
     let mut p = PageDesign::default_main(2, 0, 2).unwrap();
     let before = p.slot_count();
-    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, assign: Some(0), video: Some(Some(2)), link: Some(Target::Main(1)), start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0 });
+    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, assign: Some(0), video: Some(Some(2)), link: Some(Target::Main(1)), start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() });
     assert_eq!(p.slot_count(), before, "une vignette de video choisie ne compte pas parmi les elements");
     assert_eq!(p.all_slot_count(), before + 1);
     assert!(p.validate(2, MenuType::Main, 0, 2).iter().all(|x| !x.error), "{:?}", p.validate(2, MenuType::Main, 0, 2));

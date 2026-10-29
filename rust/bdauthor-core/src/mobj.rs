@@ -16,6 +16,17 @@ pub const NOP_INSN: u32 = 0;
 pub const MOVE_RR_INSN: u32 = 0x5000_0001;
 pub const MOVE_RI_INSN: u32 = 0x5040_0001;
 pub const PLAY_PL_PM_INSN: u32 = 0x4282_0000;
+/// SET_STREAM (groupe SET, sous-groupe SETSYSTEM), deux operandes immediats.
+pub const SET_STREAM_INSN: u32 = 0x51C0_0001;
+
+/// Reglage des sous-titres (PSR2) : `Some(k)` affiche la piste PG k (0-based), `None` masque les sous-titres sans changer de
+/// piste. Operande dst : bit 15 = numero de piste valide (bits 0-11, 1-based), bit 14 = affichage.
+pub fn set_pg_stream(track: Option<usize>) -> Command {
+    match track {
+        Some(k) => Command::new(SET_STREAM_INSN, 0x8000 | 0x4000 | ((k as u32 + 1) & 0xfff), 0),
+        None => Command::new(SET_STREAM_INSN, 0, 0),
+    }
+}
 
 fn branch_name(sub: u32, opt: u32) -> Option<&'static str> {
     Some(match (sub, opt) {

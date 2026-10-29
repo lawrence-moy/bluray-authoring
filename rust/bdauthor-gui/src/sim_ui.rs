@@ -1,7 +1,7 @@
 //! Simulation de la telecommande dans l'editeur : fleches pour passer d'un bouton a l'autre (meme regle de voisinage que le disque),
 //! Entree pour valider (etat « active » visible un instant), puis ouverture de la page visee ou lecture simulee de la video.
 use crate::App;
-use bdauthor_core::design::{SlotReturn, Target};
+use bdauthor_core::design::{SlotReturn, SubChoice, Target};
 use bdauthor_core::editor::{main_page_of_video, page_of_target, sim_buttons, video_title, PageInfo, PageRef, SimAction, SimButton};
 use eframe::egui::{self, Color32, Key, Rect};
 use std::time::{Duration, Instant};
@@ -54,8 +54,19 @@ impl App {
     }
 
     /// Execute l'action d'un bouton valide.
-    fn sim_do(&mut self, info: &PageInfo, a: SimAction, ret: SlotReturn) {
+    fn sim_do(&mut self, info: &PageInfo, a: SimAction, ret: SlotReturn, sub: SubChoice) {
         let pages = self.pages();
+        // sous-titres reglés par le bouton, rappeles dans le texte de la lecture simulee
+        let sub_txt = |v: usize| -> String {
+            match sub {
+                SubChoice::Keep => String::new(),
+                SubChoice::Off => " — sans sous-titres".to_string(),
+                SubChoice::Track(k) => {
+                    let lang = self.model.videos.get(v).and_then(|x| x.subs.get(k)).map(|t| t.lang.clone());
+                    match lang { Some(l) => format!(" — sous-titres : piste {} ({l})", k + 1), None => format!(" — sous-titres : piste {} absente", k + 1) }
+                }
+            }
+        };
         let generic = self.model.designs.generic;
         // pages generiques : retour choisi par la vignette (page d'origine par defaut)
         let generic_back = match ret {
@@ -72,15 +83,15 @@ impl App {
         let mut go: Option<PageRef> = None;
         match a {
             SimAction::Play(v) | SimAction::Go(Target::Video(v)) => {
-                play = Some((format!("Lecture de « {} »", video_title(&self.model, v)), back_of(v)));
+                play = Some((format!("Lecture de « {} »{}", video_title(&self.model, v), sub_txt(v)), back_of(v)));
             }
             SimAction::PlayChapter(v, c) => {
                 let name = self.model.videos.get(v).and_then(|x| x.chapter_list(self.durations.get(&x.file).copied()).get(c).map(|t| t.1.clone())).unwrap_or_else(|| format!("chapitre {}", c + 1));
-                play = Some((format!("Lecture de « {} » à partir de « {name} »", video_title(&self.model, v)), back_of(v)));
+                play = Some((format!("Lecture de « {} » à partir de « {name} »{}", video_title(&self.model, v), sub_txt(v)), back_of(v)));
             }
             SimAction::PlayFrom(v, t) => {
                 let s = t.round().max(0.0) as i64;
-                play = Some((format!("Lecture de « {} » à partir de {}:{:02}", video_title(&self.model, v), s / 60, s % 60), back_of(v)));
+                play = Some((format!("Lecture de « {} » à partir de {}:{:02}{}", video_title(&self.model, v), s / 60, s % 60, sub_txt(v)), back_of(v)));
             }
             SimAction::PlayAllVideos => {
                 // le disque revient a la page d'ou « Tout lire » a ete lance
@@ -156,7 +167,7 @@ impl App {
         if let Some(t) = sim.pressed {
             if t.elapsed() >= PRESS {
                 sim.pressed = None;
-                action = Some((buttons[sim.btn].action, buttons[sim.btn].ret));
+                action = Some((buttons[sim.btn].action, buttons[sim.btn].ret, buttons[sim.btn].sub));
             } else {
                 ctx.request_repaint_after(PRESS.saturating_sub(t.elapsed()));
             }
@@ -184,8 +195,8 @@ impl App {
         self.sel_item = Some(buttons[sim.btn].item);
         self.sim = Some(sim);
         help(painter, &format!("Simulation · bouton {} sur {} · Flèches : se déplacer · Entrée : valider · M : TOP MENU · Échap : quitter", self.sim.as_ref().map_or(0, |s| s.btn) + 1, buttons.len()));
-        if let Some((a, ret)) = action {
-            self.sim_do(info, a, ret);
+        if let Some((a, ret, sub)) = action {
+            self.sim_do(info, a, ret, sub);
         }
     }
 }
