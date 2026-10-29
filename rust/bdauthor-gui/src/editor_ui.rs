@@ -925,8 +925,8 @@ impl App {
             let this = match info.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(info.page) };
             let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
             if is_home {
-                ui.label(egui::RichText::new("⌂ Page d'accueil").strong());
-            } else if ui.button("⌂ Définir comme page d'accueil").on_hover_text("Page affichée à l'ouverture du disque et par la touche TOP MENU").clicked() {
+                ui.label(egui::RichText::new("🏠 Page d'accueil").strong());
+            } else if ui.button("🏠 Définir comme page d'accueil").on_hover_text("Page affichée à l'ouverture du disque et par la touche TOP MENU").clicked() {
                 self.model.designs.home = if this == Target::Main(0) { None } else { Some(this) };
                 self.bump();
             }
@@ -1262,9 +1262,9 @@ impl App {
                                 if te.lost_focus() { page_edit_done = true; }
                             }
                         } else {
-                            let home = if k == home_k { "  ⌂" } else { "" };
+                            let home = if k == home_k { "  🏠" } else { "" };
                             let label = egui::RichText::new(format!("{}. {}{home}", k + 1, names[k])).strong();
-                            let resp = ui.selectable_label(shown, label).on_hover_text("Afficher la page (+ pour déplier son contenu). Double-clic : renommer. ⌂ : page d'accueil");
+                            let resp = ui.selectable_label(shown, label).on_hover_text("Afficher la page (+ pour déplier son contenu). Double-clic : renommer. 🏠 : page d'accueil");
                             if resp.clicked() { pick_page = Some(k); }
                             if resp.double_clicked() { self.page_edit = Some((k, all[k].name.clone())); }
                             if ui.small_button("✏").on_hover_text("Renommer la page").clicked() { self.page_edit = Some((k, all[k].name.clone())); }
