@@ -1222,7 +1222,6 @@ impl App {
                 for k in 0..self.model.designs.free.len() { self.tree_pages.insert(k, false); }
             }
         });
-        ui.label(egui::RichText::new("Glissez la poignée ☰ : pages, calques et éléments changent d'ordre ; un élément ou un calque déposé sur une autre page y est déplacé (Ctrl : copié).").weak());
         let np = self.model.designs.free.len();
         if np == 0 {
             ui.label("Aucune page : ajoutez-en une.");
