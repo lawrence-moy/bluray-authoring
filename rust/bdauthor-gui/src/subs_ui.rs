@@ -1,7 +1,7 @@
 //! Panneau « Sous-titres » d'une video : pistes PGS issues de fichiers .srt/.ass ou de pistes texte integrees a la video.
 use bdauthor_core::ffmpeg::{list_subtitle_streams, SubStreamInfo, Tools};
 use bdauthor_core::film::MAX_SUB_TRACKS;
-use bdauthor_core::model::VideoEntry;
+use bdauthor_core::model::{ProjectModel, VideoEntry};
 use bdauthor_core::subtitle::{default_language_name, next_language_id, Language, SubSource, SubStyle, SubTrackCfg, VPos};
 use eframe::egui;
 use std::collections::HashMap;
@@ -127,7 +127,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    ui.label(egui::RichText::new("La liste des langues du projet se règle dans la section « Disque » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
+    ui.label(egui::RichText::new("La liste des langues du projet se règle dans le menu « Édition > Langues des sous-titres… » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
     ui.label(egui::RichText::new("Le décalage corrige un retard ou une avance. Les sous-titres sont dessinés en images (format Blu-ray PGS) ; la télécommande les active et choisit la piste.").weak());
     changed
 }
@@ -171,4 +171,60 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
         }
     }
     ui.label(egui::RichText::new("Tailles données pour une vidéo de 1080 lignes ; elles s'adaptent automatiquement à 720.").weak());
+}
+
+/// Fenetre « Langues des sous-titres » : liste des langues du projet (le rang d'une langue est son numero de piste dans toutes
+/// les videos). Retourne vrai si quelque chose a change.
+pub fn languages_window(ctx: &egui::Context, open: &mut bool, m: &mut ProjectModel) -> bool {
+    let mut changed = false;
+    egui::Window::new("Langues des sous-titres").open(open).resizable(false).show(ctx, |ui| {
+        ui.label("Le rang dans la liste est le numéro de piste, identique dans toutes les vidéos.");
+        let mut op: Option<(usize, i32)> = None; // (rang, -1 haut / 1 bas / 0 retirer)
+        let n = m.languages.len();
+        for (k, l) in m.languages.iter_mut().enumerate() {
+            ui.push_id(("langue", l.id), |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(format!("{}.", k + 1));
+                    changed |= ui.add(egui::TextEdit::singleline(&mut l.name).desired_width(150.0)).changed();
+                    ui.label("code :");
+                    changed |= ui.add(egui::TextEdit::singleline(&mut l.code).desired_width(40.0)).changed();
+                    if ui.add_enabled(k > 0, egui::Button::new("▲").small()).clicked() { op = Some((k, -1)); }
+                    if ui.add_enabled(k + 1 < n, egui::Button::new("▼").small()).clicked() { op = Some((k, 1)); }
+                    if ui.small_button("Retirer").clicked() { op = Some((k, 0)); }
+                });
+            });
+        }
+        if let Some((k, a)) = op {
+            match a {
+                -1 => m.move_language(k, k - 1),
+                1 => m.move_language(k, k + 1),
+                _ => { let id = m.languages[k].id; m.remove_language(id); }
+            }
+            changed = true;
+        }
+        ui.add_enabled_ui(m.languages.len() < MAX_SUB_TRACKS, |ui| {
+            ui.menu_button("Ajouter une langue ▾", |ui| {
+                for code in ["fra", "eng", "deu", "spa", "ita", "por", "nld", "jpn", "zho", "rus", "ara", "kor"] {
+                    let name = default_language_name(code);
+                    if ui.button(&name).clicked() {
+                        m.add_language(&name, code);
+                        changed = true;
+                        ui.close_menu();
+                    }
+                }
+                if ui.button("Autre…").clicked() { m.add_language("Nouvelle langue", "und"); changed = true; ui.close_menu(); }
+            });
+        });
+        if m.languages.len() >= MAX_SUB_TRACKS {
+            ui.label(egui::RichText::new(format!("{MAX_SUB_TRACKS} langues au maximum.")).weak());
+        }
+        ui.separator();
+        if m.languages.is_empty() {
+            ui.label(egui::RichText::new("Aucune langue : ajoutez-en pour que les boutons « Régler les sous-titres » choisissent une langue.").weak());
+        } else {
+            ui.label(egui::RichText::new("Chaque piste de sous-titres d'une vidéo choisit sa langue dans cette liste. Une vidéo qui n'a pas une langue garde une piste vide à cet endroit, pour que le bouton « Anglais », par exemple, fonctionne dans toutes les vidéos et avec « Tout lire ».").weak());
+            ui.label(egui::RichText::new("Changer l'ordre change les numéros de piste : les boutons suivent leur langue.").weak());
+        }
+    });
+    changed
 }

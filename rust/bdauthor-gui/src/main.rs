@@ -79,6 +79,8 @@ struct App {
     show_config: bool,
     /// fenetre « Style des boutons »
     show_style: bool,
+    /// fenetre « Langues des sous-titres »
+    show_langs: bool,
     /// fenetre « Fond de cette page »
     show_page_bg: bool,
     /// element montre selectionne dans l'apercu courant
@@ -127,7 +129,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_page_bg: false, preview_sel: None, preview_act: false, sim: None, sel_item: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_langs: false, show_page_bg: false, preview_sel: None, preview_act: false, sim: None, sel_item: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -314,6 +316,13 @@ impl eframe::App for App {
         });
         self.show_config = open;
 
+        // fenetre des langues de sous-titres du projet (Edition > Langues des sous-titres)
+        if self.show_langs {
+            let mut open = true;
+            if subs_ui::languages_window(ctx, &mut open, &mut self.model) { self.dirty = true; }
+            self.show_langs = open;
+        }
+
         egui::TopBottomPanel::top("barre").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 ui.menu_button("Fichier", |ui| {
@@ -339,6 +348,10 @@ impl eframe::App for App {
                     if ui.add_enabled(!busy, egui::Button::new("Style des boutons…")).on_hover_text("Couleurs, cadre, halo, agrandissement des boutons de tout le projet").clicked() {
                         self.mode = Mode::MiseEnPage;
                         self.show_style = true;
+                        ui.close_menu();
+                    }
+                    if ui.add_enabled(!busy, egui::Button::new("Langues des sous-titres…")).on_hover_text("Liste des langues du projet : le rang d'une langue est son numéro de piste dans toutes les vidéos").clicked() {
+                        self.show_langs = true;
                         ui.close_menu();
                     }
                 });
@@ -497,49 +510,6 @@ impl eframe::App for App {
                         ui.label("Langue (3 lettres) :");
                         changed |= ui.add(egui::TextEdit::singleline(&mut m.lang).desired_width(50.0)).changed();
                     });
-                    ui.separator();
-                    ui.label("Langues des sous-titres (le rang dans la liste est le numéro de piste, identique dans toutes les vidéos) :");
-                    let mut lang_op: Option<(usize, i32)> = None; // (rang, -1 haut / 1 bas / 0 retirer)
-                    let n_langs = m.languages.len();
-                    for (k, l) in m.languages.iter_mut().enumerate() {
-                        ui.push_id(("langue", l.id), |ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(format!("{}.", k + 1));
-                                changed |= ui.add(egui::TextEdit::singleline(&mut l.name).desired_width(150.0)).changed();
-                                ui.label("code :");
-                                changed |= ui.add(egui::TextEdit::singleline(&mut l.code).desired_width(40.0)).changed();
-                                if ui.add_enabled(k > 0, egui::Button::new("▲").small()).clicked() { lang_op = Some((k, -1)); }
-                                if ui.add_enabled(k + 1 < n_langs, egui::Button::new("▼").small()).clicked() { lang_op = Some((k, 1)); }
-                                if ui.small_button("Retirer").clicked() { lang_op = Some((k, 0)); }
-                            });
-                        });
-                    }
-                    if let Some((k, a)) = lang_op {
-                        match a {
-                            -1 => m.move_language(k, k - 1),
-                            1 => m.move_language(k, k + 1),
-                            _ => { let id = m.languages[k].id; m.remove_language(id); }
-                        }
-                        changed = true;
-                    }
-                    ui.add_enabled_ui(m.languages.len() < bdauthor_core::film::MAX_SUB_TRACKS, |ui| {
-                        ui.menu_button("Ajouter une langue ▾", |ui| {
-                            for code in ["fra", "eng", "deu", "spa", "ita", "por", "nld", "jpn", "zho", "rus", "ara", "kor"] {
-                                if ui.button(bdauthor_core::subtitle::default_language_name(code)).clicked() {
-                                    m.add_language(&bdauthor_core::subtitle::default_language_name(code), code);
-                                    changed = true;
-                                    ui.close_menu();
-                                }
-                            }
-                            if ui.button("Autre…").clicked() { m.add_language("Nouvelle langue", "und"); changed = true; ui.close_menu(); }
-                        });
-                    });
-                    if m.languages.is_empty() {
-                        ui.label(egui::RichText::new("Aucune langue : ajoutez-en pour que les boutons « Régler les sous-titres » choisissent une langue.").weak());
-                    } else {
-                        ui.label(egui::RichText::new("Chaque piste de sous-titres d'une vidéo choisit sa langue dans cette liste ; une vidéo qui n'a pas une langue garde une piste vide, pour que le bouton « Anglais », par exemple, fonctionne dans toutes les vidéos et avec « Tout lire ».").weak());
-                    }
-                    ui.separator();
                     ui.horizontal(|ui| {
                         ui.label("Qualité x264 (CRF, plus petit = meilleur) :");
                         changed |= ui.add(egui::Slider::new(&mut m.crf, 0..=51)).changed();

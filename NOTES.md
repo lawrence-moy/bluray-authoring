@@ -418,6 +418,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - `ProjectModel::ensure_languages` (appelee a l'ouverture dans l'interface) deduit la liste des anciens projets : une langue par code
   de piste, pistes rattachees, boutons `Track(k)` convertis en `Lang`. Validation : langue non choisie, langue en double dans une
   video, langue sans sous-titres dans aucune video, langue supprimee.
-- Interface : section « Langues des sous-titres » (onglet Projet > Disque : ajouter, renommer, code, monter/descendre, retirer),
+- Interface : fenetre « Langues des sous-titres » (menu Edition : ajouter, renommer, code, monter/descendre, retirer),
   liste « Langue » par piste, liste « Sous-titres » du bouton = langues du projet. Tests : tests/languages.rs, tests/project.rs
   (`language_list_fixes_track_numbers`). Non valide sur lecteur reel (flux PG vides, SET_STREAM).
