@@ -122,7 +122,7 @@ fn palette() -> Vec<(NewWidget, &'static str, String)> {
         (NewWidget::ChapterSlot, "🎞", "Vignette de chapitre (lecture depuis un instant)".to_string()),
     ];
     // un seul bouton de navigation : son action (Aller a, Precedent, Suivant, Tout lire) se choisit dans l'inspecteur
-    v.push((NewWidget::Nav(NavAction::Goto), "🔘", "Bouton de navigation (« Aller à… » ; action modifiable dans l'inspecteur : Précédent, Suivant, Tout lire…)".to_string()));
+    v.push((NewWidget::Nav(NavAction::Goto), "🔘", "Bouton de navigation (destination choisie dans l'inspecteur : page, vidéo, Précédent, Suivant, Tout lire, sous-titres…)".to_string()));
     v
 }
 
@@ -1064,22 +1064,34 @@ impl App {
                     }
                 }
                 Kind::Nav { action, text, target } => {
+                    // une seule liste « Destination » : les actions speciales (page precedente/suivante, tout lire),
+                    // puis les pages, les videos et le reglage des sous-titres
                     let old = *action;
-                    egui::ComboBox::from_label("Action").selected_text(action.label()).show_ui(ui, |ui| {
+                    let shown = if *action != NavAction::Goto { action.label().to_string() } else {
+                        target.and_then(|t| page_targets.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| "(destination introuvable : à choisir)".to_string())
+                    };
+                    egui::ComboBox::from_label("Destination").selected_text(shown).show_ui(ui, |ui| {
                         for a in NavAction::ALL {
+                            if a == NavAction::Goto { continue; }
                             // « Retour » n'existe que dans les anciens menus de chapitres
                             if generic && a == NavAction::Back && old != NavAction::Back { continue; }
-                            if ui.selectable_value(action, a, a.label()).changed() {
+                            if ui.selectable_label(*action == a, a.label()).clicked() {
                                 changed = true;
                                 // texte encore par defaut : il suit l'action
                                 if *text == old.default_text() { *text = a.default_text().to_string(); }
-                                if a == NavAction::Goto && target.is_none() { *target = Some(Target::Main(0)); }
+                                *action = a;
+                            }
+                        }
+                        ui.separator();
+                        for (t, l) in &page_targets {
+                            if ui.selectable_label(*action == NavAction::Goto && *target == Some(*t), l).clicked() {
+                                changed = true;
+                                if *text == old.default_text() { *text = NavAction::Goto.default_text().to_string(); }
+                                *action = NavAction::Goto;
+                                *target = Some(*t);
                             }
                         }
                     });
-                    if *action == NavAction::Goto {
-                        destination_combo(ui, target, &page_targets, &mut changed);
-                    }
                     ui.horizontal(|ui| { ui.label("Texte :"); changed |= ui.text_edit_singleline(text).changed(); });
                 }
                 Kind::Text { text, size, color, align, font, link } => {
