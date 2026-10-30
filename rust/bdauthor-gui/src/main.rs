@@ -165,10 +165,14 @@ impl App {
     fn open(&mut self) {
         let Some(p) = rfd::FileDialog::new().add_filter("Projet bdauthor", &["json"]).pick_file() else { return };
         match std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| ProjectModel::from_json(&t)) {
-            Ok(m) => {
+            Ok(mut m) => {
+                // anciens projets : liste de langues deduite des pistes de sous-titres existantes
+                let before = m.clone();
+                m.ensure_languages();
+                let migrated = m != before;
                 self.model = m;
                 self.path = Some(p);
-                self.dirty = false;
+                self.dirty = migrated;
                 self.sel = if self.model.videos.is_empty() { None } else { Some(0) };
                 self.reset_editor();
                 self.notice = "Projet ouvert.".into();
@@ -474,7 +478,7 @@ impl eframe::App for App {
                             changed = true;
                         }
                         ui.separator();
-                        changed |= subs_ui::panel(ui, v, &mut self.sub_probes, &sub_base);
+                        changed |= subs_ui::panel(ui, v, &mut self.model.languages, &mut self.sub_probes, &sub_base);
                         ui.separator();
                     } else {
                         ui.label("Ajoutez des vidéos puis sélectionnez-en une pour régler son titre, sa vignette et ses chapitres.");
@@ -493,6 +497,49 @@ impl eframe::App for App {
                         ui.label("Langue (3 lettres) :");
                         changed |= ui.add(egui::TextEdit::singleline(&mut m.lang).desired_width(50.0)).changed();
                     });
+                    ui.separator();
+                    ui.label("Langues des sous-titres (le rang dans la liste est le numéro de piste, identique dans toutes les vidéos) :");
+                    let mut lang_op: Option<(usize, i32)> = None; // (rang, -1 haut / 1 bas / 0 retirer)
+                    let n_langs = m.languages.len();
+                    for (k, l) in m.languages.iter_mut().enumerate() {
+                        ui.push_id(("langue", l.id), |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("{}.", k + 1));
+                                changed |= ui.add(egui::TextEdit::singleline(&mut l.name).desired_width(150.0)).changed();
+                                ui.label("code :");
+                                changed |= ui.add(egui::TextEdit::singleline(&mut l.code).desired_width(40.0)).changed();
+                                if ui.add_enabled(k > 0, egui::Button::new("▲").small()).clicked() { lang_op = Some((k, -1)); }
+                                if ui.add_enabled(k + 1 < n_langs, egui::Button::new("▼").small()).clicked() { lang_op = Some((k, 1)); }
+                                if ui.small_button("Retirer").clicked() { lang_op = Some((k, 0)); }
+                            });
+                        });
+                    }
+                    if let Some((k, a)) = lang_op {
+                        match a {
+                            -1 => m.move_language(k, k - 1),
+                            1 => m.move_language(k, k + 1),
+                            _ => { let id = m.languages[k].id; m.remove_language(id); }
+                        }
+                        changed = true;
+                    }
+                    ui.add_enabled_ui(m.languages.len() < bdauthor_core::film::MAX_SUB_TRACKS, |ui| {
+                        ui.menu_button("Ajouter une langue ▾", |ui| {
+                            for code in ["fra", "eng", "deu", "spa", "ita", "por", "nld", "jpn", "zho", "rus", "ara", "kor"] {
+                                if ui.button(bdauthor_core::subtitle::default_language_name(code)).clicked() {
+                                    m.add_language(&bdauthor_core::subtitle::default_language_name(code), code);
+                                    changed = true;
+                                    ui.close_menu();
+                                }
+                            }
+                            if ui.button("Autre…").clicked() { m.add_language("Nouvelle langue", "und"); changed = true; ui.close_menu(); }
+                        });
+                    });
+                    if m.languages.is_empty() {
+                        ui.label(egui::RichText::new("Aucune langue : ajoutez-en pour que les boutons « Régler les sous-titres » choisissent une langue.").weak());
+                    } else {
+                        ui.label(egui::RichText::new("Chaque piste de sous-titres d'une vidéo choisit sa langue dans cette liste ; une vidéo qui n'a pas une langue garde une piste vide, pour que le bouton « Anglais », par exemple, fonctionne dans toutes les vidéos et avec « Tout lire ».").weak());
+                    }
+                    ui.separator();
                     ui.horizontal(|ui| {
                         ui.label("Qualité x264 (CRF, plus petit = meilleur) :");
                         changed |= ui.add(egui::Slider::new(&mut m.crf, 0..=51)).changed();

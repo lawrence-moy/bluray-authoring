@@ -154,8 +154,10 @@ pub enum SubChoice {
     Keep,
     /// sous-titres masques
     Off,
-    /// piste de sous-titres affichee (indice 0-based dans les sous-titres de la video)
+    /// piste de sous-titres affichee (indice 0-based dans les sous-titres de la video) ; anciens projets sans liste de langues
     Track(usize),
+    /// langue de la liste du projet (`Language::id`) : meme numero de piste dans toutes les videos
+    Lang(u32),
 }
 
 impl SubChoice {
@@ -164,12 +166,14 @@ impl SubChoice {
             SubChoice::Keep => None,
             SubChoice::Off => Some(Value::Str("aucun".into())),
             SubChoice::Track(k) => Some(Value::Num((k + 1) as f64)),
+            SubChoice::Lang(id) => Some(Value::Obj(vec![("langue".into(), Value::Num(id as f64))])),
         }
     }
     fn from_value(v: Option<&Value>) -> SubChoice {
         match v {
             Some(Value::Str(s)) if s == "aucun" => SubChoice::Off,
             Some(Value::Num(n)) if *n >= 1.0 => SubChoice::Track(n.round() as usize - 1),
+            Some(o @ Value::Obj(_)) => match o.get("langue").and_then(Value::as_i64) { Some(id) if id >= 1 => SubChoice::Lang(id as u32), _ => SubChoice::Keep },
             _ => SubChoice::Keep,
         }
     }

@@ -172,6 +172,15 @@ pub fn encode_sub_tracks(enc: &Encoded, specs: &[SubSpec], renderer: &dyn crate:
     Ok(out)
 }
 
+/// Piste de sous-titres vide (n'affiche rien) pour un flux encode.
+pub fn empty_sub_track(enc: &Encoded, lang: [u8; 3]) -> Result<PgOut> {
+    let (w, h, _) = crate::tsclip::parse_sps(&enc.sps).map_err(|e| Error::Format(e.0))?;
+    let pts: Vec<u64> = enc.video.iter().map(|v| v.pts).collect();
+    let fps = crate::tsclip::frame_rate(&pts).map_err(|e| Error::Format(e.0))?;
+    let rate_code = crate::tsclip::FRAME_RATES.iter().find(|r| r.0 == fps).map(|r| r.2).ok_or_else(|| Error::Format(format!("cadence {fps} non geree")))?;
+    Ok(PgOut { lang, specs: crate::pgs::empty_track((w, h), rate_code, START_PTS as u64) })
+}
+
 /// Muxage avec des pistes de sous-titres PGS (PID 0x1200 + n).
 pub fn mux_encoded_subs(enc: &Encoded, lang: [u8; 3], subs: &[PgOut]) -> Result<(Vec<u8>, MuxStats)> {
     let mut streams = vec![PmtStream { stream_type: 0x1B, pid: 0x1011, desc: avc_descriptor(&enc.sps) }];

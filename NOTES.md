@@ -406,3 +406,18 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Le reglage des sous-titres ne depend plus de la destination : liste « Sous-titres » sur tout element cliquable (pistes du
   projet par numero, langues rencontrees). Nouvelle destination `Target::Stay` (JSON `{"rester": true}`, « Aucune : rester sur
   cette page ») : commandes du bouton = [SET_STREAM, NOP], le menu reste affiche.
+
+## Langues de sous-titres du projet
+- Liste `langues: [{id, nom, code}]` (modele `ProjectModel.languages`, `subtitle::Language`) : l'identifiant est stable ; le RANG dans la
+  liste est le numero de piste PG sur le disque, identique dans toutes les videos (max 8). Chaque piste d'une video a `langue_id`
+  (son code `langue` suit celui de la langue). Bouton : `SubChoice::Lang(id)` (JSON `soustitres: {"langue": id}`) -> SET_STREAM rang.
+- Generation (`project.rs` : `slot_tracks`, `add_subtitles`) : avec une liste de langues, TOUTES les videos recoivent les memes
+  pistes, de la premiere langue a la derniere utilisee ; une langue absente d'une video = piste vide (un ensemble d'affichage sans
+  objet, `pgs::empty_track`, car le controleur refuse un flux declare sans paquet). Aucun registre ni commande par video : marche
+  aussi avec « Tout lire » (une seule playlist). Sans liste de langues : ancien fonctionnement (pistes dans l'ordre, `Track(k)`).
+- `ProjectModel::ensure_languages` (appelee a l'ouverture dans l'interface) deduit la liste des anciens projets : une langue par code
+  de piste, pistes rattachees, boutons `Track(k)` convertis en `Lang`. Validation : langue non choisie, langue en double dans une
+  video, langue sans sous-titres dans aucune video, langue supprimee.
+- Interface : section « Langues des sous-titres » (onglet Projet > Disque : ajouter, renommer, code, monter/descendre, retirer),
+  liste « Langue » par piste, liste « Sous-titres » du bouton = langues du projet. Tests : tests/languages.rs, tests/project.rs
+  (`language_list_fixes_track_numbers`). Non valide sur lecteur reel (flux PG vides, SET_STREAM).

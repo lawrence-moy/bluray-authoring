@@ -65,6 +65,11 @@ impl App {
                     let lang = self.model.videos.get(v).and_then(|x| x.subs.get(k)).map(|t| t.lang.clone());
                     match lang { Some(l) => format!(" — sous-titres : piste {} ({l})", k + 1), None => format!(" — sous-titres : piste {} absente", k + 1) }
                 }
+                SubChoice::Lang(id) => {
+                    let name = self.model.language_name(id);
+                    let has = self.model.videos.get(v).map_or(false, |x| x.subs.iter().any(|t| t.lang_id == id));
+                    if has { format!(" — sous-titres : {name}") } else { format!(" — sous-titres : {name} (absents de cette vidéo : rien ne s'affiche)") }
+                }
             }
         };
         let generic = self.model.designs.generic;
@@ -103,6 +108,7 @@ impl App {
                     SubChoice::Keep => "Simulation : ce bouton ne fait rien.".to_string(),
                     SubChoice::Off => "Simulation : sous-titres masqués.".to_string(),
                     SubChoice::Track(k) => format!("Simulation : sous-titres réglés sur la piste {}.", k + 1),
+                    SubChoice::Lang(id) => format!("Simulation : sous-titres réglés sur « {} ».", self.model.language_name(id)),
                 };
                 self.edit_gen += 1;
                 return;

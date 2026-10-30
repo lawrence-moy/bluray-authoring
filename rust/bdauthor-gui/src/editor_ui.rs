@@ -952,15 +952,8 @@ impl App {
         let generic = self.model.designs.generic;
         let page_names: Vec<String> = self.pages().iter().map(|p| p.label(&self.model)).collect();
         let video_durations: Vec<Option<f64>> = self.model.videos.iter().map(|v| self.durations.get(&v.file).copied()).collect();
-        // pistes du projet par numero (le numero vaut pour toutes les videos) : langues rencontrees
-        let n_tracks = self.model.videos.iter().map(|v| v.subs.len()).max().unwrap_or(0);
-        let sub_tracks: Vec<String> = (0..n_tracks).map(|k| {
-            let mut langs: Vec<String> = Vec::new();
-            for v in &self.model.videos {
-                if let Some(t) = v.subs.get(k) { if !langs.contains(&t.lang) { langs.push(t.lang.clone()); } }
-            }
-            format!("Piste {} : {}", k + 1, langs.join(", "))
-        }).collect();
+        // langues de sous-titres du projet (le bouton choisit une langue, pas un numero de piste)
+        let sub_langs: Vec<(u32, String)> = self.model.languages.iter().map(|l| (l.id, l.name.clone())).collect();
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
         let proj_style = self.model.designs.style.clone();
         let mut pick_skin: Option<usize> = None;
@@ -1145,23 +1138,24 @@ impl App {
                     if it.sub != SubChoice::Keep { it.sub = SubChoice::Keep; changed = true; }
                 } else {
                     if it.sub == SubChoice::Keep {
-                        it.sub = if sub_tracks.is_empty() { SubChoice::Off } else { SubChoice::Track(0) };
+                        it.sub = sub_langs.first().map_or(SubChoice::Off, |(id, _)| SubChoice::Lang(*id));
                         changed = true;
                     }
                     let name = |c: SubChoice| match c {
                         SubChoice::Keep | SubChoice::Off => "Masquer les sous-titres".to_string(),
-                        SubChoice::Track(k) => sub_tracks.get(k).cloned().unwrap_or_else(|| format!("Piste {} (aucune vidéo ne l'a)", k + 1)),
+                        SubChoice::Lang(id) => sub_langs.iter().find(|(i, _)| *i == id).map_or_else(|| "(langue supprimée : à choisir)".to_string(), |(_, n)| n.clone()),
+                        SubChoice::Track(k) => format!("Piste {} (ancien réglage : à remplacer par une langue)", k + 1),
                     };
                     let cur_sub = it.sub;
                     egui::ComboBox::from_label("Sous-titres").selected_text(name(cur_sub)).show_ui(ui, |ui| {
-                        for c in std::iter::once(SubChoice::Off).chain((0..sub_tracks.len()).map(SubChoice::Track)) {
+                        for c in std::iter::once(SubChoice::Off).chain(sub_langs.iter().map(|(id, _)| SubChoice::Lang(*id))) {
                             if ui.selectable_label(cur_sub == c, name(c)).clicked() { it.sub = c; changed = true; }
                         }
                     });
-                    if sub_tracks.is_empty() {
-                        ui.label(egui::RichText::new("Aucune vidéo du projet n'a de sous-titres (à ajouter dans l'onglet « Projet »).").weak());
+                    if sub_langs.is_empty() {
+                        ui.label(egui::RichText::new("Aucune langue de sous-titres dans le projet (à ajouter dans l'onglet « Projet », section « Disque »).").weak());
                     } else {
-                        ui.label(egui::RichText::new("Le clic règle les sous-titres et le menu reste affiché. Le réglage vaut pour toutes les vidéos lues ensuite (même numéro de piste) ; le spectateur peut toujours changer avec la touche SUBTITLE.").weak());
+                        ui.label(egui::RichText::new("Le clic règle les sous-titres et le menu reste affiché. La langue vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue s'affiche sans sous-titres. Le spectateur peut toujours changer avec la touche SUBTITLE.").weak());
                     }
                 }
             }

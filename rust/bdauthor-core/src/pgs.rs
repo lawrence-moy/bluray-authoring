@@ -210,6 +210,19 @@ pub fn render_cue(text: &str, style: &SubStyle, renderer: &dyn Renderer, video: 
     Ok(Some(SubImage { x: x as u16, y: y as u16, w: w as u16, h: h as u16, entries, rows: rows.remove(0) }))
 }
 
+/// Piste qui n'affiche jamais rien : un seul ensemble d'affichage (debut d'epoque sans objet). Sert aux langues du projet qu'une
+/// video n'a pas, pour que le numero de piste de chaque langue reste le meme dans toutes les videos.
+pub fn empty_track(video: (u32, u32), rate_code: u8, first_ok: u64) -> Vec<PesSpec> {
+    let (vw, vh) = (video.0 as u16, video.1 as u16);
+    let clear_t = plane_ticks(video.0 as u64, video.1 as u64);
+    let t = first_ok + clear_t;
+    vec![
+        PesSpec { pts: t + clear_t, dts: Some(t), data: pcs(vw, vh, rate_code, 0, 0x80, None) },
+        PesSpec { pts: t, dts: None, data: wds(0, 0, 1, 1) },
+        PesSpec { pts: t, dts: None, data: seg(SEG_END, vec![]) },
+    ]
+}
+
 /// Piste complete : repliques deja fusionnees (temps en ms depuis le debut de la video), `base90` = PTS du temps 0.
 pub fn encode_track(
     cues: &[Cue], style: &SubStyle, renderer: &dyn Renderer, video: (u32, u32), rate_code: u8, base90: u64, first_ok: u64,

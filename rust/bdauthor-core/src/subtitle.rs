@@ -240,11 +240,71 @@ pub enum SubSource {
     Embedded(u32),
 }
 
+/// Langue de sous-titres du projet : identifiant interne stable, nom affiche et code de 3 lettres.
+/// Son rang dans la liste du projet est le numero de piste qu'elle a sur le disque, dans toutes les videos.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Language {
+    pub id: u32,
+    pub name: String,
+    pub code: String,
+}
+
+impl Language {
+    pub fn from_value(v: &Value) -> Result<Self, String> {
+        let id = v.get("id").and_then(Value::as_i64).filter(|n| *n >= 1).ok_or("langues : « id » (entier >= 1) attendu")? as u32;
+        let code = v.get("code").and_then(Value::as_str).unwrap_or("und").to_string();
+        let name = v.get("nom").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| code.clone());
+        Ok(Language { id, name, code })
+    }
+    pub fn to_value(&self) -> Value {
+        Value::Obj(vec![("id".into(), Value::Num(self.id as f64)), ("nom".into(), Value::Str(self.name.clone())), ("code".into(), Value::Str(self.code.clone()))])
+    }
+    /// Code sur 3 octets (`und` si invalide).
+    pub fn code_bytes(&self) -> [u8; 3] {
+        self.code.as_bytes().try_into().unwrap_or(*b"und")
+    }
+}
+
+/// Identifiant libre pour une nouvelle langue de la liste.
+pub fn next_language_id(langs: &[Language]) -> u32 {
+    langs.iter().map(|l| l.id).max().unwrap_or(0) + 1
+}
+
+/// Nom usuel d'une langue d'apres son code ISO 639-2 (code lui-meme sinon).
+pub fn default_language_name(code: &str) -> String {
+    match code {
+        "fra" | "fre" => "Français", "eng" => "Anglais", "deu" | "ger" => "Allemand", "spa" => "Espagnol", "ita" => "Italien",
+        "por" => "Portugais", "nld" | "dut" => "Néerlandais", "jpn" => "Japonais", "zho" | "chi" => "Chinois", "rus" => "Russe",
+        "ara" => "Arabe", "kor" => "Coréen", "pol" => "Polonais", "swe" => "Suédois", "dan" => "Danois", "nor" => "Norvégien",
+        "fin" => "Finnois", "tur" => "Turc", "heb" => "Hébreu", "und" => "Langue inconnue",
+        c => return c.to_string(),
+    }
+    .to_string()
+}
+
+/// Liste des langues depuis la valeur JSON du champ « langues » (absent = liste vide).
+pub fn languages_from_value(v: Option<&Value>) -> Result<Vec<Language>, String> {
+    let out: Vec<Language> = match v {
+        None | Some(Value::Null) => vec![],
+        Some(a) => a.as_array().ok_or("« langues » : liste attendue")?.iter().map(Language::from_value).collect::<Result<_, _>>()?,
+    };
+    for (k, l) in out.iter().enumerate() {
+        if out[..k].iter().any(|x| x.id == l.id) { return Err(format!("langues : identifiant {} en double", l.id)); }
+    }
+    Ok(out)
+}
+
+pub fn languages_to_value(l: &[Language]) -> Option<Value> {
+    if l.is_empty() { None } else { Some(Value::Arr(l.iter().map(Language::to_value).collect())) }
+}
+
 /// Une piste de sous-titres d'une video.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubTrackCfg {
     pub source: SubSource,
-    /// Code de langue de 3 lettres (ex. fra).
+    /// Langue de la liste du projet (`Language::id`) ; 0 : non choisie.
+    pub lang_id: u32,
+    /// Code de langue de 3 lettres (ex. fra). Avec une langue du projet, c'est le code de cette langue.
     pub lang: String,
     /// Decalage a appliquer aux temps (ms, peut etre negatif).
     pub offset_ms: i64,
@@ -253,10 +313,10 @@ pub struct SubTrackCfg {
 
 impl SubTrackCfg {
     pub fn from_file(path: &str, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::File(path.into()), lang: lang.into(), offset_ms: 0, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, style: SubStyle::default() }
     }
     pub fn embedded(index: u32, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::Embedded(index), lang: lang.into(), offset_ms: 0, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, style: SubStyle::default() }
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
@@ -277,6 +337,7 @@ impl SubTrackCfg {
         }
         Ok(SubTrackCfg {
             source,
+            lang_id: v.get("langue_id").and_then(Value::as_i64).filter(|n| *n >= 1).map_or(0, |n| n as u32),
             lang: v.get("langue").and_then(Value::as_str).unwrap_or("und").into(),
             offset_ms: v.get("decalage_ms").and_then(Value::as_f64).map_or(0, |x| x.round() as i64),
             style: st,
@@ -290,6 +351,9 @@ impl SubTrackCfg {
             SubSource::Embedded(n) => ("piste".to_string(), Value::Num(*n as f64)),
         }];
         o.push(("langue".into(), Value::Str(self.lang.clone())));
+        if self.lang_id != 0 {
+            o.push(("langue_id".into(), Value::Num(self.lang_id as f64)));
+        }
         if self.offset_ms != 0 {
             o.push(("decalage_ms".into(), Value::Num(self.offset_ms as f64)));
         }

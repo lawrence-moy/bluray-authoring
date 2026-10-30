@@ -179,6 +179,8 @@ struct ButtonEnv<'a> {
     /// echelle du plan 1920 vers le menu, taille du menu
     s: f64,
     plane: (u32, u32),
+    /// identifiants des langues de sous-titres du projet, dans l'ordre : le rang est le numero de piste
+    langs: &'a [u32],
 }
 
 /// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page.
@@ -258,6 +260,10 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
             crate::design::SubChoice::Keep => {}
             crate::design::SubChoice::Off => commands.insert(0, crate::mobj::set_pg_stream(None)),
             crate::design::SubChoice::Track(k) => commands.insert(0, crate::mobj::set_pg_stream(Some(k))),
+            crate::design::SubChoice::Lang(id) => {
+                let rank = e.langs.iter().position(|l| *l == id).ok_or_else(|| Error::Format("sous-titres d'un bouton : la langue choisie n'existe plus dans la liste des langues".into()))?;
+                commands.insert(0, crate::mobj::set_pg_stream(Some(rank)));
+            }
         }
         btn.commands = commands;
         buttons.push(btn);
@@ -563,17 +569,25 @@ fn get_usize(v: Option<&Value>, what: &str) -> Result<Option<usize>> {
     }
 }
 
+/// Pistes de sous-titres d'une video, rangees par numero de piste : `cfg[k]` est la piste k (`None` : piste vide, gardee pour que
+/// chaque langue ait le meme numero dans toutes les videos) avec son code de langue.
+type SubSlot = (Option<crate::subtitle::SubTrackCfg>, [u8; 3]);
+
 /// Ajoute les pistes de sous-titres `cfg` a un clip encode (remuxage). Retourne le nouveau clip et les flux PG declares (PID, langue).
+/// `keep_empty` : garde aussi les pistes sans replique affichable (numerotation par langues) ; sinon elles sont ignorees.
 #[allow(clippy::too_many_arguments)]
 fn add_subtitles(
-    env: &mut BuildEnv, src: &Path, base: &Path, cfg: &[crate::subtitle::SubTrackCfg], lang: [u8; 3], tmp: &Path, m2ts: &[u8], num: usize,
+    env: &mut BuildEnv, src: &Path, base: &Path, cfg: &[SubSlot], keep_empty: bool, lang: [u8; 3], tmp: &Path, m2ts: &[u8], num: usize,
 ) -> Result<(Vec<u8>, Vec<(u16, [u8; 3])>)> {
     use crate::subtitle::{load_cues, shift, SubSource};
     let abs = |f: &str| -> PathBuf { let q = Path::new(f); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
     let mut specs = Vec::new();
-    for (k, t) in cfg.iter().enumerate() {
+    for (k, (t, tl)) in cfg.iter().enumerate() {
+        let Some(t) = t else {
+            specs.push(crate::film::SubSpec { lang: *tl, cues: vec![], style: crate::subtitle::SubStyle::default() });
+            continue;
+        };
         if let Some(m) = t.problems().into_iter().next() { return bad(format!("video {num}, sous-titres {} : {m}", k + 1)); }
-        let tl: [u8; 3] = t.lang.as_bytes().try_into().map_err(|_| Error::Format(format!("video {num}, sous-titres {} : langue invalide", k + 1)))?;
         let cues = match &t.source {
             SubSource::File(f) => load_cues(&abs(f)).map_err(Error::Format)?,
             SubSource::Embedded(idx) => {
@@ -587,22 +601,47 @@ fn add_subtitles(
             let c = abs(&style.font);
             if c.is_file() { style.font = c.to_string_lossy().into_owned(); }
         }
-        specs.push(crate::film::SubSpec { lang: tl, cues: shift(&cues, t.offset_ms), style });
+        specs.push(crate::film::SubSpec { lang: *tl, cues: shift(&cues, t.offset_ms), style });
     }
     let enc = crate::film::load_encoded_m2ts(m2ts)?;
     let tracks = crate::film::encode_sub_tracks(&enc, &specs, env.renderer)?;
     let mut kept = Vec::new();
     for (k, t) in tracks.into_iter().enumerate() {
-        if t.specs.is_empty() {
-            (env.log)(&format!("   sous-titres {} : aucune replique affichable, piste ignoree", k + 1));
-        } else {
+        if t.specs.is_empty() && cfg[k].0.is_some() {
+            (env.log)(&format!("   sous-titres {} : aucune replique affichable{}", k + 1, if keep_empty { " (piste vide)" } else { ", piste ignoree" }));
+        }
+        if !t.specs.is_empty() {
             kept.push(t);
+        } else if keep_empty {
+            kept.push(crate::film::empty_sub_track(&enc, t.lang)?);
         }
     }
     let n_sets: usize = kept.iter().map(|t| t.specs.len()).sum();
     let (out, _) = crate::film::mux_encoded_subs(&enc, lang, &kept)?;
     (env.log)(&format!("   {} piste(s) de sous-titres ajoutee(s) ({} segments)", kept.len(), n_sets));
     Ok((out, kept.iter().enumerate().map(|(k, t)| (crate::pgs::PG_PID0 + k as u16, t.lang)).collect()))
+}
+
+/// Pistes de sous-titres de chaque video quand le projet a une liste de langues : la piste k de chaque video est la langue de rang k
+/// de la liste (piste vide si la video n'a pas cette langue), jusqu'a la derniere langue utilisee par une video.
+/// Retourne aussi le nombre de pistes ainsi creees dans chaque video (0 : aucune video n'a de sous-titres).
+fn slot_tracks(langs: &[crate::subtitle::Language], all: &[Vec<crate::subtitle::SubTrackCfg>]) -> Result<(Vec<Vec<SubSlot>>, usize)> {
+    let mut used = 0usize;
+    for (i, tracks) in all.iter().enumerate() {
+        for (k, t) in tracks.iter().enumerate() {
+            let Some(rank) = langs.iter().position(|l| l.id == t.lang_id) else {
+                return bad(format!("video {}, sous-titres {} : langue a choisir dans la liste des langues du projet", i + 1, k + 1));
+            };
+            if tracks[..k].iter().any(|o| o.lang_id == t.lang_id) {
+                return bad(format!("video {}, sous-titres {} : la langue « {} » est deja utilisee par une autre piste de cette video", i + 1, k + 1, langs[rank].name));
+            }
+            used = used.max(rank + 1);
+        }
+    }
+    let out = all.iter().map(|tracks| {
+        (0..used).map(|rank| (tracks.iter().find(|t| t.lang_id == langs[rank].id).cloned(), langs[rank].code_bytes())).collect()
+    }).collect();
+    Ok((out, used))
 }
 
 pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) -> Result<BuildInfo> {
@@ -682,6 +721,15 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let mut durations: Vec<f64> = Vec::new();
     let mut pg_info: Vec<Vec<(u16, [u8; 3])>> = Vec::new();
 
+    // langues de sous-titres du projet : le rang d'une langue est son numero de piste dans toutes les videos
+    let languages = crate::subtitle::languages_from_value(proj.get("langues")).map_err(Error::Format)?;
+    if languages.len() > crate::film::MAX_SUB_TRACKS {
+        return bad(format!("{} langues de sous-titres : {} au maximum", languages.len(), crate::film::MAX_SUB_TRACKS));
+    }
+    let lang_ids: Vec<u32> = languages.iter().map(|l| l.id).collect();
+    let all_subs: Vec<Vec<crate::subtitle::SubTrackCfg>> = vids.iter().map(|v| crate::subtitle::tracks_from_value(v.get("soustitres")).map_err(Error::Format)).collect::<Result<_>>()?;
+    let (slots, n_slots) = if languages.is_empty() { (Vec::new(), 0) } else { slot_tracks(&languages, &all_subs)? };
+
     // 1. videos
     for (i, v) in vids.iter().enumerate() {
         let name = vfile(v)?;
@@ -714,8 +762,18 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             }
         };
         // sous-titres PGS : ajoutes par remuxage du clip encode (le cache ne contient pas les sous-titres)
-        let sub_cfg = crate::subtitle::tracks_from_value(v.get("soustitres")).map_err(Error::Format)?;
-        let (m2ts, pg) = if sub_cfg.is_empty() { (m2ts, Vec::new()) } else { add_subtitles(env, &src, &base, &sub_cfg, lang, &tmp.0, &m2ts, i + 1)? };
+        let (m2ts, pg) = if n_slots > 0 {
+            // avec une liste de langues, toutes les videos ont les memes pistes (vides au besoin) : un meme numero = une meme langue
+            add_subtitles(env, &src, &base, &slots[i], true, lang, &tmp.0, &m2ts, i + 1)?
+        } else if all_subs[i].is_empty() {
+            (m2ts, Vec::new())
+        } else {
+            let cfg: Vec<SubSlot> = all_subs[i].iter().enumerate().map(|(k, t)| {
+                let tl: [u8; 3] = t.lang.as_bytes().try_into().map_err(|_| Error::Format(format!("video {}, sous-titres {} : langue invalide", i + 1, k + 1)))?;
+                Ok((Some(t.clone()), tl))
+            }).collect::<Result<_>>()?;
+            add_subtitles(env, &src, &base, &cfg, false, lang, &tmp.0, &m2ts, i + 1)?
+        };
         let sc = scan_clip(&m2ts)?;
         let pg_langs: Vec<[u8; 3]> = pg.iter().map(|x| x.1).collect();
         files.insert(format!("CLIPINF/{i:05}.clpi"), make_clip_clpi_pg(&m2ts, lang, 0, None, "0100", &pg_langs)?);
@@ -975,7 +1033,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         };
         let benv = ButtonEnv {
             tools: env.tools, renderer: env.renderer, style: &designs.style, abs: &p, to_decor: &to_decor, slot_spec: &slot_spec, s: sc_,
-            plane: (menu_size.0, menu_size.1),
+            plane: (menu_size.0, menu_size.1), langs: &lang_ids,
         };
         let decor_r = scale_decor(d, sc_);
         let (buttons, pix) = page_buttons(&benv, d, &[], &decor_r, MenuType::Main, k, np, &[], &target)?;

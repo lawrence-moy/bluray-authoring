@@ -2,7 +2,7 @@
 use bdauthor_core::ffmpeg::{list_subtitle_streams, SubStreamInfo, Tools};
 use bdauthor_core::film::MAX_SUB_TRACKS;
 use bdauthor_core::model::VideoEntry;
-use bdauthor_core::subtitle::{SubSource, SubStyle, SubTrackCfg, VPos};
+use bdauthor_core::subtitle::{default_language_name, next_language_id, Language, SubSource, SubStyle, SubTrackCfg, VPos};
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -20,8 +20,16 @@ fn abs(base: &Path, f: &str) -> PathBuf {
     if q.is_absolute() { q.to_path_buf() } else { base.join(q) }
 }
 
-/// Retourne vrai si quelque chose a change.
-pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, probes: &mut Probes, base: &Path) -> bool {
+/// Langue du projet portant ce code (creee avec son nom usuel si elle n'existe pas) ; retourne son identifiant.
+fn language_for_code(langs: &mut Vec<Language>, code: &str) -> u32 {
+    if let Some(l) = langs.iter().find(|l| l.code == code) { return l.id; }
+    let id = next_language_id(langs);
+    langs.push(Language { id, name: default_language_name(code), code: code.to_string() });
+    id
+}
+
+/// Retourne vrai si quelque chose a change. `langs` : langues de sous-titres du projet (le rang d'une langue est son numero de piste).
+pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path) -> bool {
     let mut changed = false;
     ui.label("Sous-titres (affichés par le lecteur, au choix avec la télécommande) :");
     let mut del = None;
@@ -31,7 +39,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, probes: &mut Probes, base: &
                 SubSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
                 SubSource::Embedded(n) => format!("piste intégrée n° {}", n + 1),
             };
-            egui::CollapsingHeader::new(format!("{} — {} ({})", k + 1, what, t.lang)).default_open(false).show(ui, |ui| {
+            let lang_label = langs.iter().find(|l| l.id == t.lang_id).map_or_else(|| if langs.is_empty() { t.lang.clone() } else { "langue à choisir".to_string() }, |l| l.name.clone());
+            egui::CollapsingHeader::new(format!("{} — {} ({})", k + 1, what, lang_label)).default_open(false).show(ui, |ui| {
                 if let SubSource::File(f) = &mut t.source {
                     ui.horizontal(|ui| {
                         ui.label("Fichier :");
@@ -48,8 +57,16 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, probes: &mut Probes, base: &
                     }
                 }
                 ui.horizontal(|ui| {
-                    ui.label("Langue (3 lettres) :");
-                    changed |= ui.add(egui::TextEdit::singleline(&mut t.lang).desired_width(40.0)).changed();
+                    let cur = langs.iter().find(|l| l.id == t.lang_id).map(|l| l.name.clone());
+                    let shown = cur.clone().unwrap_or_else(|| "(à choisir)".to_string());
+                    egui::ComboBox::from_label("Langue").selected_text(shown).show_ui(ui, |ui| {
+                        for l in langs.iter() {
+                            if ui.selectable_label(t.lang_id == l.id, &l.name).clicked() { t.lang_id = l.id; t.lang = l.code.clone(); changed = true; }
+                        }
+                    });
+                    if cur.is_none() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), "à choisir"); }
+                });
+                ui.horizontal(|ui| {
                     ui.label("Décalage :");
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
                 });
@@ -65,7 +82,10 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, probes: &mut Probes, base: &
         ui.horizontal(|ui| {
             if ui.button("Ajouter un fichier .srt / .ass…").clicked() {
                 if let Some(p) = rfd::FileDialog::new().add_filter("Sous-titres", &["srt", "ass", "ssa"]).pick_file() {
-                    v.subs.push(SubTrackCfg::from_file(&clean(&p), "fra"));
+                    let mut t = SubTrackCfg::from_file(&clean(&p), "fra");
+                    // premiere langue du projet : le francais par defaut ; ensuite, a choisir
+                    if langs.is_empty() { t.lang_id = language_for_code(langs, "fra"); }
+                    v.subs.push(t);
                     changed = true;
                 }
             }
@@ -93,7 +113,10 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, probes: &mut Probes, base: &
                         let used = v.subs.iter().any(|t| t.source == SubSource::Embedded(s.index));
                         if ui.add_enabled(!used && !full, egui::Button::new("Ajouter")).clicked() {
                             let lang = if s.lang.len() == 3 { s.lang.as_str() } else { "und" };
-                            v.subs.push(SubTrackCfg::embedded(s.index, lang));
+                            let mut t = SubTrackCfg::embedded(s.index, lang);
+                            // la langue annoncee par la piste est ajoutee a la liste du projet si elle n'y est pas
+                            t.lang_id = language_for_code(langs, lang);
+                            v.subs.push(t);
                             changed = true;
                         }
                     } else {
@@ -104,6 +127,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, probes: &mut Probes, base: &
         }
         None => {}
     }
+    ui.label(egui::RichText::new("La liste des langues du projet se règle dans la section « Disque » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
     ui.label(egui::RichText::new("Le décalage corrige un retard ou une avance. Les sous-titres sont dessinés en images (format Blu-ray PGS) ; la télécommande les active et choisit la piste.").weak());
     changed
 }

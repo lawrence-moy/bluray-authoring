@@ -570,3 +570,66 @@ fn generic_pages_with_chapter_thumbnails() {
     assert!(only.contains("NOP"), "{p2:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn language_list_fixes_track_numbers() {
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_langs_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("fr.srt"), "1\n00:00:00,500 --> 00:00:01,500\nBonjour\n").unwrap();
+    std::fs::write(dir.join("en.srt"), "1\n00:00:01,000 --> 00:00:02,000\nHello\n").unwrap();
+    for f in ["a", "b"] {
+        assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=4",
+            "-f", "lavfi", "-i", "sine=duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
+            .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
+    }
+    // langues : 1 = fra (piste 0), 2 = eng (piste 1). La video a les range dans l'ordre inverse ; la video b n'a que l'anglais.
+    let proj = r##"{ "titre": "Langues", "langue": "fra",
+      "langues": [ {"id":1,"nom":"Francais","code":"fra"}, {"id":2,"nom":"Anglais","code":"eng"} ],
+      "videos": [ {"fichier": "a.mp4", "soustitres": [ {"fichier":"en.srt","langue":"eng","langue_id":2}, {"fichier":"fr.srt","langue":"fra","langue_id":1} ]},
+                  {"fichier": "b.mp4", "soustitres": [ {"fichier":"en.srt","langue":"eng","langue_id":2} ]} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
+      "mise_en_page": { "pages": [ { "nom": "Menu", "elements": [
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"texte","texte":"English","x":1300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":{"langue":2}},
+          {"type":"texte","texte":"Francais","x":300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":{"langue":1}} ] } ] } }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let info = {
+        let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
+    };
+    assert!(info.report.ok(), "{}", info.report.render());
+    let root = dir.join("out/BDMV");
+    // chaque video declare les memes pistes : 0x1200 = francais, 0x1201 = anglais
+    for v in 0..2 {
+        let clpi = bdauthor_core::clpi::Clpi::parse(&std::fs::read(root.join(format!("CLIPINF/{v:05}.clpi"))).unwrap()).unwrap();
+        let pg: Vec<(u16, String)> = clpi.program.programs[0].streams.iter().filter(|s| s.coding_type == 0x90).map(|s| (s.pid, String::from_utf8_lossy(&s.attrs[..3]).into_owned())).collect();
+        assert_eq!(pg, vec![(0x1200, "fra".to_string()), (0x1201, "eng".to_string())], "video {v}");
+    }
+    // video a : la piste 0x1200 (fra) a bien les repliques francaises ; video b : 0x1200 est vide
+    let count = |clip: &str, pid: u16| -> usize {
+        let data = std::fs::read(root.join(format!("STREAM/{clip}.m2ts"))).unwrap();
+        bdauthor_core::m2ts::reassemble(&data, pid).map(|v| v.len()).unwrap_or(0)
+    };
+    assert!(count("00000", 0x1200) > 0 && count("00000", 0x1201) > 0);
+    // video b : la piste francaise existe (pour garder les numeros) mais n'affiche rien
+    assert!(count("00001", 0x1200) > 0 && count("00001", 0x1200) < count("00001", 0x1201));
+    let rep = info.report.render();
+    assert!(rep.contains("sous-titres 00001 PID 0x1200 : 1 ensemble(s) d'affichage, 0 sous-titre(s) affiche(s)"), "{rep}");
+    assert!(rep.contains("sous-titres 00000 PID 0x1200 : 2 ensemble(s) d'affichage, 1 sous-titre(s) affiche(s)"), "{rep}");
+    // boutons : « English » = piste 2 (rang 1), « Francais » = piste 1 (rang 0)
+    let data = std::fs::read(root.join("STREAM/80002.m2ts")).unwrap();
+    let mut segs = Vec::new();
+    for e in bdauthor_core::m2ts::reassemble(&data, 0x1400).unwrap() { segs.extend(bdauthor_core::m2ts::split_segments(&e.data).unwrap()); }
+    let ics = bdauthor_core::ig::Ics::parse(&segs.iter().find(|s| s.name() == "ICS").unwrap().payload).unwrap();
+    let mut b: Vec<&bdauthor_core::ig::Button> = ics.pages[0].bogs.iter().flat_map(|g| g.buttons.iter()).collect();
+    b.sort_by_key(|b| (b.y, b.x));
+    let cmds: Vec<String> = b.iter().map(|b| b.commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; ")).collect();
+    assert_eq!(cmds.len(), 3, "{cmds:?}");
+    assert!(cmds[1].starts_with(&bdauthor_core::mobj::set_pg_stream(Some(0)).text()), "Francais : {cmds:?}");
+    assert!(cmds[2].starts_with(&bdauthor_core::mobj::set_pg_stream(Some(1)).text()), "English : {cmds:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
