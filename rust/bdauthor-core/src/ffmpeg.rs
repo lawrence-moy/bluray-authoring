@@ -375,6 +375,13 @@ fn s(p: &Path) -> String {
 /// Construit les arguments ffmpeg (sans les options communes) pour le transcodage d'une video. Public pour les tests.
 /// Une source sans piste audio recoit une piste muette (le disque reste homogene : chaque video a son audio).
 pub fn encode_args(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts) -> (Vec<String>, Target) {
+    encode_args_tracks(src, dst, info, o, &[])
+}
+
+/// Comme `encode_args`, avec des pistes audio choisies (dans l'ordre du disque) ; `tracks` vide : la premiere piste audio du fichier.
+/// Les fichiers audio doivent avoir un chemin utilisable tel quel.
+pub fn encode_args_tracks(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tracks: &[crate::audio::AudioTrackCfg]) -> (Vec<String>, Target) {
+    use crate::audio::AudioSource;
     let tg = pick_target_scan(info.width, info.height, info.fps(), info.interlaced().then(|| info.top_first()));
     let interl = matches!(tg.scan, Scan::Tff | Scan::Bff);
     let pre = if tg.deinterlace { "bwdif=mode=send_field," } else { "" };
@@ -384,7 +391,28 @@ pub fn encode_args(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts) -> 
     );
     let mut a: Vec<String> = ["-i"].iter().map(|x| x.to_string()).collect();
     a.push(s(src));
-    if info.has_audio {
+    if !tracks.is_empty() {
+        // une entree de plus pour chaque fichier audio et pour chaque piste decalee de la video ; les autres pistes viennent de l'entree 0
+        let mut maps: Vec<String> = vec!["0:v:0".into()];
+        let mut next_input = 1usize;
+        for t in tracks {
+            let shifted = t.offset_ms != 0;
+            let (path, map_tail) = match &t.source {
+                AudioSource::Embedded(n) => (src.to_path_buf(), format!("a:{n}")),
+                AudioSource::File(f) => (std::path::PathBuf::from(f), "a:0".to_string()),
+            };
+            if matches!(t.source, AudioSource::Embedded(_)) && !shifted {
+                maps.push(format!("0:{map_tail}"));
+            } else {
+                if shifted { a.extend(["-itsoffset".to_string(), format!("{:.3}", t.offset_ms as f64 / 1000.0)]); }
+                a.extend(["-i".to_string(), s(&path)]);
+                maps.push(format!("{next_input}:{map_tail}"));
+                next_input += 1;
+            }
+        }
+        for m in maps { a.extend(["-map".to_string(), m]); }
+        a.push("-vf".into());
+    } else if info.has_audio {
         a.extend(["-map", "0:v:0", "-map", "0:a:0", "-vf"].iter().map(|x| x.to_string()));
     } else {
         a.extend(["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000", "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-vf"].iter().map(|x| x.to_string()));
@@ -408,7 +436,22 @@ pub fn encode_to_ts(
     progress: &mut dyn FnMut(f64),
     cancel: &AtomicBool,
 ) -> Result<Target> {
-    let (args, tg) = encode_args(src, dst, info, opts);
+    encode_to_ts_tracks(tools, src, dst, info, opts, &[], progress, cancel)
+}
+
+/// Comme `encode_to_ts`, avec des pistes audio choisies (voir `encode_args_tracks`).
+#[allow(clippy::too_many_arguments)]
+pub fn encode_to_ts_tracks(
+    tools: &Tools,
+    src: &Path,
+    dst: &Path,
+    info: &VideoInfo,
+    opts: &EncodeOpts,
+    tracks: &[crate::audio::AudioTrackCfg],
+    progress: &mut dyn FnMut(f64),
+    cancel: &AtomicBool,
+) -> Result<Target> {
+    let (args, tg) = encode_args_tracks(src, dst, info, opts, tracks);
     run_ffmpeg(tools, &args, info.duration_s, progress, cancel)?;
     Ok(tg)
 }
@@ -666,4 +709,50 @@ pub fn extract_subtitle_srt(tools: &Tools, src: &Path, index: u32, dst: &Path) -
         )));
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------- pistes audio integrees
+
+/// Piste audio d'un fichier video.
+#[derive(Debug, Clone, PartialEq)]
+pub struct AudioStreamInfo {
+    /// Numero parmi les pistes audio (0 = la premiere), celui de `-map 0:a:N`.
+    pub index: u32,
+    pub codec: String,
+    pub lang: String,
+    pub title: String,
+    pub channels: u32,
+}
+
+pub fn parse_audio_streams_flat(text: &str) -> Vec<AudioStreamInfo> {
+    let mut streams: BTreeMap<u32, BTreeMap<String, String>> = BTreeMap::new();
+    for line in text.lines() {
+        let Some((k, v)) = line.split_once('=') else { continue };
+        if let Some(rest) = k.strip_prefix("streams.stream.") {
+            if let Some((idx, field)) = rest.split_once('.') {
+                if let Ok(i) = idx.parse::<u32>() {
+                    streams.entry(i).or_default().insert(field.to_string(), v.trim().trim_matches('"').to_string());
+                }
+            }
+        }
+    }
+    let get = |m: &BTreeMap<String, String>, k: &str| m.get(k).cloned().unwrap_or_default();
+    streams
+        .values()
+        .filter(|s| s.get("codec_type").map(String::as_str) == Some("audio"))
+        .enumerate()
+        .map(|(n, s)| AudioStreamInfo { index: n as u32, codec: get(s, "codec_name"), lang: get(s, "tags.language"), title: get(s, "tags.title"), channels: get(s, "channels").parse().unwrap_or(0) })
+        .collect()
+}
+
+/// Pistes audio d'un fichier (video ou audio).
+pub fn list_audio_streams(tools: &Tools, src: &Path) -> Result<Vec<AudioStreamInfo>> {
+    let mut c = Command::new(&tools.ffprobe);
+    c.args(["-v", "error", "-of", "flat", "-show_entries", "stream=index,codec_type,codec_name,channels:stream_tags=language,title"]).arg(src);
+    no_window(&mut c);
+    let out = c.output()?;
+    if !out.status.success() {
+        return Err(Error::Probe(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    Ok(parse_audio_streams_flat(&String::from_utf8_lossy(&out.stdout)))
 }

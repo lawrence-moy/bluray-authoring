@@ -21,7 +21,7 @@ fn abs(base: &Path, f: &str) -> PathBuf {
 }
 
 /// Langue du projet portant ce code (creee avec son nom usuel si elle n'existe pas) ; retourne son identifiant.
-fn language_for_code(langs: &mut Vec<Language>, code: &str) -> u32 {
+pub(crate) fn language_for_code(langs: &mut Vec<Language>, code: &str) -> u32 {
     if let Some(l) = langs.iter().find(|l| l.code == code) { return l.id; }
     let id = next_language_id(langs);
     langs.push(Language { id, name: default_language_name(code), code: code.to_string() });
@@ -127,7 +127,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    ui.label(egui::RichText::new("La liste des langues du projet se règle dans le menu « Édition > Langues des sous-titres… » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
+    ui.label(egui::RichText::new("La liste des langues du projet se règle dans le menu « Édition > Langues du projet… » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
     ui.label(egui::RichText::new("Le décalage corrige un retard ou une avance. Les sous-titres sont dessinés en images (format Blu-ray PGS) ; la télécommande les active et choisit la piste.").weak());
     changed
 }
@@ -173,12 +173,12 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
     ui.label(egui::RichText::new("Tailles données pour une vidéo de 1080 lignes ; elles s'adaptent automatiquement à 720.").weak());
 }
 
-/// Fenetre « Langues des sous-titres » : liste des langues du projet (le rang d'une langue est son numero de piste dans toutes
+/// Fenetre « Langues du projet » (audio et sous-titres) : liste des langues du projet (le rang d'une langue est son numero de piste dans toutes
 /// les videos). Retourne vrai si quelque chose a change.
 pub fn languages_window(ctx: &egui::Context, open: &mut bool, m: &mut ProjectModel) -> bool {
     let mut changed = false;
-    egui::Window::new("Langues des sous-titres").open(open).resizable(false).show(ctx, |ui| {
-        ui.label("Le rang dans la liste est le numéro de piste, identique dans toutes les vidéos.");
+    egui::Window::new("Langues du projet").open(open).resizable(false).show(ctx, |ui| {
+        ui.label("Langues des pistes audio et des sous-titres. Le rang dans la liste fixe le numéro de piste, identique dans toutes les vidéos.");
         let mut op: Option<(usize, i32)> = None; // (rang, -1 haut / 1 bas / 0 retirer)
         let n = m.languages.len();
         for (k, l) in m.languages.iter_mut().enumerate() {
@@ -220,9 +220,9 @@ pub fn languages_window(ctx: &egui::Context, open: &mut bool, m: &mut ProjectMod
         }
         ui.separator();
         if m.languages.is_empty() {
-            ui.label(egui::RichText::new("Aucune langue : ajoutez-en pour que les boutons « Régler les sous-titres » choisissent une langue.").weak());
+            ui.label(egui::RichText::new("Aucune langue : ajoutez-en pour choisir la langue des pistes audio et des sous-titres, et pour les boutons « Régler… ».").weak());
         } else {
-            ui.label(egui::RichText::new("Chaque piste de sous-titres d'une vidéo choisit sa langue dans cette liste. Une vidéo qui n'a pas une langue garde une piste vide à cet endroit, pour que le bouton « Anglais », par exemple, fonctionne dans toutes les vidéos et avec « Tout lire ».").weak());
+            ui.label(egui::RichText::new("Chaque piste audio ou de sous-titres d'une vidéo choisit sa langue dans cette liste. Sous-titres : une vidéo qui n'a pas une langue garde une piste vide à cet endroit. Audio : seules comptent les langues qui ont de l'audio quelque part, et chaque vidéo doit avoir les premières de l'ordre de la liste, sans trou.").weak());
             ui.label(egui::RichText::new("Changer l'ordre change les numéros de piste : les boutons suivent leur langue.").weak());
         }
     });

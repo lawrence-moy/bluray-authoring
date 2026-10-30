@@ -20,6 +20,8 @@ pub struct VideoEntry {
     pub auto_s: Option<f64>,
     /// Pistes de sous-titres PGS.
     pub subs: Vec<crate::subtitle::SubTrackCfg>,
+    /// Pistes audio choisies (vide : la premiere piste audio du fichier, dans la langue du disque).
+    pub audio: Vec<crate::audio::AudioTrackCfg>,
     raw: Value,
 }
 
@@ -47,7 +49,7 @@ impl VideoEntry {
     }
 
     pub fn new(file: &str) -> Self {
-        VideoEntry { file: file.into(), title: String::new(), thumb_s: None, chapters: vec![], auto_s: None, subs: vec![], raw: Value::Obj(vec![]) }
+        VideoEntry { file: file.into(), title: String::new(), thumb_s: None, chapters: vec![], auto_s: None, subs: vec![], audio: vec![], raw: Value::Obj(vec![]) }
     }
 }
 
@@ -115,6 +117,7 @@ impl ProjectModel {
             e.thumb_s = x.get("vignette_s").and_then(Value::as_f64);
             e.auto_s = x.get("chapitres_auto_s").and_then(Value::as_f64);
             e.subs = crate::subtitle::tracks_from_value(x.get("soustitres"))?;
+            e.audio = crate::audio::tracks_from_value(x.get("pistes_audio"))?;
             for c in x.get("chapitres").and_then(Value::as_array).unwrap_or(&[]) {
                 e.chapters.push(match c {
                     Value::Obj(_) => ChapterEntry { t: c.get("t").and_then(Value::as_f64).ok_or("chapitre sans « t »")?, title: c.get("titre").and_then(Value::as_str).unwrap_or("").into() },
@@ -157,6 +160,8 @@ impl ProjectModel {
             set(&mut o, "chapitres_auto_s", e.auto_s.map(n));
             let subs: Vec<SubTrackCfg> = e.subs.iter().map(|t| self.synced_track(t)).collect();
             set(&mut o, "soustitres", crate::subtitle::tracks_to_value(&subs));
+            let audio: Vec<crate::audio::AudioTrackCfg> = e.audio.iter().map(|t| { let mut t = t.clone(); if let Some(l) = self.language(t.lang_id) { t.lang = l.code.clone(); } t }).collect();
+            set(&mut o, "pistes_audio", crate::audio::tracks_to_value(&audio));
             set(&mut o, "chapitres", if e.chapters.is_empty() { None } else {
                 Some(Value::Arr(e.chapters.iter().map(|c| if c.title.is_empty() { n(c.t) } else { Value::Obj(vec![("t".into(), n(c.t)), ("titre".into(), s(&c.title))]) }).collect()))
             });
@@ -220,6 +225,7 @@ impl ProjectModel {
         self.languages.retain(|l| l.id != id);
         for v in &mut self.videos {
             for t in &mut v.subs { if t.lang_id == id { t.lang_id = 0; } }
+            for t in &mut v.audio { if t.lang_id == id { t.lang_id = 0; } }
         }
         self.for_each_item(&mut |it| if it.sub == crate::design::SubChoice::Lang(id) { it.sub = crate::design::SubChoice::Keep; });
     }
@@ -310,6 +316,24 @@ impl ProjectModel {
                 if let crate::subtitle::SubSource::File(f) = &st.source {
                     if !f.trim().is_empty() && !abs(f).is_file() { p.push(format!("Vidéo {}, sous-titres {} : fichier introuvable ({f}).", i + 1, k + 1)); }
                 }
+            }
+        }
+        for (i, v) in self.videos.iter().enumerate() {
+            for (k, t) in v.audio.iter().enumerate() {
+                for m in t.problems() { p.push(format!("Vidéo {}, piste audio {} : {m}.", i + 1, k + 1)); }
+                if let crate::audio::AudioSource::File(f) = &t.source {
+                    if !f.trim().is_empty() && !abs(f).is_file() { p.push(format!("Vidéo {}, piste audio {} : fichier introuvable ({f}).", i + 1, k + 1)); }
+                }
+            }
+        }
+        {
+            let tracks: Vec<Vec<crate::audio::AudioTrackCfg>> = self.videos.iter().map(|v| v.audio.clone()).collect();
+            if tracks.iter().any(|t| !t.is_empty()) && self.languages.is_empty() {
+                p.push("Pistes audio configurées mais aucune langue dans la liste des langues du projet.".into());
+            } else if let Err(e) = crate::audio::plan_audio(&self.languages, &self.lang, &tracks) {
+                let mut m = e;
+                if let Some(c) = m.get_mut(0..1) { c.make_ascii_uppercase(); }
+                p.push(m);
             }
         }
         // pages generiques : toutes les pages sont dans la liste, sans pages automatiques

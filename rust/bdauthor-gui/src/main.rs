@@ -2,6 +2,7 @@
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
 mod editor_ui;
+mod audio_ui;
 mod subs_ui;
 mod style_ui;
 mod sim_ui;
@@ -79,7 +80,7 @@ struct App {
     show_config: bool,
     /// fenetre « Style des boutons »
     show_style: bool,
-    /// fenetre « Langues des sous-titres »
+    /// fenetre « Langues du projet »
     show_langs: bool,
     /// fenetre « Fond de cette page »
     show_page_bg: bool,
@@ -110,6 +111,7 @@ struct App {
     /// (hauteur, cadence) de chaque video sondee
     video_sizes: HashMap<String, (u32, f64)>,
     sub_probes: subs_ui::Probes,
+    audio_probes: audio_ui::AudioProbes,
     thumbs: HashMap<(String, i64), Arc<RgbaImage>>,
     requested: HashSet<String>,
     worker: Option<editor_ui::Worker>,
@@ -130,7 +132,7 @@ impl Default for App {
     fn default() -> Self {
         App {
             mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_langs: false, show_page_bg: false, preview_sel: None, preview_act: false, sim: None, sel_item: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
-            durations: HashMap::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
+            durations: HashMap::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
 }
@@ -316,7 +318,7 @@ impl eframe::App for App {
         });
         self.show_config = open;
 
-        // fenetre des langues de sous-titres du projet (Edition > Langues des sous-titres)
+        // fenetre des langues du projet, audio et sous-titres (Edition > Langues du projet)
         if self.show_langs {
             let mut open = true;
             if subs_ui::languages_window(ctx, &mut open, &mut self.model) { self.dirty = true; }
@@ -350,7 +352,7 @@ impl eframe::App for App {
                         self.show_style = true;
                         ui.close_menu();
                     }
-                    if ui.add_enabled(!busy, egui::Button::new("Langues des sous-titres…")).on_hover_text("Liste des langues du projet : le rang d'une langue est son numéro de piste dans toutes les vidéos").clicked() {
+                    if ui.add_enabled(!busy, egui::Button::new("Langues du projet…")).on_hover_text("Langues des pistes audio et des sous-titres : le rang d'une langue est son numéro de piste dans toutes les vidéos").clicked() {
                         self.show_langs = true;
                         ui.close_menu();
                     }
@@ -491,6 +493,8 @@ impl eframe::App for App {
                             changed = true;
                         }
                         ui.separator();
+                        changed |= audio_ui::panel(ui, v, &mut self.model.languages, &mut self.audio_probes, &sub_base);
+                        ui.separator();
                         changed |= subs_ui::panel(ui, v, &mut self.model.languages, &mut self.sub_probes, &sub_base);
                         ui.separator();
                     } else {
@@ -507,7 +511,7 @@ impl eframe::App for App {
                         changed |= ui.text_edit_singleline(&mut m.title).changed();
                     });
                     ui.horizontal(|ui| {
-                        ui.label("Langue (3 lettres) :");
+                        ui.label("Langue audio par défaut (3 lettres) :").on_hover_text("Langue de la piste audio des vidéos dont les pistes audio ne sont pas choisies");
                         changed |= ui.add(egui::TextEdit::singleline(&mut m.lang).desired_width(50.0)).changed();
                     });
                     ui.horizontal(|ui| {

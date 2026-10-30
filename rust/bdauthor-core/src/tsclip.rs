@@ -313,6 +313,11 @@ pub fn make_clip_clpi(data: &[u8], lang: [u8; 3], pad: u8, aspect_code: Option<u
 
 /// Comme `make_clip_clpi`, en declarant les flux de sous-titres PGS du clip ; `pg_langs` : langue de chacun, dans l'ordre des PID.
 pub fn make_clip_clpi_pg(data: &[u8], lang: [u8; 3], pad: u8, aspect_code: Option<u8>, version: &str, pg_langs: &[[u8; 3]]) -> PResult<Vec<u8>> {
+    make_clip_clpi_tracks(data, &[lang], pad, aspect_code, version, pg_langs)
+}
+
+/// Comme `make_clip_clpi_pg`, avec une langue par piste audio (`audio_langs[k]` pour la piste k ; la derniere sert aux suivantes).
+pub fn make_clip_clpi_tracks(data: &[u8], audio_langs: &[[u8; 3]], pad: u8, aspect_code: Option<u8>, version: &str, pg_langs: &[[u8; 3]]) -> PResult<Vec<u8>> {
     let sc = scan_clip(data)?;
     let (start45, end45) = ((sc.start90 / 2) as u32, (sc.end90 / 2) as u32);
     let rate = py_floordiv(data.len() as f64, (end45 - start45) as f64 / 45000.0) as u32;
@@ -324,7 +329,8 @@ pub fn make_clip_clpi_pg(data: &[u8], lang: [u8; 3], pad: u8, aspect_code: Optio
         v
     };
     let mut streams = vec![Stream { pid: sc.video.0, coding_type: sc.video.1, attrs: fill(&[sc.video_code, aspect << 4, 0, 0]) }];
-    for &(pid, typ, code) in &sc.audio_codes {
+    for (k, &(pid, typ, code)) in sc.audio_codes.iter().enumerate() {
+        let lang = audio_langs.get(k).or(audio_langs.last()).copied().unwrap_or(*b"und");
         streams.push(Stream { pid, coding_type: typ, attrs: fill(&[code, lang[0], lang[1], lang[2]]) });
     }
     let mut pgs = sc.pg.clone();

@@ -1153,7 +1153,7 @@ impl App {
                         }
                     });
                     if sub_langs.is_empty() {
-                        ui.label(egui::RichText::new("Aucune langue de sous-titres dans le projet (à ajouter dans le menu « Édition > Langues des sous-titres… »).").weak());
+                        ui.label(egui::RichText::new("Aucune langue de sous-titres dans le projet (à ajouter dans le menu « Édition > Langues du projet… »).").weak());
                     } else {
                         ui.label(egui::RichText::new("Le clic règle les sous-titres et le menu reste affiché. La langue vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue s'affiche sans sous-titres. Le spectateur peut toujours changer avec la touche SUBTITLE.").weak());
                     }

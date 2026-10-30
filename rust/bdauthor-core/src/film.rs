@@ -77,8 +77,18 @@ pub fn avc_descriptor(sps_nal: &[u8]) -> Vec<u8> {
 #[derive(Debug, Clone)]
 pub struct Encoded {
     pub video: Vec<VideoAu>,
+    /// premiere piste audio
     pub audio: Vec<AudioFrame>,
+    /// pistes audio suivantes, dans l'ordre de la PMT
+    pub extra_audio: Vec<Vec<AudioFrame>>,
     pub sps: Vec<u8>,
+}
+
+impl Encoded {
+    /// Nombre de pistes audio.
+    pub fn audio_tracks(&self) -> usize {
+        if self.audio.is_empty() && self.extra_audio.is_empty() { 0 } else { 1 + self.extra_audio.len() }
+    }
 }
 
 /// Lit un MPEG-TS (paquets de 188 octets) produit par ffmpeg : unites d'acces video, trames AC3, SPS ; horodatages decales pour
@@ -101,7 +111,7 @@ pub fn load_encoded_m2ts(m2ts: &[u8]) -> PResult<Encoded> {
 fn load_source_packets(data: &[u8]) -> PResult<Encoded> {
     let (_, _, streams) = parse_psi(&data)?;
     let vpid = streams.iter().find(|s| s.0 == 0x1B).ok_or_else(|| ParseError("aucun flux H.264".into()))?.1;
-    let apid = streams.iter().find(|s| s.0 == 0x81).map(|s| s.1);
+    let apids: Vec<u16> = streams.iter().filter(|s| s.0 == 0x81).map(|s| s.1).collect();
     let mut video = Vec::new();
     let mut sps: Option<Vec<u8>> = None;
     for e in reassemble(&data, vpid)? {
@@ -112,22 +122,25 @@ fn load_source_packets(data: &[u8]) -> PResult<Encoded> {
         }
         video.push((e.pts.ok_or_else(|| ParseError("PES video sans PTS".into()))?, e.dts, e.data));
     }
-    let mut audio = Vec::new();
-    if let Some(a) = apid {
+    let mut tracks: Vec<Vec<(u64, Vec<u8>)>> = Vec::new();
+    for &a in &apids {
+        let mut audio = Vec::new();
         for e in reassemble(&data, a)? {
             let pts = e.pts.ok_or_else(|| ParseError("PES audio sans PTS".into()))?;
             for (k, fr) in ac3_frames(&e.data)?.into_iter().enumerate() {
                 audio.push((pts + k as u64 * AC3_FRAME_TICKS, fr.to_vec()));
             }
         }
+        tracks.push(audio);
     }
-    let first = video.iter().map(|v| v.0).chain(audio.iter().map(|a| a.0)).min().ok_or_else(|| ParseError("flux vide".into()))? as i64;
+    let first = video.iter().map(|v| v.0).chain(tracks.iter().flatten().map(|a| a.0)).min().ok_or_else(|| ParseError("flux vide".into()))? as i64;
     let shift = START_PTS - first;
     let sh = |p: u64| (p as i64 + shift) as u64;
     let mut video: Vec<VideoAu> = video.into_iter().map(|(p, d, x)| VideoAu { pts: sh(p), dts: d.map(sh), data: x }).collect();
     video.sort_by_key(|a| a.dts.unwrap_or(a.pts));
-    let audio = audio.into_iter().map(|(p, x)| AudioFrame { pts: sh(p), data: x }).collect();
-    Ok(Encoded { video, audio, sps: sps.ok_or_else(|| ParseError("aucun SPS".into()))? })
+    let mut tracks: Vec<Vec<AudioFrame>> = tracks.into_iter().map(|t| t.into_iter().map(|(p, x)| AudioFrame { pts: sh(p), data: x }).collect()).collect();
+    let audio = if tracks.is_empty() { Vec::new() } else { tracks.remove(0) };
+    Ok(Encoded { video, audio, extra_audio: tracks, sps: sps.ok_or_else(|| ParseError("aucun SPS".into()))? })
 }
 
 /// Muxage M2TS d'un flux encode (`lang` : code de langue de la piste audio, 3 lettres).
@@ -183,14 +196,26 @@ pub fn empty_sub_track(enc: &Encoded, lang: [u8; 3]) -> Result<PgOut> {
 
 /// Muxage avec des pistes de sous-titres PGS (PID 0x1200 + n).
 pub fn mux_encoded_subs(enc: &Encoded, lang: [u8; 3], subs: &[PgOut]) -> Result<(Vec<u8>, MuxStats)> {
+    mux_encoded_tracks(enc, &[lang], subs)
+}
+
+/// Comme `mux_encoded_subs`, avec une langue par piste audio (`audio_langs[k]` pour la piste k ; la derniere sert aux pistes suivantes).
+/// PID audio : 0x1100 + numero de piste.
+pub fn mux_encoded_tracks(enc: &Encoded, audio_langs: &[[u8; 3]], subs: &[PgOut]) -> Result<(Vec<u8>, MuxStats)> {
     let mut streams = vec![PmtStream { stream_type: 0x1B, pid: 0x1011, desc: avc_descriptor(&enc.sps) }];
-    if let Some(a0) = enc.audio.first() {
+    let all: Vec<&Vec<AudioFrame>> = if enc.audio_tracks() == 0 { vec![] } else { std::iter::once(&enc.audio).chain(enc.extra_audio.iter()).collect() };
+    let mut audios: Vec<(u16, &[AudioFrame])> = Vec::new();
+    for (k, tr) in all.iter().enumerate() {
+        let Some(a0) = tr.first() else { return Err(Error::Format(format!("piste audio {} vide", k + 1))) };
+        let lang = audio_langs.get(k).or(audio_langs.last()).copied().unwrap_or(*b"und");
+        let pid = 0x1100 + k as u16;
         let mut d = vec![0x05, 0x04, 0x41, 0x43, 0x2d, 0x33];
         d.extend(ac3_descriptor(&a0.data)?);
         d.extend_from_slice(&[0x0A, 4]);
         d.extend_from_slice(&lang);
         d.push(0);
-        streams.push(PmtStream { stream_type: 0x81, pid: 0x1100, desc: d });
+        streams.push(PmtStream { stream_type: 0x81, pid, desc: d });
+        audios.push((pid, tr.as_slice()));
     }
     let mut tracks = Vec::new();
     for (k, t) in subs.iter().enumerate() {
@@ -201,7 +226,7 @@ pub fn mux_encoded_subs(enc: &Encoded, lang: [u8; 3], subs: &[PgOut]) -> Result<
         streams.push(PmtStream { stream_type: crate::pgs::PG_STREAM_TYPE, pid, desc: d });
         tracks.push(SubTrack { pid, specs: t.specs.clone() });
     }
-    mux_film_subs(&enc.video, &enc.audio, &tracks, &streams, &MuxParams::default()).map_err(Error::Format)
+    crate::vmux::mux_film_audios(&enc.video, &audios, &tracks, &streams, &MuxParams::default()).map_err(Error::Format)
 }
 
 #[derive(Debug, Clone)]
@@ -216,14 +241,28 @@ pub struct FilmStats {
 pub fn make_film_m2ts(
     tools: &Tools, src: &Path, lang: [u8; 3], opts: &EncodeOpts, workdir: Option<&Path>, progress: &mut dyn FnMut(f64), cancel: &AtomicBool,
 ) -> Result<(Vec<u8>, FilmStats)> {
+    make_film_m2ts_tracks(tools, src, &[lang], &[], opts, workdir, progress, cancel)
+}
+
+/// Comme `make_film_m2ts`, avec des pistes audio choisies (`tracks`, chemins des fichiers audio utilisables tels quels) et la langue
+/// de chacune (`langs`, voir `mux_encoded_tracks`). `tracks` vide : la premiere piste audio du fichier.
+#[allow(clippy::too_many_arguments)]
+pub fn make_film_m2ts_tracks(
+    tools: &Tools, src: &Path, langs: &[[u8; 3]], tracks: &[crate::audio::AudioTrackCfg], opts: &EncodeOpts, workdir: Option<&Path>,
+    progress: &mut dyn FnMut(f64), cancel: &AtomicBool,
+) -> Result<(Vec<u8>, FilmStats)> {
     let info = ffmpeg::probe(tools, src)?;
     let tmp = TempDir::new(workdir)?;
     let ts_path = tmp.0.join("enc.ts");
-    let target = ffmpeg::encode_to_ts(tools, src, &ts_path, &info, opts, progress, cancel)?;
+    let target = ffmpeg::encode_to_ts_tracks(tools, src, &ts_path, &info, opts, tracks, progress, cancel)?;
     let enc = load_encoded(&std::fs::read(&ts_path)?)?;
     drop(tmp);
-    let (m2ts, mux) = mux_encoded(&enc, lang)?;
-    Ok((m2ts, FilmStats { cible: target.label.to_string(), images: enc.video.len(), trames_audio: enc.audio.len(), mux }))
+    if !tracks.is_empty() && enc.audio_tracks() != tracks.len() {
+        return Err(Error::Format(format!("{} pistes audio demandees, {} produites par l'encodage", tracks.len(), enc.audio_tracks())));
+    }
+    let (m2ts, mux) = mux_encoded_tracks(&enc, langs, &[])?;
+    let frames = enc.audio.len() + enc.extra_audio.iter().map(Vec::len).sum::<usize>();
+    Ok((m2ts, FilmStats { cible: target.label.to_string(), images: enc.video.len(), trames_audio: frames, mux }))
 }
 
 /// Image fixe -> clip video seul (pas d'audio) de `seconds` secondes au format `size`.

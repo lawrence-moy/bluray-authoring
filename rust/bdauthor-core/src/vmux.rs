@@ -180,20 +180,29 @@ pub fn mux_film(video: &[VideoAu], audio: &[AudioFrame], pmt_streams: &[PmtStrea
 pub fn mux_film_subs(
     video: &[VideoAu], audio: &[AudioFrame], subs: &[SubTrack], pmt_streams: &[PmtStream], p: &MuxParams,
 ) -> Result<(Vec<u8>, MuxStats), String> {
+    mux_film_audios(video, &[(p.audio_pid, audio)], subs, pmt_streams, p)
+}
+
+/// Comme `mux_film_subs`, avec plusieurs pistes audio : (PID, trames AC3) ; avec une seule piste, la sortie est la meme.
+pub fn mux_film_audios(
+    video: &[VideoAu], audios: &[(u16, &[AudioFrame])], subs: &[SubTrack], pmt_streams: &[PmtStream], p: &MuxParams,
+) -> Result<(Vec<u8>, MuxStats), String> {
     if video.is_empty() {
         return Err("aucune image video".into());
     }
     let rate = p.peak_rate as u64 * 50;
     let dt = (188u64 * 27_000_000) as f64 / rate as f64;
     // (heure de decodage, genre, pid, PES, taille)
-    let mut raw: Vec<(u64, Kind, u16, Vec<u8>, usize)> = Vec::with_capacity(video.len() + audio.len());
+    let mut raw: Vec<(u64, Kind, u16, Vec<u8>, usize)> = Vec::with_capacity(video.len() + audios.iter().map(|a| a.1.len()).sum::<usize>());
     let sub_total: usize = subs.iter().map(|t| t.specs.len()).sum();
     raw.reserve(sub_total);
     for v in video {
         raw.push((v.dts.unwrap_or(v.pts) * 300, Kind::Video, p.video_pid, build_pes(STREAM_ID_VIDEO, v.pts, v.dts, &v.data)?, v.data.len()));
     }
-    for a in audio {
-        raw.push((a.pts * 300, Kind::Audio, p.audio_pid, build_pes(STREAM_ID_AUDIO, a.pts, None, &a.data)?, a.data.len()));
+    for (apid, audio) in audios {
+        for a in audio.iter() {
+            raw.push((a.pts * 300, Kind::Audio, *apid, build_pes(STREAM_ID_AUDIO, a.pts, None, &a.data)?, a.data.len()));
+        }
     }
     for t in subs {
         for sp in &t.specs {
@@ -201,12 +210,13 @@ pub fn mux_film_subs(
         }
     }
     raw.sort_by_key(|x| (x.0, x.1 == Kind::Video)); // « a » avant « v », tri stable
-    let (mut ccv, mut cca) = (0u8, 0u8);
+    let mut ccv = 0u8;
     let mut ccs: std::collections::HashMap<u16, u8> = std::collections::HashMap::new();
     let items: Vec<Item> = raw
         .into_iter()
         .map(|(dl, kind, pid, pes, size)| {
-            let cc = if kind == Kind::Sub { ccs.entry(pid).or_insert(0) } else if pid == p.video_pid { &mut ccv } else { &mut cca };
+            // compteur de continuite propre a chaque PID (une seule piste audio : meme sortie qu'avec un compteur unique)
+            let cc = if pid == p.video_pid { &mut ccv } else { ccs.entry(pid).or_insert(0) };
             let (packets, next) = packetize(&pes, pid, *cc);
             *cc = next;
             Item { kind, deadline: dl, packets, size }

@@ -421,3 +421,18 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Interface : fenetre « Langues des sous-titres » (menu Edition : ajouter, renommer, code, monter/descendre, retirer),
   liste « Langue » par piste, liste « Sous-titres » du bouton = langues du projet. Tests : tests/languages.rs, tests/project.rs
   (`language_list_fixes_track_numbers`). Non valide sur lecteur reel (flux PG vides, SET_STREAM).
+
+## Pistes audio par langue
+- Meme liste de langues que les sous-titres (fenetre Edition > Langues du projet). Video : `pistes_audio: [{piste: n | fichier, langue, langue_id,
+  decalage_ms}]` (`audio::AudioTrackCfg`, piste n = n-ieme piste audio du fichier, fichier = doublage separe). Sans pistes configurees :
+  ancien fonctionnement (premiere piste audio, langue du disque, `langue`).
+- `audio::plan_audio` : numero de piste audio d'une langue = rang parmi les langues ayant de l'audio dans au moins une video (ordre de la
+  liste). Pas de piste de silence : chaque video doit avoir les PREMIERES langues de cet ordre (moins de langues permis, ni trou ni autre
+  ordre) sinon erreur explicite ; une video sans reglage compte pour sa piste par defaut dans la langue du disque (doit etre dans la liste).
+  Les pistes sont rangees dans cet ordre a la creation du disque.
+- Disque : ffmpeg encode chaque piste en AC-3 stereo (`-itsoffset` pour un decalage, entree supplementaire pour un fichier audio) ;
+  `Encoded.extra_audio`, PID audio 0x1100 + k, langue par flux dans la PMT, le CLPI (`make_clip_clpi_tracks`) et la playlist
+  (`PlaylistParams.more_audio`, aussi dans « Tout lire ») ; compteurs de continuite TS par PID (`vmux::mux_film_audios`). Cle du cache
+  d'encodage : reglages audio ajoutes seulement quand une liste de langues est utilisee.
+- Interface : panneau « Pistes audio » par video (`audio_ui.rs`), « Langue audio par defaut » dans Disque. Reste a faire : bouton « Regler la
+  langue audio » (commande SET_STREAM audio, format de l'operande a verifier). Tests : tests/audio.rs, project.rs (`several_audio_tracks_per_video`).

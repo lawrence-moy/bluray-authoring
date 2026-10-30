@@ -633,3 +633,67 @@ fn language_list_fixes_track_numbers() {
     assert!(cmds[2].starts_with(&bdauthor_core::mobj::set_pg_stream(Some(1)).text()), "English : {cmds:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn several_audio_tracks_per_video() {
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_audio_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
+    // a.mp4 : image 4 s, piste audio 0 en francais (4 s), piste audio 1 en anglais (2 s) ; b.mp4 : une piste ; doub.wav : doublage francais de b
+    run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=4", "-f", "lavfi", "-i", "sine=frequency=440:duration=4", "-f", "lavfi", "-i", "sine=frequency=880:duration=2",
+          "-map", "0", "-map", "1", "-map", "2", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-metadata:s:a:0", "language=fra", "-metadata:s:a:1", "language=eng", dir.join("a.mp4").to_str().unwrap()]);
+    run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i", "sine=duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", dir.join("b.mp4").to_str().unwrap()]);
+    run(&["-f", "lavfi", "-i", "sine=frequency=300:duration=3", dir.join("doub.wav").to_str().unwrap()]);
+    let streams = bdauthor_core::ffmpeg::list_audio_streams(&tools, &dir.join("a.mp4")).unwrap();
+    assert_eq!(streams.iter().map(|s| (s.index, s.lang.as_str())).collect::<Vec<_>>(), vec![(0, "fra"), (1, "eng")]);
+    // langues : 1 = fra (piste 1), 2 = eng (piste 2). La video a les declare dans l'ordre inverse.
+    let proj = r##"{ "titre": "Audio", "langue": "fra",
+      "langues": [ {"id":1,"nom":"Francais","code":"fra"}, {"id":2,"nom":"Anglais","code":"eng"} ],
+      "videos": [ {"fichier": "a.mp4", "pistes_audio": [ {"piste":1,"langue":"eng","langue_id":2}, {"piste":0,"langue":"fra","langue_id":1} ]},
+                  {"fichier": "b.mp4", "pistes_audio": [ {"fichier":"doub.wav","langue":"fra","langue_id":1} ]},
+                  {"fichier": "a.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2} }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let build = |out: &str| {
+        let mut logs = Vec::new();
+        let info = {
+            let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
+            let cancel = AtomicBool::new(false);
+            let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+            build_project(&dir.join("projet.json"), &dir.join(out), &mut env).unwrap()
+        };
+        (info, logs)
+    };
+    let (info, _) = build("out");
+    assert!(info.report.ok(), "{}", info.report.render());
+    let root = dir.join("out/BDMV");
+    let audio = |v: usize| -> Vec<(u16, String)> {
+        let clpi = bdauthor_core::clpi::Clpi::parse(&std::fs::read(root.join(format!("CLIPINF/{v:05}.clpi"))).unwrap()).unwrap();
+        clpi.program.programs[0].streams.iter().filter(|s| s.coding_type == 0x81).map(|s| (s.pid, String::from_utf8_lossy(&s.attrs[1..4]).into_owned())).collect()
+    };
+    // video a : francais d'abord (piste 1), anglais ensuite (piste 2), malgre l'ordre du projet
+    assert_eq!(audio(0), vec![(0x1100, "fra".to_string()), (0x1101, "eng".to_string())]);
+    // video b : doublage francais seul, meme numero que dans la video a ; video c (sans reglage) : sa premiere piste, en francais
+    assert_eq!(audio(1), vec![(0x1100, "fra".to_string())]);
+    assert_eq!(audio(2), vec![(0x1100, "fra".to_string())]);
+    // le francais de a dure 4 s, l'anglais 2 s : l'ordre des flux suit bien les langues
+    let count = |clip: &str, pid: u16| -> usize {
+        let data = std::fs::read(root.join(format!("STREAM/{clip}.m2ts"))).unwrap();
+        bdauthor_core::m2ts::reassemble(&data, pid).map(|v| v.len()).unwrap_or(0)
+    };
+    assert!(count("00000", 0x1100) > count("00000", 0x1101) && count("00000", 0x1101) > 0, "{} {}", count("00000", 0x1100), count("00000", 0x1101));
+    assert_eq!(count("00001", 0x1101), 0);
+    // playlist de a : deux entrees audio (fra puis eng)
+    let mpls = std::fs::read(root.join("PLAYLIST/00000.mpls")).unwrap();
+    let entry = |pid: u8, l: &[u8; 3]| { let mut n = vec![9u8, 1, 0x11, pid, 0, 0, 0, 0, 0, 0, 5, 0x81]; n.push(0); n.extend_from_slice(l); n };
+    let find = |pid: u8, l: &[u8; 3]| { let n = entry(pid, l); mpls.windows(n.len()).position(|w| w[..12] == n[..12] && w[13..] == n[13..]) };
+    let (fr, en) = (find(0x00, b"fra"), find(0x01, b"eng"));
+    assert!(fr.is_some() && en.is_some() && fr < en, "{fr:?} {en:?}");
+    // ffprobe voit 2 flux audio dans le clip de a
+    let pr = Command::new(&tools.ffprobe).args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name,id", "-of", "csv=p=0"]).arg(root.join("STREAM/00000.m2ts")).output().unwrap();
+    let ids: std::collections::BTreeSet<String> = String::from_utf8_lossy(&pr.stdout).lines().filter(|l| l.contains("ac3")).map(String::from).collect();
+    assert_eq!(ids.len(), 2, "{ids:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

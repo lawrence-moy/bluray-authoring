@@ -17,7 +17,7 @@ use crate::mobj::{Command, MovieObject, MovieObjectBdmv, GOTO_INSN, JUMP_TITLE_I
 use crate::convert::{generate_pages, GenVideo};
 use crate::nav::{make_index, make_playlist, make_playlist_multi, AudioStn, PlaylistParams, VideoStn};
 use crate::palette::RgbaImage;
-use crate::tsclip::{make_clip_clpi, make_clip_clpi_pg, py_floordiv, scan_clip, ClipScan, FRAME_RATES};
+use crate::tsclip::{make_clip_clpi, make_clip_clpi_tracks, py_floordiv, scan_clip, ClipScan, FRAME_RATES};
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -497,11 +497,34 @@ pub fn parse_chapters(v: &Value, sc: &ClipScan) -> Result<Vec<Chapter>> {
 }
 
 // ------------------------------------------------------------------ cache d'encodage
+/// Resume des reglages audio d'une video pour la cle du cache d'encodage.
+fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) -> String {
+    let mut s = String::new();
+    for t in tracks {
+        match &t.source {
+            crate::audio::AudioSource::Embedded(n) => s.push_str(&format!("e{n}")),
+            crate::audio::AudioSource::File(f) => {
+                let md = std::fs::metadata(f).ok();
+                let mtime = md.as_ref().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
+                s.push_str(&format!("f{}:{}:{}", f, md.map_or(0, |m| m.len()), mtime));
+            }
+        }
+        s.push_str(&format!("@{};", t.offset_ms));
+    }
+    for l in langs { s.push_str(&String::from_utf8_lossy(l)); s.push(','); }
+    s
+}
+
 fn fnv1a(data: &[u8]) -> u64 {
     data.iter().fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
 }
 
 fn cache_key(path: &Path, lang: [u8; 3], o: &EncodeOpts, info: &ffmpeg::VideoInfo) -> Result<String> {
+    cache_key_with(path, lang, o, info, "")
+}
+
+/// `extra` : reglages audio propres a la video (pistes, langues) ; vide : meme cle qu'avant leur apparition.
+fn cache_key_with(path: &Path, lang: [u8; 3], o: &EncodeOpts, info: &ffmpeg::VideoInfo, extra: &str) -> Result<String> {
     let md = std::fs::metadata(path)?;
     let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map_or(0, |d| d.as_secs());
     let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -512,6 +535,7 @@ fn cache_key(path: &Path, lang: [u8; 3], o: &EncodeOpts, info: &ffmpeg::VideoInf
     if !matches!(tg.label, "1080p" | "720p59.94" | "720p50" | "720p59.94 (cadence doublee)" | "720p24") {
         s.push_str(&format!("|cible={}", tg.label));
     }
+    if !extra.is_empty() { s.push_str(&format!("|audio={extra}")); }
     Ok(format!("{:016x}", fnv1a(s.as_bytes())))
 }
 
@@ -577,7 +601,7 @@ type SubSlot = (Option<crate::subtitle::SubTrackCfg>, [u8; 3]);
 /// `keep_empty` : garde aussi les pistes sans replique affichable (numerotation par langues) ; sinon elles sont ignorees.
 #[allow(clippy::too_many_arguments)]
 fn add_subtitles(
-    env: &mut BuildEnv, src: &Path, base: &Path, cfg: &[SubSlot], keep_empty: bool, lang: [u8; 3], tmp: &Path, m2ts: &[u8], num: usize,
+    env: &mut BuildEnv, src: &Path, base: &Path, cfg: &[SubSlot], keep_empty: bool, audio_langs: &[[u8; 3]], tmp: &Path, m2ts: &[u8], num: usize,
 ) -> Result<(Vec<u8>, Vec<(u16, [u8; 3])>)> {
     use crate::subtitle::{load_cues, shift, SubSource};
     let abs = |f: &str| -> PathBuf { let q = Path::new(f); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
@@ -617,7 +641,7 @@ fn add_subtitles(
         }
     }
     let n_sets: usize = kept.iter().map(|t| t.specs.len()).sum();
-    let (out, _) = crate::film::mux_encoded_subs(&enc, lang, &kept)?;
+    let (out, _) = crate::film::mux_encoded_tracks(&enc, audio_langs, &kept)?;
     (env.log)(&format!("   {} piste(s) de sous-titres ajoutee(s) ({} segments)", kept.len(), n_sets));
     Ok((out, kept.iter().enumerate().map(|(k, t)| (crate::pgs::PG_PID0 + k as u16, t.lang)).collect()))
 }
@@ -729,6 +753,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let lang_ids: Vec<u32> = languages.iter().map(|l| l.id).collect();
     let all_subs: Vec<Vec<crate::subtitle::SubTrackCfg>> = vids.iter().map(|v| crate::subtitle::tracks_from_value(v.get("soustitres")).map_err(Error::Format)).collect::<Result<_>>()?;
     let (slots, n_slots) = if languages.is_empty() { (Vec::new(), 0) } else { slot_tracks(&languages, &all_subs)? };
+    // pistes audio : meme regle de numerotation par langue (les langues audio viennent de la meme liste)
+    let all_audio: Vec<Vec<crate::audio::AudioTrackCfg>> = vids.iter().map(|v| crate::audio::tracks_from_value(v.get("pistes_audio")).map_err(Error::Format)).collect::<Result<_>>()?;
+    if languages.is_empty() && all_audio.iter().any(|t| !t.is_empty()) {
+        return bad("pistes audio configurees mais aucune langue dans la liste des langues du projet (menu Edition > Langues des sous-titres)");
+    }
+    let audio_plan = crate::audio::plan_audio(&languages, lang_s, &all_audio).map_err(Error::Format)?;
+    let mut audio_langs: Vec<Vec<[u8; 3]>> = Vec::new();
 
     // 1. videos
     for (i, v) in vids.iter().enumerate() {
@@ -737,9 +768,26 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         (env.log)(&format!("[{}/{n}] encodage de {name} ...", i + 1));
         let info = ffmpeg::probe(env.tools, &src)?;
         durations.push(info.duration_s);
+        // pistes audio de cette video (chemins complets) et leurs langues
+        let (a_tracks, a_langs): (Vec<crate::audio::AudioTrackCfg>, Vec<[u8; 3]>) = match &audio_plan {
+            Some(pl) => {
+                let mut t = pl.videos[i].tracks.clone();
+                for x in &mut t {
+                    if let crate::audio::AudioSource::File(f) = &mut x.source {
+                        let full = p(f);
+                        if !full.is_file() { return bad(format!("video {}, piste audio : fichier introuvable ({f})", i + 1)); }
+                        *f = full.to_string_lossy().into_owned();
+                    }
+                }
+                (t, pl.videos[i].langs.clone())
+            }
+            None => (Vec::new(), vec![lang]),
+        };
+        let a_sig = if audio_plan.is_some() { audio_signature(&a_tracks, &a_langs) } else { String::new() };
+        audio_langs.push(a_langs.clone());
         let cached = match &cache_dir {
             Some(d) => {
-                let f = d.join(format!("{}.m2ts", cache_key(&src, lang, &eopts, &info)?));
+                let f = d.join(format!("{}.m2ts", cache_key_with(&src, lang, &eopts, &info, &a_sig)?));
                 std::fs::read(&f).ok().filter(|b| !b.is_empty() && b.len() % 192 == 0).map(|b| (b, f))
             }
             None => None,
@@ -749,11 +797,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             None => {
                 let (lo, hi) = (i as f64 / n as f64 * 0.85, (i + 1) as f64 / n as f64 * 0.85);
                 let progress = &mut *env.progress;
-                let (m, st) = make_film_m2ts(env.tools, &src, lang, &eopts, None, &mut |f| progress(lo + (hi - lo) * f), env.cancel)?;
+                let (m, st) = crate::film::make_film_m2ts_tracks(env.tools, &src, &a_langs, &a_tracks, &eopts, None, &mut |f| progress(lo + (hi - lo) * f), env.cancel)?;
                 (env.log)(&format!("   {} : {} images, {} trames audio", st.cible, st.images, st.trames_audio));
                 if let Some(d) = &cache_dir {
                     std::fs::create_dir_all(d)?;
-                    let f = d.join(format!("{}.m2ts", cache_key(&src, lang, &eopts, &info)?));
+                    let f = d.join(format!("{}.m2ts", cache_key_with(&src, lang, &eopts, &info, &a_sig)?));
                     let t = f.with_extension("m2ts.tmp");
                     std::fs::write(&t, &m)?;
                     std::fs::rename(&t, &f)?;
@@ -764,7 +812,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         // sous-titres PGS : ajoutes par remuxage du clip encode (le cache ne contient pas les sous-titres)
         let (m2ts, pg) = if n_slots > 0 {
             // avec une liste de langues, toutes les videos ont les memes pistes (vides au besoin) : un meme numero = une meme langue
-            add_subtitles(env, &src, &base, &slots[i], true, lang, &tmp.0, &m2ts, i + 1)?
+            add_subtitles(env, &src, &base, &slots[i], true, &a_langs, &tmp.0, &m2ts, i + 1)?
         } else if all_subs[i].is_empty() {
             (m2ts, Vec::new())
         } else {
@@ -772,11 +820,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 let tl: [u8; 3] = t.lang.as_bytes().try_into().map_err(|_| Error::Format(format!("video {}, sous-titres {} : langue invalide", i + 1, k + 1)))?;
                 Ok((Some(t.clone()), tl))
             }).collect::<Result<_>>()?;
-            add_subtitles(env, &src, &base, &cfg, false, lang, &tmp.0, &m2ts, i + 1)?
+            add_subtitles(env, &src, &base, &cfg, false, &a_langs, &tmp.0, &m2ts, i + 1)?
         };
         let sc = scan_clip(&m2ts)?;
         let pg_langs: Vec<[u8; 3]> = pg.iter().map(|x| x.1).collect();
-        files.insert(format!("CLIPINF/{i:05}.clpi"), make_clip_clpi_pg(&m2ts, lang, 0, None, "0100", &pg_langs)?);
+        files.insert(format!("CLIPINF/{i:05}.clpi"), make_clip_clpi_tracks(&m2ts, &a_langs, 0, None, "0100", &pg_langs)?);
         pg_info.push(pg);
         files.insert(format!("STREAM/{i:05}.m2ts"), m2ts);
         scans.push(sc);
@@ -1061,11 +1109,14 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     // 6. playlists des videos (avec leurs reperes), « Tout lire », sequence d'ouverture, navigation
     let mut video_params = Vec::new();
     for (i, sc) in scans.iter().enumerate() {
-        let Some(&(pid_a, type_a, code_a)) = sc.audio_codes.first() else { return bad(format!("la video {} n'a pas de piste audio exploitable", i + 1)) };
+        if sc.audio_codes.is_empty() { return bad(format!("la video {} n'a pas de piste audio exploitable", i + 1)); }
+        let stns: Vec<AudioStn> = sc.audio_codes.iter().enumerate().map(|(k, &(pid, coding, fmt_rate))| {
+            AudioStn { pid, coding, fmt_rate, lang: audio_langs[i].get(k).or(audio_langs[i].last()).copied().unwrap_or(lang) }
+        }).collect();
         let pp = PlaylistParams {
             clip: format!("{i:05}"), in_time: (sc.start90 / 2) as u32, out_time: (sc.end90 / 2) as u32,
             video: VideoStn { pid: sc.video.0, coding: sc.video.1, fmt_rate: sc.video_code },
-            audio: Some(AudioStn { pid: pid_a, coding: type_a, fmt_rate: code_a, lang }),
+            audio: Some(stns[0]), more_audio: stns[1..].to_vec(),
             with_menu: false, pg: pg_info[i].clone(), marks: if marks[i].is_empty() { None } else { Some(marks[i].clone()) },
             ..Default::default()
         };
