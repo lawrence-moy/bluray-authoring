@@ -688,20 +688,24 @@ impl App {
         let due = self.drag.is_none() || self.last_preview.elapsed().as_secs_f32() * 1000.0 >= min_gap;
         // animation du bouton selectionne : animation d'images (simulation ou « Apercu ») sinon halo anime (simulation),
         // a la cadence de la page ; `pulse` = image + 1 (0 : image fixe)
-        let (n_frames, fps) = {
+        let (n_frames, fps, once) = {
             let d = info.design(&self.model.designs);
             let fps = d.map_or(0, |d| d.anim_fps);
             let fps = if fps == 0 { bdauthor_core::design::DEFAULT_ANIM_FPS } else { fps };
-            let n = self.sel_item.and_then(|i| d.and_then(|d| d.items.get(i))).map_or(0, |it| {
+            let (n, once) = self.sel_item.and_then(|i| d.and_then(|d| d.items.get(i))).map_or((0, false), |it| {
                 let custom = if matches!(it.kind, Kind::Slot { .. }) { 0 } else { it.look.skin.anim_frames() };
-                if custom > 0 && (self.sim.is_some() || self.anim_preview) { custom }
-                else if custom == 0 && self.sim.is_some() { let p = it.look.style.as_ref().unwrap_or(&self.model.designs.style).pulse_frames(); if p > 1 { p } else { 0 } }
-                else { 0 }
+                if custom > 0 && (self.sim.is_some() || self.anim_preview) { (custom, it.look.skin.sel_once) }
+                else if custom == 0 && self.sim.is_some() { let p = it.look.style.as_ref().unwrap_or(&self.model.designs.style).pulse_frames(); (if p > 1 { p } else { 0 }, false) }
+                else { (0, false) }
             });
-            (n, fps)
+            (n, fps, once)
         };
-        let pulse = if n_frames > 0 { (self.t0.elapsed().as_secs_f64() * fps as f64) as usize % n_frames + 1 } else { 0 };
-        if n_frames > 0 { ctx.request_repaint_after(std::time::Duration::from_millis(30)); }
+        // comme le lecteur : l'animation repart du debut a chaque nouvelle selection ; « une fois » s'arrete sur la derniere image
+        let key = (self.sel_item, self.anim_preview, self.sim.is_some(), once);
+        if key != self.anim_key { self.anim_key = key; self.anim_t0 = std::time::Instant::now(); }
+        let step = (self.anim_t0.elapsed().as_secs_f64() * fps as f64) as usize;
+        let pulse = if n_frames == 0 { 0 } else if once { step.min(n_frames - 1) + 1 } else { step % n_frames + 1 };
+        if n_frames > 0 && !(once && step >= n_frames - 1) { ctx.request_repaint_after(std::time::Duration::from_millis(30)); }
         if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() || (self.preview_sel != self.sel_item && self.drag.is_none()) || self.preview_act != self.sim_pressed() || self.preview_pulse != pulse {
             self.preview_pulse = pulse;
             let t = std::time::Instant::now();

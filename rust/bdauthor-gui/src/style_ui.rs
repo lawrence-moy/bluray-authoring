@@ -108,7 +108,7 @@ fn anim_ui(ui: &mut egui::Ui, skin: &mut Skin, pick: &mut Option<usize>, preview
         if ui.radio(skin.sel_once, "une fois, puis dernière image").clicked() && !skin.sel_once { skin.sel_once = true; changed = true; }
     });
     ui.horizontal(|ui| {
-        ui.toggle_value(preview, "▶ Aperçu").on_hover_text("Joue l'animation sur l'aperçu de la page tant que l'élément est sélectionné (toujours en boucle)");
+        ui.toggle_value(preview, "▶ Aperçu").on_hover_text("Joue l'animation sur l'aperçu de la page tant que l'élément est sélectionné. En lecture « une fois », désactiver puis réactiver pour la rejouer.");
         let n = skin.sel_frames.len();
         ui.label(egui::RichText::new(format!("Durée : {:.1} s ({fps} images/s, réglable dans « Fond de cette page »)", n as f64 / fps.max(1) as f64)).weak());
     });
