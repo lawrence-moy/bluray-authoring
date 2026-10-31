@@ -809,7 +809,9 @@ impl FontRenderer {
             let skin_state = || -> Option<Arc<RgbaImage>> {
                 let key = hkey(|hh| ("habillage", skin, project_dir, w, h, &st, state).hash(hh));
                 let one = |p: &str| if p.is_empty() { None } else { Some(abs(p)) };
-                let states = self.skin_button(&[one(&skin.normal), one(&skin.selected), one(&skin.activated)], w as u32, h as u32, &st).ok()?;
+                // etat selectionne anime : premiere image de l'animation (l'editeur fait defiler les suivantes)
+                let sel = if skin.selected.is_empty() { skin.sel_frames.first().map_or("", |f| f.as_str()) } else { skin.selected.as_str() };
+                let states = self.skin_button(&[one(&skin.normal), one(sel), one(&skin.activated)], w as u32, h as u32, &st).ok()?;
                 Some(self.cached_sprite(key, || states[state].as_ref().clone()))
             };
             match &it.kind {

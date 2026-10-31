@@ -473,3 +473,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   `MenuOptions::anim_fps` -> `anim_rate_code(code video, ips)`.
 - Interface : inspecteur > images d'etats > « Animer l'etat selectionne » (liste ordonnee, boucle / une fois, « ▶ Apercu ») ; cadence
   dans « Fond de cette page ». Apercu et simulation jouent l'animation (en boucle). Validation : image normale manquante, fichiers absents.
+- (suite) Une seule ligne « Selectionne » dans l'inspecteur : une image = etat fixe (`Skin::selected`), plusieurs (selection
+  multiple) = animation (`Skin::sel_frames`, au moins deux). `Skin::set_selected` / `selected_files` gardent cet invariant ; a la
+  lecture, une animation prime sur une image « selectionne » et une animation d'une image devient image fixe. Apercu statique de
+  l'etat selectionne d'un element anime : premiere image (bdauthor-render).

@@ -79,3 +79,26 @@ fn custom_animation_json_and_weight() {
     let probs = m.validate(std::path::Path::new("/nonexistent"));
     assert!(probs.iter().any(|p| p.contains("Animation d'un élément : image introuvable (a2.png)")), "{probs:?}");
 }
+
+#[test]
+fn selected_images_one_or_many() {
+    use bdauthor_core::style::Skin;
+    let mut sk = Skin { normal: "n.png".into(), ..Default::default() };
+    sk.set_selected(vec!["s.png".into()]);
+    assert_eq!((sk.selected.as_str(), sk.sel_frames.len(), sk.anim_frames()), ("s.png", 0, 0));
+    sk.set_selected(vec!["a.png".into(), "b.png".into()]);
+    assert_eq!((sk.selected.as_str(), sk.anim_frames()), ("", 2));
+    assert_eq!(sk.selected_files(), ["a.png", "b.png"]);
+    sk.sel_once = true;
+    let back = Skin::from_value(&sk.to_value());
+    assert_eq!(back, sk);
+    sk.set_selected(vec![]);
+    assert!(sk.selected_files().is_empty() && !sk.sel_once);
+    // anciens projets : image « selectionne » + animation -> l'animation gagne ; animation d'une seule image -> image fixe
+    let v = bdauthor_core::json::parse(r#"{"normal":"n.png","selectionne":"s.png","animation_selection":["a.png","b.png"],"animation_une_fois":true}"#).unwrap();
+    let old = Skin::from_value(&v);
+    assert_eq!((old.selected.as_str(), old.sel_frames.len(), old.sel_once), ("", 2, true));
+    let v = bdauthor_core::json::parse(r#"{"normal":"n.png","animation_selection":["a.png"]}"#).unwrap();
+    let one = Skin::from_value(&v);
+    assert_eq!((one.selected.as_str(), one.sel_frames.len()), ("a.png", 0));
+}

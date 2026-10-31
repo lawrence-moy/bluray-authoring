@@ -177,7 +177,8 @@ pub struct Skin {
     pub normal: String,
     pub selected: String,
     pub activated: String,
-    /// Animation de l'etat selectionne : images jouees dans l'ordre (remplacent `selected`) ; exige une image normale.
+    /// Animation de l'etat selectionne : images jouees dans l'ordre, au moins deux (une seule image va dans `selected`, qui est
+    /// alors vide ici, voir `set_selected`) ; exige une image normale.
     pub sel_frames: Vec<String>,
     /// Animation jouee une seule fois (arret sur la derniere image) au lieu d'en boucle.
     pub sel_once: bool,
@@ -186,6 +187,22 @@ pub struct Skin {
 impl Skin {
     pub fn is_empty(&self) -> bool {
         self.normal.is_empty() && self.selected.is_empty() && self.activated.is_empty() && self.sel_frames.is_empty()
+    }
+    /// Images de l'etat « selectionne » : aucune, une (image fixe) ou plusieurs (animation, dans l'ordre).
+    pub fn selected_files(&self) -> Vec<String> {
+        if !self.sel_frames.is_empty() { self.sel_frames.clone() } else if self.selected.is_empty() { vec![] } else { vec![self.selected.clone()] }
+    }
+    /// Choisit les images de l'etat « selectionne » : une image = etat fixe (`selected`), plusieurs = animation (`sel_frames`).
+    pub fn set_selected(&mut self, files: Vec<String>) {
+        let mut files: Vec<String> = files.into_iter().filter(|f| !f.is_empty()).collect();
+        if files.len() >= 2 {
+            self.selected.clear();
+            self.sel_frames = files;
+        } else {
+            self.selected = files.pop().unwrap_or_default();
+            self.sel_frames.clear();
+            self.sel_once = false;
+        }
     }
     /// Nombre d'images de l'animation de l'etat selectionne effectivement utilisee (0 sans animation ou sans image normale).
     pub fn anim_frames(&self) -> usize {
@@ -207,9 +224,12 @@ impl Skin {
     }
     pub fn from_value(v: &Value) -> Skin {
         let g = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-        let sel_frames = v.get("animation_selection").and_then(Value::as_array)
+        let sel_frames: Vec<String> = v.get("animation_selection").and_then(Value::as_array)
             .map(|a| a.iter().filter_map(Value::as_str).filter(|f| !f.is_empty()).map(String::from).collect()).unwrap_or_default();
-        Skin { normal: g("normal"), selected: g("selectionne"), activated: g("active"), sel_frames, sel_once: v.get("animation_une_fois").and_then(Value::as_bool).unwrap_or(false) }
+        let mut s = Skin { normal: g("normal"), selected: g("selectionne"), activated: g("active"), sel_frames: vec![], sel_once: v.get("animation_une_fois").and_then(Value::as_bool).unwrap_or(false) };
+        // une animation (si presente) prime sur l'image « selectionne », comme sur le disque ; une animation d'une image est une image fixe
+        if !sel_frames.is_empty() { let once = s.sel_once; s.set_selected(sel_frames); if s.sel_frames.len() >= 2 { s.sel_once = once; } }
+        s
     }
 }
 

@@ -1262,13 +1262,14 @@ impl App {
             }
         }
         self.anim_preview = anim_preview;
-        if pick_skin == Some(3) {
-            // images de l'animation : plusieurs fichiers, ranges par ordre de nom
+        if pick_skin == Some(1) {
+            // image(s) « selectionne » : une = etat fixe, plusieurs = animation (rangees par ordre de nom)
             if let Some(mut fs) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_files() {
                 fs.sort();
                 let rel: Vec<String> = fs.iter().map(|f| self.relative(f)).collect();
                 if let Some(it) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)) {
-                    it.look.skin.sel_frames = rel;
+                    it.look.skin.set_selected(rel);
+                    if it.look.skin.sel_frames.is_empty() { self.anim_preview = false; }
                     changed = true;
                 }
             }
