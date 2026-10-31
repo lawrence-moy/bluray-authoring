@@ -102,8 +102,8 @@ impl App {
                 // le disque revient a la page d'ou « Tout lire » a ete lance
                 play = Some(("Lecture de toutes les vidéos à la suite".to_string(), if generic { Some(info.r) } else { self.home_page() }));
             }
-            SimAction::Go(Target::Stay) => {
-                // aucune navigation : seul le reglage des sous-titres a lieu
+            SimAction::Go(Target::Stay(exit)) => {
+                // reglage des sous-titres, puis la page de sortie s'il y en a une
                 self.notice = match sub {
                     SubChoice::Keep => "Simulation : ce bouton ne fait rien.".to_string(),
                     SubChoice::Off => "Simulation : sous-titres masqués.".to_string(),
@@ -111,15 +111,15 @@ impl App {
                     SubChoice::Lang(id) => format!("Simulation : sous-titres réglés sur « {} ».", self.model.language_name(id)),
                 };
                 self.edit_gen += 1;
-                return;
+                match exit.and_then(|q| page_of_target(&pages, Target::Main(q))) { Some(r) => go = Some(r), None => return }
             }
-            SimAction::Go(Target::Audio(id)) => {
+            SimAction::Go(Target::Audio(id, exit)) => {
                 // aucune navigation : seule la langue audio change (pour les videos lues ensuite)
                 let name = self.model.language_name(id);
                 let has = self.model.videos.iter().any(|v| v.audio.iter().any(|t| t.lang_id == id));
                 self.notice = if has { format!("Simulation : langue audio réglée sur « {name} ».") } else { format!("Simulation : aucune vidéo n'a d'audio en « {name} » : rien ne change.") };
                 self.edit_gen += 1;
-                return;
+                match exit.and_then(|q| page_of_target(&pages, Target::Main(q))) { Some(r) => go = Some(r), None => return }
             }
             SimAction::Go(t) => go = page_of_target(&pages, t),
             SimAction::Prev | SimAction::Next => {

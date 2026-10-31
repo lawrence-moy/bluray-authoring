@@ -256,6 +256,7 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         let mut btn = MenuButton::new("", go, bx + l, by + t, vec![nrm, sel, act]);
         // sous-titres choisis par le bouton : regles avant ses autres commandes
         let mut commands = commands;
+        if it.sub != crate::design::SubChoice::Keep && commands.is_empty() { commands.push(Command::new(JUMP_TITLE_INSN, go, 0)); }
         match it.sub {
             crate::design::SubChoice::Keep => {}
             crate::design::SubChoice::Off => commands.insert(0, crate::mobj::set_pg_stream(None)),
@@ -710,7 +711,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             let mut errs = Vec::new();
             for (k, d) in ds.free.iter().enumerate() {
                 errs.extend(d.validate_free(k, np, n).into_iter().filter(|x| x.error).map(|x| format!("page {} : {}", k + 1, x.msg)));
-                for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay | Target::Audio(_) => true, Target::Chapters(..) => false }) {
+                for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay(e) | Target::Audio(_, e) => e.map_or(true, |q| q < np), Target::Chapters(..) => false }) {
                     errs.push(format!("page {} : {}", k + 1, pr.msg));
                 }
             }
@@ -870,7 +871,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             for pr in d.validate_free(k, np, n) {
                 if pr.error { errs.push(format!("page {} : {}", k + 1, pr.msg)); } else { (env.log)(&format!("page {} : {}", k + 1, pr.msg)); }
             }
-            for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay | Target::Audio(_) => true, Target::Chapters(..) => false }) {
+            for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay(e) | Target::Audio(_, e) => e.map_or(true, |q| q < np), Target::Chapters(..) => false }) {
                 errs.push(format!("page {} : {}", k + 1, pr.msg));
             }
         }
@@ -929,12 +930,21 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             Target::Main(q) => (page_title(q.min(np - 1)), vec![]),
             Target::Chapters(..) => (page_title(home_idx), vec![]),
             // aucune navigation : une commande vide (sans elle, le bouton menerait au Top Menu)
-            Target::Stay => (0, vec![Command::new(NOP_INSN, 0, 0)]),
+            // reglage des sous-titres (commande ajoutee par `page_buttons`) puis page de sortie, ou aucune navigation
+            // (une commande vide : sans elle, le bouton menerait au Top Menu)
+            Target::Stay(e) => match e {
+                Some(q) => { let t = page_title(q.min(np - 1)); (t, vec![Command::new(JUMP_TITLE_INSN, t, 0)]) }
+                None => (0, vec![Command::new(NOP_INSN, 0, 0)]),
+            },
             // langue audio : numero de piste = rang parmi les langues ayant de l'audio (voir `audio::plan_audio`) ;
             // sans piste correspondante (signale par la validation), le bouton ne change rien
-            Target::Audio(id) => {
+            Target::Audio(id, e) => {
                 let rank = audio_plan.as_ref().and_then(|pl| pl.slots.iter().position(|s| *s == id));
-                (0, rank.map_or_else(|| vec![Command::new(NOP_INSN, 0, 0)], |r| vec![crate::mobj::set_audio_stream(r), Command::new(NOP_INSN, 0, 0)]))
+                let mut c: Vec<Command> = rank.map(crate::mobj::set_audio_stream).into_iter().collect();
+                match e {
+                    Some(q) => { let t = page_title(q.min(np - 1)); c.push(Command::new(JUMP_TITLE_INSN, t, 0)); (t, c) }
+                    None => { c.push(Command::new(NOP_INSN, 0, 0)); (0, c) }
+                }
             }
         }
     };

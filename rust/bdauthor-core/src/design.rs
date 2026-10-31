@@ -19,32 +19,33 @@ pub enum Target {
     Chapters(usize, usize),
     /// Lecture d'une video (0-based) depuis le debut.
     Video(usize),
-    /// Aucune navigation : le menu reste affiche (bouton qui ne fait que regler les sous-titres, par exemple).
-    Stay,
-    /// Aucune navigation : regle la langue audio (`Language::id`) et reste sur la page. Jamais en meme temps que les sous-titres.
-    Audio(u32),
+    /// Regle les sous-titres (`Item::sub`) puis va a la page du menu principal donnee (0-based) ; `None` = reste sur la page.
+    Stay(Option<usize>),
+    /// Regle la langue audio (`Language::id`) puis va a la page donnee ; `None` = reste sur la page. Jamais avec les sous-titres.
+    Audio(u32, Option<usize>),
 }
 
 impl Target {
     /// Valeur JSON (champ « cible »).
     pub fn to_value(self) -> Value {
         let num = |v: usize| Value::Num((v + 1) as f64);
+        let then = |e: Option<usize>| e.map(|p| ("ensuite".to_string(), num(p)));
         let o = match self {
             Target::Main(p) => vec![("menu".to_string(), Value::Str("principal".into())), ("page".to_string(), num(p))],
             Target::Chapters(v, p) => vec![("menu".to_string(), Value::Str("chapitres".into())), ("video".to_string(), num(v)), ("page".to_string(), num(p))],
             Target::Video(v) => vec![("lire".to_string(), Value::Str("video".into())), ("video".to_string(), num(v))],
-            Target::Stay => vec![("rester".to_string(), Value::Bool(true))],
-            Target::Audio(id) => vec![("audio_langue".to_string(), Value::Num(id as f64))],
+            Target::Stay(e) => std::iter::once(("rester".to_string(), Value::Bool(true))).chain(then(e)).collect(),
+            Target::Audio(id, e) => std::iter::once(("audio_langue".to_string(), Value::Num(id as f64))).chain(then(e)).collect(),
         };
         Value::Obj(o)
     }
     pub fn from_value(c: &Value) -> Option<Target> {
         let n = |key: &str| c.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
         if c.get("rester").and_then(Value::as_bool) == Some(true) {
-            return Some(Target::Stay);
+            return Some(Target::Stay(n("ensuite")));
         }
         if let Some(id) = c.get("audio_langue").and_then(Value::as_i64) {
-            return if id >= 1 { Some(Target::Audio(id as u32)) } else { None };
+            return if id >= 1 { Some(Target::Audio(id as u32, n("ensuite"))) } else { None };
         }
         if c.get("lire").and_then(Value::as_str) == Some("video") {
             return n("video").map(Target::Video);
@@ -55,10 +56,35 @@ impl Target {
             _ => None,
         }
     }
+    /// Reglage sans navigation propre (sous-titres ou audio) ?
+    pub fn is_setting(self) -> bool { matches!(self, Target::Stay(_) | Target::Audio(..)) }
+    /// Page de sortie d'un reglage (`None` : reste sur la page, ou destination qui n'est pas un reglage).
+    pub fn exit(self) -> Option<usize> { match self { Target::Stay(e) | Target::Audio(_, e) => e, _ => None } }
+    /// Le meme reglage avec une autre page de sortie (sans effet sur les autres destinations).
+    pub fn with_exit(self, e: Option<usize>) -> Target {
+        match self { Target::Stay(_) => Target::Stay(e), Target::Audio(id, _) => Target::Audio(id, e), t => t }
+    }
+    /// La destination sans sa page de sortie : ce qui est choisi dans la liste « Destination ».
+    pub fn without_exit(self) -> Target { self.with_exit(None) }
+    /// Page du menu principal visee (destination de page, ou page de sortie d'un reglage) : a renumeroter avec les pages.
+    pub fn page_mut(&mut self) -> Option<&mut usize> {
+        match self { Target::Main(p) | Target::Stay(Some(p)) | Target::Audio(_, Some(p)) => Some(p), _ => None }
+    }
+    /// La page `page` du menu principal a ete supprimee : `false` si cette destination doit etre retiree (page visee),
+    /// sinon renumerotation ; un reglage qui sortait vers cette page reste desormais sur place.
+    pub fn page_removed(&mut self, page: usize) -> bool {
+        match self {
+            Target::Main(p) if *p == page => return false,
+            Target::Stay(e) | Target::Audio(_, e) if *e == Some(page) => *e = None,
+            _ => {}
+        }
+        if let Some(p) = self.page_mut() { if *p > page { *p -= 1; } }
+        true
+    }
     /// Renumerotation quand deux videos echangent leur place.
     fn swap_videos(&mut self, a: usize, b: usize) {
         let sw = |v: &mut usize| *v = if *v == a { b } else if *v == b { a } else { *v };
-        match self { Target::Chapters(v, _) | Target::Video(v) => sw(v), Target::Main(_) | Target::Stay | Target::Audio(_) => {} }
+        match self { Target::Chapters(v, _) | Target::Video(v) => sw(v), Target::Main(_) | Target::Stay(_) | Target::Audio(..) => {} }
     }
 }
 
@@ -483,7 +509,7 @@ impl PageDesign {
         // impasse : aucun bouton ni lien ne mene a une autre page (la touche Menu ramene toujours a l'accueil)
         let exits = self.items.iter().any(|i| match &i.kind {
             Kind::Nav { action: NavAction::Prev | NavAction::Next | NavAction::Goto, .. } => true,
-            _ => matches!(i.link(), Some(Target::Main(_) | Target::Chapters(..))),
+            _ => matches!(i.link(), Some(Target::Main(_) | Target::Chapters(..) | Target::Stay(Some(_)) | Target::Audio(_, Some(_)))),
         });
         if !exits && page > 0 {
             p.push(Problem { error: false, msg: "Aucun bouton vers une autre page : on n'en sortira qu'avec la touche Menu de la télécommande.".into() });
@@ -763,11 +789,7 @@ impl Designs {
         for d in self.all_mut() {
             for it in &mut d.items {
                 if let Some(target) = it.targets_mut() {
-                    match *target {
-                        Some(Target::Main(p)) if p == page => *target = None,
-                        Some(Target::Main(p)) if p > page => *target = Some(Target::Main(p - 1)),
-                        _ => {}
-                    }
+                    if let Some(t) = target { if !t.page_removed(page) { *target = None; } }
                 }
             }
         }

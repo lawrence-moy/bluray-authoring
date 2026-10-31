@@ -215,7 +215,8 @@ fn kind_name(k: &Kind) -> &'static str {
 fn link_ui(ui: &mut egui::Ui, link: &mut Option<Target>, targets: &[(Target, String)], changed: &mut bool) {
     let mut on = link.is_some();
     if ui.checkbox(&mut on, "Cliquable (devient un bouton du menu)").changed() {
-        *link = if on { targets.first().map(|t| t.0) } else { None };
+        // par defaut : la premiere page (pas un reglage de sous-titres ou d'audio)
+        *link = if on { targets.iter().find(|t| !t.0.is_setting()).or(targets.first()).map(|t| t.0) } else { None };
         *changed = true;
     }
     if link.is_some() {
@@ -226,10 +227,11 @@ fn link_ui(ui: &mut egui::Ui, link: &mut Option<Target>, targets: &[(Target, Str
 
 /// Liste des destinations possibles : pages du menu puis videos a lire.
 fn destination_combo(ui: &mut egui::Ui, target: &mut Option<Target>, targets: &[(Target, String)], changed: &mut bool) {
-    let shown = target.and_then(|t| targets.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| "(destination introuvable : à choisir)".to_string());
+    let shown = target.and_then(|t| targets.iter().find(|(x, _)| *x == t.without_exit()).map(|(_, l)| l.clone())).unwrap_or_else(|| "(destination introuvable : à choisir)".to_string());
     egui::ComboBox::from_label("Destination").selected_text(shown).show_ui(ui, |ui| {
         for (t, label) in targets {
-            if ui.selectable_label(*target == Some(*t), label).clicked() { *target = Some(*t); *changed = true; }
+            // meme reglage deja choisi : sa page de sortie est gardee
+            if ui.selectable_label(target.map(Target::without_exit) == Some(*t), label).clicked() && target.map(Target::without_exit) != Some(*t) { *target = Some(*t); *changed = true; }
         }
     });
 }
@@ -249,9 +251,9 @@ impl App {
             out.push((Target::Video(v), format!("Lire la vidéo {}. {}", v + 1, video_title(&self.model, v))));
         }
         // reglages sans navigation : les sous-titres, puis une entree par langue audio (jamais les deux a la fois)
-        let mut stay = vec![(Target::Stay, "Régler les sous-titres (sans quitter la page)".to_string())];
+        let mut stay = vec![(Target::Stay(None), "Régler les sous-titres".to_string())];
         for l in &self.model.languages {
-            stay.push((Target::Audio(l.id), format!("Régler la langue audio : {} (sans quitter la page)", l.name)));
+            stay.push((Target::Audio(l.id, None), format!("Régler la langue audio : {}", l.name)));
         }
         out.splice(0..0, stay);
         out
@@ -683,7 +685,7 @@ impl App {
             Some(d) => {
                 let targets = self.page_targets();
                 let mut probs = if info.is_free() { d.validate_free(info.page, info.pages, self.model.videos.len()) } else { d.validate(info.count(), info.menu, info.page, info.pages) };
-                probs.extend(d.check_targets(&|t| targets.iter().any(|(x, _)| *x == t)));
+                probs.extend(d.check_targets(&|t| targets.iter().any(|(x, _)| *x == t.without_exit()) && t.exit().map_or(true, |q| targets.iter().any(|(x, _)| *x == Target::Main(q)))));
                 probs
             }
             None => vec![],
@@ -1040,11 +1042,11 @@ impl App {
                     }
                     // au clic : lecture (habituel) ou autre destination
                     let habit = if start.is_some() { "Lire la vidéo depuis ce chapitre" } else { "Lire la vidéo" };
-                    let shown = link.and_then(|t| page_targets.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| if link.is_some() { "(destination introuvable)".into() } else { habit.to_string() });
+                    let shown = link.and_then(|t| page_targets.iter().find(|(x, _)| *x == t.without_exit()).map(|(_, l)| l.clone())).unwrap_or_else(|| if link.is_some() { "(destination introuvable)".into() } else { habit.to_string() });
                     egui::ComboBox::from_label("Au clic").selected_text(shown).show_ui(ui, |ui| {
                         if ui.selectable_label(link.is_none(), habit).clicked() { *link = None; changed = true; }
                         for (t, l) in &page_targets {
-                            if ui.selectable_label(*link == Some(*t), l).clicked() { *link = Some(*t); changed = true; }
+                            if ui.selectable_label(link.map(Target::without_exit) == Some(*t), l).clicked() && link.map(Target::without_exit) != Some(*t) { *link = Some(*t); changed = true; }
                         }
                     });
                     // apres la lecture
@@ -1066,7 +1068,7 @@ impl App {
                     // puis les pages, les videos et le reglage des sous-titres
                     let old = *action;
                     let shown = if *action != NavAction::Goto { action.label().to_string() } else {
-                        target.and_then(|t| page_targets.iter().find(|(x, _)| *x == t).map(|(_, l)| l.clone())).unwrap_or_else(|| "(destination introuvable : à choisir)".to_string())
+                        target.and_then(|t| page_targets.iter().find(|(x, _)| *x == t.without_exit()).map(|(_, l)| l.clone())).unwrap_or_else(|| "(destination introuvable : à choisir)".to_string())
                     };
                     egui::ComboBox::from_label("Destination").selected_text(shown).show_ui(ui, |ui| {
                         for a in NavAction::ALL {
@@ -1082,7 +1084,8 @@ impl App {
                         }
                         ui.separator();
                         for (t, l) in &page_targets {
-                            if ui.selectable_label(*action == NavAction::Goto && *target == Some(*t), l).clicked() {
+                            let same = *action == NavAction::Goto && target.map(Target::without_exit) == Some(*t);
+                            if ui.selectable_label(same, l).clicked() && !same {
                                 changed = true;
                                 if *text == old.default_text() { *text = NavAction::Goto.default_text().to_string(); }
                                 *action = NavAction::Goto;
@@ -1131,14 +1134,12 @@ impl App {
                     ui.label(egui::RichText::new("L'image est ajustée dans le cadre sans déformation.").weak());
                 }
             }
-            // action « Regler les sous-titres » : destination « rester sur la page » + piste choisie ; aucune autre action
-            // ne touche aux sous-titres
+            // actions « Regler les sous-titres » / « Regler la langue audio » : destination de reglage + langue, puis page de
+            // sortie (ou rester sur la page) ; aucune autre destination ne touche aux sous-titres ni a l'audio
             {
                 use bdauthor_core::design::SubChoice;
-                let stay = match &it.kind {
-                    Kind::Nav { action: NavAction::Goto, target, .. } => *target == Some(Target::Stay),
-                    _ => it.link() == Some(Target::Stay),
-                };
+                let cur = it.targets_mut().and_then(|t| *t);
+                let stay = matches!(cur, Some(Target::Stay(_)));
                 if !stay {
                     if it.sub != SubChoice::Keep { it.sub = SubChoice::Keep; changed = true; }
                 } else {
@@ -1157,21 +1158,30 @@ impl App {
                             if ui.selectable_label(cur_sub == c, name(c)).clicked() { it.sub = c; changed = true; }
                         }
                     });
-                    if sub_langs.is_empty() {
-                        ui.label(egui::RichText::new("Aucune langue de sous-titres dans le projet (à ajouter dans le menu « Édition > Langues du projet… »).").weak());
-                    } else {
-                        ui.label(egui::RichText::new("Le clic règle les sous-titres et le menu reste affiché. La langue vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue s'affiche sans sous-titres. Le spectateur peut toujours changer avec la touche SUBTITLE.").weak());
-                    }
                 }
-            }
-            // action « Regler la langue audio » : la langue est dans la destination elle-meme
-            {
-                let audio_id = match &it.kind {
-                    Kind::Nav { action: NavAction::Goto, target, .. } => *target,
-                    _ => it.link(),
-                };
-                if let Some(Target::Audio(_)) = audio_id {
-                    ui.label(egui::RichText::new("Le clic règle la langue audio et le menu reste affiché. Elle vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue garde son audio actuel. Le spectateur peut toujours changer avec la touche AUDIO. Les sous-titres ne sont pas modifiés.").weak());
+                if let Some(t) = cur.filter(|t| t.is_setting()) {
+                    // page de sortie : les pages du menu seulement
+                    let pages: Vec<(usize, &String)> = page_targets.iter().filter_map(|(x, l)| if let Target::Main(q) = x { Some((*q, l)) } else { None }).collect();
+                    let here = "Rester sur la page courante";
+                    let exit = t.exit();
+                    let shown = exit.map_or_else(|| here.to_string(), |q| pages.iter().find(|(p, _)| *p == q).map_or_else(|| "(page introuvable : à choisir)".to_string(), |(_, l)| (*l).clone()));
+                    let mut pick: Option<Option<usize>> = None;
+                    egui::ComboBox::from_label("Ensuite").selected_text(shown).show_ui(ui, |ui| {
+                        if ui.selectable_label(exit.is_none(), here).clicked() { pick = Some(None); }
+                        for (q, l) in &pages {
+                            if ui.selectable_label(exit == Some(*q), l.as_str()).clicked() { pick = Some(Some(*q)); }
+                        }
+                    });
+                    if let Some(e) = pick {
+                        if let Some(slot) = it.targets_mut() { *slot = Some(t.with_exit(e)); changed = true; }
+                    }
+                    let after = if exit.is_some() { "puis le menu passe à la page choisie" } else { "et le menu reste affiché" };
+                    let txt = match t {
+                        Target::Audio(..) => format!("Le clic règle la langue audio {after}. Elle vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue garde son audio actuel. Le spectateur peut toujours changer avec la touche AUDIO. Les sous-titres ne sont pas modifiés."),
+                        _ if sub_langs.is_empty() => "Aucune langue de sous-titres dans le projet (à ajouter dans le menu « Édition > Langues du projet… »).".to_string(),
+                        _ => format!("Le clic règle les sous-titres {after}. La langue vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue s'affiche sans sous-titres. Le spectateur peut toujours changer avec la touche SUBTITLE."),
+                    };
+                    ui.label(egui::RichText::new(txt).weak());
                 }
             }
             // apparence propre a ce bouton

@@ -81,7 +81,7 @@ fn audio_language_action() {
       "mise_en_page":{"pages":[{"nom":"P","elements":[{"type":"texte","texte":"x","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"audio_langue":4}}]}]}}"#;
     let mut m = ProjectModel::from_json(t).unwrap();
     let link = |m: &ProjectModel| match &m.designs.free[0].items[0].kind { Kind::Text { link, .. } => *link, _ => None };
-    assert_eq!(link(&m), Some(Target::Audio(4)));
+    assert_eq!(link(&m), Some(Target::Audio(4, None)));
     assert_eq!(m.designs.free[0].items[0].sub, SubChoice::Keep);
     assert!(m.to_json().contains("\"audio_langue\": 4"));
     let probs = |m: &ProjectModel| -> Vec<String> { m.validate(std::path::Path::new("/nonexistent")).into_iter().filter(|p| !p.contains("introuvable")).collect() };
@@ -95,4 +95,29 @@ fn audio_language_action() {
     // commande du lecteur : SET_STREAM, audio seulement (bit 31), sous-titres intacts (bits 15 et 14 a 0)
     let c = bdauthor_core::mobj::set_audio_stream(1);
     assert_eq!(c.dst, 0x8002_0000);
+}
+
+#[test]
+fn setting_then_exit_page() {
+    // reglage des sous-titres puis page 2 ; reglage audio puis page 3 ; JSON, renumerotation et suppression de page
+    let t = r#"{"videos":[{"fichier":"a"}],"langues":[{"id":4,"nom":"Anglais","code":"eng"}],
+      "mise_en_page":{"generique":true,"pages":[
+        {"nom":"P1","elements":[
+          {"type":"texte","texte":"st","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"rester":true,"ensuite":2},"soustitres":{"langue":4}},
+          {"type":"texte","texte":"au","x":0,"y":20,"w":10,"h":10,"taille":40,"cible":{"audio_langue":4,"ensuite":3}},
+          {"type":"texte","texte":"ici","x":0,"y":40,"w":10,"h":10,"taille":40,"cible":{"rester":true},"soustitres":"aucun"}]},
+        {"nom":"P2","elements":[]},{"nom":"P3","elements":[]}]}}"#;
+    let mut m = ProjectModel::from_json(t).unwrap();
+    let links = |m: &ProjectModel| -> Vec<Option<Target>> { m.designs.free[0].items.iter().map(|it| it.link()).collect() };
+    assert_eq!(links(&m), [Some(Target::Stay(Some(1))), Some(Target::Audio(4, Some(2))), Some(Target::Stay(None))]);
+    let back = ProjectModel::from_json(&m.to_json()).unwrap();
+    assert_eq!(links(&back), links(&m));
+    assert!(m.to_json().contains("\"ensuite\": 2"));
+    assert_eq!(Target::Audio(4, Some(2)).without_exit(), Target::Audio(4, None));
+    // echange des pages 2 et 3 : les sorties suivent
+    bdauthor_core::editor::swap_pages(&mut m, 1, 2);
+    assert_eq!(links(&m)[..2], [Some(Target::Stay(Some(2))), Some(Target::Audio(4, Some(1)))]);
+    // suppression de la page 2 (ex-P3) : le reglage qui y sortait reste sur place, l'autre est renumerote
+    m.designs.page_removed(2);
+    assert_eq!(links(&m)[..2], [Some(Target::Stay(None)), Some(Target::Audio(4, Some(1)))]);
 }

@@ -455,7 +455,7 @@ pub fn page_of_target(pages: &[PageInfo], t: Target) -> Option<PageRef> {
     match t {
         Target::Main(p) => pages.iter().find(|i| i.menu == MenuType::Main && i.page == p).map(|i| i.r),
         Target::Chapters(v, q) => pages.iter().find(|i| i.r == PageRef::Chapters(v, q)).map(|i| i.r),
-        Target::Video(_) | Target::Stay | Target::Audio(_) => None,
+        Target::Video(_) | Target::Stay(_) | Target::Audio(..) => None,
     }
 }
 
@@ -473,7 +473,7 @@ pub fn swap_pages(m: &mut ProjectModel, a: usize, b: usize) {
     let sw = |p: usize| if p == a { b } else if p == b { a } else { p };
     for pg in d.free.iter_mut() {
         for it in &mut pg.items {
-            if let Some(Some(Target::Main(p))) = it.targets_mut() { *p = sw(*p); }
+            if let Some(p) = it.targets_mut().and_then(|t| t.as_mut()).and_then(Target::page_mut) { *p = sw(*p); }
             if let Kind::Slot { ret: crate::design::SlotReturn::Page(p), .. } = &mut it.kind { *p = sw(*p); }
         }
     }
@@ -496,7 +496,7 @@ pub fn move_page(m: &mut ProjectModel, from: usize, to: usize) {
     };
     for pg in d.free.iter_mut() {
         for it in &mut pg.items {
-            if let Some(Some(Target::Main(p))) = it.targets_mut() { *p = map(*p); }
+            if let Some(p) = it.targets_mut().and_then(|t| t.as_mut()).and_then(Target::page_mut) { *p = map(*p); }
             if let Kind::Slot { ret: crate::design::SlotReturn::Page(p), .. } = &mut it.kind { *p = map(*p); }
         }
     }
@@ -579,7 +579,7 @@ pub fn append_generated_pages(m: &mut ProjectModel, durations: &HashMap<String, 
     let mut pages = gen.free;
     for pg in &mut pages {
         for it in &mut pg.items {
-            if let Some(Some(Target::Main(p))) = it.targets_mut() { *p += off; }
+            if let Some(p) = it.targets_mut().and_then(|t| t.as_mut()).and_then(Target::page_mut) { *p += off; }
             if let Kind::Slot { ret: crate::design::SlotReturn::Page(p), .. } = &mut it.kind { *p += off; }
         }
     }

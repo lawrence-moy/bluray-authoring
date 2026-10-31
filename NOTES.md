@@ -443,3 +443,13 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Disque : commande `mobj::set_audio_stream(rang)` (SET_STREAM, dst = 0x8000_0000 | (rang+1) << 16, sous-titres intacts), rang = rang de la
   langue dans `AudioPlan.slots` ; sans piste correspondante : NOP. Format de l'operande d'apres libbluray, NON verifie sur lecteur.
 - Retrait d'une langue : la destination redevient « a choisir ». Validation : avertissement si aucune video n'a d'audio dans cette langue.
+
+## Reglages puis page de sortie (« Ensuite »)
+- `Target::Stay(Option<page>)` et `Target::Audio(id, Option<page>)` : le reglage (sous-titres via `Item::sub`, ou audio) puis la page du
+  menu principal choisie, ou rester sur la page (`None`). JSON : champ `"ensuite": n` (1-based) a cote de `"rester"` / `"audio_langue"`.
+- Interface : destinations « Regler les sous-titres » et « Regler la langue audio : X » (sans « sans quitter la page ») ; sous la langue,
+  liste « Ensuite » : « Rester sur la page courante » puis les pages. `Target::without_exit` sert a comparer avec les entrees de la liste.
+- Renumerotation des pages (echange, deplacement, ajout, suppression, conversion) via `Target::page_mut` / `Target::page_removed` : un
+  reglage dont la page de sortie est supprimee reste sur place.
+- Disque : commandes [SET_STREAM, JUMP_TITLE page] (ou NOP sans sortie). Securite : un bouton sans commandes qui recoit un reglage de
+  sous-titres garde son saut (JUMP_TITLE ajoute). Nouvel element cliquable : destination par defaut = premiere page (plus le reglage).

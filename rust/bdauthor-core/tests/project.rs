@@ -592,8 +592,9 @@ fn language_list_fixes_track_numbers() {
       "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
       "mise_en_page": { "pages": [ { "nom": "Menu", "elements": [
           {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
-          {"type":"texte","texte":"English","x":1300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":{"langue":2}},
-          {"type":"texte","texte":"Francais","x":300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":{"langue":1}} ] } ] } }"##;
+          {"type":"texte","texte":"English","x":1300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true,"ensuite":2},"soustitres":{"langue":2}},
+          {"type":"texte","texte":"Francais","x":300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":{"langue":1}} ] },
+        { "nom": "Fin", "elements": [ {"type":"texte","texte":"Retour","x":100,"y":100,"w":300,"h":90,"taille":40,"cible":{"menu":"principal","page":1}} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
@@ -631,6 +632,10 @@ fn language_list_fixes_track_numbers() {
     assert_eq!(cmds.len(), 3, "{cmds:?}");
     assert!(cmds[1].starts_with(&bdauthor_core::mobj::set_pg_stream(Some(0)).text()), "Francais : {cmds:?}");
     assert!(cmds[2].starts_with(&bdauthor_core::mobj::set_pg_stream(Some(1)).text()), "English : {cmds:?}");
+    // « English » sort ensuite vers la page « Fin » (titre 4 = 2 videos + 2e page) ; « Francais » reste sur la page
+    assert_eq!(b[2].commands.len(), 2, "{cmds:?}");
+    assert_eq!((b[2].commands[1].insn, b[2].commands[1].dst), (bdauthor_core::mobj::JUMP_TITLE_INSN, 4), "{cmds:?}");
+    assert!(!cmds[1].contains("JUMP_TITLE"), "{cmds:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

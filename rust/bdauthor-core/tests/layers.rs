@@ -142,7 +142,7 @@ fn subtitle_choice_per_button() {
     b.sub = SubChoice::Track(1);
     d.items.push(b);
     let mut t = txt("off");
-    if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Stay); }
+    if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Stay(None)); }
     t.sub = SubChoice::Off;
     d.items.push(t);
     let back = PageDesign::from_value(&d.to_value()).unwrap();
