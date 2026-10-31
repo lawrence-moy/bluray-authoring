@@ -595,16 +595,8 @@ impl eframe::App for App {
                     changed |= file_row(ui, "Séquence d'ouverture :", &mut m.intro, "(aucune : le menu s'ouvre directement)", "Vidéos", VIDEO_EXTS);
                     changed |= ui.checkbox(&mut m.menu_1080, "Menu en 1920x1080 (sinon : taille de la vidéo)").changed();
                     changed |= ui.checkbox(&mut m.loop_menu, "Rejouer le fond en boucle (sinon : arrêt sur la dernière image)").changed();
-                    ui.horizontal(|ui| {
-                        let mut on = m.par_page.is_some();
-                        if ui.checkbox(&mut on, "Vignettes par page générée :").on_hover_text("Pour la conversion d'un ancien projet en pages personnalisées (premier passage dans « Mise en page »)").changed() {
-                            m.par_page = if on { Some(8) } else { None };
-                            changed = true;
-                        }
-                        if let Some(p) = &mut m.par_page {
-                            changed |= ui.add(egui::Slider::new(p, 1..=12)).changed();
-                        }
-                    });
+                    // « vignettes par page generee » retire de l'interface : seules les pages personnalisees sont utilisees (la valeur
+                    // eventuelle du fichier reste lue pour la premiere conversion d'un ancien projet)
                     changed |= ui.checkbox(&mut m.cache, "Réutiliser les vidéos déjà encodées (cache)").changed();
                     if changed {
                         self.dirty = true;
