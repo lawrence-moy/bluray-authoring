@@ -268,7 +268,7 @@ fn styled_buttons_project() {
     // halo + agrandissement + etat active ; une vignette collee au bord gauche (son halo doit etre rogne) ; un bouton dessine
     let proj = r##"{ "titre": "Style", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
       "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
-      "mise_en_page": { "style_boutons": {"halo": 24, "agrandir": 10, "etat_active": true},
+      "mise_en_page": { "style_boutons": {"halo": 24, "agrandir": 10, "etat_active": true, "halo_anime": true},
         "principal": { "1": { "elements": [
           {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356},
           {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"style":{"halo":0,"agrandir":0}},
@@ -306,6 +306,11 @@ fn styled_buttons_project() {
     // vignette 2 : style propre sans effet -> taille exacte, position exacte
     let b1 = btns.iter().find(|b| b.x == 667).expect("vignette 2 a x = 1000 x 2/3");
     assert_eq!(size(b1.normal.0), (373, 237));
+    // halo anime (style du projet) : 8 images de meme taille, en boucle ; la vignette 2 (sans halo) n'est pas animee
+    assert_eq!((b0.selected.2 - b0.selected.1, b0.selected.3), (7, 0x80));
+    for id in b0.selected.1..=b0.selected.2 { assert_eq!(size(id), (w0, h0)); }
+    assert_eq!((b1.selected.1, b1.selected.3), (b1.selected.2, 0));
+    assert!(ics.pages[0].frame_rate_code > 0);
     let _ = std::fs::remove_dir_all(&dir);
 }
 

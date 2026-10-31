@@ -20,6 +20,10 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str) -> bool {
         ui.label("Texte"); ui.color_edit_button_srgb(&mut st.sel_text); ui.end_row();
         ui.label("Cadre"); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.sel_border); px(ui, &mut st.sel_border_w, 40); }); ui.end_row();
         ui.label("Halo"); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.glow_color); px(ui, &mut st.glow, 60); }); ui.end_row();
+        ui.label("");
+        ui.add_enabled(st.glow > 0, egui::Checkbox::new(&mut st.glow_pulse, "Halo animé (pulsation)"))
+            .on_hover_text(format!("Le halo grandit et diminue en boucle tant que le bouton est sélectionné ({} images, environ 8 par seconde). Augmente le poids de la page. Visible dans la simulation.", bdauthor_core::style::PULSE_FRAMES));
+        ui.end_row();
         ui.label("Agrandir"); pct(ui, &mut st.zoom, 20); ui.end_row();
     });
     ui.strong("Commun");

@@ -549,7 +549,7 @@ impl PageDesign {
             let st = it.look.style.as_ref().unwrap_or(base).scaled(k);
             let (_, _, w, h) = it.scaled(k);
             let (mx, my) = st.margins(w, h);
-            let states = if !it.look.skin.activated.is_empty() { 3 } else { st.state_count() };
+            let states = if !it.look.skin.activated.is_empty() { 3 + st.pulse_frames() as u64 - 1 } else { st.state_count() };
             bytes += ((w + 2 * mx).max(1) as u64) * ((h + 2 * my).max(1) as u64) * states;
             buttons += 1;
         }

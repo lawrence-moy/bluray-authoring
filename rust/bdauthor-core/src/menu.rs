@@ -24,11 +24,13 @@ pub struct MenuButton {
     pub images: Vec<Arc<RgbaImage>>,
     pub neighbors: Option<(u16, u16, u16, u16)>, // (haut, bas, gauche, droite)
     pub commands: Vec<Command>,                  // vide = JUMP_TITLE `title`
+    /// Etat selectionne anime : images suivantes de l'animation, apres `images[1]` (vide = image fixe). Jouees en boucle.
+    pub sel_frames: Vec<Arc<RgbaImage>>,
 }
 
 impl MenuButton {
     pub fn new(label: &str, title: u32, x: i32, y: i32, images: Vec<Arc<RgbaImage>>) -> Self {
-        MenuButton { label: label.into(), title, x, y, images, neighbors: None, commands: vec![] }
+        MenuButton { label: label.into(), title, x, y, images, neighbors: None, commands: vec![], sel_frames: vec![] }
     }
     pub fn width(&self) -> i32 { self.images.first().map_or(0, |i| i.width as i32) }
     pub fn height(&self) -> i32 { self.images.first().map_or(0, |i| i.height as i32) }
@@ -98,6 +100,18 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
         }
         owner.push(ids);
     }
+    // etats selectionnes animes : images propres (objets consecutifs exiges par la norme), sans partage avec d'autres boutons
+    let mut anim: Vec<Vec<usize>> = Vec::new();
+    for b in buttons {
+        let mut keys = Vec::new();
+        if !b.sel_frames.is_empty() {
+            for im in std::iter::once(&b.images[1.min(b.images.len() - 1)]).chain(b.sel_frames.iter()) {
+                flat.push(im.clone());
+                keys.push(flat.len() - 1);
+            }
+        }
+        anim.push(keys);
+    }
     let refs: Vec<&RgbaImage> = flat.iter().map(|a| a.as_ref()).collect();
     let (entries, rows) = quantize_images(&refs, o.rgb_colors, &ALPHA_LEVELS, ALPHA_MIN, true)?;
     let mut pds = Pds::new(0, 0);
@@ -122,17 +136,30 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
                 (ods.len() - 1) as u16
             });
         }
-        let (base, sel, act) = (oid[0], oid[1], oid[2]);
+        let (base, mut sel, act) = (oid[0], oid[1], oid[2]);
+        // animation : objets consecutifs [debut, fin], lecture en boucle (bit « repeat »)
+        let (mut sel_end, mut sel_flags) = (sel, 0u8);
+        if !anim[n].is_empty() {
+            for (j, &key) in anim[n].iter().enumerate() {
+                let im = &flat[key];
+                ods.push(Ods { object_id: ods.len() as u16, version: 0, sequence_flag: 0xC0, width: im.width as u16, height: im.height as u16, rle: rle_encode(&rows[key]) });
+                if j == 0 { sel = (ods.len() - 1) as u16; }
+            }
+            sel_end = (ods.len() - 1) as u16;
+            sel_flags = 0x80;
+        }
         let (up, down, left, right) = b.neighbors.unwrap_or(nbs[n]);
         let btn = Button {
             button_id: n as u16, numeric_select_value: 0xFFFF, auto_action_flags: 0, x: b.x as u16, y: b.y as u16,
             upper: up, lower: down, left, right,
-            normal: (base, base, 0), selected: (0xFF, sel, sel, 0), activated: (0xFF, act, act),
+            normal: (base, base, 0), selected: (0xFF, sel, sel_end, sel_flags), activated: (0xFF, act, act),
             commands: if b.commands.is_empty() { vec![Command::new(JUMP_TITLE_INSN, b.title, 0)] } else { b.commands.clone() },
         };
         bogs.push(Bog { default_valid_button: n as u16, buttons: vec![btn] });
     }
-    let page = Page { default_activated: 0xFFFF, bogs, ..Default::default() };
+    // cadence des animations : une image toutes les (code + 1) images video, soit environ 8 images par seconde
+    let animated = anim.iter().any(|a| !a.is_empty());
+    let page = Page { default_activated: 0xFFFF, bogs, frame_rate_code: if animated { anim_rate_code(o.frame_rate_code) } else { 0 }, ..Default::default() };
     let ics = Ics {
         video_width: o.video_size.0 as u16, video_height: o.video_size.1 as u16, frame_rate_byte: o.frame_rate_code << 4,
         composition_number: 0, composition_state: 0x80, sequence_descriptor: 0xC0, stream_model: 1, ui_model: o.ui_model,
@@ -142,6 +169,13 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
     let ods_segs: Vec<(Vec<u8>, u64, u64)> = ods.iter().map(|d| (seg(SEG_ODS, d.pack()), d.width as u64, d.height as u64)).collect();
     let specs = ig_pes_specs(&seg(SEG_ICS, ics.pack()), &seg(SEG_PDS, pds.pack()), &ods_segs, o.ics_pts, (o.video_size.0 as u64, o.video_size.1 as u64));
     Ok(BuiltMenu { specs, ics, pds, ods })
+}
+
+/// Code de cadence des animations de boutons pour une video de code `video_code` : environ 8 images par seconde
+/// (le lecteur avance d'une image toutes les `code + 1` images video).
+pub fn anim_rate_code(video_code: u8) -> u8 {
+    let fps = match video_code { 1 => 23.976, 2 => 24.0, 3 => 25.0, 4 => 29.97, 6 => 50.0, 7 => 59.94, _ => 25.0 };
+    ((fps / 8.0_f64).round() as i64 - 1).clamp(0, 255) as u8
 }
 
 /// Fichier .clpi d'un clip de menu IG (sans EP_map). Horloge 45 kHz.

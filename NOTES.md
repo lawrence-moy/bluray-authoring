@@ -453,3 +453,13 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   reglage dont la page de sortie est supprimee reste sur place.
 - Disque : commandes [SET_STREAM, JUMP_TITLE page] (ou NOP sans sortie). Securite : un bouton sans commandes qui recoit un reglage de
   sous-titres garde son saut (JUMP_TITLE ajoute). Nouvel element cliquable : destination par defaut = premiere page (plus le reglage).
+
+## Halo anime (etat selectionne anime)
+- Style : `ButtonStyle::glow_pulse` (JSON `"halo_anime": true`), sans effet si le halo vaut 0. `PULSE_FRAMES` = 8 images ; image i =
+  `pulse_style(i)` (rayon du halo entre 35 % et 100 %, en cosinus pour une boucle sans a-coup). Marges = celles du halo complet.
+- Disque : `page_buttons` dessine les etats via une fonction de dessin rappelee pour chaque image (tous types d'elements, images
+  d'etats comprises) ; `MenuButton::sel_frames`. `build_menu` ecrit l'etat selectionne en objets CONSECUTIFS [debut, fin] (exige par
+  libbluray : objet = debut + index), drapeau repeat 0x80, et la cadence de page `anim_rate_code` (une image toutes les code+1 images
+  video, environ 8 i/s). Poids : images supplementaires comptees (`state_count`, `weight`).
+- Editeur : case « Halo anime (pulsation) » dans le style ; la simulation joue l'animation sur le bouton selectionne.
+- Non verifie sur lecteur materiel. Tests : tests/anim.rs, project.rs (style du projet).

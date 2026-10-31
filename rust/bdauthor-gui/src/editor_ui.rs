@@ -507,6 +507,13 @@ impl App {
             self.base_cache.as_ref().map(|(_, i)| i.clone())
         };
         let sel = if info.custom(&self.model.designs) || self.sim.is_some() { sel_shift } else { None };
+        // simulation : image courante du halo anime sur le bouton selectionne
+        if self.preview_pulse > 0 {
+            if let Some(it) = sel.and_then(|s| design.items.get_mut(s)) {
+                let st = it.look.style.clone().unwrap_or_else(|| self.model.designs.style.clone());
+                it.look.style = Some(st.pulse_style(self.preview_pulse));
+            }
+        }
         let act = self.sim_pressed();
         let img = renderer.render_page_preview(&design, info.menu, info.page, info.pages, &slots, base.as_ref(), PREVIEW, &base_dir, &self.model.designs.style, sel, act);
         self.preview_sel = self.sel_item;
@@ -663,7 +670,14 @@ impl App {
         // aperçu régénéré hors glissement
         let min_gap = if self.cfg.adaptive_preview { (self.render_ms * 1.25).clamp(16.0, 200.0) } else { 0.0 };
         let due = self.drag.is_none() || self.last_preview.elapsed().as_secs_f32() * 1000.0 >= min_gap;
-        if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() || (self.preview_sel != self.sel_item && self.drag.is_none()) || self.preview_act != self.sim_pressed() {
+        // halo anime du bouton selectionne, joue dans la simulation (environ 8 images par seconde)
+        let pulse_on = self.sim.is_some() && self.sel_item
+            .and_then(|i| info.design(&self.model.designs).and_then(|d| d.items.get(i)).map(|it| it.look.style.as_ref().unwrap_or(&self.model.designs.style).pulse_frames() > 1))
+            .unwrap_or(false);
+        let pulse = if pulse_on { (self.t0.elapsed().as_secs_f64() * 8.0) as usize % bdauthor_core::style::PULSE_FRAMES } else { 0 };
+        if pulse_on { ctx.request_repaint_after(std::time::Duration::from_millis(60)); }
+        if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() || (self.preview_sel != self.sel_item && self.drag.is_none()) || self.preview_act != self.sim_pressed() || self.preview_pulse != pulse {
+            self.preview_pulse = pulse;
             let t = std::time::Instant::now();
             self.refresh_preview(ctx, &info);
             self.render_ms = t.elapsed().as_secs_f32() * 1000.0;

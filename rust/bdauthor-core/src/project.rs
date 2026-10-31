@@ -198,11 +198,14 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         let above: Vec<Decor> = decor.iter().filter(|(i, d)| *i > idx && d.intersects((bx, by, bw, bh))).map(|(_, d)| d.shifted(-bx, -by)).collect();
         let skin = &it.look.skin;
         let skinned = !skin.normal.is_empty() && !matches!(it.kind, Kind::Slot { .. });
-        let skin_states = || -> Result<[Arc<RgbaImage>; 3]> {
+        // dessin des etats pour un style donne (appele une fois par image du halo anime)
+        type Draw<'d> = Box<dyn Fn(&ButtonStyle) -> Result<[Arc<RgbaImage>; 3]> + 'd>;
+        let skin_draw = || -> Draw<'_> {
             let one = |p: &str| if p.is_empty() { None } else { Some((e.abs)(p)) };
-            renderer.skin_button(&[one(&skin.normal), one(&skin.selected), one(&skin.activated)], w as u32, h as u32, &st).map_err(Error::Format)
+            let paths = [one(&skin.normal), one(&skin.selected), one(&skin.activated)];
+            Box::new(move |st: &ButtonStyle| renderer.skin_button(&paths, w as u32, h as u32, st).map_err(Error::Format))
         };
-        let (states, go, commands) = match &it.kind {
+        let (draw, go, commands): (Draw<'_>, u32, Vec<Command>) = match &it.kind {
             Kind::Slot { thumb_h, video, link, .. } => {
                 let own;
                 let sp = match video {
@@ -219,41 +222,59 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
                 };
                 let th = py_round(*thumb_h as f64 * s) as i32;
                 let thumb = ffmpeg::extract_thumbnail_rgba(e.tools, &sp.source, (w as u32, th as u32), sp.at, sp.duration)?;
-                let states = renderer.thumb_button(&thumb, &sp.label, w as u32, h as u32, th as u32, &st);
+                let label = sp.label.clone();
+                let draw: Draw<'_> = Box::new(move |st: &ButtonStyle| Ok(renderer.thumb_button(&thumb, &label, w as u32, h as u32, th as u32, st)));
                 // destination choisie : remplace le comportement habituel de la vignette (deja pris en compte par `slot_spec`)
                 match (link, video) {
-                    (Some(t), None) => { let (g, c) = target(NavAction::Goto, Some(*t)); (states, g, c) }
-                    _ => (states, sp.go, sp.commands.clone()),
+                    (Some(t), None) => { let (g, c) = target(NavAction::Goto, Some(*t)); (draw, g, c) }
+                    _ => (draw, sp.go, sp.commands.clone()),
                 }
             }
             Kind::Nav { action, text, target: tg } if nav_applicable(*action, menu, page, pages) => {
-                let states = if skinned { skin_states()? } else { renderer.text_button(text, w as u32, h as u32, &st) };
+                let draw: Draw<'_> = if skinned { skin_draw() } else {
+                    let text = text.clone();
+                    Box::new(move |st: &ButtonStyle| Ok(renderer.text_button(&text, w as u32, h as u32, st)))
+                };
                 let (g, c) = target(*action, *tg);
-                (states, g, c)
+                (draw, g, c)
             }
             Kind::Text { .. } | Kind::Image { .. } if it.link().is_some() => {
-                let states = if skinned {
-                    skin_states()?
+                let draw: Draw<'_> = if skinned {
+                    skin_draw()
                 } else {
                     let Some(d) = (e.to_decor)(it, s) else { continue };
-                    renderer.decor_button(&d.shifted(-x, -y), w as u32, h as u32, &st)
+                    let d = d.shifted(-x, -y);
+                    Box::new(move |st: &ButtonStyle| Ok(renderer.decor_button(&d, w as u32, h as u32, st)))
                 };
                 let (g, c) = target(NavAction::Goto, it.link());
-                (states, g, c)
+                (draw, g, c)
             }
             _ => continue,
         };
+        let states = draw(&st)?;
+        // halo anime : images suivantes de l'etat selectionne, halo de plus en plus petit puis de nouveau grand
+        let mut frames: Vec<Arc<RgbaImage>> = Vec::new();
+        for i in 1..st.pulse_frames() {
+            frames.push(draw(&st.pulse_style(i))?[1].clone());
+        }
+        let cover = |im: Arc<RgbaImage>| if above.is_empty() { im } else { renderer.overlay([im.clone(), im.clone(), im], &above)[0].clone() };
         let states = if above.is_empty() { states } else { renderer.overlay(states, &above) };
+        let frames: Vec<Arc<RgbaImage>> = frames.into_iter().map(cover).collect();
         // taille attendue, puis rognage aux bords du menu (le halo ne doit pas deborder du plan graphique)
         let (l, t) = ((-bx).max(0), (-by).max(0));
         let (r, b) = ((bx + bw - e.plane.0 as i32).max(0), (by + bh - e.plane.1 as i32).max(0));
         let (cw, ch) = ((bw - l - r).max(1) as u32, (bh - t - b).max(1) as u32);
-        let (states, distinct) = map_states(states, &|im| {
+        let fit = |im: &RgbaImage| {
             let full = recenter(im, bw.max(1) as u32, bh.max(1) as u32);
             if (l, t, r, b) == (0, 0, 0, 0) { full } else { sub_image(&full, l as u32, t as u32, cw, ch) }
-        });
+        };
+        let (states, distinct) = map_states(states, &fit);
+        let frames: Vec<Arc<RgbaImage>> = frames.iter().map(|im| Arc::new(fit(im))).collect();
+        // une animation a son propre exemplaire de l'image selectionnee (objets consecutifs)
+        let distinct = if frames.is_empty() { distinct } else { distinct + frames.len() as u64 + 1 };
         let [nrm, sel, act] = states;
         let mut btn = MenuButton::new("", go, bx + l, by + t, vec![nrm, sel, act]);
+        btn.sel_frames = frames;
         // sous-titres choisis par le bouton : regles avant ses autres commandes
         let mut commands = commands;
         if it.sub != crate::design::SubChoice::Keep && commands.is_empty() { commands.push(Command::new(JUMP_TITLE_INSN, go, 0)); }

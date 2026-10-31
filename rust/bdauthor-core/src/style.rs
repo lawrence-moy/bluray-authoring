@@ -31,6 +31,8 @@ pub struct ButtonStyle {
     /// Rayon du halo autour du bouton selectionne (px, 0 = aucun).
     pub glow: i32,
     pub glow_color: [u8; 3],
+    /// Halo anime : il pulse (grandit et diminue en boucle) tant que le bouton est selectionne (`PULSE_FRAMES` images).
+    pub glow_pulse: bool,
     /// Agrandissement du bouton selectionne, en % (0 a 20).
     pub zoom: i32,
     /// Textes et images cliquables : opacite (%) du fond colore quand ils sont selectionnes (0 = pas de fond).
@@ -49,7 +51,7 @@ impl Default for ButtonStyle {
         ButtonStyle {
             normal_bg: [24, 32, 58], normal_text: [255, 255, 255], normal_border: [70, 85, 120], normal_border_w: 1, dim: 0,
             sel_bg: [60, 100, 190], sel_text: [255, 255, 255], sel_border: [255, 255, 255], sel_border_w: 5, radius: 0,
-            glow: 0, glow_color: [120, 180, 255], zoom: 0, backdrop: 60, underline: false,
+            glow: 0, glow_color: [120, 180, 255], glow_pulse: false, zoom: 0, backdrop: 60, underline: false,
             activated: false, act_bg: [240, 150, 40], act_text: [255, 255, 255], act_border: [255, 230, 150],
         }
     }
@@ -96,9 +98,24 @@ impl ButtonStyle {
         (self.glow.max(0) + z(w), self.glow.max(0) + z(h))
     }
 
-    /// Nombre d'images differentes par bouton.
+    /// Nombre d'images differentes par bouton (images du halo anime comprises).
     pub fn state_count(&self) -> u64 {
-        if self.activated { 3 } else { 2 }
+        (if self.activated { 3 } else { 2 }) + self.pulse_frames() as u64 - 1
+    }
+
+    /// Nombre d'images de l'etat selectionne : `PULSE_FRAMES` si le halo est anime (et non nul), sinon 1.
+    pub fn pulse_frames(&self) -> usize {
+        if self.glow_pulse && self.glow > 0 { PULSE_FRAMES } else { 1 }
+    }
+
+    /// Style de l'image `i` (0 = halo complet) de l'animation du halo : rayon entre 35 % et 100 %, variation en cosinus
+    /// (boucle sans a-coup). Les marges restent celles du style complet : les images ont toutes la meme taille.
+    pub fn pulse_style(&self, i: usize) -> ButtonStyle {
+        let mut s = self.clone();
+        let t = (1.0 + (2.0 * std::f64::consts::PI * i as f64 / PULSE_FRAMES as f64).cos()) / 2.0;
+        s.glow = ((self.glow as f64) * (0.35 + 0.65 * t)).round() as i32;
+        s.glow_pulse = false;
+        s
     }
 
     pub fn to_value(&self) -> Value {
@@ -109,7 +126,7 @@ impl ButtonStyle {
             ("cadre_epaisseur".into(), n(self.normal_border_w)), ("assombrir".into(), n(self.dim)),
             ("fond_selection".into(), hex(self.sel_bg)), ("texte_selection".into(), hex(self.sel_text)), ("cadre_selection".into(), hex(self.sel_border)),
             ("cadre_selection_epaisseur".into(), n(self.sel_border_w)), ("arrondi".into(), n(self.radius)),
-            ("halo".into(), n(self.glow)), ("halo_couleur".into(), hex(self.glow_color)), ("agrandir".into(), n(self.zoom)),
+            ("halo".into(), n(self.glow)), ("halo_couleur".into(), hex(self.glow_color)), ("halo_anime".into(), Value::Bool(self.glow_pulse)), ("agrandir".into(), n(self.zoom)),
             ("fond_cliquable".into(), n(self.backdrop)), ("souligner".into(), Value::Bool(self.underline)),
             ("etat_active".into(), Value::Bool(self.activated)), ("fond_active".into(), hex(self.act_bg)),
             ("texte_active".into(), hex(self.act_text)), ("cadre_active".into(), hex(self.act_border)),
@@ -141,6 +158,7 @@ impl ButtonStyle {
         int("arrondi", &mut s.radius);
         int("halo", &mut s.glow);
         col("halo_couleur", &mut s.glow_color)?;
+        boolean("halo_anime", &mut s.glow_pulse);
         int("agrandir", &mut s.zoom);
         int("fond_cliquable", &mut s.backdrop);
         boolean("souligner", &mut s.underline);
@@ -194,6 +212,8 @@ impl Look {
 
 /// Memoire des images de boutons qu'un lecteur doit decoder pour une page (d'apres la specification Blu-ray telle que comprise :
 /// tampon d'objets decodes de 16 Mio pour les menus IG ; a confirmer).
+/// Images de l'animation du halo (etat selectionne) quand `ButtonStyle::glow_pulse` est actif.
+pub const PULSE_FRAMES: usize = 8;
 pub const DECODED_LIMIT: u64 = 16 * 1024 * 1024;
 /// Debit de decodage retenu pour estimer le delai d'affichage (octets, soit pixels, par seconde) — meme hypothese que `required_ics_pts`.
 pub const DECODE_RATE: f64 = 8_000_000.0;
