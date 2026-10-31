@@ -177,11 +177,19 @@ pub struct Skin {
     pub normal: String,
     pub selected: String,
     pub activated: String,
+    /// Animation de l'etat selectionne : images jouees dans l'ordre (remplacent `selected`) ; exige une image normale.
+    pub sel_frames: Vec<String>,
+    /// Animation jouee une seule fois (arret sur la derniere image) au lieu d'en boucle.
+    pub sel_once: bool,
 }
 
 impl Skin {
     pub fn is_empty(&self) -> bool {
-        self.normal.is_empty() && self.selected.is_empty() && self.activated.is_empty()
+        self.normal.is_empty() && self.selected.is_empty() && self.activated.is_empty() && self.sel_frames.is_empty()
+    }
+    /// Nombre d'images de l'animation de l'etat selectionne effectivement utilisee (0 sans animation ou sans image normale).
+    pub fn anim_frames(&self) -> usize {
+        if self.normal.is_empty() { 0 } else { self.sel_frames.len() }
     }
     pub fn get(&self, s: BtnState) -> &str {
         match s { BtnState::Normal => &self.normal, BtnState::Selected => &self.selected, BtnState::Activated => &self.activated }
@@ -191,11 +199,17 @@ impl Skin {
         for (k, v) in [("normal", &self.normal), ("selectionne", &self.selected), ("active", &self.activated)] {
             if !v.is_empty() { o.push((k.to_string(), Value::Str(v.clone()))); }
         }
+        if !self.sel_frames.is_empty() {
+            o.push(("animation_selection".into(), Value::Arr(self.sel_frames.iter().map(|f| Value::Str(f.clone())).collect())));
+            if self.sel_once { o.push(("animation_une_fois".into(), Value::Bool(true))); }
+        }
         Value::Obj(o)
     }
     pub fn from_value(v: &Value) -> Skin {
         let g = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-        Skin { normal: g("normal"), selected: g("selectionne"), activated: g("active") }
+        let sel_frames = v.get("animation_selection").and_then(Value::as_array)
+            .map(|a| a.iter().filter_map(Value::as_str).filter(|f| !f.is_empty()).map(String::from).collect()).unwrap_or_default();
+        Skin { normal: g("normal"), selected: g("selectionne"), activated: g("active"), sel_frames, sel_once: v.get("animation_une_fois").and_then(Value::as_bool).unwrap_or(false) }
     }
 }
 
@@ -210,10 +224,11 @@ impl Look {
     pub fn is_default(&self) -> bool { self.style.is_none() && self.skin.is_empty() }
 }
 
-/// Memoire des images de boutons qu'un lecteur doit decoder pour une page (d'apres la specification Blu-ray telle que comprise :
-/// tampon d'objets decodes de 16 Mio pour les menus IG ; a confirmer).
 /// Images de l'animation du halo (etat selectionne) quand `ButtonStyle::glow_pulse` est actif.
 pub const PULSE_FRAMES: usize = 8;
+
+/// Memoire des images de boutons qu'un lecteur doit decoder pour une page (d'apres la specification Blu-ray telle que comprise :
+/// tampon d'objets decodes de 16 Mio pour les menus IG ; a confirmer).
 pub const DECODED_LIMIT: u64 = 16 * 1024 * 1024;
 /// Debit de decodage retenu pour estimer le delai d'affichage (octets, soit pixels, par seconde) — meme hypothese que `required_ics_pts`.
 pub const DECODE_RATE: f64 = 8_000_000.0;

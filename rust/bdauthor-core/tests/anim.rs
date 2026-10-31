@@ -34,8 +34,10 @@ fn animated_selected_state_in_menu() {
     let o = MenuOptions { frame_rate_code: 3, ..Default::default() };
     let m = build_menu(&[b0, b1], &o).unwrap();
     let page = &m.ics.pages[0];
-    assert_eq!(page.frame_rate_code, anim_rate_code(3));
-    assert_eq!(anim_rate_code(3), 2); // 25 i/s : une image sur 3 (8,3 i/s)
+    assert_eq!(page.frame_rate_code, anim_rate_code(3, 8.0));
+    assert_eq!(anim_rate_code(3, 8.0), 2); // 25 i/s : une image sur 3 (8,3 i/s)
+    assert_eq!(anim_rate_code(3, 25.0), 0);
+    assert_eq!(anim_rate_code(1, 4.0), 5);
     let btn = |i: usize| &page.bogs[i].buttons[0];
     // bouton anime : 4 objets consecutifs, en boucle ; le bouton fixe partage toujours ses images
     let sel = btn(0).selected;
@@ -50,4 +52,30 @@ fn animated_selected_state_in_menu() {
     let packed = m.ics.pack();
     let re = bdauthor_core::ig::Ics::parse(&packed).unwrap();
     assert_eq!(re.pages[0].bogs[0].buttons[0].selected, sel);
+}
+
+#[test]
+fn custom_animation_json_and_weight() {
+    use bdauthor_core::design::*;
+    use bdauthor_core::style::Skin;
+    let sk = Skin { normal: "n.png".into(), sel_frames: vec!["a1.png".into(), "a2.png".into()], sel_once: true, ..Default::default() };
+    assert_eq!(Skin::from_value(&sk.to_value()), sk);
+    assert_eq!(sk.anim_frames(), 2);
+    // sans image normale, l'animation n'est pas utilisee
+    assert_eq!(Skin { normal: String::new(), ..sk.clone() }.anim_frames(), 0);
+    // cadence de page : JSON
+    let t = r#"{"videos":[{"fichier":"a"}],"mise_en_page":{"generique":true,"pages":[{"nom":"P","animation_ips":12,"elements":[
+        {"type":"navigation","action":"aller_a","texte":"x","cible":{"menu":"principal","page":1},"x":0,"y":0,"w":200,"h":80,
+         "images_etats":{"normal":"n.png","animation_selection":["a1.png","a2.png","a3.png"]}}]}]}}"#;
+    let m = bdauthor_core::model::ProjectModel::from_json(t).unwrap();
+    let pg = &m.designs.free[0];
+    assert_eq!(pg.anim_fps, 12);
+    assert!(m.to_json().contains("\"animation_ips\": 12"));
+    assert_eq!(pg.items[0].look.skin.sel_frames.len(), 3);
+    // poids : image normale + 3 images d'animation (pas d'etat active distinct)
+    let w = pg.weight(1, &m.designs.style, MenuType::Main, 0, 1, (1920, 1080));
+    assert_eq!(w.bytes, 200 * 80 * 4);
+    // validation : images introuvables signalees
+    let probs = m.validate(std::path::Path::new("/nonexistent"));
+    assert!(probs.iter().any(|p| p.contains("Animation d'un élément : image introuvable (a2.png)")), "{probs:?}");
 }

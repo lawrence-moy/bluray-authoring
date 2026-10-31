@@ -273,7 +273,7 @@ fn styled_buttons_project() {
           {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356},
           {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"style":{"halo":0,"agrandir":0}},
           {"type":"navigation","action":"aller_a","texte":"B","cible":{"lire":"video","video":2},"x":800,"y":900,"w":300,"h":90,
-           "images_etats":{"normal":"btn.png"}} ] } } } }"##;
+           "images_etats":{"normal":"btn.png","animation_selection":["f1.png","f2.png","f3.png"],"animation_une_fois":true}} ] } } } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let mut logs = Vec::new();
     let info = {
@@ -311,6 +311,9 @@ fn styled_buttons_project() {
     for id in b0.selected.1..=b0.selected.2 { assert_eq!(size(id), (w0, h0)); }
     assert_eq!((b1.selected.1, b1.selected.3), (b1.selected.2, 0));
     assert!(ics.pages[0].frame_rate_code > 0);
+    // bouton dessine avec animation personnalisee (3 images, une fois) : prioritaire sur le halo anime du style du projet
+    let bb = btns.iter().find(|b| b.x > 400 && b.y > 500).expect("bouton B");
+    assert_eq!((bb.selected.2 - bb.selected.1, bb.selected.3), (2, 0));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

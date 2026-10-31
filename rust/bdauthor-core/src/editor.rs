@@ -278,7 +278,7 @@ pub fn copy_decor(src: &PageDesign, target: PageDesign, target_default: &PageDes
             }
         }
     }
-    let mut d = PageDesign { items, layers: src.layers.clone(), bg: src.bg.clone(), name: target_name };
+    let mut d = PageDesign { items, layers: src.layers.clone(), bg: src.bg.clone(), name: target_name, anim_fps: src.anim_fps };
     d.normalize_layers();
     d
 }

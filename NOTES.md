@@ -463,3 +463,13 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   video, environ 8 i/s). Poids : images supplementaires comptees (`state_count`, `weight`).
 - Editeur : case « Halo anime (pulsation) » dans le style ; la simulation joue l'animation sur le bouton selectionne.
 - Non verifie sur lecteur materiel. Tests : tests/anim.rs, project.rs (style du projet).
+
+## Animation personnalisee de l'etat selectionne
+- Images d'etats d'un element (`Skin`) : `sel_frames` (JSON `"animation_selection": [chemins]`) et `sel_once`
+  (`"animation_une_fois": true`, sinon en boucle). Exige une image normale (`Skin::anim_frames` = 0 sinon). Prioritaire sur le halo anime.
+- Disque : chaque image passe par `Renderer::skin_button` en tant qu'image « selectionne » (effets du style appliques) ; la premiere
+  remplace l'etat selectionne, les autres vont dans `MenuButton::sel_frames` ; `sel_once` -> drapeau repeat a 0.
+- Cadence par page : `PageDesign::anim_fps` (JSON `"animation_ips"`, 0 = `DEFAULT_ANIM_FPS` 8), une seule par page (norme) ;
+  `MenuOptions::anim_fps` -> `anim_rate_code(code video, ips)`.
+- Interface : inspecteur > images d'etats > « Animer l'etat selectionne » (liste ordonnee, boucle / une fois, « ▶ Apercu ») ; cadence
+  dans « Fond de cette page ». Apercu et simulation jouent l'animation (en boucle). Validation : image normale manquante, fichiers absents.

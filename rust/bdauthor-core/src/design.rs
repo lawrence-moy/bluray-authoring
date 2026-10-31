@@ -345,7 +345,12 @@ pub struct PageDesign {
     pub name: String,
     /// Fond propre a cette page ; par defaut celui du projet.
     pub bg: PageBg,
+    /// Cadence des animations de boutons de la page (images par seconde, une seule par page selon la norme) ; 0 = 8 par defaut.
+    pub anim_fps: u32,
 }
+
+/// Cadence des animations de boutons quand la page n'en precise pas.
+pub const DEFAULT_ANIM_FPS: u32 = 8;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Problem { pub error: bool, pub msg: String }
@@ -549,7 +554,11 @@ impl PageDesign {
             let st = it.look.style.as_ref().unwrap_or(base).scaled(k);
             let (_, _, w, h) = it.scaled(k);
             let (mx, my) = st.margins(w, h);
-            let states = if !it.look.skin.activated.is_empty() { 3 + st.pulse_frames() as u64 - 1 } else { st.state_count() };
+            let anim = if matches!(it.kind, Kind::Slot { .. }) { 0 } else { it.look.skin.anim_frames() as u64 };
+            let states = if anim > 0 {
+                // image normale + animation (exemplaires propres) + etat active s'il est distinct
+                1 + anim + u64::from(!it.look.skin.activated.is_empty() || st.activated)
+            } else if !it.look.skin.activated.is_empty() { 3 + st.pulse_frames() as u64 - 1 } else { st.state_count() };
             bytes += ((w + 2 * mx).max(1) as u64) * ((h + 2 * my).max(1) as u64) * states;
             buttons += 1;
         }
@@ -653,6 +662,7 @@ impl PageDesign {
             o.push(("calques".into(), Value::Arr(ls)));
         }
         if !self.name.is_empty() { o.push(("nom".into(), Value::Str(self.name.clone()))); }
+        if self.anim_fps != 0 { o.push(("animation_ips".into(), Value::Num(self.anim_fps as f64))); }
         if !self.bg.is_default() { o.push(("fond_page".into(), self.bg.to_value())); }
         Value::Obj(o)
     }
@@ -703,7 +713,8 @@ impl PageDesign {
             hidden: l.get("masque").and_then(Value::as_bool).unwrap_or(false),
             locked: l.get("verrouille").and_then(Value::as_bool).unwrap_or(false),
         }).collect()).unwrap_or_default();
-        let mut d = PageDesign { items, layers, name: v.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default() };
+        let mut d = PageDesign { items, layers, name: v.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default(),
+            anim_fps: v.get("animation_ips").and_then(Value::as_f64).map_or(0, |x| x.round().clamp(0.0, 60.0) as u32) };
         d.normalize_layers();
         Ok(d)
     }

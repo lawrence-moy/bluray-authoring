@@ -217,7 +217,7 @@ fn button_style_json_scale_weight() {
     let mut p = PageDesign::default_main(2, 0, 1).unwrap();
     p.items[0].look.style = Some(ButtonStyle { glow: 0, ..ButtonStyle::default() });
     p.items.push(Item::nav(NavAction::Goto, 100, 900, 300, 80));
-    p.items.last_mut().unwrap().look.skin = Skin { normal: "b.png".into(), selected: "".into(), activated: "c.svg".into() };
+    p.items.last_mut().unwrap().look.skin = Skin { normal: "b.png".into(), selected: "".into(), activated: "c.svg".into(), ..Default::default() };
     ds.main.insert(0, p.clone());
     let text = ds.to_value().to_pretty();
     assert!(text.contains("style_boutons") && text.contains("images_etats"));

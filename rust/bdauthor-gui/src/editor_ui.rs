@@ -507,11 +507,17 @@ impl App {
             self.base_cache.as_ref().map(|(_, i)| i.clone())
         };
         let sel = if info.custom(&self.model.designs) || self.sim.is_some() { sel_shift } else { None };
-        // simulation : image courante du halo anime sur le bouton selectionne
+        // image courante de l'animation du bouton selectionne
         if self.preview_pulse > 0 {
+            let i = self.preview_pulse - 1;
             if let Some(it) = sel.and_then(|s| design.items.get_mut(s)) {
-                let st = it.look.style.clone().unwrap_or_else(|| self.model.designs.style.clone());
-                it.look.style = Some(st.pulse_style(self.preview_pulse));
+                if it.look.skin.anim_frames() > 0 && !matches!(it.kind, Kind::Slot { .. }) {
+                    let f = it.look.skin.sel_frames[i % it.look.skin.sel_frames.len()].clone();
+                    it.look.skin.selected = f;
+                } else {
+                    let st = it.look.style.clone().unwrap_or_else(|| self.model.designs.style.clone());
+                    it.look.style = Some(st.pulse_style(i));
+                }
             }
         }
         let act = self.sim_pressed();
@@ -630,6 +636,16 @@ impl App {
                 egui::Window::new("Fond de cette page").open(&mut open).resizable(false).show(ctx, |ui| {
                     changed |= page_bg_ui(ui, &mut d.bg, &mut pick);
                     if let Some(n) = &note { ui.label(egui::RichText::new(n).weak()); }
+                    ui.separator();
+                    ui.strong("Animations des boutons");
+                    let def = bdauthor_core::design::DEFAULT_ANIM_FPS;
+                    let cur = if d.anim_fps == 0 { def } else { d.anim_fps };
+                    egui::ComboBox::from_label("images par seconde").selected_text(cur.to_string()).show_ui(ui, |ui| {
+                        for f in [4, 6, 8, 12, 25] {
+                            if ui.selectable_label(cur == f, f.to_string()).clicked() && cur != f { d.anim_fps = if f == def { 0 } else { f }; changed = true; }
+                        }
+                    });
+                    ui.label(egui::RichText::new("Une seule cadence par page (norme Blu-ray), pour le halo animé et les animations d'images. Arrondie à une fraction de la cadence de la vidéo du menu.").weak());
                 });
             }
             self.show_page_bg = open;
@@ -670,12 +686,22 @@ impl App {
         // aperçu régénéré hors glissement
         let min_gap = if self.cfg.adaptive_preview { (self.render_ms * 1.25).clamp(16.0, 200.0) } else { 0.0 };
         let due = self.drag.is_none() || self.last_preview.elapsed().as_secs_f32() * 1000.0 >= min_gap;
-        // halo anime du bouton selectionne, joue dans la simulation (environ 8 images par seconde)
-        let pulse_on = self.sim.is_some() && self.sel_item
-            .and_then(|i| info.design(&self.model.designs).and_then(|d| d.items.get(i)).map(|it| it.look.style.as_ref().unwrap_or(&self.model.designs.style).pulse_frames() > 1))
-            .unwrap_or(false);
-        let pulse = if pulse_on { (self.t0.elapsed().as_secs_f64() * 8.0) as usize % bdauthor_core::style::PULSE_FRAMES } else { 0 };
-        if pulse_on { ctx.request_repaint_after(std::time::Duration::from_millis(60)); }
+        // animation du bouton selectionne : animation d'images (simulation ou « Apercu ») sinon halo anime (simulation),
+        // a la cadence de la page ; `pulse` = image + 1 (0 : image fixe)
+        let (n_frames, fps) = {
+            let d = info.design(&self.model.designs);
+            let fps = d.map_or(0, |d| d.anim_fps);
+            let fps = if fps == 0 { bdauthor_core::design::DEFAULT_ANIM_FPS } else { fps };
+            let n = self.sel_item.and_then(|i| d.and_then(|d| d.items.get(i))).map_or(0, |it| {
+                let custom = if matches!(it.kind, Kind::Slot { .. }) { 0 } else { it.look.skin.anim_frames() };
+                if custom > 0 && (self.sim.is_some() || self.anim_preview) { custom }
+                else if custom == 0 && self.sim.is_some() { let p = it.look.style.as_ref().unwrap_or(&self.model.designs.style).pulse_frames(); if p > 1 { p } else { 0 } }
+                else { 0 }
+            });
+            (n, fps)
+        };
+        let pulse = if n_frames > 0 { (self.t0.elapsed().as_secs_f64() * fps as f64) as usize % n_frames + 1 } else { 0 };
+        if n_frames > 0 { ctx.request_repaint_after(std::time::Duration::from_millis(30)); }
         if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() || (self.preview_sel != self.sel_item && self.drag.is_none()) || self.preview_act != self.sim_pressed() || self.preview_pulse != pulse {
             self.preview_pulse = pulse;
             let t = std::time::Instant::now();
@@ -978,6 +1004,9 @@ impl App {
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
         let proj_style = self.model.designs.style.clone();
         let mut pick_skin: Option<usize> = None;
+        let mut anim_preview = self.anim_preview;
+        let page_fps = info.design(&self.model.designs).map_or(0, |d| d.anim_fps);
+        let page_fps = if page_fps == 0 { bdauthor_core::design::DEFAULT_ANIM_FPS } else { page_fps };
         {
             let Some(d) = info.design_mut(&mut self.model.designs) else { return };
             let layers: Vec<(u32, String)> = d.layers.iter().rev().map(|l| (l.id, l.name.clone())).collect();
@@ -1212,7 +1241,7 @@ impl App {
                     });
                 }
                 if !matches!(it.kind, Kind::Slot { .. }) {
-                    changed |= crate::style_ui::skin_ui(ui, &mut it.look.skin, &mut pick_skin);
+                    changed |= crate::style_ui::skin_ui(ui, &mut it.look.skin, &mut pick_skin, &mut anim_preview, page_fps);
                 }
             }
         }
@@ -1225,7 +1254,18 @@ impl App {
                 }
             }
         }
-        if let Some(state) = pick_skin {
+        self.anim_preview = anim_preview;
+        if pick_skin == Some(3) {
+            // images de l'animation : plusieurs fichiers, ranges par ordre de nom
+            if let Some(mut fs) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_files() {
+                fs.sort();
+                let rel: Vec<String> = fs.iter().map(|f| self.relative(f)).collect();
+                if let Some(it) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)) {
+                    it.look.skin.sel_frames = rel;
+                    changed = true;
+                }
+            }
+        } else if let Some(state) = pick_skin {
             if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                 let rel = self.relative(&f);
                 if let Some(it) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)) {

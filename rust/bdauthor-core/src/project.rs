@@ -251,11 +251,23 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
             }
             _ => continue,
         };
-        let states = draw(&st)?;
-        // halo anime : images suivantes de l'etat selectionne, halo de plus en plus petit puis de nouveau grand
+        let mut states = draw(&st)?;
         let mut frames: Vec<Arc<RgbaImage>> = Vec::new();
-        for i in 1..st.pulse_frames() {
-            frames.push(draw(&st.pulse_style(i))?[1].clone());
+        if skinned && skin.anim_frames() > 0 {
+            // animation fournie par l'auteur : chaque image remplace l'image « selectionne » (effets du style appliques)
+            let one = |p: &str| if p.is_empty() { None } else { Some((e.abs)(p)) };
+            let mut all = Vec::new();
+            for f in &skin.sel_frames {
+                let paths = [one(&skin.normal), one(f), one(&skin.activated)];
+                all.push(renderer.skin_button(&paths, w as u32, h as u32, &st).map_err(|m| Error::Format(format!("animation ({f}) : {m}")))?[1].clone());
+            }
+            states[1] = all.remove(0);
+            frames = all;
+        } else {
+            // halo anime : images suivantes de l'etat selectionne, halo de plus en plus petit puis de nouveau grand
+            for i in 1..st.pulse_frames() {
+                frames.push(draw(&st.pulse_style(i))?[1].clone());
+            }
         }
         let cover = |im: Arc<RgbaImage>| if above.is_empty() { im } else { renderer.overlay([im.clone(), im.clone(), im], &above)[0].clone() };
         let states = if above.is_empty() { states } else { renderer.overlay(states, &above) };
@@ -275,6 +287,7 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         let [nrm, sel, act] = states;
         let mut btn = MenuButton::new("", go, bx + l, by + t, vec![nrm, sel, act]);
         btn.sel_frames = frames;
+        btn.sel_once = skinned && skin.anim_frames() > 1 && skin.sel_once;
         // sous-titres choisis par le bouton : regles avant ses autres commandes
         let mut commands = commands;
         if it.sub != crate::design::SubChoice::Keep && commands.is_empty() { commands.push(Command::new(JUMP_TITLE_INSN, go, 0)); }
@@ -1036,9 +1049,10 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     // `looping` : fond anime ou sonore (le menu tourne alors toujours en boucle)
     // clips de fond animes ou sonores (pour le resume de la construction)
     let anim_clips: std::cell::RefCell<BTreeSet<u32>> = Default::default();
-    let add_menu_page = |files: &mut BTreeMap<String, Vec<u8>>, buttons: &[MenuButton], pix: &[u64], ig_num: u32, pl_num: u32, bg_num: u32, bgscan: &ClipScan, label: &str, looping: bool| -> Result<MenuStats> {
+    let add_menu_page = |files: &mut BTreeMap<String, Vec<u8>>, buttons: &[MenuButton], pix: &[u64], ig_num: u32, pl_num: u32, bg_num: u32, bgscan: &ClipScan, label: &str, looping: bool, anim_fps: u32| -> Result<MenuStats> {
         let pts = required_ics_pts(pix, (menu_size.0 as u64, menu_size.1 as u64), 42956, 9000);
-        let clip = build_menu_clip(buttons, &MenuOptions { ics_pts: pts, video_size: menu_size, ui_model: 0, rgb_colors: 63, frame_rate_code: FRAME_RATES.iter().find(|r| r.0 == bgscan.fps).map_or(1, |r| r.2) }).map_err(Error::Format)?;
+        let clip = build_menu_clip(buttons, &MenuOptions { ics_pts: pts, video_size: menu_size, ui_model: 0, rgb_colors: 63, frame_rate_code: FRAME_RATES.iter().find(|r| r.0 == bgscan.fps).map_or(1, |r| r.2),
+            anim_fps: if anim_fps == 0 { crate::design::DEFAULT_ANIM_FPS } else { anim_fps } as f64 }).map_err(Error::Format)?;
         if clip.m2ts.len() > 6 * 1024 * 1024 {
             return bad(format!("{label} trop lourd ({:.1} Mo) : reduire le nombre d'elements par page (menu.par_page)", clip.m2ts.len() as f64 / 1e6));
         }
@@ -1137,7 +1151,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             next_bg += 1;
             (num, own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_page{k}.png"), fond_s, fps, &still_opts, &mut files, num)?, animated)
         };
-        let res = add_menu_page(&mut files, &buttons, &pix, 80002 + k as u32, (n + k) as u32, bg_num, &pscan, &what, looping)?;
+        let res = add_menu_page(&mut files, &buttons, &pix, 80002 + k as u32, (n + k) as u32, bg_num, &pscan, &what, looping, d.anim_fps)?;
         if k == 0 { first_page = Some(res); }
     }
     let first_page = first_page.expect("au moins une page");
