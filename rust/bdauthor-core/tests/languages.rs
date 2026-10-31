@@ -73,3 +73,26 @@ fn language_choice_json() {
     assert!(m.to_json().contains("\"langue\": 4"));
     assert!(ProjectModel::from_json(r#"{"videos":[{"fichier":"a"}],"langues":[{"id":1,"code":"fra"},{"id":1,"code":"eng"}]}"#).is_err());
 }
+
+#[test]
+fn audio_language_action() {
+    // texte cliquable (pas seulement un bouton) qui regle la langue audio 4
+    let t = r#"{"videos":[{"fichier":"a","pistes_audio":[{"piste":1,"langue":"eng","langue_id":4}]}],"langues":[{"id":4,"nom":"Anglais","code":"eng"}],
+      "mise_en_page":{"pages":[{"nom":"P","elements":[{"type":"texte","texte":"x","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"audio_langue":4}}]}]}}"#;
+    let mut m = ProjectModel::from_json(t).unwrap();
+    let link = |m: &ProjectModel| match &m.designs.free[0].items[0].kind { Kind::Text { link, .. } => *link, _ => None };
+    assert_eq!(link(&m), Some(Target::Audio(4)));
+    assert_eq!(m.designs.free[0].items[0].sub, SubChoice::Keep);
+    assert!(m.to_json().contains("\"audio_langue\": 4"));
+    let probs = |m: &ProjectModel| -> Vec<String> { m.validate(std::path::Path::new("/nonexistent")).into_iter().filter(|p| !p.contains("introuvable")).collect() };
+    assert!(!probs(&m).iter().any(|p| p.contains("Élément cliquable")), "{:?}", probs(&m));
+    // plus aucune video avec cette langue : avertissement
+    m.videos[0].audio[0].lang_id = 0;
+    assert!(probs(&m).iter().any(|p| p.contains("aucune vidéo n'a de piste audio en « Anglais »")), "{:?}", probs(&m));
+    // retrait de la langue : la destination est a rechoisir
+    m.remove_language(4);
+    assert_eq!(link(&m), None);
+    // commande du lecteur : SET_STREAM, audio seulement (bit 31), sous-titres intacts (bits 15 et 14 a 0)
+    let c = bdauthor_core::mobj::set_audio_stream(1);
+    assert_eq!(c.dst, 0x8002_0000);
+}

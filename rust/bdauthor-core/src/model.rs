@@ -227,7 +227,13 @@ impl ProjectModel {
             for t in &mut v.subs { if t.lang_id == id { t.lang_id = 0; } }
             for t in &mut v.audio { if t.lang_id == id { t.lang_id = 0; } }
         }
-        self.for_each_item(&mut |it| if it.sub == crate::design::SubChoice::Lang(id) { it.sub = crate::design::SubChoice::Keep; });
+        self.for_each_item(&mut |it| {
+            if it.sub == crate::design::SubChoice::Lang(id) { it.sub = crate::design::SubChoice::Keep; }
+            // destination « regler la langue audio » sur cette langue : a rechoisir
+            if let Some(t) = it.targets_mut() {
+                if *t == Some(crate::design::Target::Audio(id)) { *t = None; }
+            }
+        });
     }
 
     /// Change l'ordre des langues (donc les numeros de piste) : la langue `from` passe a la position `to`.
@@ -364,11 +370,18 @@ impl ProjectModel {
             for pg in d.main.values().chain(d.chapters.values()).chain(d.free.iter()) {
                 for it in &pg.items {
                     if let Kind::Nav { action: NavAction::Goto, text, target } = &it.kind {
-                        let bad = match target { None => true, Some(Target::Main(q)) => *q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => *v >= self.videos.len(), Some(Target::Stay) => false };
+                        let bad = match target { None => true, Some(Target::Main(q)) => *q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => *v >= self.videos.len(), Some(Target::Stay) => false, Some(Target::Audio(id)) => self.language(*id).is_none() };
                         if bad { p.push(format!("Bouton « {text} » : destination invalide ou non choisie.")); }
                     }
-                    let bad_link = match it.link() { Some(Target::Main(q)) => q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => v >= self.videos.len(), Some(Target::Stay) | None => false };
+                    let bad_link = match it.link() { Some(Target::Main(q)) => q >= total, Some(Target::Chapters(v, _)) | Some(Target::Video(v)) => v >= self.videos.len(), Some(Target::Audio(id)) => self.language(id).is_none(), Some(Target::Stay) | None => false };
                     if bad_link { p.push("Élément cliquable : destination invalide.".into()); }
+                    // reglage de la langue audio : au moins une video doit avoir de l'audio dans cette langue
+                    let audio_target = match &it.kind { Kind::Nav { action: NavAction::Goto, target, .. } => *target, _ => it.link() };
+                    if let Some(Target::Audio(id)) = audio_target {
+                        if self.language(id).is_some() && self.videos.iter().all(|ve| ve.audio.iter().all(|t| t.lang_id != id)) {
+                            p.push(format!("Élément cliquable : aucune vidéo n'a de piste audio en « {} » (le clic ne changera rien).", self.language_name(id)));
+                        }
+                    }
                     if it.fixed_video().map_or(false, |v| v >= self.videos.len()) { p.push("Vignette : la vidéo choisie n'existe pas.".into()); }
                     match it.sub {
                         crate::design::SubChoice::Track(k) => {
@@ -409,7 +422,7 @@ impl ProjectModel {
         }
         if let Some(h) = self.designs.home {
             let total = auto_pages(self) + self.designs.free.len();
-            let bad = match h { crate::design::Target::Main(q) => q >= total, crate::design::Target::Chapters(v, _) => v >= self.videos.len(), crate::design::Target::Video(_) | crate::design::Target::Stay => true };
+            let bad = match h { crate::design::Target::Main(q) => q >= total, crate::design::Target::Chapters(v, _) => v >= self.videos.len(), crate::design::Target::Video(_) | crate::design::Target::Stay | crate::design::Target::Audio(_) => true };
             if bad { p.push("Page d'accueil invalide : choisissez une page existante.".into()); }
         }
         p

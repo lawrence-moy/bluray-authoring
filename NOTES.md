@@ -436,3 +436,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   d'encodage : reglages audio ajoutes seulement quand une liste de langues est utilisee.
 - Interface : panneau « Pistes audio » par video (`audio_ui.rs`), « Langue audio par defaut » dans Disque. Reste a faire : bouton « Regler la
   langue audio » (commande SET_STREAM audio, format de l'operande a verifier). Tests : tests/audio.rs, project.rs (`several_audio_tracks_per_video`).
+
+## Action « Regler la langue audio »
+- Destination `Target::Audio(id_langue)` (JSON `{"audio_langue": id}`), distincte de `Target::Stay` (sous-titres) : un element regle l'un OU
+  l'autre. Disponible pour tout element cliquable (bouton, vignette, texte, image) via « Destination » / « Au clic » : une entree par langue.
+- Disque : commande `mobj::set_audio_stream(rang)` (SET_STREAM, dst = 0x8000_0000 | (rang+1) << 16, sous-titres intacts), rang = rang de la
+  langue dans `AudioPlan.slots` ; sans piste correspondante : NOP. Format de l'operande d'apres libbluray, NON verifie sur lecteur.
+- Retrait d'une langue : la destination redevient « a choisir ». Validation : avertissement si aucune video n'a d'audio dans cette langue.

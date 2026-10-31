@@ -28,6 +28,13 @@ pub fn set_pg_stream(track: Option<usize>) -> Command {
     }
 }
 
+/// Reglage de la piste audio principale (PSR1) : piste `k` (0-based). Operande dst : bit 31 = numero d'audio valide,
+/// bits 16-27 = numero 1-based ; les bits des sous-titres (15 et 14) restent a 0, donc les sous-titres ne changent pas.
+/// Format releve dans la reference libbluray (hdmv_vm) ; non verifie sur lecteur materiel.
+pub fn set_audio_stream(track: usize) -> Command {
+    Command::new(SET_STREAM_INSN, 0x8000_0000 | (((track as u32 + 1) & 0xfff) << 16), 0)
+}
+
 fn branch_name(sub: u32, opt: u32) -> Option<&'static str> {
     Some(match (sub, opt) {
         (0, 0) => "NOP", (0, 1) => "GOTO", (0, 2) => "BREAK",

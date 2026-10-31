@@ -113,6 +113,14 @@ impl App {
                 self.edit_gen += 1;
                 return;
             }
+            SimAction::Go(Target::Audio(id)) => {
+                // aucune navigation : seule la langue audio change (pour les videos lues ensuite)
+                let name = self.model.language_name(id);
+                let has = self.model.videos.iter().any(|v| v.audio.iter().any(|t| t.lang_id == id));
+                self.notice = if has { format!("Simulation : langue audio réglée sur « {name} ».") } else { format!("Simulation : aucune vidéo n'a d'audio en « {name} » : rien ne change.") };
+                self.edit_gen += 1;
+                return;
+            }
             SimAction::Go(t) => go = page_of_target(&pages, t),
             SimAction::Prev | SimAction::Next => {
                 let d = if a == SimAction::Next { 1 } else { -1 };

@@ -248,7 +248,12 @@ impl App {
         for v in 0..self.model.videos.len() {
             out.push((Target::Video(v), format!("Lire la vidéo {}. {}", v + 1, video_title(&self.model, v))));
         }
-        out.insert(0, (Target::Stay, "Régler les sous-titres (sans quitter la page)".to_string()));
+        // reglages sans navigation : les sous-titres, puis une entree par langue audio (jamais les deux a la fois)
+        let mut stay = vec![(Target::Stay, "Régler les sous-titres (sans quitter la page)".to_string())];
+        for l in &self.model.languages {
+            stay.push((Target::Audio(l.id), format!("Régler la langue audio : {} (sans quitter la page)", l.name)));
+        }
+        out.splice(0..0, stay);
         out
     }
 
@@ -1157,6 +1162,16 @@ impl App {
                     } else {
                         ui.label(egui::RichText::new("Le clic règle les sous-titres et le menu reste affiché. La langue vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue s'affiche sans sous-titres. Le spectateur peut toujours changer avec la touche SUBTITLE.").weak());
                     }
+                }
+            }
+            // action « Regler la langue audio » : la langue est dans la destination elle-meme
+            {
+                let audio_id = match &it.kind {
+                    Kind::Nav { action: NavAction::Goto, target, .. } => *target,
+                    _ => it.link(),
+                };
+                if let Some(Target::Audio(_)) = audio_id {
+                    ui.label(egui::RichText::new("Le clic règle la langue audio et le menu reste affiché. Elle vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue garde son audio actuel. Le spectateur peut toujours changer avec la touche AUDIO. Les sous-titres ne sont pas modifiés.").weak());
                 }
             }
             // apparence propre a ce bouton

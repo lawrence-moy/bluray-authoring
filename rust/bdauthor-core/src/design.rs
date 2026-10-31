@@ -21,6 +21,8 @@ pub enum Target {
     Video(usize),
     /// Aucune navigation : le menu reste affiche (bouton qui ne fait que regler les sous-titres, par exemple).
     Stay,
+    /// Aucune navigation : regle la langue audio (`Language::id`) et reste sur la page. Jamais en meme temps que les sous-titres.
+    Audio(u32),
 }
 
 impl Target {
@@ -32,6 +34,7 @@ impl Target {
             Target::Chapters(v, p) => vec![("menu".to_string(), Value::Str("chapitres".into())), ("video".to_string(), num(v)), ("page".to_string(), num(p))],
             Target::Video(v) => vec![("lire".to_string(), Value::Str("video".into())), ("video".to_string(), num(v))],
             Target::Stay => vec![("rester".to_string(), Value::Bool(true))],
+            Target::Audio(id) => vec![("audio_langue".to_string(), Value::Num(id as f64))],
         };
         Value::Obj(o)
     }
@@ -39,6 +42,9 @@ impl Target {
         let n = |key: &str| c.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
         if c.get("rester").and_then(Value::as_bool) == Some(true) {
             return Some(Target::Stay);
+        }
+        if let Some(id) = c.get("audio_langue").and_then(Value::as_i64) {
+            return if id >= 1 { Some(Target::Audio(id as u32)) } else { None };
         }
         if c.get("lire").and_then(Value::as_str) == Some("video") {
             return n("video").map(Target::Video);
@@ -52,7 +58,7 @@ impl Target {
     /// Renumerotation quand deux videos echangent leur place.
     fn swap_videos(&mut self, a: usize, b: usize) {
         let sw = |v: &mut usize| *v = if *v == a { b } else if *v == b { a } else { *v };
-        match self { Target::Chapters(v, _) | Target::Video(v) => sw(v), Target::Main(_) | Target::Stay => {} }
+        match self { Target::Chapters(v, _) | Target::Video(v) => sw(v), Target::Main(_) | Target::Stay | Target::Audio(_) => {} }
     }
 }
 
