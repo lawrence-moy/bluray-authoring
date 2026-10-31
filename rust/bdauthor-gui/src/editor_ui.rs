@@ -279,7 +279,7 @@ impl App {
         self.path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
     }
 
-    fn bump(&mut self) {
+    pub(crate) fn bump(&mut self) {
         self.edit_gen += 1;
         self.dirty = true;
     }
@@ -634,27 +634,6 @@ impl App {
             }
         }
 
-        // fenetre du style des boutons du projet
-        let mut open = self.show_style;
-        let mut style_changed = false;
-        let mut pick_sound: Option<u8> = None;
-        egui::Window::new("Style des boutons").open(&mut open).resizable(false).show(ctx, |ui| {
-            egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
-                style_changed = crate::style_ui::style_ui(ui, &mut self.model.designs.style, "projet", &mut pick_sound);
-            });
-            ui.label(egui::RichText::new("S'applique à tous les boutons du projet, sauf ceux qui ont leur propre style (inspecteur).").weak());
-        });
-        self.show_style = open;
-        if let Some(k) = pick_sound {
-            if let Some(f) = rfd::FileDialog::new().add_filter("Sons", &crate::style_ui::SOUND_EXTS).pick_file() {
-                let rel = self.relative(&f);
-                let st = &mut self.model.designs.style;
-                if k == 1 { st.sound_select = rel; } else { st.sound_activate = rel; }
-                style_changed = true;
-            }
-        }
-        if style_changed { self.bump(); }
-
         // aperçu régénéré hors glissement
         let min_gap = if self.cfg.adaptive_preview { (self.render_ms * 1.25).clamp(16.0, 200.0) } else { 0.0 };
         let due = self.drag.is_none() || self.last_preview.elapsed().as_secs_f32() * 1000.0 >= min_gap;
@@ -932,7 +911,7 @@ impl App {
         self.bump();
     }
 
-    fn relative(&self, f: &std::path::Path) -> String {
+    pub(crate) fn relative(&self, f: &std::path::Path) -> String {
         let base = self.base_dir();
         let s = match (std::fs::canonicalize(f), std::fs::canonicalize(&base)) {
             (Ok(a), Ok(b)) => a.strip_prefix(&b).map(|r| r.to_path_buf()).unwrap_or_else(|_| f.to_path_buf()),
@@ -1261,7 +1240,7 @@ impl App {
                     let after = if exit.is_some() { "puis le menu passe à la page choisie" } else { "et le menu reste affiché" };
                     let txt = match t {
                         Target::Audio(..) => format!("Le clic règle la langue audio {after}. Elle vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue garde son audio actuel. Le spectateur peut toujours changer avec la touche AUDIO. Les sous-titres ne sont pas modifiés."),
-                        _ if sub_langs.is_empty() => "Aucune langue de sous-titres dans le projet (à ajouter dans le menu « Édition > Langues du projet… »).".to_string(),
+                        _ if sub_langs.is_empty() => "Aucune langue de sous-titres dans le projet (à ajouter dans le menu « Édition > Projet… », onglet « Langues »).".to_string(),
                         _ => format!("Le clic règle les sous-titres {after}. La langue vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue s'affiche sans sous-titres. Le spectateur peut toujours changer avec la touche SUBTITLE."),
                     };
                     ui.label(egui::RichText::new(txt).weak());

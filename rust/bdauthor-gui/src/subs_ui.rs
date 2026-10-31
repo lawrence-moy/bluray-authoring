@@ -127,7 +127,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    ui.label(egui::RichText::new("La liste des langues du projet se règle dans le menu « Édition > Langues du projet… » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
+    ui.label(egui::RichText::new("La liste des langues du projet se règle dans le menu « Édition > Projet… », onglet « Langues » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
     ui.label(egui::RichText::new("Le décalage corrige un retard ou une avance. Les sous-titres sont dessinés en images (format Blu-ray PGS) ; la télécommande les active et choisit la piste.").weak());
     changed
 }
@@ -173,11 +173,11 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
     ui.label(egui::RichText::new("Tailles données pour une vidéo de 1080 lignes ; elles s'adaptent automatiquement à 720.").weak());
 }
 
-/// Fenetre « Langues du projet » (audio et sous-titres) : liste des langues du projet (le rang d'une langue est son numero de piste dans toutes
-/// les videos). Retourne vrai si quelque chose a change.
-pub fn languages_window(ctx: &egui::Context, open: &mut bool, m: &mut ProjectModel) -> bool {
+/// Onglet « Langues » de la fenetre Projet (audio et sous-titres) : liste des langues du projet (le rang d'une langue est son numero de
+/// piste dans toutes les videos). Retourne vrai si quelque chose a change.
+pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
     let mut changed = false;
-    egui::Window::new("Langues du projet").open(open).resizable(false).show(ctx, |ui| {
+    {
         ui.label("Langues des pistes audio et des sous-titres. Le rang dans la liste fixe le numéro de piste, identique dans toutes les vidéos.");
         let mut op: Option<(usize, i32)> = None; // (rang, -1 haut / 1 bas / 0 retirer)
         let n = m.languages.len();
@@ -225,6 +225,6 @@ pub fn languages_window(ctx: &egui::Context, open: &mut bool, m: &mut ProjectMod
             ui.label(egui::RichText::new("Chaque piste audio ou de sous-titres d'une vidéo choisit sa langue dans cette liste. Sous-titres : une vidéo qui n'a pas une langue garde une piste vide à cet endroit. Audio : seules comptent les langues qui ont de l'audio quelque part, et chaque vidéo doit avoir les premières de l'ordre de la liste, sans trou.").weak());
             ui.label(egui::RichText::new("Changer l'ordre change les numéros de piste : les boutons suivent leur langue.").weak());
         }
-    });
+    }
     changed
 }
