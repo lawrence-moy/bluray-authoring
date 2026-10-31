@@ -1008,21 +1008,17 @@ impl App {
                     self.bump();
                 }
             });
-            if info.custom(&self.model.designs) { self.page_settings_ui(ui, &info); }
-            ui.separator();
+            if info.custom(&self.model.designs) {
+                self.page_settings_ui(ui, &info);
+            } else {
+                ui.label("Personnalisez la page pour modifier ses éléments.");
+            }
+            // page affichee sans element selectionne : pas de rubrique « Element »
+            return;
         }
         ui.heading("Élément");
-        if widget {
-            ui.label(egui::RichText::new("Réglages de la page (fond, musique, animations, page d'accueil) : cliquez dans une zone vide de l'aperçu.").weak());
-        }
-        if !info.custom(&self.model.designs) {
-            ui.label("Personnalisez la page pour modifier ses éléments.");
-            return;
-        }
-        let Some(i) = self.sel_item else {
-            ui.label("Cliquez sur un élément de l'aperçu ou de la liste ci-dessus pour le modifier.\n\nGlissez pour déplacer, tirez un coin pour redimensionner, flèches du clavier pour ajuster (Maj : 10 px). Clic droit : dupliquer ou supprimer (Suppr retire aussi l'élément sélectionné).");
-            return;
-        };
+        ui.label(egui::RichText::new("Réglages de la page (fond, musique, animations, page d'accueil) : cliquez dans une zone vide de l'aperçu.").weak());
+        let Some(i) = self.sel_item else { return };
         let mut op: Option<Op> = None;
         let mut pick_image = false;
         let mut changed = false;
