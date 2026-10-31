@@ -1,6 +1,10 @@
 //! Reglages de l'apparence des boutons (style du projet ou propre a un element) et images d'etats.
 use bdauthor_core::style::{ButtonStyle, Skin, Weight, DECODED_LIMIT};
-use eframe::egui::{self, Color32};
+use eframe::egui::{self, Color32, Rect, Stroke};
+
+/// Image de l'animation en cours de glisser-deposer (rang dans la liste).
+#[derive(Clone, Copy)]
+struct FrameDrag(usize);
 
 /// Retourne vrai si le style a change.
 pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str) -> bool {
@@ -89,21 +93,38 @@ pub fn skin_ui(ui: &mut egui::Ui, skin: &mut Skin, pick: &mut Option<usize>, pre
 /// Animation de l'etat selectionne (au moins deux images) : liste ordonnee, lecture en boucle ou une fois, apercu.
 fn anim_ui(ui: &mut egui::Ui, skin: &mut Skin, preview: &mut bool, fps: u32) -> bool {
     let mut changed = false;
-    let mut op: Option<(usize, i32)> = None;
+    // (rang, destination) : deplacement par glisser-deposer ; (rang, None) : retrait
+    let mut op: Option<(usize, Option<usize>)> = None;
     ui.indent("anim_sel", |ui| {
-        egui::ScrollArea::vertical().id_salt("anim_frames").max_height(140.0).show(ui, |ui| {
-            let n = skin.sel_frames.len();
+        let mut rows: Vec<Rect> = Vec::new();
+        let list = egui::ScrollArea::vertical().id_salt("anim_frames").max_height(140.0).show(ui, |ui| {
             for (k, f) in skin.sel_frames.iter().enumerate() {
-                ui.horizontal(|ui| {
+                let r = ui.horizontal(|ui| {
+                    let _ = ui.dnd_drag_source(egui::Id::new(("image_animation", k)), FrameDrag(k), |ui| ui.label(egui::RichText::new("☰").weak()))
+                        .response.on_hover_text("Glisser pour changer l'ordre des images");
                     ui.label(format!("{:02}", k + 1));
                     let name = std::path::Path::new(f).file_name().map(|x| x.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone());
                     ui.label(name).on_hover_text(f.as_str());
-                    if k > 0 && ui.small_button("◀").on_hover_text("Plus tôt").clicked() { op = Some((k, -1)); }
-                    if k + 1 < n && ui.small_button("▶").on_hover_text("Plus tard").clicked() { op = Some((k, 1)); }
-                    if ui.small_button("✕").on_hover_text("Retirer").clicked() { op = Some((k, 0)); }
-                });
+                    if ui.small_button("✕").on_hover_text("Retirer").clicked() { op = Some((k, None)); }
+                }).response;
+                rows.push(r.rect);
             }
         });
+        // glisser-deposer (meme mecanique que la liste des pages et calques) : une ligne bleue montre la place d'arrivee
+        let area = list.inner_rect;
+        if let (Some(drag), Some(pos)) = (egui::DragAndDrop::payload::<FrameDrag>(ui.ctx()), ui.ctx().pointer_hover_pos()) {
+            if area.expand(8.0).contains(pos) && !rows.is_empty() {
+                let r = rows.iter().filter(|rect| rect.center().y < pos.y).count();
+                let y = if r < rows.len() { rows[r].top() } else { rows[rows.len() - 1].bottom() };
+                ui.painter().hline(area.x_range(), y, Stroke::new(2.5_f32, Color32::from_rgb(90, 170, 255)));
+                if ui.input(|i| i.pointer.any_released()) {
+                    egui::DragAndDrop::clear_payload(ui.ctx());
+                    let from = drag.0;
+                    let to = if r > from { r - 1 } else { r };
+                    if to != from { op = Some((from, Some(to))); }
+                }
+            }
+        }
         ui.horizontal(|ui| {
             ui.label("Lecture :");
             if ui.radio(!skin.sel_once, "en boucle").clicked() && skin.sel_once { skin.sel_once = false; changed = true; }
@@ -121,7 +142,10 @@ fn anim_ui(ui: &mut egui::Ui, skin: &mut Skin, preview: &mut bool, fps: u32) -> 
     if let Some((k, d)) = op {
         // une animation garde au moins deux images ; en dessous, l'image restante devient l'image fixe
         let mut files = skin.sel_frames.clone();
-        if d == 0 { files.remove(k); } else { files.swap(k, (k as i32 + d) as usize); }
+        if k < files.len() {
+            let f = files.remove(k);
+            if let Some(to) = d { files.insert(to.min(files.len()), f); }
+        }
         let once = skin.sel_once;
         skin.set_selected(files);
         if skin.sel_frames.len() >= 2 { skin.sel_once = once; } else { *preview = false; }
