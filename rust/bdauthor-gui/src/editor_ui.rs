@@ -1283,6 +1283,18 @@ impl App {
                 if !matches!(it.kind, Kind::Slot { .. }) {
                     changed |= crate::style_ui::skin_ui(ui, &mut it.look.skin, &mut pick_skin, &mut anim_preview, page_fps);
                 }
+                // sons : independants de l'apparence
+                ui.separator();
+                let mut own_snd = it.look.sounds.is_some();
+                if ui.checkbox(&mut own_snd, "Sons propres à cet élément").on_hover_text("Sinon : les sons du style des boutons du projet").changed() {
+                    it.look.sounds = if own_snd {
+                        Some(bdauthor_core::style::ItemSounds { select: proj_style.sound_select.clone(), activate: proj_style.sound_activate.clone() })
+                    } else { None };
+                    changed = true;
+                }
+                if let Some(snd) = &mut it.look.sounds {
+                    changed |= crate::style_ui::sounds_ui(ui, &mut snd.select, &mut snd.activate, &mut pick_sound_el);
+                }
             }
         }
         if pick_font {
@@ -1298,8 +1310,8 @@ impl App {
         if let Some(k) = pick_sound_el {
             if let Some(f) = rfd::FileDialog::new().add_filter("Sons", &crate::style_ui::SOUND_EXTS).pick_file() {
                 let rel = self.relative(&f);
-                if let Some(st) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).and_then(|it| it.look.style.as_mut()) {
-                    if k == 1 { st.sound_select = rel; } else { st.sound_activate = rel; }
+                if let Some(snd) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).and_then(|it| it.look.sounds.as_mut()) {
+                    if k == 1 { snd.select = rel; } else { snd.activate = rel; }
                     changed = true;
                 }
             }

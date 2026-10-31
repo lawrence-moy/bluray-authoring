@@ -425,7 +425,7 @@ impl ProjectModel {
             let d = &self.designs;
             for pg in d.main.values().chain(d.chapters.values()).chain(d.free.iter()) {
                 for it in &pg.items {
-                    if let Some(st) = &it.look.style { check(&st.sound_select); check(&st.sound_activate); }
+                    if let Some(s) = &it.look.sounds { check(&s.select); check(&s.activate); }
                 }
             }
             for f in missing { p.push(format!("Son de menu introuvable ({f}).")); }

@@ -281,10 +281,39 @@ impl Skin {
 pub struct Look {
     pub style: Option<ButtonStyle>,
     pub skin: Skin,
+    /// Sons propres a l'element (independants de l'apparence) ; `None` = sons du style du projet.
+    pub sounds: Option<ItemSounds>,
 }
 
 impl Look {
-    pub fn is_default(&self) -> bool { self.style.is_none() && self.skin.is_empty() }
+    pub fn is_default(&self) -> bool { self.style.is_none() && self.skin.is_empty() && self.sounds.is_none() }
+    /// Sons effectifs de l'element : (selection, appui sur OK) ; les siens, sinon ceux du style du projet.
+    pub fn sounds<'a>(&'a self, project: &'a ButtonStyle) -> (&'a str, &'a str) {
+        match &self.sounds {
+            Some(s) => (&s.select, &s.activate),
+            None => (&project.sound_select, &project.sound_activate),
+        }
+    }
+}
+
+/// Sons propres a un element : fichiers audio (vide = aucun son pour cet evenement).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct ItemSounds {
+    pub select: String,
+    pub activate: String,
+}
+
+impl ItemSounds {
+    pub fn to_value(&self) -> Value {
+        let mut o = Vec::new();
+        if !self.select.is_empty() { o.push(("selection".to_string(), Value::Str(self.select.clone()))); }
+        if !self.activate.is_empty() { o.push(("activation".to_string(), Value::Str(self.activate.clone()))); }
+        Value::Obj(o)
+    }
+    pub fn from_value(v: &Value) -> ItemSounds {
+        let g = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        ItemSounds { select: g("selection"), activate: g("activation") }
+    }
 }
 
 /// Images de l'animation du halo (etat selectionne) quand `ButtonStyle::glow_pulse` est actif.

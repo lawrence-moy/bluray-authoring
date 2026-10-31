@@ -275,7 +275,7 @@ fn styled_buttons_project() {
       "mise_en_page": { "style_boutons": {"halo": 24, "agrandir": 10, "etat_active": true, "halo_anime": true, "son_selection": "clic.wav"},
         "principal": { "1": { "elements": [
           {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"style":{"halo":0,"agrandir":0,"son_activation":"ok.wav"}},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"style":{"halo":0,"agrandir":0},"sons":{"activation":"ok.wav"}},
           {"type":"navigation","action":"aller_a","texte":"B","cible":{"lire":"video","video":2},"x":800,"y":900,"w":300,"h":90,
            "images_etats":{"normal":"btn.png","animation_normal":["n1.png","n2.png"],"animation_selection":["f1.png","f2.png","f3.png"],"animation_une_fois":true}} ] } } } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();

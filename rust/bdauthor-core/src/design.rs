@@ -650,6 +650,7 @@ impl PageDesign {
             put("x", num(it.x)); put("y", num(it.y)); put("w", num(it.w)); put("h", num(it.h));
             if let Some(st) = &it.look.style { put("style", st.to_value()); }
             if !it.look.skin.is_empty() { put("images_etats", it.look.skin.to_value()); }
+            if let Some(s) = &it.look.sounds { put("sons", s.to_value()); }
             if !self.layers.is_empty() { put("calque", num(it.layer as i32)); }
             if let Some(v) = it.sub.to_value() { put("soustitres", v); }
             Value::Obj(o)
@@ -703,10 +704,18 @@ impl PageDesign {
                 "image" => Kind::Image { path: st("fichier").ok_or_else(|| format!("élément {} : « fichier » manquant", k + 1))?.to_string(), link: link()? },
                 t => return Err(format!("élément {} : type « {t} » inconnu", k + 1)),
             };
-            let look = Look {
+            let mut look = Look {
                 style: match e.get("style") { Some(v @ Value::Obj(_)) => Some(ButtonStyle::from_value(v).map_err(|m| format!("élément {} : {m}", k + 1))?), _ => None },
                 skin: e.get("images_etats").map(Skin::from_value).unwrap_or_default(),
+                sounds: e.get("sons").map(crate::style::ItemSounds::from_value),
             };
+            // sons d'abord ranges dans le style propre de l'element : deplaces vers ses sons propres
+            if let Some(st) = &mut look.style {
+                if !st.sound_select.is_empty() || !st.sound_activate.is_empty() {
+                    let (select, activate) = (std::mem::take(&mut st.sound_select), std::mem::take(&mut st.sound_activate));
+                    if look.sounds.is_none() { look.sounds = Some(crate::style::ItemSounds { select, activate }); }
+                }
+            }
             let layer = e.get("calque").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32);
             items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer, sub: SubChoice::from_value(e.get("soustitres")) });
         }

@@ -35,3 +35,23 @@ fn style_sounds_json_and_button_ids() {
     let btn = &m.ics.pages[0].bogs[0].buttons[0];
     assert_eq!((btn.selected.0, btn.activated.0), (0, 1));
 }
+
+#[test]
+fn element_sounds_independent_of_style() {
+    use bdauthor_core::model::ProjectModel;
+    let t = r#"{"videos":[{"fichier":"a"}],"mise_en_page":{"generique":true,"style_boutons":{"son_selection":"clic.wav"},"pages":[{"nom":"P","elements":[
+        {"type":"navigation","action":"aller_a","texte":"a","cible":{"menu":"principal","page":1},"x":0,"y":0,"w":200,"h":80},
+        {"type":"navigation","action":"aller_a","texte":"b","cible":{"menu":"principal","page":1},"x":300,"y":0,"w":200,"h":80,"sons":{"activation":"ok.wav"}},
+        {"type":"navigation","action":"aller_a","texte":"c","cible":{"menu":"principal","page":1},"x":600,"y":0,"w":200,"h":80,"style":{"son_selection":"ancien.wav"}}]}]}}"#;
+    let m = ProjectModel::from_json(t).unwrap();
+    let st = &m.designs.style;
+    let it = &m.designs.free[0].items;
+    assert_eq!(it[0].look.sounds(st), ("clic.wav", ""));
+    assert_eq!(it[1].look.sounds(st), ("", "ok.wav"));
+    // ancien format (sons dans le style propre) : deplaces vers les sons propres
+    assert_eq!(it[2].look.sounds(st), ("ancien.wav", ""));
+    assert!(it[2].look.style.as_ref().unwrap().sound_select.is_empty());
+    let back = ProjectModel::from_json(&m.to_json()).unwrap();
+    assert_eq!(back.designs.free[0].items[1].look.sounds, it[1].look.sounds);
+    assert!(m.to_json().contains("\"sons\""));
+}

@@ -303,10 +303,11 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         let distinct = if nframes.is_empty() { distinct } else { distinct + nframes.len() as u64 + 1 };
         let [nrm, sel, act] = states;
         let mut btn = MenuButton::new("", go, bx + l, by + t, vec![nrm, sel, act]);
-        // sons du bouton (style propre ou style du projet)
+        // sons du bouton (les siens, sinon ceux du style du projet ; independants de l'apparence)
         let snd = |f: &str| if f.is_empty() { 0xFF } else { e.sounds.get(f).copied().unwrap_or(0xFF) };
-        btn.sound_select = snd(&st.sound_select);
-        btn.sound_activate = snd(&st.sound_activate);
+        let (s_sel, s_act) = it.look.sounds(e.style);
+        btn.sound_select = snd(s_sel);
+        btn.sound_activate = snd(s_act);
         btn.sel_frames = frames;
         btn.normal_once = !nframes.is_empty() && skin.normal_once;
         btn.normal_frames = nframes;
@@ -922,10 +923,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let sound_ids: BTreeMap<String, u8> = {
         let mut order: Vec<String> = Vec::new();
         let mut add = |f: &str| if !f.is_empty() && !order.iter().any(|x| x == f) { order.push(f.to_string()); };
-        let used = |st: &ButtonStyle, add: &mut dyn FnMut(&str)| { add(&st.sound_select); add(&st.sound_activate); };
         for d in &pages {
             for it in d.items.iter().filter(|it| it.is_button()) {
-                used(it.look.style.as_ref().unwrap_or(&designs.style), &mut add);
+                let (a, b) = it.look.sounds(&designs.style);
+                add(a);
+                add(b);
             }
         }
         if order.len() > crate::sound::MAX_SOUNDS { return bad(format!("trop de sons de menu differents ({}, {} au plus)", order.len(), crate::sound::MAX_SOUNDS)); }

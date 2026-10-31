@@ -497,3 +497,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   etats selectionne / active des boutons IG (0xFF = aucun).
 - Construction : `ffmpeg::decode_menu_sound` (stereo 48 kHz s16be, 10 s au plus). Validation : fichiers introuvables.
 - Non verifie sur lecteur materiel.
+- (suite) Sons propres a un element, independants de l'apparence : `Look::sounds: Option<ItemSounds>` (JSON element `"sons":
+  {"selection", "activation"}`) ; `Look::sounds(&style_projet)` donne les sons effectifs (les siens, sinon ceux du style du projet).
+  Les sons ne figurent plus que dans le style du projet ; ceux d'un style propre (format de quelques minutes) sont deplaces a la lecture.
+  Inspecteur : case « Sons propres a cet element » au meme niveau que « Apparence propre a cet element ».

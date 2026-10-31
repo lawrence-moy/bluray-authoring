@@ -52,22 +52,33 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &
     });
     ui.checkbox(&mut st.underline, "Souligner au lieu d'encadrer");
     ui.label(egui::RichText::new("Tailles données pour un menu 1920 × 1080. Le halo et l'agrandissement élargissent l'image des boutons : laissez de l'espace entre eux.").weak());
-    ui.strong("Sons");
-    for (k, label, path) in [(1u8, "Sélection", &mut st.sound_select), (2, "Appui sur OK", &mut st.sound_activate)] {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(label);
-            ui.add(egui::TextEdit::singleline(path).desired_width(140.0).hint_text("aucun"));
-            if ui.small_button("Choisir…").clicked() { *pick_sound = Some(k); }
-            if !path.is_empty() && ui.small_button("✕").clicked() { path.clear(); }
-        });
+    // sons : seulement dans le style du projet (un element a sa propre case « Sons propres a cet element », hors apparence)
+    if id == "projet" {
+        ui.strong("Sons");
+        sounds_ui(ui, &mut st.sound_select, &mut st.sound_activate, pick_sound);
     }
-    ui.label(egui::RichText::new("Sons courts (moins d'une seconde), joués par le lecteur quand la sélection arrive sur le bouton ou à l'appui sur OK. Convertis en stéréo 48 kHz sur le disque (10 s au plus).").weak());
     if ui.button("Valeurs par défaut").on_hover_text("Couleurs, cadre, halo… (les sons sont gardés)").clicked() {
         let sounds = (std::mem::take(&mut st.sound_select), std::mem::take(&mut st.sound_activate));
         *st = ButtonStyle::default();
         (st.sound_select, st.sound_activate) = sounds;
     }
     *st != before
+}
+
+/// Lignes « Selection » et « Appui sur OK » (fichiers audio). `pick` recoit 1 ou 2 pour choisir le fichier. Retourne vrai si un
+/// chemin a change.
+pub fn sounds_ui(ui: &mut egui::Ui, select: &mut String, activate: &mut String, pick: &mut Option<u8>) -> bool {
+    let mut changed = false;
+    for (k, label, path) in [(1u8, "Sélection", select), (2, "Appui sur OK", activate)] {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(label);
+            changed |= ui.add(egui::TextEdit::singleline(path).desired_width(140.0).hint_text("aucun")).changed();
+            if ui.small_button("Choisir…").clicked() { *pick = Some(k); }
+            if !path.is_empty() && ui.small_button("✕").clicked() { path.clear(); changed = true; }
+        });
+    }
+    ui.label(egui::RichText::new("Sons courts (moins d'une seconde), joués par le lecteur quand la sélection arrive sur le bouton ou à l'appui sur OK. Convertis en stéréo 48 kHz sur le disque (10 s au plus).").weak());
+    changed
 }
 
 /// Images d'etats d'un bouton. `pick` recoit l'etat (0 normal, 1 selectionne, 2 active) dont l'utilisateur veut choisir le ou les
