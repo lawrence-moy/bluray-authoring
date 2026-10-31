@@ -663,8 +663,13 @@ pub fn blit(dst: &mut RgbaImage, src: &RgbaImage, x: i32, y: i32, opacity: f32) 
             let a = s[3] as f32 / 255.0 * opacity;
             if a <= 0.0 { continue; }
             let d = [dst.data[di], dst.data[di + 1], dst.data[di + 2], dst.data[di + 3]];
-            let mix = |dc: u8, sc: u8| (dc as f32 * (1.0 - a) + sc as f32 * a).round() as u8;
-            let na = (d[3] as f32 + (255.0 - d[3] as f32) * a).round() as u8;
+            // composition « par-dessus » sur une destination qui peut etre transparente : la couleur de la destination ne compte
+            // qu'a hauteur de sa propre opacite (sinon un pixel translucide pose sur du vide serait assombri vers le noir)
+            let da = d[3] as f32 / 255.0;
+            let oa = a + da * (1.0 - a);
+            if oa <= 0.0 { continue; }
+            let mix = |dc: u8, sc: u8| ((sc as f32 * a + dc as f32 * da * (1.0 - a)) / oa).round().clamp(0.0, 255.0) as u8;
+            let na = (oa * 255.0).round().clamp(0.0, 255.0) as u8;
             dst.data[di..di + 4].copy_from_slice(&[mix(d[0], s[0]), mix(d[1], s[1]), mix(d[2], s[2]), na]);
         }
     }
