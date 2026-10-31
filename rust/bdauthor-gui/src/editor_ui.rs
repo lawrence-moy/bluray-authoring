@@ -994,20 +994,27 @@ impl App {
         }
         let Some(info) = self.current_info() else { return };
         // la page affichee : fond et page d'accueil
-        ui.heading("Page");
-        ui.horizontal_wrapped(|ui| {
-            let this = match info.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(info.page) };
-            let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
-            if is_home {
-                ui.label(egui::RichText::new("🏠 Page d'accueil").strong());
-            } else if ui.button("🏠 Définir comme page d'accueil").on_hover_text("Page affichée à l'ouverture du disque et par la touche TOP MENU").clicked() {
-                self.model.designs.home = if this == Target::Main(0) { None } else { Some(this) };
-                self.bump();
-            }
-        });
-        if info.custom(&self.model.designs) { self.page_settings_ui(ui, &info); }
-        ui.separator();
+        // un element selectionne : seuls ses reglages sont affiches (ceux de la page reviennent quand rien n'est selectionne)
+        let widget = info.custom(&self.model.designs) && self.sel_item.is_some();
+        if !widget {
+            ui.heading("Page");
+            ui.horizontal_wrapped(|ui| {
+                let this = match info.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(info.page) };
+                let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
+                if is_home {
+                    ui.label(egui::RichText::new("🏠 Page d'accueil").strong());
+                } else if ui.button("🏠 Définir comme page d'accueil").on_hover_text("Page affichée à l'ouverture du disque et par la touche TOP MENU").clicked() {
+                    self.model.designs.home = if this == Target::Main(0) { None } else { Some(this) };
+                    self.bump();
+                }
+            });
+            if info.custom(&self.model.designs) { self.page_settings_ui(ui, &info); }
+            ui.separator();
+        }
         ui.heading("Élément");
+        if widget {
+            ui.label(egui::RichText::new("Réglages de la page (fond, musique, animations, page d'accueil) : cliquez dans une zone vide de l'aperçu.").weak());
+        }
         if !info.custom(&self.model.designs) {
             ui.label("Personnalisez la page pour modifier ses éléments.");
             return;
