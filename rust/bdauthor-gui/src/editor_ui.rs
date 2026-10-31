@@ -875,7 +875,10 @@ impl App {
                     let r = Rect::from_min_max(to_screen(it.x as f32, it.y as f32), to_screen((it.x + it.w) as f32, (it.y + it.h) as f32));
                     let selected = self.sel_item == Some(i);
                     let col = kind_color(&it.kind);
-                    if selected {
+                    if selected && self.preview_pulse > 0 {
+                        // animation en cours dans l'apercu : ni voile ni cadre epais (ils la cacheraient), un contour fin seulement
+                        painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_white_alpha(140)));
+                    } else if selected {
                         painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 28));
                         painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
                     } else {
