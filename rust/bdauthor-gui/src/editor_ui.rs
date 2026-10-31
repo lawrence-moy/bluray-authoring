@@ -634,57 +634,6 @@ impl App {
             }
         }
 
-        // fenetre du fond de la page courante
-        if custom && self.show_page_bg {
-            let mut open = true;
-            let mut pick: Option<u8> = None;
-            let mut changed = false;
-            let note = {
-                use bdauthor_core::design::{PageMusic, PageVisual};
-                let bg = info.design(&self.model.designs).map(|d| d.bg.clone()).unwrap_or_default();
-                let video = match &bg.visual { PageVisual::Video(f, _) => f.clone(), PageVisual::Project => self.model.bg_video.clone(), _ => String::new() };
-                let music = match &bg.music { PageMusic::File(f) => f.clone(), PageMusic::Project => self.model.music.clone(), PageMusic::Silent => String::new() };
-                if bg.is_default() { None } else { self.bg_note(&video, &music) }
-            };
-            if let Some(d) = info.design_mut(&mut self.model.designs) {
-                egui::Window::new("Fond de cette page").open(&mut open).resizable(false).show(ctx, |ui| {
-                    changed |= page_bg_ui(ui, &mut d.bg, &mut pick);
-                    if let Some(n) = &note { ui.label(egui::RichText::new(n).weak()); }
-                    ui.separator();
-                    ui.strong("Animations des boutons");
-                    let def = bdauthor_core::design::DEFAULT_ANIM_FPS;
-                    let cur = if d.anim_fps == 0 { def } else { d.anim_fps };
-                    egui::ComboBox::from_label("images par seconde").selected_text(cur.to_string()).show_ui(ui, |ui| {
-                        for f in [4, 6, 8, 12, 25] {
-                            if ui.selectable_label(cur == f, f.to_string()).clicked() && cur != f { d.anim_fps = if f == def { 0 } else { f }; changed = true; }
-                        }
-                    });
-                    ui.label(egui::RichText::new("Une seule cadence par page (norme Blu-ray), pour le halo animé et les animations d'images. Arrondie à une fraction de la cadence de la vidéo du menu.").weak());
-                });
-            }
-            self.show_page_bg = open;
-            if let Some(k) = pick {
-                let (name, exts): (&str, &[&str]) = match k {
-                    0 => ("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]),
-                    1 => ("Vidéos", &["mp4", "mkv", "mov", "avi", "m2ts", "mts", "ts", "webm", "wmv", "m4v", "mpg", "mpeg"]),
-                    _ => ("Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]),
-                };
-                if let Some(f) = rfd::FileDialog::new().add_filter(name, exts).pick_file() {
-                    let rel = self.relative(&f);
-                    if let Some(d) = info.design_mut(&mut self.model.designs) {
-                        use bdauthor_core::design::{PageMusic, PageVisual};
-                        match k {
-                            0 => d.bg.visual = PageVisual::Image(rel),
-                            1 => d.bg.visual = PageVisual::Video(rel, matches!(d.bg.visual, PageVisual::Video(_, true))),
-                            _ => d.bg.music = PageMusic::File(rel),
-                        }
-                        changed = true;
-                    }
-                }
-            }
-            if changed { self.bump(); }
-        }
-
         // fenetre du style des boutons du projet
         let mut open = self.show_style;
         let mut style_changed = false;
@@ -984,6 +933,54 @@ impl App {
     }
 
     // ------------------------------------------------------------------ inspecteur (panneau de droite)
+    /// Reglages de la page affichee, directement dans l'inspecteur : fond (image ou video), musique, cadence des animations.
+    fn page_settings_ui(&mut self, ui: &mut egui::Ui, info: &PageInfo) {
+        let mut pick: Option<u8> = None;
+        let mut changed = false;
+        let note = {
+            use bdauthor_core::design::{PageMusic, PageVisual};
+            let bg = info.design(&self.model.designs).map(|d| d.bg.clone()).unwrap_or_default();
+            let video = match &bg.visual { PageVisual::Video(f, _) => f.clone(), PageVisual::Project => self.model.bg_video.clone(), _ => String::new() };
+            let music = match &bg.music { PageMusic::File(f) => f.clone(), PageMusic::Project => self.model.music.clone(), PageMusic::Silent => String::new() };
+            if bg.is_default() { None } else { self.bg_note(&video, &music) }
+        };
+        let Some(d) = info.design_mut(&mut self.model.designs) else { return };
+        egui::CollapsingHeader::new("Fond et animations de cette page").id_salt("reglages_page").default_open(true).show(ui, |ui| {
+            changed |= page_bg_ui(ui, &mut d.bg, &mut pick);
+            if let Some(n) = &note { ui.label(egui::RichText::new(n).weak()); }
+            ui.separator();
+            ui.strong("Animations des boutons");
+            let def = bdauthor_core::design::DEFAULT_ANIM_FPS;
+            let cur = if d.anim_fps == 0 { def } else { d.anim_fps };
+            egui::ComboBox::from_label("images par seconde").selected_text(cur.to_string()).show_ui(ui, |ui| {
+                for f in [4, 6, 8, 12, 25] {
+                    if ui.selectable_label(cur == f, f.to_string()).clicked() && cur != f { d.anim_fps = if f == def { 0 } else { f }; changed = true; }
+                }
+            });
+            ui.label(egui::RichText::new("Une seule cadence par page (norme Blu-ray), pour le halo animé et les animations d'images. Arrondie à une fraction de la cadence de la vidéo du menu.").weak());
+        });
+        if let Some(k) = pick {
+            let (name, exts): (&str, &[&str]) = match k {
+                0 => ("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]),
+                1 => ("Vidéos", &["mp4", "mkv", "mov", "avi", "m2ts", "mts", "ts", "webm", "wmv", "m4v", "mpg", "mpeg"]),
+                _ => ("Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]),
+            };
+            if let Some(f) = rfd::FileDialog::new().add_filter(name, exts).pick_file() {
+                let rel = self.relative(&f);
+                if let Some(d) = info.design_mut(&mut self.model.designs) {
+                    use bdauthor_core::design::{PageMusic, PageVisual};
+                    match k {
+                        0 => d.bg.visual = PageVisual::Image(rel),
+                        1 => d.bg.visual = PageVisual::Video(rel, matches!(d.bg.visual, PageVisual::Video(_, true))),
+                        _ => d.bg.music = PageMusic::File(rel),
+                    }
+                    changed = true;
+                }
+            }
+        }
+        if changed { self.bump(); }
+    }
+
     pub(crate) fn inspector_ui(&mut self, ui: &mut egui::Ui) {
         if self.sim.is_some() {
             ui.heading("Simulation");
@@ -999,7 +996,6 @@ impl App {
         // la page affichee : fond et page d'accueil
         ui.heading("Page");
         ui.horizontal_wrapped(|ui| {
-            if info.custom(&self.model.designs) && ui.button("Fond de cette page…").on_hover_text("Image, vidéo ou musique propres à cette page").clicked() { self.show_page_bg = true; }
             let this = match info.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(info.page) };
             let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
             if is_home {
@@ -1009,6 +1005,7 @@ impl App {
                 self.bump();
             }
         });
+        if info.custom(&self.model.designs) { self.page_settings_ui(ui, &info); }
         ui.separator();
         ui.heading("Élément");
         if !info.custom(&self.model.designs) {
