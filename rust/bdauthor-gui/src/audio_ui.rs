@@ -26,7 +26,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
     let mut changed = false;
     ui.label("Pistes audio (au choix avec la télécommande) :");
     if v.audio.is_empty() {
-        ui.label(egui::RichText::new("Aucune piste choisie : la première piste audio de la vidéo est utilisée, dans la langue du disque (section « Disque »).").weak());
+        ui.label(egui::RichText::new("Aucune piste choisie : la première piste audio de la vidéo est utilisée, dans la langue audio par défaut (Édition > Projet…).").weak());
     }
     let mut del = None;
     for (k, t) in v.audio.iter_mut().enumerate() {

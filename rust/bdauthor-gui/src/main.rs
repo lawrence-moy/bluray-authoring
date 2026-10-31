@@ -82,6 +82,8 @@ struct App {
     show_style: bool,
     /// fenetre « Langues du projet »
     show_langs: bool,
+    /// fenetre « Projet » (titre du disque, langue audio par defaut, encodage)
+    show_project: bool,
     /// element montre selectionne dans l'apercu courant
     preview_sel: Option<usize>,
     /// etat « active » montre dans l'apercu courant
@@ -138,7 +140,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_langs: false, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_style: false, show_langs: false, show_project: false, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -325,6 +327,41 @@ impl eframe::App for App {
         });
         self.show_config = open;
 
+        // fenetre du projet : titre du disque, langue audio par defaut, encodage (Edition > Projet)
+        if self.show_project {
+            let mut open = true;
+            let mut changed = false;
+            let m = &mut self.model;
+            egui::Window::new("Projet").open(&mut open).resizable(false).show(ctx, |ui| {
+                ui.add_enabled_ui(!busy, |ui| {
+                    ui.heading("Disque");
+                    ui.horizontal(|ui| {
+                        ui.label("Titre du disque :");
+                        changed |= ui.text_edit_singleline(&mut m.title).changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("Langue audio par défaut (3 lettres) :").on_hover_text("Langue de la piste audio des vidéos dont les pistes audio ne sont pas choisies");
+                        changed |= ui.add(egui::TextEdit::singleline(&mut m.lang).desired_width(50.0)).changed();
+                    });
+                    ui.separator();
+                    ui.heading("Encodage");
+                    ui.horizontal(|ui| {
+                        ui.label("Qualité x264 (CRF, plus petit = meilleur) :");
+                        changed |= ui.add(egui::Slider::new(&mut m.crf, 0..=51)).changed();
+                    });
+                    egui::ComboBox::from_label("Préréglage d'encodage (plus lent = plus compact)")
+                        .selected_text(m.preset.clone())
+                        .show_ui(ui, |ui| {
+                            for p in PRESETS {
+                                changed |= ui.selectable_value(&mut m.preset, p.to_string(), p).changed();
+                            }
+                        });
+                });
+            });
+            if changed { self.dirty = true; }
+            self.show_project = open;
+        }
+
         // fenetre des langues du projet, audio et sous-titres (Edition > Langues du projet)
         if self.show_langs {
             let mut open = true;
@@ -353,6 +390,10 @@ impl eframe::App for App {
                         ui.label(egui::RichText::new("Concerne l'onglet « Mise en page »").weak());
                     }
                     ui.separator();
+                    if ui.button("Projet…").on_hover_text("Titre du disque, langue audio par défaut, qualité d'encodage").clicked() {
+                        self.show_project = true;
+                        ui.close_menu();
+                    }
                     // la fenetre du style s'ouvre dans l'onglet « Mise en page »
                     if ui.add_enabled(!busy, egui::Button::new("Style des boutons…")).on_hover_text("Couleurs, cadre, halo, agrandissement des boutons de tout le projet").clicked() {
                         self.mode = Mode::MiseEnPage;
@@ -509,30 +550,10 @@ impl eframe::App for App {
                         ui.separator();
                     }
 
-                    ui.heading("Disque");
+                    // titre du disque, langue audio par defaut et encodage : fenetre Edition > Projet
                     let (bgv, mus) = (self.model.bg_video.clone(), self.model.music.clone());
                     let bg_note = self.bg_note(&bgv, &mus);
                     let m = &mut self.model;
-                    ui.horizontal(|ui| {
-                        ui.label("Titre du disque :");
-                        changed |= ui.text_edit_singleline(&mut m.title).changed();
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Langue audio par défaut (3 lettres) :").on_hover_text("Langue de la piste audio des vidéos dont les pistes audio ne sont pas choisies");
-                        changed |= ui.add(egui::TextEdit::singleline(&mut m.lang).desired_width(50.0)).changed();
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Qualité x264 (CRF, plus petit = meilleur) :");
-                        changed |= ui.add(egui::Slider::new(&mut m.crf, 0..=51)).changed();
-                    });
-                    egui::ComboBox::from_label("Préréglage d'encodage (plus lent = plus compact)")
-                        .selected_text(m.preset.clone())
-                        .show_ui(ui, |ui| {
-                            for p in PRESETS {
-                                changed |= ui.selectable_value(&mut m.preset, p.to_string(), p).changed();
-                            }
-                        });
-                    ui.separator();
                     ui.heading("Menu");
                     ui.horizontal(|ui| {
                         ui.label("Image de fond :");
