@@ -127,7 +127,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    ui.label(egui::RichText::new("La liste des langues du projet se règle dans le menu « Édition > Projet… », onglet « Langues » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
+    ui.label(egui::RichText::new("La liste des langues du projet se règle dans le menu « Édition > Projet… », onglet « Langues des sous-titres » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
     ui.label(egui::RichText::new("Le décalage corrige un retard ou une avance. Les sous-titres sont dessinés en images (format Blu-ray PGS) ; la télécommande les active et choisit la piste.").weak());
     changed
 }

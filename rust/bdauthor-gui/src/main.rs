@@ -337,7 +337,7 @@ impl eframe::App for App {
                 ui.horizontal(|ui| {
                     ui.selectable_value(tab, 0, "Général");
                     ui.selectable_value(tab, 1, "Style des boutons");
-                    ui.selectable_value(tab, 2, "Langues");
+                    ui.selectable_value(tab, 2, "Langues des sous-titres");
                 });
                 ui.separator();
                 ui.add_enabled_ui(!busy, |ui| match *tab {

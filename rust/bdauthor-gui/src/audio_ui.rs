@@ -117,6 +117,6 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    ui.label(egui::RichText::new("Chaque langue garde le même numéro de piste dans toutes les vidéos : leurs langues audio doivent donc suivre l'ordre de la liste des langues (menu « Édition > Projet… », onglet « Langues »), sans trou. Les pistes sont converties en AC-3 stéréo. Le décalage corrige une avance ou un retard.").weak());
+    ui.label(egui::RichText::new("Chaque langue garde le même numéro de piste dans toutes les vidéos : leurs langues audio doivent donc suivre l'ordre de la liste des langues (menu « Édition > Projet… », onglet « Langues des sous-titres »), sans trou. Les pistes sont converties en AC-3 stéréo. Le décalage corrige une avance ou un retard.").weak());
     changed
 }

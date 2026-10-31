@@ -1240,7 +1240,7 @@ impl App {
                     let after = if exit.is_some() { "puis le menu passe à la page choisie" } else { "et le menu reste affiché" };
                     let txt = match t {
                         Target::Audio(..) => format!("Le clic règle la langue audio {after}. Elle vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue garde son audio actuel. Le spectateur peut toujours changer avec la touche AUDIO. Les sous-titres ne sont pas modifiés."),
-                        _ if sub_langs.is_empty() => "Aucune langue de sous-titres dans le projet (à ajouter dans le menu « Édition > Projet… », onglet « Langues »).".to_string(),
+                        _ if sub_langs.is_empty() => "Aucune langue de sous-titres dans le projet (à ajouter dans le menu « Édition > Projet… », onglet « Langues des sous-titres »).".to_string(),
                         _ => format!("Le clic règle les sous-titres {after}. La langue vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue s'affiche sans sous-titres. Le spectateur peut toujours changer avec la touche SUBTITLE."),
                     };
                     ui.label(egui::RichText::new(txt).weak());
