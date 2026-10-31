@@ -134,16 +134,18 @@ fn anim_ui(ui: &mut egui::Ui, skin: &mut Skin, state: usize, preview: &mut bool,
                 }
             }
         }
-        ui.horizontal(|ui| {
+        // rangees repliables : elles ne doivent pas imposer une largeur minimale au panneau
+        ui.horizontal_wrapped(|ui| {
             ui.label("Lecture :");
             if ui.radio(!*once, "en boucle").clicked() && *once { *once = false; changed = true; }
-            if ui.radio(*once, "une fois, puis dernière image").clicked() && !*once { *once = true; changed = true; }
+            if ui.radio(*once, "une fois").on_hover_text("Une seule fois, puis arrêt sur la dernière image").clicked() && !*once { *once = true; changed = true; }
         });
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let tip = if state == 0 { "Joue les animations de l'état normal des éléments de la page (et celle de l'élément sélectionné)." } else { "Joue l'animation sur l'aperçu de la page tant que l'élément est sélectionné." };
             ui.toggle_value(preview, "▶ Aperçu").on_hover_text(format!("{tip} En lecture « une fois », désactiver puis réactiver pour la rejouer."));
             let n = frames.len();
-            ui.label(egui::RichText::new(format!("Durée : {:.1} s ({fps} images/s, réglable dans « Fond et animations de cette page »)", n as f64 / fps.max(1) as f64)).weak());
+            ui.label(egui::RichText::new(format!("{:.1} s à {fps} im/s", n as f64 / fps.max(1) as f64)).weak())
+                .on_hover_text("Cadence réglable dans « Fond et animations de cette page » (sans élément sélectionné)");
         });
         if state == 1 && no_normal {
             ui.colored_label(Color32::from_rgb(230, 100, 90), "Choisissez aussi une image « normale » : sans elle, l'animation est ignorée.");
