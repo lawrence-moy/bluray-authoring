@@ -93,7 +93,7 @@ fn full_project() {
     }
     let proj = r#"{ "titre": "Test", "langue": "fra",
       "videos": [ {"fichier": "videos/a.mp4", "titre": "Alpha", "chapitres": [0, 2.5, {"t": 3, "titre": "Fin"}]}, {"fichier": "videos/b.mp4"}, {"fichier": "videos/c.mp4", "titre": "Gamma"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"par_page": 2, "fond_secondes": 2} }"#;
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2} }"#;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let mut logs = Vec::new();
     let mut last = 0.0;
@@ -106,8 +106,9 @@ fn full_project() {
     assert_eq!(last, 1.0);
     println!("{info:#?}");
     assert!(info.report.ok(), "{}", info.report.render());
-    // ancien projet converti : 2 pages pour les videos + 1 page de chapitres de la video 1
-    assert_eq!(info.main_pages, 3);
+    // projet sans page : pages de depart = 1 page pour les videos + 1 page de chapitres de la video 1
+    assert_eq!(info.main_pages, 2);
+    assert!(logs.iter().any(|l| l.contains("page(s) de depart")), "{logs:?}");
     assert!(info.chapters.contains_key(&1));
     // second passage : tout vient du cache
     let mut logs2 = Vec::new();
@@ -133,36 +134,42 @@ fn custom_layout_project() {
             "-f", "lavfi", "-i", &format!("sine=frequency={}:duration=4", 300 + 200 * i), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
             .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
     }
-    // page 1 du menu principal personnalisee (2 vignettes + titre + logo + 'Suivant' deplace), page 2 automatique ;
-    // menu de chapitres de la video 1 : page 1 personnalisee avec une vignette de trop (doit retomber sur la grille automatique)
+    // page 1 : titre, logo, 2 vignettes, une image devant la 2e, « Suivant » deplace, petite vignette de la video 3 menant a la page 3 ;
+    // page 2 : video 3 ; page 3 : favoris et liens ; page 4 : chapitres de la video 1
     let proj = r##"{ "titre": "Test", "langue": "fra",
       "videos": [ {"fichier": "a.mp4", "chapitres": [0, 2.5, 3.2]}, {"fichier": "b.mp4"}, {"fichier": "c.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"par_page": 2, "fond_secondes": 2},
-      "mise_en_page": { "principal": { "1": { "elements": [
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
+      "mise_en_page": { "pages": [
+        { "elements": [
           {"type":"texte","texte":"Mon titre","x":100,"y":60,"w":1700,"h":120,"taille":90,"couleur":"#ffcc00","alignement":"gauche"},
           {"type":"image","fichier":"b.mp4","x":1500,"y":800,"w":300,"h":200},
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"element":2},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356},
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1},
           {"type":"image","fichier":"b.mp4","x":1400,"y":500,"w":300,"h":200},
           {"type":"navigation","action":"suivant","texte":"Page 2","x":800,"y":900,"w":300,"h":90},
-          {"type":"vignette","vignette_h":150,"x":100,"y":800,"w":250,"h":200,"video":3,"cible":{"menu":"principal","page":3}} ] } },
-        "libres": [ { "elements": [
+          {"type":"vignette","vignette_h":150,"x":100,"y":800,"w":250,"h":200,"video":3,"cible":{"page":3}} ] },
+        { "elements": [
+          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":3},
+          {"type":"navigation","action":"precedent","texte":"<","x":400,"y":900,"w":300,"h":90},
+          {"type":"navigation","action":"suivant","texte":">","x":1200,"y":900,"w":300,"h":90} ] },
+        { "elements": [
           {"type":"texte","texte":"Mes favoris","x":100,"y":60,"w":1700,"h":120,"taille":80,"couleur":"#ffffff","alignement":"centre"},
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"element":3},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"element":1},
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":3},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1},
           {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90},
-          {"type":"navigation","action":"aller_a","texte":"Chapitres de a","cible":{"menu":"chapitres","video":1,"page":1},"x":1200,"y":900,"w":400,"h":90},
+          {"type":"navigation","action":"aller_a","texte":"Chapitres de a","cible":{"page":4},"x":1200,"y":900,"w":400,"h":90},
           {"type":"texte","texte":"Lire c","x":100,"y":700,"w":400,"h":90,"taille":60,"couleur":"#ffffff","alignement":"centre","cible":{"lire":"video","video":3}},
-          {"type":"image","fichier":"b.mp4","x":1600,"y":60,"w":200,"h":120,"cible":{"menu":"principal","page":1}},
+          {"type":"image","fichier":"b.mp4","x":1600,"y":60,"w":200,"h":120,"cible":{"page":1}},
           {"type":"navigation","action":"aller_a","texte":"Lire b","cible":{"lire":"video","video":2},"x":1500,"y":700,"w":300,"h":90},
           {"type":"vignette","vignette_h":100,"x":600,"y":700,"w":200,"h":130,"video":null},
-          {"type":"vignette","vignette_h":100,"x":850,"y":700,"w":200,"h":130,"video":3} ] } ],
-        "chapitres": { "1": { "1": { "elements": [
-          {"type":"vignette","vignette_h":200,"x":100,"y":300,"w":400,"h":250},
-          {"type":"vignette","vignette_h":200,"x":600,"y":300,"w":400,"h":250},
-          {"type":"vignette","vignette_h":200,"x":1100,"y":300,"w":400,"h":250} ] } } } } }"##;
+          {"type":"vignette","vignette_h":100,"x":850,"y":700,"w":200,"h":130,"video":3} ] },
+        { "elements": [
+          {"type":"vignette","vignette_h":200,"x":100,"y":300,"w":400,"h":250,"video":1,"depart_s":0},
+          {"type":"vignette","vignette_h":200,"x":600,"y":300,"w":400,"h":250,"video":1,"depart_s":2.5},
+          {"type":"vignette","vignette_h":200,"x":1100,"y":300,"w":400,"h":250,"video":9,"depart_s":3.2},
+          {"type":"navigation","action":"aller_a","texte":"Retour","cible":{"page":1},"x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
-    // la page de chapitres invalide bloque la construction, avec l'erreur dans le journal
+    // la page de chapitres invalide (video 9) bloque la construction avant tout encodage, avec l'erreur dans le journal
     let mut logs = Vec::new();
     let r = {
         let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
@@ -171,10 +178,11 @@ fn custom_layout_project() {
         build_project(&dir.join("projet.json"), &dir.join("out"), &mut env)
     };
     let e = r.expect_err("mise en page invalide : la construction doit s'arreter").to_string();
-    assert!(e.contains("menu de chapitres 1 (page 1)"), "{e}");
-    assert!(logs.iter().any(|l| l.starts_with("ERREUR de mise en page") && l.contains("chapitres")), "{logs:?}");
-    // sans la page fautive, la construction aboutit
-    let proj = proj.replace(r#""chapitres": { "1": { "1": { "elements": ["#, r#""chapitres_ignores": { "1": { "1": { "elements": ["#);
+    assert!(e.contains("page 4") && e.contains("n'existe pas"), "{e}");
+    assert!(logs.iter().any(|l| l.starts_with("ERREUR de mise en page")), "{logs:?}");
+    assert!(!logs.iter().any(|l| l.contains("encodage")), "aucun encodage avant l'erreur : {logs:?}");
+    // corrigee, la construction aboutit
+    let proj = proj.replace(r#""video":9"#, r#""video":1"#);
     std::fs::write(dir.join("projet.json"), &proj).unwrap();
     OVERLAYS.store(0, std::sync::atomic::Ordering::SeqCst);
     let info = {
@@ -184,15 +192,15 @@ fn custom_layout_project() {
         build_project(&dir.join("projet.json"), &dir.join("out"), &mut env).unwrap()
     };
     assert!(info.report.ok(), "{}", info.report.render());
-    assert_eq!(info.main_pages, 5, "2 pages de videos + 1 page libre + 2 pages de chapitres (pages generiques apres conversion)");
+    assert_eq!(info.main_pages, 4);
     assert_eq!(OVERLAYS.load(std::sync::atomic::Ordering::SeqCst), 1, "seule la 2e vignette est recouverte par l'image placee devant elle");
-    // page libre : 3 vignettes (dont la video 3 deux fois ; celle sans video est absente), « Precedent », 2 boutons « Aller a »,
+    // page 3 : 3 vignettes (dont la video 3 deux fois ; celle sans video est absente), « Precedent », 2 boutons « Aller a »,
     // un texte et une image cliquables
     let rep = info.report.render();
     assert!(rep.contains(": 8 bouton(s)"), "{rep}");
-    // page 1 : 2 vignettes d'elements, « Suivant », une vignette de la video 3 menant a la page libre
+    // page 1 : 2 vignettes, « Suivant », une vignette de la video 3 menant a la page 3
     assert!(rep.contains(": 4 bouton(s)"), "{rep}");
-    // la page 1 personnalisee a son propre fond : un clip de fond de plus que sans personnalisation
+    // les pages a decor (titres, images) ont leur propre fond
     let bgs = std::fs::read_dir(dir.join("out/BDMV/STREAM")).unwrap().filter(|e| { let n = e.as_ref().unwrap().file_name().into_string().unwrap(); n.starts_with("0000") || n.starts_with("0001") }).count();
     assert!(bgs >= 5, "{bgs}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -273,11 +281,11 @@ fn styled_buttons_project() {
     let proj = r##"{ "titre": "Style", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
       "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
       "mise_en_page": { "style_boutons": {"halo": 24, "agrandir": 10, "etat_active": true, "halo_anime": true, "son_selection": "clic.wav"},
-        "principal": { "1": { "elements": [
-          {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"style":{"halo":0,"agrandir":0},"sons":{"activation":"ok.wav"}},
+        "pages": [ { "elements": [
+          {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2,"style":{"halo":0,"agrandir":0},"sons":{"activation":"ok.wav"}},
           {"type":"navigation","action":"aller_a","texte":"B","cible":{"lire":"video","video":2},"x":800,"y":900,"w":300,"h":90,
-           "images_etats":{"normal":"btn.png","animation_normal":["n1.png","n2.png"],"animation_selection":["f1.png","f2.png","f3.png"],"animation_une_fois":true}} ] } } } }"##;
+           "images_etats":{"normal":"btn.png","animation_normal":["n1.png","n2.png"],"animation_selection":["f1.png","f2.png","f3.png"],"animation_une_fois":true}} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let mut logs = Vec::new();
     let info = {
@@ -345,16 +353,16 @@ fn home_intro_and_play_all() {
             "-f", "lavfi", "-i", &format!("sine=duration={d}"), "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
             .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
     }
-    // accueil = page libre (page 2 du menu principal) ; « Tout lire » sur la page 1 ; sequence d'ouverture
+    // accueil = page 2 ; « Tout lire » sur la page 1 ; sequence d'ouverture
     let proj = r##"{ "titre": "Accueil", "langue": "fra", "videos": [ {"fichier": "a.mp4", "chapitres": [0, 1.5]}, {"fichier": "b.mp4"} ],
       "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2, "intro": "intro.mp4"},
-      "mise_en_page": { "accueil": {"menu": "principal", "page": 2},
-        "principal": { "1": { "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356},
-          {"type":"navigation","action":"tout_lire","texte":"Tout lire","x":800,"y":900,"w":300,"h":90} ] } },
-        "libres": [ { "elements": [
-          {"type":"navigation","action":"aller_a","texte":"Videos","cible":{"menu":"principal","page":1},"x":800,"y":500,"w":300,"h":90} ] } ] } }"##;
+      "mise_en_page": { "accueil": {"page": 2}, "pages": [
+        { "elements": [
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2},
+          {"type":"navigation","action":"tout_lire","texte":"Tout lire","x":800,"y":900,"w":300,"h":90} ] },
+        { "elements": [
+          {"type":"navigation","action":"aller_a","texte":"Videos","cible":{"page":1},"x":800,"y":500,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
@@ -367,19 +375,18 @@ fn home_intro_and_play_all() {
     let mo = bdauthor_core::mobj::MovieObjectBdmv::parse(&std::fs::read(root.join("MovieObject.bdmv")).unwrap()).unwrap();
     let idx = bdauthor_core::index::IndexBdmv::parse(&std::fs::read(root.join("index.bdmv")).unwrap()).unwrap();
     let text = |o: usize| mo.objects[o].commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; ");
-    // ancien projet converti : pages 1 (videos), 2 (page libre = accueil), 3 (chapitres de a) -> titres 3, 4, 5 ;
-    // lecture depuis un repere de a (titre 6), « Tout lire » (titre 7)
-    assert_eq!(idx.titles.len(), 7);
-    assert!(text(0).contains("JUMP_TITLE 4"), "Top Menu -> accueil (titre de la page libre) : {}", text(0));
+    // pages 1 et 2 (accueil) -> titres 3 et 4 ; « Tout lire » (titre 5)
+    assert_eq!(idx.titles.len(), 5);
+    assert!(text(0).contains("JUMP_TITLE 4"), "Top Menu -> accueil (titre de la page 2) : {}", text(0));
     assert!(text(3).starts_with("PLAY_PL"), "titre 3 = page 1 du menu : {}", text(3));
     // « Tout lire » revient a la page d'ou il a ete lance (registre de retour)
-    assert!(text(7).starts_with("PLAY_PL") && text(7).contains("JUMP_TITLE r1"), "{}", text(7));
+    assert!(text(5).starts_with("PLAY_PL") && text(5).contains("JUMP_TITLE r1"), "{}", text(5));
     // ouverture : objet dedie, lecture de l'intro puis accueil
     let fp = idx.first_playback.id_ref as usize;
     assert_eq!(fp, mo.objects.len() - 1);
     assert!(text(fp).starts_with("PLAY_PL") && text(fp).ends_with("JUMP_TITLE 0"), "{}", text(fp));
     // la playlist « Tout lire » enchaine les deux videos, avec une marque au debut de chacune et les chapitres de a
-    let pl_all = mo.objects[7].commands[0].dst;
+    let pl_all = mo.objects[5].commands[0].dst;
     let m = bdauthor_core::mpls::Mpls::parse(&std::fs::read(root.join(format!("PLAYLIST/{pl_all:05}.mpls"))).unwrap()).unwrap();
     assert_eq!(m.playitems.iter().map(|p| p.clip.as_str()).collect::<Vec<_>>(), vec!["00000", "00001"]);
     assert_eq!(m.marks.iter().map(|k| k.playitem_ref).collect::<Vec<_>>(), vec![0, 0, 1]);
@@ -399,11 +406,15 @@ fn animated_menu_background_with_music() {
     run(&["-f", "lavfi", "-i", "mandelbrot=size=320x180:rate=25", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", dir.join("fond.mp4").to_str().unwrap()]);
     run(&["-f", "lavfi", "-i", "sine=frequency=440:duration=5", "-c:a", "libmp3lame", dir.join("musique.mp3").to_str().unwrap()]);
     let proj = r##"{ "titre": "Anime", "langue": "fra", "videos": [ {"fichier": "a.mp4", "chapitres": [0, 1]}, {"fichier": "b.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_video": "fond.mp4", "musique": "musique.mp3", "par_page": 1},
-      "mise_en_page": { "principal": { "2": { "elements": [
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_video": "fond.mp4", "musique": "musique.mp3"},
+      "mise_en_page": { "pages": [
+        { "elements": [
+          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":1},
+          {"type":"navigation","action":"suivant","texte":">","x":800,"y":900,"w":300,"h":90} ] },
+        { "elements": [
           {"type":"texte","texte":"Page 2","x":100,"y":60,"w":800,"h":120,"taille":80,"couleur":"#ffcc00","alignement":"gauche"},
-          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356},
-          {"type":"navigation","action":"precedent","texte":"<","x":800,"y":900,"w":300,"h":90} ] } } } }"##;
+          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":2},
+          {"type":"navigation","action":"precedent","texte":"<","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let build = |out: &str| {
         let mut logs = Vec::new();
@@ -420,7 +431,7 @@ fn animated_menu_background_with_music() {
     let first = t0.elapsed();
     assert!(info.report.ok(), "{}", info.report.render());
     let root = dir.join("out/BDMV");
-    // pages du menu principal : playlists 2 et 3 (apres les 2 videos) ; fond avec son, en boucle (pas d'arret sur image)
+    // pages du menu : playlists 2 et 3 (apres les 2 videos) ; fond avec son, en boucle (pas d'arret sur image)
     for pl in [2, 3] {
         let m = bdauthor_core::mpls::Mpls::parse(&std::fs::read(root.join(format!("PLAYLIST/{pl:05}.mpls"))).unwrap()).unwrap();
         let it = &m.playitems[0];
@@ -460,15 +471,18 @@ fn per_page_backgrounds() {
     run(&["-f", "lavfi", "-i", "color=c=green:size=320x180", "-frames:v", "1", dir.join("vert.png").to_str().unwrap()]);
     // musique du projet ; page 1 : video propre, sans musique ; page 2 : image propre + musique du projet ; page 3 : comme le projet
     let proj = r##"{ "titre": "Fonds", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"}, {"fichier": "c.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"musique": "musique.mp3", "par_page": 1, "fond_secondes": 2},
-      "mise_en_page": { "principal": {
-        "1": { "fond_page": {"video": "fond.mp4", "musique": null}, "elements": [
-          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356},
+      "encodage": {"preset": "ultrafast"}, "menu": {"musique": "musique.mp3", "fond_secondes": 2},
+      "mise_en_page": { "pages": [
+        { "fond_page": {"video": "fond.mp4", "musique": null}, "elements": [
+          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":1},
           {"type":"navigation","action":"suivant","texte":">","x":800,"y":900,"w":300,"h":90} ] },
-        "2": { "fond_page": {"image": "vert.png"}, "elements": [
-          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356},
+        { "fond_page": {"image": "vert.png"}, "elements": [
+          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":2},
           {"type":"navigation","action":"precedent","texte":"<","x":400,"y":900,"w":300,"h":90},
-          {"type":"navigation","action":"suivant","texte":">","x":1200,"y":900,"w":300,"h":90} ] } } } }"##;
+          {"type":"navigation","action":"suivant","texte":">","x":1200,"y":900,"w":300,"h":90} ] },
+        { "elements": [
+          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":3},
+          {"type":"navigation","action":"precedent","texte":"<","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
@@ -478,7 +492,7 @@ fn per_page_backgrounds() {
     };
     assert!(info.report.ok(), "{}", info.report.render());
     let root = dir.join("out/BDMV");
-    // playlists des pages du menu principal : 3, 4, 5
+    // playlists des pages du menu : 3, 4, 5
     let page = |pl: u32| {
         let m = bdauthor_core::mpls::Mpls::parse(&std::fs::read(root.join(format!("PLAYLIST/{pl:05}.mpls"))).unwrap()).unwrap();
         let clip = m.playitems[0].clip.clone();
@@ -503,11 +517,11 @@ fn invalid_main_layout_stops_before_encoding() {
     std::fs::create_dir_all(&dir).unwrap();
     assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=1", "-c:v", "libx264", "-pix_fmt", "yuv420p"])
         .arg(dir.join("a.mp4")).status().unwrap().success());
-    // page 1 : 2 vignettes pour 1 seule video -> une vignette sans rien a montrer
+    // page 1 : une vignette de la video 2 alors que le projet n'en a qu'une
     let proj = r##"{ "videos": [ {"fichier": "a.mp4"} ], "encodage": {"preset": "ultrafast"},
-      "mise_en_page": { "principal": { "1": { "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356} ] } } } }"##;
+      "mise_en_page": { "pages": [ { "elements": [
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let mut logs = Vec::new();
     let r = {
@@ -517,7 +531,7 @@ fn invalid_main_layout_stops_before_encoding() {
         build_project(&dir.join("projet.json"), &dir.join("out"), &mut env)
     };
     let e = r.expect_err("doit echouer").to_string();
-    assert!(e.contains("menu principal (page 1)") && e.contains("sans élément"), "{e}");
+    assert!(e.contains("page 1") && e.contains("la vidéo 2 n'existe pas"), "{e}");
     assert!(!logs.iter().any(|l| l.contains("encodage")), "aucun encodage avant l'erreur : {logs:?}");
     assert!(!dir.join(".cache_bdauthor").exists());
     let _ = std::fs::remove_dir_all(&dir);
@@ -537,16 +551,17 @@ fn generic_pages_with_chapter_thumbnails() {
     // page 1 : vignette de la video a, vignette de chapitre de a a 3 s (retour a l'accueil), « Suivant » ;
     // page 2 (accueil) : vignette de chapitre de b a 2 s (retour en page 1), « Precedent »
     let proj = r##"{ "titre": "Generique", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
+      "langues": [ {"id":1,"nom":"Français","code":"fra"}, {"id":2,"nom":"Anglais","code":"eng"} ],
       "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
-      "mise_en_page": { "accueil": {"menu": "principal", "page": 2}, "pages": [
+      "mise_en_page": { "accueil": {"page": 2}, "pages": [
         { "nom": "Videos", "elements": [
           {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1,"soustitres":"aucun"},
           {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1,"depart_s":3,"libelle":"Milieu","retour":"accueil"},
           {"type":"navigation","action":"suivant","texte":"Suite","x":800,"y":900,"w":300,"h":90} ] },
         { "nom": "Chapitres", "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2,"depart_s":2,"retour":{"page":1},"soustitres":2},
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2,"depart_s":2,"retour":{"page":1},"soustitres":{"langue":2}},
           {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90},
-          {"type":"texte","texte":"Sous-titres FR","x":1300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":1} ] } ] } }"##;
+          {"type":"texte","texte":"Sous-titres FR","x":1300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":{"langue":1}} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
@@ -619,7 +634,7 @@ fn language_list_fixes_track_numbers() {
           {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
           {"type":"texte","texte":"English","x":1300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true,"ensuite":2},"soustitres":{"langue":2}},
           {"type":"texte","texte":"Francais","x":300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":{"langue":1}} ] },
-        { "nom": "Fin", "elements": [ {"type":"texte","texte":"Retour","x":100,"y":100,"w":300,"h":90,"taille":40,"cible":{"menu":"principal","page":1}} ] } ] } }"##;
+        { "nom": "Fin", "elements": [ {"type":"texte","texte":"Retour","x":100,"y":100,"w":300,"h":90,"taille":40,"cible":{"page":1}} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});

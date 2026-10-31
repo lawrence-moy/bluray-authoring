@@ -1,9 +1,10 @@
-//! Conversion d'un ancien projet (pages automatiques du menu principal, pages libres, menus de chapitres) en pages generiques :
-//! toutes les pages deviennent des pages personnalisees, les vignettes montrent une video choisie ou un chapitre (instant de depart).
+//! Pages de depart d'un projet : a partir des videos, une grille de vignettes (sur une ou plusieurs pages) puis, pour chaque video
+//! qui a des chapitres, ses pages de chapitres. Toutes sont des pages ordinaires, modifiables ensuite dans l'editeur.
 use crate::design::*;
-use crate::project::paginate;
+use crate::project::{layout, paginate};
+use crate::style::ButtonStyle;
 
-/// Une video du projet pour la conversion : son titre et ses chapitres (instant en secondes, nom), vide s'il y en a moins de 2.
+/// Une video du projet : son titre et ses chapitres (instant en secondes, nom), vide s'il y en a moins de 2.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GenVideo {
     pub title: String,
@@ -15,123 +16,76 @@ fn mmss(t: f64) -> String {
     format!("{}:{:02}", s / 60, s % 60)
 }
 
-/// Pages generiques equivalentes a l'ancien menu : pages du menu principal (personnalisees ou grille automatique), pages libres,
-/// puis menus de chapitres de chaque video. Style et accueil sont repris ; les destinations sont renumerotees.
-pub fn generate_pages(videos: &[GenVideo], par_page: Option<usize>, disc_title: &str, legacy: &Designs) -> Result<Designs, String> {
+/// Grille de vignettes (une par entree : video, instant de depart, libelle), en reservant `reserve` px en bas pour les boutons.
+fn grid(entries: &[(usize, Option<f64>, String)], reserve: i32) -> Result<Vec<Item>, String> {
+    Ok(layout(entries.len(), (1920, 1080), reserve).map_err(|e| e.to_string())?
+        .into_iter().zip(entries).map(|(c, (v, start, label))| Item::video_slot(c.x, c.y, c.w, c.h, c.th, *v, *start, label)).collect())
+}
+
+fn goto(text: &str, t: Target, x: i32, w: i32) -> Item {
+    let mut it = Item::nav(NavAction::Goto, x, NAV_Y, w, 80);
+    if let Kind::Nav { text: tx, target, .. } = &mut it.kind { *tx = text.to_string(); *target = Some(t); }
+    it
+}
+
+/// Pages de depart pour ces videos : grille des videos (une vignette de video a chapitres mene a ses chapitres), puis pages de
+/// chapitres (« Tout lire » lit la video, « Retour » revient a la page de la video). Le style du projet est repris.
+pub fn generate_pages(videos: &[GenVideo], disc_title: &str, style: &ButtonStyle) -> Result<Designs, String> {
     let n = videos.len();
-    let mut out = Designs { style: legacy.style.clone(), generic: true, ..Default::default() };
+    let mut out = Designs { style: style.clone(), ..Default::default() };
     if n == 0 {
         return Ok(out);
     }
-    let main = paginate(n, par_page).map_err(|e| e.to_string())?;
-    let (m, f) = (main.len(), legacy.free.len());
+    let main = paginate(n, None).map_err(|e| e.to_string())?;
+    let m = main.len();
     // premiere page de chapitres de chaque video, et pagination de ses chapitres
     let mut ch_first: Vec<Option<usize>> = vec![None; n];
     let mut ch_pages: Vec<Vec<Vec<usize>>> = vec![Vec::new(); n];
-    let mut next = m + f;
+    let mut next = m;
     for (v, gv) in videos.iter().enumerate() {
         if gv.chapters.len() >= 2 {
-            let pg = paginate(gv.chapters.len(), par_page).map_err(|e| e.to_string())?;
+            let pg = paginate(gv.chapters.len(), None).map_err(|e| e.to_string())?;
             ch_first[v] = Some(next);
             next += pg.len();
             ch_pages[v] = pg;
         }
     }
-    let total = next;
     let video_page = |v: usize| main.iter().position(|g| g.contains(&v)).unwrap_or(0);
-    let remap = |t: Target| -> Option<Target> {
-        match t {
-            Target::Main(p) => (p < m + f).then_some(Target::Main(p)),
-            Target::Chapters(v, q) => ch_first.get(v).copied().flatten().filter(|_| q < ch_pages[v].len()).map(|i| Target::Main(i + q)),
-            Target::Video(v) => (v < n).then_some(Target::Video(v)),
-            Target::Stay(e) => Some(Target::Stay(e.filter(|p| *p < m + f))),
-            Target::Audio(id, e) => Some(Target::Audio(id, e.filter(|p| *p < m + f))),
-        }
-    };
-    let fix_links = |d: &mut PageDesign| {
-        for it in &mut d.items {
-            if let Some(t) = it.targets_mut() {
-                *t = t.and_then(remap);
-            }
-            // une vignette de video a chapitres ouvrait son menu de chapitres
-            if let Kind::Slot { video: Some(Some(v)), link, start: None, .. } = &mut it.kind {
-                if link.is_none() {
-                    if let Some(i) = ch_first.get(*v).copied().flatten() { *link = Some(Target::Main(i)); }
-                }
-            }
-        }
-    };
     let pages_label = |base: String, q: usize, of: usize| if of > 1 { format!("{base} ({}/{of})", q + 1) } else { base };
 
-    // menu principal
+    // grille des videos
     for (p, idxs) in main.iter().enumerate() {
-        let mut d = match legacy.main.get(&p) {
-            Some(d) => d.clone(),
-            None => PageDesign::starting_point(MenuType::Main, idxs.len(), p, m + f, disc_title)?,
-        };
-        let asg = d.slot_assignment(idxs.len());
-        let mut k = 0;
-        for it in &mut d.items {
-            if let Kind::Slot { video: video @ None, assign, .. } = &mut it.kind {
-                let a = asg.get(k).copied().unwrap_or(usize::MAX);
-                k += 1;
-                *video = Some(idxs.get(a).copied());
-                *assign = None;
+        let entries: Vec<(usize, Option<f64>, String)> = idxs.iter().map(|&v| (v, None, String::new())).collect();
+        let mut items = grid(&entries, if m > 1 { 140 } else { 0 })?;
+        for it in &mut items {
+            if let Kind::Slot { video: Some(v), link, .. } = &mut it.kind {
+                if let Some(i) = ch_first[*v] { *link = Some(Target::Main(i)); }
             }
         }
-        fix_links(&mut d);
-        if d.name.is_empty() { d.name = pages_label("Menu principal".into(), p, m); }
-        out.free.push(d);
+        items.insert(0, Item::text(disc_title, 100, 90, 1720, 110, 84));
+        if p > 0 { items.push(Item::nav(NavAction::Prev, 560, NAV_Y, 360, 80)); }
+        if p + 1 < m { items.push(Item::nav(NavAction::Next, 1000, NAV_Y, 360, 80)); }
+        out.free.push(PageDesign { items, name: pages_label("Vidéos".into(), p, m), ..Default::default() });
     }
-    // pages libres
-    for (k, d) in legacy.free.iter().enumerate() {
-        let mut d = d.clone();
-        fix_links(&mut d);
-        if d.name.is_empty() { d.name = format!("Page libre {}", k + 1); }
-        out.free.push(d);
-    }
-    // menus de chapitres
+    // pages de chapitres
     for (v, gv) in videos.iter().enumerate() {
         let npg = ch_pages[v].len();
         for (q, idxs) in ch_pages[v].iter().enumerate() {
-            let mut d = match legacy.chapters.get(&(v, q)) {
-                Some(d) => d.clone(),
-                None => PageDesign::starting_point(MenuType::Chapters, idxs.len(), q, npg, &format!("{} - chapitres", gv.title))?,
-            };
-            let asg = d.slot_assignment(idxs.len());
-            let mut k = 0;
-            for it in &mut d.items {
-                match &mut it.kind {
-                    Kind::Slot { video: video @ None, assign, start, label, .. } => {
-                        let a = asg.get(k).copied().unwrap_or(usize::MAX);
-                        k += 1;
-                        *assign = None;
-                        match idxs.get(a).and_then(|&j| gv.chapters.get(j)) {
-                            Some((t, name)) => {
-                                *video = Some(Some(v));
-                                *start = Some(*t);
-                                *label = format!("{name} ({})", mmss(*t));
-                            }
-                            None => *video = Some(None),
-                        }
-                    }
-                    Kind::Nav { action, target, .. } if *action == NavAction::PlayAll => {
-                        *action = NavAction::Goto;
-                        *target = Some(Target::Video(v));
-                    }
-                    Kind::Nav { action, target, .. } if *action == NavAction::Back => {
-                        *action = NavAction::Goto;
-                        *target = Some(Target::Main(video_page(v)));
-                    }
-                    _ => {}
-                }
+            let entries: Vec<(usize, Option<f64>, String)> = idxs.iter().filter_map(|&j| gv.chapters.get(j)).map(|(t, name)| (v, Some(*t), format!("{name} ({})", mmss(*t)))).collect();
+            let mut items = grid(&entries, 140)?;
+            items.insert(0, Item::text(&format!("{} - chapitres", gv.title), 100, 90, 1720, 110, 84));
+            if npg == 1 {
+                items.push(goto("Tout lire", Target::Video(v), 560, 360));
+                items.push(goto("Retour", Target::Main(video_page(v)), 1000, 360));
+            } else {
+                if q > 0 { items.push(Item::nav(NavAction::Prev, 260, NAV_Y, 320, 80)); }
+                items.push(goto("Tout lire", Target::Video(v), 620, 320));
+                items.push(goto("Retour", Target::Main(video_page(v)), 980, 320));
+                if q + 1 < npg { items.push(Item::nav(NavAction::Next, 1340, NAV_Y, 320, 80)); }
             }
-            fix_links(&mut d);
-            if d.name.is_empty() { d.name = pages_label(format!("Chapitres : {}", gv.title), q, npg); }
-            out.free.push(d);
+            out.free.push(PageDesign { items, name: pages_label(format!("Chapitres : {}", gv.title), q, npg), ..Default::default() });
         }
     }
-    debug_assert_eq!(out.free.len(), total);
-    out.home = legacy.home.and_then(remap).filter(|t| !matches!(t, Target::Video(_)));
+    debug_assert_eq!(out.free.len(), next);
     Ok(out)
 }

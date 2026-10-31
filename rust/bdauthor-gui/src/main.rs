@@ -176,14 +176,10 @@ impl App {
     fn open(&mut self) {
         let Some(p) = rfd::FileDialog::new().add_filter("Projet bdauthor", &["json"]).pick_file() else { return };
         match std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| ProjectModel::from_json(&t)) {
-            Ok(mut m) => {
-                // anciens projets : liste de langues deduite des pistes de sous-titres existantes
-                let before = m.clone();
-                m.ensure_languages();
-                let migrated = m != before;
+            Ok(m) => {
                 self.model = m;
                 self.path = Some(p);
-                self.dirty = migrated;
+                self.dirty = false;
                 self.sel = if self.model.videos.is_empty() { None } else { Some(0) };
                 self.reset_editor();
                 self.notice = "Projet ouvert.".into();

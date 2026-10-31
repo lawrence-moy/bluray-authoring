@@ -1,33 +1,18 @@
 use bdauthor_core::design::*;
 use bdauthor_core::editor::*;
-use bdauthor_core::model::*;
-use std::collections::HashMap;
 
-fn model(n: usize) -> ProjectModel {
-    let mut m = ProjectModel::default();
-    for i in 0..n { m.videos.push(VideoEntry::new(&format!("v{i}.mp4"))); }
-    m
-}
 
-#[test]
-fn page_list() {
-    let mut m = model(13);
-    let p = list_pages(&m, &HashMap::new());
-    assert_eq!(p.len(), 2);
-    assert_eq!((p[0].count(), p[1].count()), (7, 6));
-    m.videos[2].auto_s = Some(60.0);
-    assert_eq!(list_pages(&m, &HashMap::new()).len(), 2, "duree inconnue : chapitres automatiques ignores");
-    let d: HashMap<String, f64> = [("v2.mp4".to_string(), 1500.0)].into(); // 25 chapitres -> 4 pages (au-dela de 12 : pages de 8)
-    let p = list_pages(&m, &d);
-    assert_eq!(p.iter().filter(|x| x.menu == MenuType::Chapters).count(), 4);
-    assert_eq!(p[2].video, Some(2));
-    assert!(p[2].label(&m).contains("Chapitres de"));
-    assert!(p[0].starting_point(&m).unwrap().slot_count() == 7);
+/// Page de test : titre, `n` vignettes de videos, puis « Suivant ».
+fn page(n: usize, title: &str) -> PageDesign {
+    let mut items = vec![Item::text(title, 100, 90, 1720, 110, 84)];
+    for k in 0..n { items.push(Item::video_slot(100 + 420 * k as i32, 300, 400, 260, 225, k, None, "")); }
+    items.push(Item::nav(NavAction::Next, 1000, 940, 360, 80));
+    PageDesign { items, ..Default::default() }
 }
 
 #[test]
 fn drag_and_hit() {
-    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, assign: None, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() };
+    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() };
     let items = vec![it(100, 100, 300, 200), it(250, 150, 300, 200)];
     assert_eq!(hit_test(&items, 260.0, 160.0, None, 8.0), Some((1, Handle::Body)), "l'element du dessus gagne");
     assert_eq!(hit_test(&items, 120.0, 120.0, None, 8.0), Some((0, Handle::Body)));
@@ -42,12 +27,12 @@ fn drag_and_hit() {
     // vignette : la hauteur du libelle est conservee
     let mut a = items[0].clone();
     set_rect(&mut a, &items[0], (100, 100, 300, 300));
-    assert_eq!(a.kind, Kind::Slot { thumb_h: 260, assign: None, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() });
+    assert_eq!(a.kind, Kind::Slot { thumb_h: 260, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() });
 }
 
 #[test]
 fn ordering_and_decor_copy() {
-    let mut d = PageDesign::starting_point(MenuType::Main, 3, 0, 2, "T").unwrap(); // [texte, v, v, v, suivant]
+    let mut d = page(3, "T"); // [texte, v, v, v, suivant]
     assert!(matches!(d.items[0].kind, Kind::Text { .. }));
     let up = move_in_list(&mut d, 0, true);
     assert_eq!(up, 0);
@@ -56,11 +41,11 @@ fn ordering_and_decor_copy() {
     assert!(matches!(d.items[4].kind, Kind::Text { .. }) && matches!(d.items[0].kind, Kind::Slot { .. }));
     assert_eq!(to_back(&mut d, 4), 0);
     assert!(matches!(d.items[0].kind, Kind::Text { .. }));
-    let mut src = PageDesign::starting_point(MenuType::Main, 3, 0, 2, "Titre commun").unwrap();
+    let mut src = page(3, "Titre commun");
     src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default() });
-    let target = PageDesign::default_main(2, 1, 2).unwrap();
-    let out = copy_decor(&src, target.clone(), &target);
-    assert!(out.items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Prev, .. })), "Precedent repris de la page cible");
+    let mut target = page(2, "Autre");
+    target.items.retain(|i| matches!(i.kind, Kind::Slot { .. }));
+    let out = copy_decor(&src, target.clone());
     assert!(out.items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Next, .. })));
     assert_eq!(out.slot_count(), 2);
     assert!(out.items.iter().any(|i| matches!(&i.kind, Kind::Text { text, .. } if text == "Titre commun")));
@@ -73,27 +58,26 @@ fn history_undo_redo() {
     let mut d = Designs::default();
     let mut h = History::default();
     h.reset(&d);
-    let a = PageDesign::default_main(2, 0, 1).unwrap();
-    d.main.insert(0, a.clone());
+    d.free.push(page(2, "T"));
     h.observe(&d, 1000);
     // changement rapproche : fusionne avec le precedent ? non, c'est la 1re etape (pile vide) -> nouvelle etape
-    d.main.get_mut(&0).unwrap().items[0].x += 5;
+    d.free[0].items[0].x += 5;
     h.observe(&d, 1100); // fusion
-    d.main.get_mut(&0).unwrap().items[0].x += 5;
+    d.free[0].items[0].x += 5;
     h.observe(&d, 3000); // nouvelle etape
     assert!(h.can_undo() && !h.can_redo());
-    let x_final = d.main[&0].items[0].x;
+    let x_final = d.free[0].items[0].x;
     assert!(h.undo(&mut d));
-    assert_eq!(d.main[&0].items[0].x, x_final - 5);
+    assert_eq!(d.free[0].items[0].x, x_final - 5);
     assert!(h.undo(&mut d));
-    assert!(d.main.is_empty(), "retour a l'etat initial");
+    assert!(d.free.is_empty(), "retour a l'etat initial");
     assert!(!h.undo(&mut d));
     assert!(h.redo(&mut d) && h.redo(&mut d));
-    assert_eq!(d.main[&0].items[0].x, x_final);
+    assert_eq!(d.free[0].items[0].x, x_final);
     assert!(!h.redo(&mut d));
     // un nouveau changement vide « refaire »
     h.undo(&mut d);
-    d.main.get_mut(&0).unwrap().items[0].y += 7;
+    d.free[0].items[0].y += 7;
     h.observe(&d, 9000);
     assert!(!h.can_redo());
     h.reset(&d);
@@ -101,92 +85,35 @@ fn history_undo_redo() {
 }
 
 #[test]
-fn slot_assignment_and_swap() {
-    let mut d = PageDesign::default_main(4, 0, 1).unwrap(); // 4 vignettes automatiques
-    assert_eq!(d.slot_assignment(4), vec![0, 1, 2, 3]);
-    // la 3e vignette montre l'element 1 : les vignettes automatiques prennent les elements restants
-    d.assign_slot(2, Some(0), 4);
-    assert_eq!(d.slot_assignment(4), vec![1, 2, 0, 3]);
-    assert!(d.unshown_elements(4).is_empty());
-    // deux vignettes explicites sur le meme element, les deux autres automatiques
-    d.assign_slot(0, Some(0), 4);
-    assert_eq!(d.slot_assignment(4), vec![0, 1, 0, 2]);
-    let v = d.validate(4, MenuType::Main, 0, 1);
-    assert!(v.iter().all(|p| !p.error) && v.iter().any(|p| p.msg.contains("sans vignette")), "{v:?}");
-    d.assign_slot(2, None, 4);
-    d.assign_slot(0, None, 4);
-    assert_eq!(d.slot_assignment(4), vec![0, 1, 2, 3], "retour a l'automatique");
-    // affectation invalide ignoree (page plus petite)
-    let mut e = PageDesign::default_main(3, 0, 1).unwrap();
-    if let Kind::Slot { assign, .. } = &mut e.items[0].kind { *assign = Some(7); }
-    assert_eq!(e.slot_assignment(3), vec![0, 1, 2]);
-    // aller-retour JSON
-    let mut ds = Designs::default();
-    ds.main.insert(0, d.clone());
-    let back = Designs::from_value(&bdauthor_core::json::parse(&ds.to_value().to_pretty()).unwrap()).unwrap();
-    assert_eq!(back, ds);
-}
-
-#[test]
-fn free_pages_listing_and_add() {
-    let mut m = model(5);
-    m.par_page = Some(3); // 2 pages automatiques
-    assert_eq!(list_pages(&m, &HashMap::new()).len(), 2);
-    // pas de personnalisation : l'ajout d'une page libre n'ajoute rien a la page automatique precedente
-    let f = add_free_page(&mut m);
-    assert_eq!(f, 0);
-    let pages = list_pages(&m, &HashMap::new());
-    assert_eq!(pages.len(), 3);
-    assert!(pages.iter().all(|p| p.pages == 3), "les pages automatiques voient la page libre dans la suite");
-    let last = pages.last().unwrap();
-    assert!(last.is_free() && last.page == 2 && last.items.len() == 5);
-    assert!(last.custom(&m.designs));
-    assert_eq!(m.designs.free[0].items.len(), 1, "page vierge = bouton Precedent seulement");
-    // une 2e page libre : la 1re recoit un bouton Suivant
-    add_free_page(&mut m);
-    assert!(m.designs.free[0].items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Next, .. })));
-    // suppression
-    pages.last().unwrap().remove_design(&mut m.designs);
-    assert_eq!(m.designs.free.len(), 1);
-    // page automatique personnalisee sans « Suivant » : l'ajout le lui donne
-    let mut m2 = model(2);
-    m2.designs.main.insert(0, PageDesign::default_main(2, 0, 1).unwrap());
-    add_free_page(&mut m2);
-    assert!(m2.designs.main[&0].items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Next, .. })));
-}
-
-#[test]
 fn remote_simulation() {
     use bdauthor_core::style::ButtonStyle;
-    let info = PageInfo { r: PageRef::Main(0), menu: MenuType::Main, page: 0, pages: 2, items: vec![0, 1, 2, 3], video: None };
-    let mut d = PageDesign::default_main(4, 0, 2).unwrap();
-    let mut t = Item::text("Chapitres de 3", 100, 60, 400, 80, 40);
-    if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Chapters(2, 0)); }
+    let info = PageInfo { r: PageRef(0), page: 0, pages: 2 };
+    let mut d = page(4, "Videos");
+    let mut t = Item::text("Page 2", 100, 600, 400, 80, 40);
+    if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Main(1)); }
     d.items.push(t);
-    d.items.push(Item { x: 1500, y: 60, w: 200, h: 120, kind: Kind::Slot { thumb_h: 100, assign: None, video: Some(None), link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() });
+    d.items.push(Item { x: 1500, y: 60, w: 200, h: 120, kind: Kind::Slot { thumb_h: 100, video: None, link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() });
     let st = ButtonStyle::default();
-    let b = sim_buttons(&info, &d, &st, 4, &|v| v == 1);
+    let b = sim_buttons(&info, &d, &st, 4);
     let acts: Vec<SimAction> = b.iter().map(|x| x.action).collect();
-    // 4 vignettes (la 2e ouvre son menu de chapitres), « Suivant », le texte cliquable ; la vignette sans video n'existe pas
-    assert_eq!(acts, vec![SimAction::Play(0), SimAction::Go(Target::Chapters(1, 0)), SimAction::Play(2), SimAction::Play(3), SimAction::Next, SimAction::Go(Target::Chapters(2, 0))]);
+    // 4 vignettes, « Suivant », le texte cliquable ; la vignette sans video n'existe pas
+    assert_eq!(acts, vec![SimAction::Play(0), SimAction::Play(1), SimAction::Play(2), SimAction::Play(3), SimAction::Next, SimAction::Go(Target::Main(1))]);
     // voisins : meme regle que le disque (bdauthor_core::menu::auto_neighbors)
     let rects: Vec<(i32, i32, i32, i32)> = b.iter().map(|x| x.rect).collect();
     let n = bdauthor_core::menu::auto_neighbors(&rects);
     assert!(b.iter().zip(&n).all(|(x, m)| x.neighbors == (m.0 as usize, m.1 as usize, m.2 as usize, m.3 as usize)));
     assert_eq!(b[0].neighbors.3, 1);
     assert_eq!(b[1].neighbors.2, 0);
-    // destination personnalisee d'une vignette
-    if let Kind::Slot { link, .. } = &mut d.items[0].kind { *link = Some(Target::Main(1)); }
-    assert_eq!(sim_buttons(&info, &d, &st, 4, &|_| false)[0].action, SimAction::Go(Target::Main(1)));
-    // page de chapitres
-    let ci = PageInfo { r: PageRef::Chapters(1, 0), menu: MenuType::Chapters, page: 0, pages: 1, items: vec![0, 1, 2], video: Some(1) };
-    let c = PageDesign::default_chapter(3, 0, 1).unwrap();
-    let acts: Vec<SimAction> = sim_buttons(&ci, &c, &st, 4, &|_| true).iter().map(|x| x.action).collect();
-    assert_eq!(acts, vec![SimAction::PlayChapter(1, 0), SimAction::PlayChapter(1, 1), SimAction::PlayChapter(1, 2), SimAction::Play(1), SimAction::Back]);
+    // destination personnalisee d'une vignette ; video inexistante : absente
+    if let Kind::Slot { link, .. } = &mut d.items[1].kind { *link = Some(Target::Main(1)); }
+    assert_eq!(sim_buttons(&info, &d, &st, 4)[0].action, SimAction::Go(Target::Main(1)));
+    assert_eq!(sim_buttons(&info, &d, &st, 2).len(), 4);
+    // « Suivant » absent de la derniere page
+    let last = PageInfo { r: PageRef(1), page: 1, pages: 2 };
+    assert!(!sim_buttons(&last, &d, &st, 4).iter().any(|x| x.action == SimAction::Next));
     // pages visees
-    let pages = vec![info.clone(), PageInfo { r: PageRef::Free(0), menu: MenuType::Main, page: 1, pages: 2, items: vec![0, 1, 2, 3], video: None }, ci.clone()];
-    assert_eq!(page_of_target(&pages, Target::Main(1)), Some(PageRef::Free(0)));
-    assert_eq!(page_of_target(&pages, Target::Chapters(1, 0)), Some(PageRef::Chapters(1, 0)));
-    assert_eq!(page_of_target(&pages, Target::Chapters(3, 0)), None);
-    assert_eq!(main_page_of_video(&pages, 2), Some(PageRef::Main(0)));
+    let pages = vec![info.clone(), last.clone()];
+    assert_eq!(page_of_target(&pages, Target::Main(1)), Some(PageRef(1)));
+    assert_eq!(page_of_target(&pages, Target::Main(5)), None);
+    assert_eq!(page_of_target(&pages, Target::Video(0)), None);
 }

@@ -59,14 +59,15 @@ fn compose_and_preview() {
     let size = (960, 540);
     let bg = r.compose_background(None, size, &[Decor::Text { text: "Titre\nSous-titre".into(), x: 40, y: 20, w: 880, h: 100, size: 40, color: [255, 200, 0], align: Align::Left, font: String::new() }]).unwrap();
     assert!(bg.data.chunks_exact(4).any(|p| p[0] > 200 && p[1] > 150 && p[2] < 80), "du texte jaune doit etre dessine");
-    let d = PageDesign::starting_point(MenuType::Chapters, 3, 0, 2, "Mes chapitres").unwrap();
+    let mut d = PageDesign::blank_free(0);
+    for k in 0..3 { d.items.push(Item::video_slot(100 + 560 * k, 300, 500, 330, 280, 0, Some(60.0 * k as f64), "Intro")); }
     let slots = vec![PreviewSlot { label: "Intro (0:00)".into(), thumb: None, key: 0 }; 3];
     let st = bdauthor_core::style::ButtonStyle::default();
-    let p = r.render_page_preview(&d, MenuType::Chapters, 0, 2, &slots, None, size, std::path::Path::new("."), &st, None, false);
+    let p = r.render_page_preview(&d, 0, 2, &slots, None, size, std::path::Path::new("."), &st, None, false);
     assert_eq!((p.width, p.height), size);
     assert_ne!(p, gradient(size));
     // element selectionne : l'apercu change
-    let p2 = r.render_page_preview(&d, MenuType::Chapters, 0, 2, &slots, None, size, std::path::Path::new("."), &st, Some(1), false);
+    let p2 = r.render_page_preview(&d, 0, 2, &slots, None, size, std::path::Path::new("."), &st, Some(1), false);
     assert_ne!(p, p2);
     // cover_resize : dimensions exactes
     let c = cover_resize(&rounded_rect(200, 100, 0.0, [1, 2, 3]), 50, 50);

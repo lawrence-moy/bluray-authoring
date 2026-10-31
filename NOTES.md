@@ -501,3 +501,14 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   {"selection", "activation"}`) ; `Look::sounds(&style_projet)` donne les sons effectifs (les siens, sinon ceux du style du projet).
   Les sons ne figurent plus que dans le style du projet ; ceux d'un style propre (format de quelques minutes) sont deplaces a la lecture.
   Inspecteur : case « Sons propres a cet element » au meme niveau que « Apparence propre a cet element ».
+
+## Nettoyage du format de projet (ancien modele des menus automatiques retire)
+
+- Le projet ne contient plus que des pages personnalisees : `mise_en_page` = `pages`, `style_boutons`, `accueil`.
+  Les anciennes cles `principal`, `chapitres`, `libres`, `menu.par_page`, `menu.retour` ne sont plus lues ni ecrites.
+- Cible de page en JSON : `{"page": n}` (l'ancien `"menu": "principal"` est ignore a la lecture).
+- Retires : menus de chapitres separes (`Target::Chapters`), bouton « Retour » (`NavAction::Back`), `MenuType`,
+  vignettes « element de la page », sous-titres par numero de piste, plan de navigation pagine (nav.rs).
+- Sans aucune page, la construction genere des pages de depart (`convert::generate_pages`) ; l'editeur propose
+  « Creer les pages de depart » (`editor::ensure_pages`).
+- `projet_test.json` converti (copie : `projet_test.avant_nettoyage.json`).

@@ -1,10 +1,8 @@
 //! Construction des fichiers de navigation : index.bdmv, MovieObject.bdmv, playlists — equivalent de `nav.py`.
 use crate::index::IndexBdmv;
 use crate::index::IndexObject;
-use crate::mobj::*;
 use crate::mpls::*;
 use crate::reader::Put;
-use std::collections::BTreeMap;
 
 /// index.bdmv : First Playback et Top Menu pointent vers les objets donnes ; `title_objs[k]` = objet du titre k+1.
 pub fn make_index(first_playback_obj: u16, top_menu_obj: u16, title_objs: &[u16], user_data: &[u8]) -> Vec<u8> {
@@ -161,77 +159,4 @@ pub fn make_playlist_multi(items: &[PlaylistParams]) -> Vec<u8> {
     app_info.zeros(12);
     let playitems = items.iter().map(|p| PlayItem::new(&p.clip, p.in_time, p.out_time, item_tail(&PlaylistParams { with_menu: false, ..p.clone() }))).collect();
     Mpls { version: "0100".into(), app_info, playitems, subpaths: vec![], marks, extension: vec![] }.pack()
-}
-
-/// Titres d'une video a chapitres : pages de son menu de chapitres et titre « lecture depuis un repere ».
-#[derive(Debug, Clone, PartialEq)]
-pub struct ChapterTitles {
-    pub pages: Vec<u16>,
-    pub play: u16,
-}
-
-pub struct NavPlan {
-    pub main_titles: Vec<u16>, // titre de chaque page du menu principal (la page 1 = Top Menu = 0)
-    pub chapters: BTreeMap<usize, ChapterTitles>,
-    pub total_titles: u16,
-}
-
-/// Numerotation des titres avec pagination : 1..N = videos ; puis pages 2.. du menu principal ; puis, par video a chapitres
-/// (ordre croissant), ses pages de chapitres et un titre « lecture depuis un repere ». `chapter_pages` : {video: nombre de pages}.
-pub fn plan_navigation(n_videos: usize, main_pages: usize, chapter_pages: &BTreeMap<usize, usize>) -> NavPlan {
-    let mut t = n_videos as u16;
-    let mut main_titles = vec![0u16];
-    for _ in 1..main_pages {
-        t += 1;
-        main_titles.push(t);
-    }
-    let mut chapters = BTreeMap::new();
-    for (&i, &np) in chapter_pages {
-        let pages: Vec<u16> = (t + 1..=t + np as u16).collect();
-        t += np as u16 + 1;
-        chapters.insert(i, ChapterTitles { pages, play: t });
-    }
-    NavPlan { main_titles, chapters, total_titles: t }
-}
-
-/// MovieObject.bdmv avec menus pagines. L'objet de rang k est celui du titre k (objet 0 = Top Menu = page 1).
-/// `retour` : « chapitres » = apres une video a chapitres on revient a son menu de chapitres ; sinon a la page du menu principal.
-pub fn make_movie_objects_paged(
-    n_videos: usize,
-    main_pls: &[u16],
-    main_titles: &[u16],
-    ch_pls: &BTreeMap<usize, Vec<u16>>,
-    ch_titles: &BTreeMap<usize, ChapterTitles>,
-    video_page: &[usize],
-    retour_chapitres: bool,
-) -> Vec<u8> {
-    let loop_obj = |pl: u16| {
-        MovieObject::new(vec![
-            Command::new(PLAY_PL_INSN, pl as u32, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0),
-            Command::new(NOP_INSN, 0, 0), Command::new(GOTO_INSN, 0, 0),
-        ])
-    };
-    let back = |i: usize| -> u32 {
-        match ch_titles.get(&i) {
-            Some(c) if retour_chapitres => c.pages[0] as u32,
-            _ => main_titles[video_page[i]] as u32,
-        }
-    };
-    let mut objs = vec![loop_obj(main_pls[0])];
-    for i in 0..n_videos {
-        objs.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, i as u32, 0), Command::new(JUMP_TITLE_INSN, back(i), 0)]));
-    }
-    for &pl in &main_pls[1..] {
-        objs.push(loop_obj(pl));
-    }
-    for (&i, pls) in ch_pls {
-        for &pl in pls {
-            objs.push(loop_obj(pl));
-        }
-        objs.push(MovieObject::new(vec![
-            Command::new(MOVE_RR_INSN, 10, 0), Command::new(MOVE_RI_INSN, 0, 0),
-            Command::new(PLAY_PL_PM_INSN, i as u32, 10), Command::new(JUMP_TITLE_INSN, back(i), 0),
-        ]));
-    }
-    MovieObjectBdmv { version: "0100".into(), objects: objs }.pack()
 }

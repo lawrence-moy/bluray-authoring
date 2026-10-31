@@ -2,7 +2,7 @@
 //! Entree pour valider (etat « active » visible un instant), puis ouverture de la page visee ou lecture simulee de la video.
 use crate::App;
 use bdauthor_core::design::{SlotReturn, SubChoice, Target};
-use bdauthor_core::editor::{main_page_of_video, page_of_target, sim_buttons, video_title, PageInfo, PageRef, SimAction, SimButton};
+use bdauthor_core::editor::{page_of_target, sim_buttons, video_title, PageInfo, PageRef, SimAction, SimButton};
 use eframe::egui::{self, Color32, Key, Rect};
 use std::time::{Duration, Instant};
 
@@ -20,19 +20,12 @@ pub(crate) struct Sim {
 }
 
 impl App {
-    fn has_chapters(&self, pages: &[PageInfo], v: usize) -> bool {
-        pages.iter().any(|p| matches!(p.r, PageRef::Chapters(x, _) if x == v))
-    }
-
     pub(crate) fn sim_page_buttons(&self, info: &PageInfo) -> Vec<SimButton> {
-        let Some(d) = info.design(&self.model.designs).cloned().or_else(|| info.starting_point(&self.model).ok()) else { return vec![] };
-        let pages = self.pages();
-        // pages generiques : une vignette lit sa video (les pages de chapitres sont des liens choisis)
-        let generic = self.model.designs.generic;
-        sim_buttons(info, &d, &self.model.designs.style, self.model.videos.len(), &|v| !generic && self.has_chapters(&pages, v))
+        let Some(d) = info.design(&self.model.designs) else { return vec![] };
+        sim_buttons(info, d, &self.model.designs.style, self.model.videos.len())
     }
 
-    /// Page d'accueil (touche TOP MENU) : celle choisie, sinon la page 1 du menu principal.
+    /// Page d'accueil (touche TOP MENU) : celle choisie, sinon la page 1.
     pub(crate) fn home_page(&self) -> Option<PageRef> {
         let pages = self.pages();
         self.model.designs.home.and_then(|h| page_of_target(&pages, h)).or_else(|| page_of_target(&pages, Target::Main(0)))
@@ -61,10 +54,6 @@ impl App {
             match sub {
                 SubChoice::Keep => String::new(),
                 SubChoice::Off => " — sans sous-titres".to_string(),
-                SubChoice::Track(k) => {
-                    let lang = self.model.videos.get(v).and_then(|x| x.subs.get(k)).map(|t| t.lang.clone());
-                    match lang { Some(l) => format!(" — sous-titres : piste {} ({l})", k + 1), None => format!(" — sous-titres : piste {} absente", k + 1) }
-                }
                 SubChoice::Lang(id) => {
                     let name = self.model.language_name(id);
                     let has = self.model.videos.get(v).map_or(false, |x| x.subs.iter().any(|t| t.lang_id == id));
@@ -72,27 +61,18 @@ impl App {
                 }
             }
         };
-        let generic = self.model.designs.generic;
-        // pages generiques : retour choisi par la vignette (page d'origine par defaut)
-        let generic_back = match ret {
+        // a la fin d'une video : retour choisi par la vignette (page d'origine par defaut)
+        let back = match ret {
             SlotReturn::Origin => Some(info.r),
             SlotReturn::Home => self.home_page(),
             SlotReturn::Page(p) => page_of_target(&pages, Target::Main(p)).or(Some(info.r)),
         };
-        // a la fin d'une video : son menu de chapitres (si l'option est active et qu'il existe), sinon sa page du menu principal
-        let back_of = |v: usize| -> Option<PageRef> {
-            if generic { return generic_back; }
-            if self.model.back_to_chapters && self.has_chapters(&pages, v) { Some(PageRef::Chapters(v, 0)) } else { main_page_of_video(&pages, v) }
-        };
+        let back_of = |_v: usize| back;
         let mut play: Option<(String, Option<PageRef>)> = None;
         let mut go: Option<PageRef> = None;
         match a {
             SimAction::Play(v) | SimAction::Go(Target::Video(v)) => {
                 play = Some((format!("Lecture de « {} »{}", video_title(&self.model, v), sub_txt(v)), back_of(v)));
-            }
-            SimAction::PlayChapter(v, c) => {
-                let name = self.model.videos.get(v).and_then(|x| x.chapter_list(self.durations.get(&x.file).copied()).get(c).map(|t| t.1.clone())).unwrap_or_else(|| format!("chapitre {}", c + 1));
-                play = Some((format!("Lecture de « {} » à partir de « {name} »{}", video_title(&self.model, v), sub_txt(v)), back_of(v)));
             }
             SimAction::PlayFrom(v, t) => {
                 let s = t.round().max(0.0) as i64;
@@ -100,14 +80,13 @@ impl App {
             }
             SimAction::PlayAllVideos => {
                 // le disque revient a la page d'ou « Tout lire » a ete lance
-                play = Some(("Lecture de toutes les vidéos à la suite".to_string(), if generic { Some(info.r) } else { self.home_page() }));
+                play = Some(("Lecture de toutes les vidéos à la suite".to_string(), Some(info.r)));
             }
             SimAction::Go(Target::Stay(exit)) => {
                 // reglage des sous-titres, puis la page de sortie s'il y en a une
                 self.notice = match sub {
                     SubChoice::Keep => "Simulation : ce bouton ne fait rien.".to_string(),
                     SubChoice::Off => "Simulation : sous-titres masqués.".to_string(),
-                    SubChoice::Track(k) => format!("Simulation : sous-titres réglés sur la piste {}.", k + 1),
                     SubChoice::Lang(id) => format!("Simulation : sous-titres réglés sur « {} ».", self.model.language_name(id)),
                 };
                 self.edit_gen += 1;
@@ -124,12 +103,8 @@ impl App {
             SimAction::Go(t) => go = page_of_target(&pages, t),
             SimAction::Prev | SimAction::Next => {
                 let d = if a == SimAction::Next { 1 } else { -1 };
-                go = match info.r {
-                    PageRef::Chapters(v, q) => (q as i64 + d >= 0).then(|| PageRef::Chapters(v, (q as i64 + d) as usize)).filter(|r| pages.iter().any(|p| p.r == *r)),
-                    _ => (info.page as i64 + d >= 0).then(|| page_of_target(&pages, Target::Main((info.page as i64 + d) as usize))).flatten(),
-                };
+                go = (info.page as i64 + d >= 0).then(|| page_of_target(&pages, Target::Main((info.page as i64 + d) as usize))).flatten();
             }
-            SimAction::Back => go = info.video.and_then(|v| main_page_of_video(&pages, v)),
         }
         if let Some(p) = play {
             if let Some(s) = self.sim.as_mut() { s.playing = Some(p); }

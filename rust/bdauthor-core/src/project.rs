@@ -6,7 +6,7 @@
 //! Le dessin (vignettes, libelles, fond) est delegue a un `Renderer` : le crate `bdauthor-render` en fournit un complet.
 use crate::check::{check_bdmv, Report};
 use crate::style::ButtonStyle;
-use crate::design::{nav_applicable, Align, Designs, Item, Kind, MenuType, NavAction, PageDesign, PageMusic, PageVisual, SlotReturn, Target};
+use crate::design::{nav_applicable, Align, Designs, Item, Kind, NavAction, PageDesign, PageMusic, PageVisual, SlotReturn, Target};
 use crate::disc::write_bdmv;
 use crate::ffmpeg::{self, EncodeOpts, Error, Tools};
 use crate::film::{make_film_m2ts, make_still_m2ts};
@@ -185,12 +185,11 @@ struct ButtonEnv<'a> {
     sounds: &'a BTreeMap<String, u8>,
 }
 
-/// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page.
-/// `decor` : textes et images non cliquables a l'echelle du menu ; `slots` : elements de la page.
-#[allow(clippy::too_many_arguments)]
-fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor: &[(usize, Decor)], menu: MenuType, page: usize, pages: usize, slots: &[SlotSpec], target: &dyn Fn(NavAction, Option<Target>) -> (u32, Vec<Command>)) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+/// Boutons (et surface d'objets graphiques de chacun) de la page `page` sur `pages` d'apres sa mise en page.
+/// `decor` : textes et images non cliquables a l'echelle du menu.
+fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], page: usize, pages: usize, target: &dyn Fn(NavAction, Option<Target>) -> (u32, Vec<Command>)) -> Result<(Vec<MenuButton>, Vec<u64>)> {
     let (renderer, s) = (e.renderer, e.s);
-    let (mut buttons, mut pix, mut k) = (Vec::new(), Vec::new(), 0usize);
+    let (mut buttons, mut pix) = (Vec::new(), Vec::new());
     for (idx, it) in design.items.iter().enumerate() {
         let (x, y, w, h) = it.scaled(s);
         let st = it.look.style.as_ref().unwrap_or(e.style).scaled(s);
@@ -208,31 +207,18 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
             Box::new(move |st: &ButtonStyle| renderer.skin_button(&paths, w as u32, h as u32, st).map_err(Error::Format))
         };
         let (draw, go, commands): (Draw<'_>, u32, Vec<Command>) = match &it.kind {
-            Kind::Slot { thumb_h, video, link, .. } => {
-                let own;
-                let sp = match video {
-                    Some(Some(v)) => {
-                        own = (e.slot_spec)(it).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?;
-                        &own
-                    }
-                    Some(None) => continue, // vignette sans video : absente du disque
-                    None => {
-                        let a = assignment.get(k).copied().unwrap_or(usize::MAX);
-                        k += 1;
-                        match slots.get(a) { Some(sp) => sp, None => continue }
-                    }
-                };
+            Kind::Slot { thumb_h, video, .. } => {
+                // vignette sans video : absente du disque
+                let Some(v) = video else { continue };
+                let sp = (e.slot_spec)(it).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?;
                 let th = py_round(*thumb_h as f64 * s) as i32;
                 let thumb = ffmpeg::extract_thumbnail_rgba(e.tools, &sp.source, (w as u32, th as u32), sp.at, sp.duration)?;
                 let label = sp.label.clone();
                 let draw: Draw<'_> = Box::new(move |st: &ButtonStyle| Ok(renderer.thumb_button(&thumb, &label, w as u32, h as u32, th as u32, st)));
-                // destination choisie : remplace le comportement habituel de la vignette (deja pris en compte par `slot_spec`)
-                match (link, video) {
-                    (Some(t), None) => { let (g, c) = target(NavAction::Goto, Some(*t)); (draw, g, c) }
-                    _ => (draw, sp.go, sp.commands.clone()),
-                }
+                // destination choisie ou lecture : deja dans `slot_spec`
+                (draw, sp.go, sp.commands.clone())
             }
-            Kind::Nav { action, text, target: tg } if nav_applicable(*action, menu, page, pages) => {
+            Kind::Nav { action, text, target: tg } if nav_applicable(*action, page, pages) => {
                 let draw: Draw<'_> = if skinned { skin_draw() } else {
                     let text = text.clone();
                     Box::new(move |st: &ButtonStyle| Ok(renderer.text_button(&text, w as u32, h as u32, st)))
@@ -318,7 +304,6 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         match it.sub {
             crate::design::SubChoice::Keep => {}
             crate::design::SubChoice::Off => commands.insert(0, crate::mobj::set_pg_stream(None)),
-            crate::design::SubChoice::Track(k) => commands.insert(0, crate::mobj::set_pg_stream(Some(k))),
             crate::design::SubChoice::Lang(id) => {
                 let rank = e.langs.iter().position(|l| *l == id).ok_or_else(|| Error::Format("sous-titres d'un bouton : la langue choisie n'existe plus dans la liste des langues".into()))?;
                 commands.insert(0, crate::mobj::set_pg_stream(Some(rank)));
@@ -469,7 +454,8 @@ pub fn layout(n: usize, size: (u32, u32), reserve: i32) -> Result<Vec<Cell>> {
         .collect())
 }
 
-/// Repartit `count` elements en pages equilibrees. Une seule page si count <= par_page (12 par defaut) ; sinon pages de `par_page` (8 par defaut).
+/// Repartit `count` elements en pages equilibrees (pages de depart). Une seule page si count <= par_page (12 par defaut) ; sinon
+/// pages de `par_page` (8 par defaut).
 pub fn paginate(count: usize, par_page: Option<usize>) -> Result<Vec<Vec<usize>>> {
     if let Some(p) = par_page {
         if !(1..=MAX_PER_PAGE).contains(&p) {
@@ -613,7 +599,6 @@ pub struct BuildInfo {
     pub videos: usize,
     pub main_pages: usize,
     pub chapters: BTreeMap<usize, usize>,
-    pub chapter_pages: BTreeMap<usize, usize>,
     pub format: (u32, u32, f64),
     pub menu_size: (u32, u32),
     pub ics_pts_s: f64,
@@ -747,7 +732,6 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     if let Some(s) = enc_cfg.get("preset").and_then(Value::as_str) { eopts.preset = s.to_string(); }
     if let Some(s) = enc_cfg.get("audio_bitrate").and_then(Value::as_str) { eopts.audio_bitrate = s.to_string(); }
     let menu_cfg = proj.get("menu").unwrap_or(&empty);
-    let par_page = get_usize(menu_cfg.get("par_page"), "menu.par_page")?;
     let title = proj.get("titre").and_then(Value::as_str).unwrap_or("Menu").to_string();
     let boucle = menu_cfg.get("boucle").and_then(Value::as_bool).unwrap_or(false);
     let fond_s = menu_cfg.get("fond_secondes").and_then(Value::as_f64).unwrap_or(5.0);
@@ -758,40 +742,19 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             Path::new(v.get("fichier").and_then(Value::as_str).unwrap_or("")).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
         })
     };
-    // mises en page du menu principal et pages libres verifiees avant tout encodage (les menus de chapitres, dont le nombre de
-    // chapitres depend des videos encodees, sont verifies a leur construction)
+    // pages du menu verifiees avant tout encodage (sauf les instants des chapitres, compares plus tard a la duree reelle des videos)
     if let Some(v) = proj.get("mise_en_page") {
         let ds = Designs::from_value(v).map_err(|e| Error::Format(format!("mise_en_page : {e}")))?;
-        if ds.generic {
-            // pages generiques : verifiees entierement avant tout encodage (sauf les instants des chapitres, compares plus tard a la
-            // duree reelle des videos)
-            let np = ds.free.len();
-            let mut errs = Vec::new();
-            for (k, d) in ds.free.iter().enumerate() {
-                errs.extend(d.validate_free(k, np, n).into_iter().filter(|x| x.error).map(|x| format!("page {} : {}", k + 1, x.msg)));
-                for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay(e) | Target::Audio(_, e) => e.map_or(true, |q| q < np), Target::Chapters(..) => false }) {
-                    errs.push(format!("page {} : {}", k + 1, pr.msg));
-                }
-            }
-            if np == 0 { errs.push("aucune page de menu : ajoutez au moins une page dans l'editeur".into()); }
-            if !errs.is_empty() {
-                return layout_failure(&errs, &mut *env.log);
-            }
-        } else {
-        // ancien projet : pages du menu principal et pages libres (les menus de chapitres sont verifies apres conversion)
-        let mp = paginate(n, par_page)?;
-        let tm = mp.len() + ds.free.len();
+        let np = ds.free.len();
         let mut errs = Vec::new();
-        for (&pg, d) in &ds.main {
-            let Some(items) = mp.get(pg) else { continue };
-            errs.extend(d.validate(items.len(), MenuType::Main, pg, tm).into_iter().filter(|x| x.error).map(|x| format!("menu principal (page {}) : {}", pg + 1, x.msg)));
-        }
-        for (f, d) in ds.free.iter().enumerate() {
-            errs.extend(d.validate_free(mp.len() + f, tm, n).into_iter().filter(|x| x.error).map(|x| format!("page libre {} : {}", f + 1, x.msg)));
+        for (k, d) in ds.free.iter().enumerate() {
+            errs.extend(d.validate(k, np, n).into_iter().filter(|x| x.error).map(|x| format!("page {} : {}", k + 1, x.msg)));
+            for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay(e) | Target::Audio(_, e) => e.map_or(true, |q| q < np) }) {
+                errs.push(format!("page {} : {}", k + 1, pr.msg));
+            }
         }
         if !errs.is_empty() {
             return layout_failure(&errs, &mut *env.log);
-        }
         }
     }
     let cache_dir = if menu_cfg.get("cache").and_then(Value::as_bool).unwrap_or(true) { Some(base.join(".cache_bdauthor")) } else { None };
@@ -889,34 +852,21 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         scans.push(sc);
     }
     (env.progress)(0.86);
-    // 2. pages du menu : pages generiques ; un ancien projet est d'abord converti (avec les chapitres reels de ses videos)
-    let mut legacy_chapters: Vec<Vec<Chapter>> = Vec::new();
+    // 2. pages du menu ; un projet sans page recoit les pages de depart (grille des videos, pages de chapitres)
+    let mut video_chapters: Vec<Vec<Chapter>> = Vec::new();
     for (v, sc) in vids.iter().zip(&scans) {
-        legacy_chapters.push(parse_chapters(v, sc)?);
+        video_chapters.push(parse_chapters(v, sc)?);
     }
     let mut designs = match proj.get("mise_en_page") {
         Some(v) => Designs::from_value(v).map_err(|e| Error::Format(format!("mise_en_page : {e}")))?,
         None => Designs::default(),
     };
-    if !designs.generic {
-        // menus de chapitres personnalises de l'ancien projet : verifies avec le nombre reel de chapitres avant la conversion
-        let mut errs = Vec::new();
-        for (&(v, q), d) in &designs.chapters {
-            let Some(ch) = legacy_chapters.get(v) else { continue };
-            if ch.len() < 2 { continue }
-            let pg = paginate(ch.len(), par_page)?;
-            let Some(idxs) = pg.get(q) else { continue };
-            errs.extend(d.validate(idxs.len(), MenuType::Chapters, q, pg.len()).into_iter().filter(|x| x.error)
-                .map(|x| format!("menu de chapitres {} (page {}) : {}", v + 1, q + 1, x.msg)));
-        }
-        if !errs.is_empty() {
-            return layout_failure(&errs, &mut *env.log);
-        }
-        let gv: Vec<GenVideo> = vids.iter().zip(&legacy_chapters)
+    if designs.free.is_empty() {
+        let gv: Vec<GenVideo> = vids.iter().zip(&video_chapters)
             .map(|(v, ch)| GenVideo { title: vtitle(v), chapters: ch.iter().map(|c| (c.t_rel, c.name.clone())).collect() })
             .collect();
-        designs = generate_pages(&gv, par_page, &title, &designs).map_err(Error::Format)?;
-        (env.log)(&format!("ancien projet : menus convertis en {} page(s) generique(s)", designs.free.len()));
+        designs.free = generate_pages(&gv, &title, &designs.style).map_err(Error::Format)?.free;
+        (env.log)(&format!("aucune page de menu : {} page(s) de depart generee(s)", designs.free.len()));
     }
     let pages: Vec<PageDesign> = designs.free.clone();
     // sons des menus : un identifiant par fichier distinct, dans l'ordre de rencontre (style du projet puis elements)
@@ -940,10 +890,10 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     {
         let mut errs = Vec::new();
         for (k, d) in pages.iter().enumerate() {
-            for pr in d.validate_free(k, np, n) {
+            for pr in d.validate(k, np, n) {
                 if pr.error { errs.push(format!("page {} : {}", k + 1, pr.msg)); } else { (env.log)(&format!("page {} : {}", k + 1, pr.msg)); }
             }
-            for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay(e) | Target::Audio(_, e) => e.map_or(true, |q| q < np), Target::Chapters(..) => false }) {
+            for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay(e) | Target::Audio(_, e) => e.map_or(true, |q| q < np) }) {
                 errs.push(format!("page {} : {}", k + 1, pr.msg));
             }
         }
@@ -957,7 +907,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let mut marks: Vec<Vec<u32>> = Vec::with_capacity(n);
     for (i, sc) in scans.iter().enumerate() {
         let dur = (sc.end90 - sc.start90) as f64 / 90000.0;
-        let mut set: BTreeSet<u32> = legacy_chapters[i].iter().map(|c| c.mark45).collect();
+        let mut set: BTreeSet<u32> = video_chapters[i].iter().map(|c| c.mark45).collect();
         for (k, d) in pages.iter().enumerate() {
             for it in &d.items {
                 if let (Some(v), Some(t)) = (it.fixed_video(), it.chapter_start()) {
@@ -1000,7 +950,6 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         match t {
             Target::Video(v) => (0, vec![set_ret(origin), Command::new(JUMP_TITLE_INSN, v as u32 + 1, 0)]),
             Target::Main(q) => (page_title(q.min(np - 1)), vec![]),
-            Target::Chapters(..) => (page_title(home_idx), vec![]),
             // aucune navigation : une commande vide (sans elle, le bouton menerait au Top Menu)
             // reglage des sous-titres (commande ajoutee par `page_buttons`) puis page de sortie, ou aucune navigation
             // (une commande vide : sans elle, le bouton menerait au Top Menu)
@@ -1092,7 +1041,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let clip = build_menu_clip(buttons, &MenuOptions { ics_pts: pts, video_size: menu_size, ui_model: 0, rgb_colors: 63, frame_rate_code: FRAME_RATES.iter().find(|r| r.0 == bgscan.fps).map_or(1, |r| r.2),
             anim_fps: if anim_fps == 0 { crate::design::DEFAULT_ANIM_FPS } else { anim_fps } as f64 }).map_err(Error::Format)?;
         if clip.m2ts.len() > 6 * 1024 * 1024 {
-            return bad(format!("{label} trop lourd ({:.1} Mo) : reduire le nombre d'elements par page (menu.par_page)", clip.m2ts.len() as f64 / 1e6));
+            return bad(format!("{label} trop lourd ({:.1} Mo) : reduire le nombre d'elements de la page ", clip.m2ts.len() as f64 / 1e6));
         }
         if looping { anim_clips.borrow_mut().insert(bg_num); }
         let stats = MenuStats { pts, bytes: clip.m2ts.len(), objects: clip.menu.ods.len(), palette: clip.menu.pds.entries.len() };
@@ -1146,7 +1095,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let origin = page_title(k);
         // vignettes : video depuis le debut ou depuis un repere, ou destination choisie ; retour selon la vignette
         let slot_spec = |it: &Item| -> Option<SlotSpec> {
-            let Kind::Slot { video: Some(Some(v)), link, start, label, thumb_at, ret, .. } = &it.kind else { return None };
+            let Kind::Slot { video: Some(v), link, start, label, thumb_at, ret, .. } = &it.kind else { return None };
             let v = *v;
             let vj = vids.get(v)?;
             let back = match ret { SlotReturn::Origin => origin, SlotReturn::Home => 0, SlotReturn::Page(q) if *q < np => page_title(*q), SlotReturn::Page(_) => origin };
@@ -1165,7 +1114,6 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 NavAction::Next => (page_title((k + 1).min(np - 1)), vec![]),
                 NavAction::PlayAll => (0, vec![set_ret(origin), Command::new(JUMP_TITLE_INSN, play_all_title.unwrap_or(0), 0)]),
                 NavAction::Goto => t.map(|t| goto(t, origin)).unwrap_or((page_title(home_idx), vec![])),
-                NavAction::Back => (page_title(home_idx), vec![]),
             }
         };
         let benv = ButtonEnv {
@@ -1173,7 +1121,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             plane: (menu_size.0, menu_size.1), langs: &lang_ids, sounds: &sound_ids,
         };
         let decor_r = scale_decor(d, sc_);
-        let (buttons, pix) = page_buttons(&benv, d, &[], &decor_r, MenuType::Main, k, np, &[], &target)?;
+        let (buttons, pix) = page_buttons(&benv, d, &decor_r, k, np, &target)?;
         if buttons.is_empty() { return bad(format!("{what} : aucun bouton (le lecteur ne pourrait pas en sortir)")); }
         if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
         let decor: Vec<Decor> = scale_decor(d, sd).into_iter().map(|(_, d)| d).collect();
@@ -1314,7 +1262,6 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     Ok(BuildInfo {
         videos: n, main_pages: np,
         chapters: marks.iter().enumerate().filter(|(_, m)| m.len() > 1).map(|(i, m)| (i + 1, m.len())).collect(),
-        chapter_pages: BTreeMap::new(),
         format: fmt, menu_size, ics_pts_s: first_page.pts as f64 / 90000.0, menu_bytes: first_page.bytes,
         menu_objects: first_page.objects, palette_entries: first_page.palette,
         total_stream_bytes: files.iter().filter(|(k, _)| k.starts_with("STREAM")).map(|(_, v)| v.len()).sum(),

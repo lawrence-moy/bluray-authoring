@@ -1,7 +1,7 @@
 //! Editeur visuel de mise en page (onglet « Mise en page ») : apercu fidele, glisser/redimensionner, inspecteur.
 use crate::App;
-use bdauthor_core::design::{Align, Item, Kind, MenuType, NavAction, PageDesign, SlotReturn, Target};
-use bdauthor_core::editor::{add_layer, copy_decor, dragged_rect, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
+use bdauthor_core::design::{Align, Item, Kind, NavAction, PageDesign, SlotReturn, Target};
+use bdauthor_core::editor::{add_layer, dragged_rect, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -80,7 +80,6 @@ impl Worker {
 enum SlotShow {
     /// video, instant de la miniature (sinon celui de la video), libelle (vide : titre de la video)
     Video(usize, Option<f64>, String),
-    Element(usize),
     Missing,
 }
 
@@ -132,9 +131,9 @@ fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
         NewWidget::Text => Item::text("Texte", 660, 470, 600, 120, 60),
         NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0, sub: Default::default() },
         NewWidget::VideoSlot | NewWidget::ChapterSlot => {
-            let mut it = Item::slot(100, 300, 400, 250, 200);
+            let mut it = Item::video_slot(100, 300, 400, 250, 200, 0, None, "");
             if let Kind::Slot { video, start, .. } = &mut it.kind {
-                *video = Some(first_video);
+                *video = first_video;
                 if w == NewWidget::ChapterSlot { *start = Some(0.0); }
             }
             it
@@ -238,15 +237,12 @@ fn destination_combo(ui: &mut egui::Ui, target: &mut Option<Target>, targets: &[
 
 impl App {
     pub(crate) fn pages(&self) -> Vec<PageInfo> {
-        list_pages(&self.model, &self.durations)
+        list_pages(&self.model)
     }
 
     /// Destinations d'un bouton « Aller a » ou d'un element cliquable : (cible, libelle) ; les pages, puis les videos a lire.
     fn page_targets(&self) -> Vec<(Target, String)> {
-        let mut out: Vec<(Target, String)> = self.pages().into_iter().map(|p| {
-            let t = match p.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(p.page) };
-            (t, format!("Page : {}", p.label(&self.model)))
-        }).collect();
+        let mut out: Vec<(Target, String)> = self.pages().into_iter().map(|p| (Target::Main(p.page), format!("Page : {}", p.label(&self.model)))).collect();
         for v in 0..self.model.videos.len() {
             out.push((Target::Video(v), format!("Lire la vidéo {}. {}", v + 1, video_title(&self.model, v))));
         }
@@ -318,28 +314,18 @@ impl App {
 
     /// Ce que montre chaque vignette de la page, dans l'ordre de la liste.
     fn slot_plan(&self, info: &PageInfo) -> Vec<SlotShow> {
-        let d = match info.design(&self.model.designs) { Some(d) => d.clone(), None => match info.starting_point(&self.model) { Ok(d) => d, Err(_) => return vec![] } };
+        let Some(d) = info.design(&self.model.designs) else { return vec![] };
         let n = self.model.videos.len();
-        let eff = d.slot_assignment(info.count());
-        let mut k = 0;
-        let mut out = Vec::new();
-        for it in &d.items {
-            let Kind::Slot { start, label, thumb_at, .. } = &it.kind else { continue };
-            out.push(match it.fixed_video() {
+        d.items.iter().filter_map(|it| {
+            let Kind::Slot { start, label, thumb_at, .. } = &it.kind else { return None };
+            Some(match it.fixed_video() {
                 Some(v) if v < n => {
                     let label = if !label.is_empty() { label.clone() } else if let Some(t) = start { mmss(*t) } else { String::new() };
                     SlotShow::Video(v, thumb_at.or(*start), label)
                 }
-                Some(_) => SlotShow::Missing,
-                None if info.is_free() || it.is_video_slot() => SlotShow::Missing,
-                None => {
-                    let e = eff.get(k).copied().unwrap_or(usize::MAX);
-                    k += 1;
-                    if e == usize::MAX { SlotShow::Missing } else { SlotShow::Element(e) }
-                }
-            });
-        }
-        out
+                _ => SlotShow::Missing,
+            })
+        }).collect()
     }
 
     fn video_thumb(&self, i: usize) -> (String, f64) {
@@ -395,58 +381,22 @@ impl App {
         self.thumbs.get(&(f.clone(), ms)).cloned()
     }
 
-    /// (fichier, instant de la miniature) de chaque element de la page (videos de la page, ou chapitres).
-    fn element_sources(&self, info: &PageInfo) -> Vec<(String, f64)> {
-        if info.is_free() { return vec![]; }
-        let mut out = Vec::new();
-        match info.video {
-            None => for &i in &info.items {
-                out.push(self.video_thumb(i));
-            },
-            Some(vi) => {
-                let v = &self.model.videos[vi];
-                let ch = v.chapter_list(self.durations.get(&v.file).copied());
-                for &j in &info.items {
-                    if let Some(c) = ch.get(j) { out.push((v.file.clone(), c.0)); }
-                }
-            }
-        }
-        out
-    }
-
-    /// Libelle de chaque element de la page.
-    fn element_labels(&self, info: &PageInfo) -> Vec<String> {
-        if info.is_free() { return vec![]; }
-        match info.video {
-            None => info.items.iter().map(|&i| video_title(&self.model, i)).collect(),
-            Some(vi) => {
-                let v = &self.model.videos[vi];
-                let ch = v.chapter_list(self.durations.get(&v.file).copied());
-                info.items.iter().filter_map(|&j| ch.get(j)).map(|(t, n)| { let s = t.round() as i64; format!("{n} ({}:{:02})", s / 60, s % 60) }).collect()
-            }
-        }
-    }
-
     /// Miniatures utiles a la page : (fichier, instant).
     fn slot_sources(&self, info: &PageInfo) -> Vec<(String, f64)> {
-        let elems = self.element_sources(info);
         self.slot_plan(info).into_iter().filter_map(|s| match s {
             SlotShow::Video(v, at, _) => { let (f, a) = self.video_thumb(v); Some((f, at.unwrap_or(a))) }
-            SlotShow::Element(e) => elems.get(e).cloned(),
             SlotShow::Missing => None,
         }).collect()
     }
 
     /// Contenu de chaque vignette pour l'apercu, dans l'ordre de la liste.
     fn preview_slots(&self, info: &PageInfo) -> Vec<PreviewSlot> {
-        let (sources, labels) = (self.element_sources(info), self.element_labels(info));
         self.slot_plan(info).into_iter().map(|s| {
             let (label, src) = match s {
                 SlotShow::Video(v, at, label) => {
                     let (f, a) = self.video_thumb(v);
                     (if label.is_empty() { video_title(&self.model, v) } else { label }, Some((f, at.unwrap_or(a))))
                 }
-                SlotShow::Element(e) => (labels.get(e).cloned().unwrap_or_default(), sources.get(e).cloned()),
                 SlotShow::Missing => ("(choisir une vidéo)".to_string(), None),
             };
             let (file, at) = src.unwrap_or((String::new(), 0.0));
@@ -465,15 +415,8 @@ impl App {
     fn refresh_preview(&mut self, ctx: &egui::Context, info: &PageInfo) {
         let base_dir = self.base_dir();
         let slots = self.preview_slots(info);
-        let design = match info.design(&self.model.designs).cloned() {
-            Some(d) => d,
-            None => match info.starting_point(&self.model) { Ok(d) => d, Err(_) => return },
-        };
-        let mut design = design;
-        for it in &mut design.items {
-            // les PreviewSlot sont deja dans l'ordre des vignettes
-            if let Kind::Slot { assign, video, .. } = &mut it.kind { *assign = None; *video = None; }
-        }
+        // les PreviewSlot sont dans l'ordre des vignettes de la page
+        let Some(mut design) = info.design(&self.model.designs).cloned() else { return };
         // calques masques (hors simulation) : leurs elements et vignettes sont retires de l'apercu
         let mut slots = slots;
         let mut sel_shift: Option<usize> = self.sel_item;
@@ -506,7 +449,7 @@ impl App {
             }
             self.base_cache.as_ref().map(|(_, i)| i.clone())
         };
-        let sel = if info.custom(&self.model.designs) || self.sim.is_some() { sel_shift } else { None };
+        let sel = if info.design(&self.model.designs).is_some() || self.sim.is_some() { sel_shift } else { None };
         // image courante de l'animation du bouton selectionne
         if self.preview_pulse > 0 {
             let i = self.preview_pulse - 1;
@@ -535,7 +478,7 @@ impl App {
             }
         }
         let act = self.sim_pressed();
-        let img = renderer.render_page_preview(&design, info.menu, info.page, info.pages, &slots, base.as_ref(), PREVIEW, &base_dir, &self.model.designs.style, sel, act);
+        let img = renderer.render_page_preview(&design, info.page, info.pages, &slots, base.as_ref(), PREVIEW, &base_dir, &self.model.designs.style, sel, act);
         self.preview_sel = self.sel_item;
         self.preview_act = act;
         let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data);
@@ -545,36 +488,38 @@ impl App {
         }
     }
 
-    // ------------------------------------------------------------------ pages generiques
-    /// Convertit un ancien projet (pages automatiques, pages libres, menus de chapitres) en pages generiques, une fois connues les
-    /// durees utiles (chapitres automatiques). `false` tant que la conversion n'est pas faite (ou sans video).
-    pub(crate) fn ensure_generic(&mut self) -> bool {
-        if self.model.designs.generic { return true; }
-        if self.model.videos.is_empty() { return false; }
+    // ------------------------------------------------------------------ pages de depart
+    /// Cree les pages de depart (grille des videos, pages de chapitres) d'un projet qui n'a encore aucune page, une fois connues les
+    /// durees utiles (chapitres automatiques). `false` tant que ce n'est pas possible.
+    pub(crate) fn create_starter_pages(&mut self) -> bool {
         let waiting: Vec<String> = self.model.videos.iter().filter(|v| v.chapters.is_empty() && v.auto_s.is_some()).map(|v| v.file.clone()).collect();
         for f in &waiting { let _ = self.media_duration(f, false); }
-        match bdauthor_core::editor::convert_to_generic(&mut self.model, &self.durations) {
-            Ok(()) => {
+        match bdauthor_core::editor::ensure_pages(&mut self.model, &self.durations) {
+            Ok(true) => {
                 self.history.reset(&self.model.designs);
                 self.cur = None;
                 self.sel_item = None;
                 self.dirty = true;
                 self.edit_gen += 1;
-                self.notice = format!("Menus mis en pages génériques : {} page(s), toutes modifiables.", self.model.designs.free.len());
+                self.notice = format!("Pages de départ créées : {} page(s), toutes modifiables.", self.model.designs.free.len());
                 true
             }
-            Err(_) => false,
+            _ => false,
         }
     }
 
     // ------------------------------------------------------------------ zone centrale : barre d'outils + apercu
     pub(crate) fn layout_central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        if !self.ensure_generic() {
-            ui.label("Ajoutez des vidéos dans l'onglet « Projet » pour composer les pages de menu.");
-            return;
-        }
         let Some(info) = self.current_info() else {
-            ui.label("Aucune page : « + Page » (à gauche) en ajoute une.");
+            if self.model.videos.is_empty() {
+                ui.label("Ajoutez des vidéos dans l'onglet « Projet » pour composer les pages de menu.");
+                return;
+            }
+            ui.label("Aucune page de menu.");
+            if ui.button("Créer les pages de départ").on_hover_text("Une grille de vignettes des vidéos, puis une page de chapitres par vidéo qui en a ; tout reste modifiable").clicked() && !self.create_starter_pages() {
+                self.notice = "Pages de départ : durée des vidéos à chapitres automatiques en cours de lecture, réessayez dans un instant.".into();
+            }
+            ui.label(egui::RichText::new("Ou « + Page » (à gauche) pour partir d'une page vierge. Sans page, la construction du disque crée ces pages de départ.").weak());
             return;
         };
         if let Err(e) = &self.renderer {
@@ -582,7 +527,7 @@ impl App {
             return;
         }
         self.request_media(&info);
-        let custom = info.custom(&self.model.designs);
+        let custom = info.design(&self.model.designs).is_some();
 
         ui.horizontal_wrapped(|ui| {
             if self.sim.is_none() {
@@ -678,9 +623,9 @@ impl App {
         }
 
         // poids de la page (images de boutons a decoder)
-        if let Some(d) = info.design(&self.model.designs).cloned().or_else(|| info.starting_point(&self.model).ok()) {
+        if let Some(d) = info.design(&self.model.designs) {
             let plane = if self.model.menu_1080 { (1920, 1080) } else { self.menu_plane() };
-            let wt = d.weight(info.count(), &self.model.designs.style, info.menu, info.page, info.pages, plane);
+            let wt = d.weight(&self.model.designs.style, info.page, info.pages, plane);
             crate::style_ui::weight_ui(ui, &wt, plane);
         }
 
@@ -688,7 +633,7 @@ impl App {
         let probs: Vec<bdauthor_core::design::Problem> = match info.design(&self.model.designs).filter(|_| custom) {
             Some(d) => {
                 let targets = self.page_targets();
-                let mut probs = if info.is_free() { d.validate_free(info.page, info.pages, self.model.videos.len()) } else { d.validate(info.count(), info.menu, info.page, info.pages) };
+                let mut probs = d.validate(info.page, info.pages, self.model.videos.len());
                 probs.extend(d.check_targets(&|t| targets.iter().any(|(x, _)| *x == t.without_exit()) && t.exit().map_or(true, |q| targets.iter().any(|(x, _)| *x == Target::Main(q)))));
                 probs
             }
@@ -829,13 +774,8 @@ impl App {
             }
             // surcouche : cadres des éléments
             if let Some(d) = info.design(&self.model.designs) {
-                let mut slot_no = 0;
-                let eff = d.slot_assignment(info.count());
                 for (i, it) in d.items.iter().enumerate() {
-                    if d.item_hidden(i) {
-                        if matches!(it.kind, Kind::Slot { .. }) && it.fixed_video().is_none() && !info.is_free() { slot_no += 1; }
-                        continue;
-                    }
+                    if d.item_hidden(i) { continue; }
                     let r = Rect::from_min_max(to_screen(it.x as f32, it.y as f32), to_screen((it.x + it.w) as f32, (it.y + it.h) as f32));
                     let selected = self.sel_item == Some(i);
                     let col = kind_color(&it.kind);
@@ -851,12 +791,7 @@ impl App {
                     if let Kind::Slot { start, .. } = it.kind {
                         let shown = match it.fixed_video() {
                             Some(v) => match start { Some(t) => format!("V{} @{}", v + 1, mmss(t)), None => format!("V{}", v + 1) },
-                            None if info.is_free() || it.is_video_slot() => "?".to_string(),
-                            None => {
-                                let e = eff.get(slot_no).copied().unwrap_or(usize::MAX);
-                                slot_no += 1;
-                                if e == usize::MAX { "?".to_string() } else { (e + 1).to_string() }
-                            }
+                            None => "?".to_string(),
                         };
                         let shown = if it.link().is_some() { format!("{shown} →") } else { shown };
                         painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(14.0), col);
@@ -889,26 +824,7 @@ impl App {
                     }
                 });
             }
-            let others = self.pages().into_iter().filter(|p| p.menu == info.menu && p.r != info.r && !p.is_free()).count();
-            if others > 0 && ui.button("Reprendre le décor et les boutons sur les autres pages de ce menu").clicked() {
-                self.copy_decor_to_others(&info);
-            }
         }
-    }
-
-    fn copy_decor_to_others(&mut self, info: &PageInfo) {
-        let Some(src) = info.design(&self.model.designs).cloned() else { return };
-        for t in self.pages().into_iter().filter(|p| p.menu == info.menu && p.r != info.r && !p.is_free()) {
-            let default = match t.menu {
-                MenuType::Main => PageDesign::default_main(t.count(), t.page, t.pages),
-                MenuType::Chapters => PageDesign::default_chapter(t.count(), t.page, t.pages),
-            };
-            let Ok(default) = default else { continue };
-            let base = t.design(&self.model.designs).cloned().unwrap_or_else(|| default.clone());
-            t.set_design(&mut self.model.designs, copy_decor(&src, base, &default));
-        }
-        self.notice = "Décor repris sur les autres pages.".into();
-        self.bump();
     }
 
     pub(crate) fn relative(&self, f: &std::path::Path) -> String {
@@ -983,11 +899,11 @@ impl App {
         let Some(info) = self.current_info() else { return };
         // la page affichee : fond et page d'accueil
         // un element selectionne : seuls ses reglages sont affiches (ceux de la page reviennent quand rien n'est selectionne)
-        let widget = info.custom(&self.model.designs) && self.sel_item.is_some();
+        let widget = info.design(&self.model.designs).is_some() && self.sel_item.is_some();
         if !widget {
             ui.heading("Page");
             ui.horizontal_wrapped(|ui| {
-                let this = match info.r { PageRef::Chapters(v, q) => Target::Chapters(v, q), _ => Target::Main(info.page) };
+                let this = Target::Main(info.page);
                 let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
                 if is_home {
                     ui.label(egui::RichText::new("🏠 Page d'accueil").strong());
@@ -996,11 +912,7 @@ impl App {
                     self.bump();
                 }
             });
-            if info.custom(&self.model.designs) {
-                self.page_settings_ui(ui, &info);
-            } else {
-                ui.label("Personnalisez la page pour modifier ses éléments.");
-            }
+            self.page_settings_ui(ui, &info);
             // page affichee sans element selectionne : pas de rubrique « Element »
             return;
         }
@@ -1014,7 +926,6 @@ impl App {
         let base_dir = self.base_dir();
         let font_check = self.renderer.as_ref();
         let page_targets = self.page_targets();
-        let generic = self.model.designs.generic;
         let page_names: Vec<String> = self.pages().iter().map(|p| p.label(&self.model)).collect();
         let video_durations: Vec<Option<f64>> = self.model.videos.iter().map(|v| self.durations.get(&v.file).copied()).collect();
         // langues de sous-titres du projet (le bouton choisit une langue, pas un numero de piste)
@@ -1061,17 +972,17 @@ impl App {
                     });
                     // video montree
                     let vname = |v: usize| format!("Vidéo {}. {}", v + 1, video_labels.get(v).cloned().unwrap_or_default());
-                    let old_video = (*video).flatten();
-                    let shown = match *video { Some(Some(v)) => vname(v), _ => "(aucune vidéo : à choisir)".to_string() };
+                    let old_video = *video;
+                    let shown = match *video { Some(v) => vname(v), None => "(aucune vidéo : à choisir)".to_string() };
                     egui::ComboBox::from_label("Vidéo").selected_text(shown).show_ui(ui, |ui| {
                         for v in 0..video_labels.len() {
-                            if ui.selectable_label(*video == Some(Some(v)), vname(v)).clicked() { *video = Some(Some(v)); changed = true; }
+                            if ui.selectable_label(*video == Some(v), vname(v)).clicked() { *video = Some(v); changed = true; }
                         }
                     });
-                    if let (Some(o), Some(nv)) = (old_video, (*video).flatten()) {
+                    if let (Some(o), Some(nv)) = (old_video, *video) {
                         if o != nv && *link == Some(Target::Video(o)) { *link = Some(Target::Video(nv)); }
                     }
-                    let dur = (*video).flatten().and_then(|v| video_durations.get(v).copied().flatten());
+                    let dur = *video.and_then(|v| video_durations.get(v).copied().flatten());
                     // depart : debut de la video ou instant (vignette de chapitre)
                     let mut chapter = start.is_some();
                     ui.horizontal(|ui| {
@@ -1091,7 +1002,7 @@ impl App {
                     // libelle et image
                     ui.horizontal(|ui| {
                         ui.label("Libellé :");
-                        let hint = match start { Some(t) => mmss(*t), None => (*video).flatten().and_then(|v| video_labels.get(v).cloned()).unwrap_or_default() };
+                        let hint = match start { Some(t) => mmss(*t), None => *video.and_then(|v| video_labels.get(v).cloned()).unwrap_or_default() };
                         changed |= ui.add(egui::TextEdit::singleline(label).hint_text(hint)).changed();
                     });
                     let mut own_img = thumb_at.is_some();
@@ -1135,8 +1046,6 @@ impl App {
                     egui::ComboBox::from_label("Destination").selected_text(shown).show_ui(ui, |ui| {
                         for a in NavAction::ALL {
                             if a == NavAction::Goto { continue; }
-                            // « Retour » n'existe que dans les anciens menus de chapitres
-                            if generic && a == NavAction::Back && old != NavAction::Back { continue; }
                             if ui.selectable_label(*action == a, a.label()).clicked() {
                                 changed = true;
                                 // texte encore par defaut : il suit l'action
@@ -1212,7 +1121,6 @@ impl App {
                     let name = |c: SubChoice| match c {
                         SubChoice::Keep | SubChoice::Off => "Masquer les sous-titres".to_string(),
                         SubChoice::Lang(id) => sub_langs.iter().find(|(i, _)| *i == id).map_or_else(|| "(langue supprimée : à choisir)".to_string(), |(_, n)| n.clone()),
-                        SubChoice::Track(k) => format!("Piste {} (ancien réglage : à remplacer par une langue)", k + 1),
                     };
                     let cur_sub = it.sub;
                     egui::ComboBox::from_label("Sous-titres").selected_text(name(cur_sub)).show_ui(ui, |ui| {
@@ -1365,17 +1273,13 @@ impl App {
             ui.label("Ajoutez des vidéos dans l'onglet « Projet ».");
             return;
         }
-        if !self.ensure_generic() {
-            ui.label("Préparation des pages (lecture de la durée des vidéos à chapitres automatiques)…\nSi cela dure, vérifiez dans l'onglet « Projet » que ces vidéos sont bien trouvées.");
-            return;
-        }
         let mut op: Option<LayerOp> = None;
         let info = self.current_info();
-        let cur_k = match info.as_ref().map(|i| i.r) { Some(PageRef::Free(k)) => Some(k), _ => None };
+        let cur_k = match info.as_ref().map(|i| i.r) { Some(PageRef(k)) => Some(k), None => None };
         ui.horizontal_wrapped(|ui| {
             if ui.button("+ Page").on_hover_text("Ajoute une page vierge à la fin").clicked() {
                 let f = bdauthor_core::editor::add_free_page(&mut self.model);
-                self.cur = Some(PageRef::Free(f));
+                self.cur = Some(PageRef(f));
                 self.sel_item = None;
                 self.bump();
             }
@@ -1491,7 +1395,7 @@ impl App {
                                 Kind::Text { text, link, .. } => format!("Texte « {} »{}", text.lines().next().unwrap_or("").chars().take(24).collect::<String>(), if link.is_some() { " (cliquable)" } else { "" }),
                                 Kind::Image { path, link } => format!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { " (cliquable)" } else { "" }),
                                 Kind::Nav { action, text, .. } => if *action == NavAction::Goto { format!("Bouton « {text} »") } else { format!("Bouton {}", action.label()) },
-                                Kind::Slot { video, link, start, .. } => format!("Vignette{}{}{}", match video { Some(Some(v)) => format!(" (vidéo {})", v + 1), Some(None) => " (sans vidéo)".to_string(), None => String::new() },
+                                Kind::Slot { video, link, start, .. } => format!("Vignette{}{}{}", match video { Some(v) => format!(" (vidéo {})", v + 1), None => " (sans vidéo)".to_string() },
                                     start.map(|t| format!(" à {}", mmss(t))).unwrap_or_default(), if link.is_some() { " →" } else { "" }),
                             };
                             let mut col = kind_color(&it.kind);
@@ -1611,8 +1515,8 @@ impl App {
             }
         }
         let show = |me: &mut Self, k: usize| {
-            if me.cur != Some(PageRef::Free(k)) {
-                me.cur = Some(PageRef::Free(k));
+            if me.cur != Some(PageRef(k)) {
+                me.cur = Some(PageRef(k));
                 me.sel_item = None;
                 me.drag = None;
                 me.edit_gen += 1;
@@ -1635,7 +1539,7 @@ impl App {
         }
         let Some(op) = op else { return };
         // la page affichee apres l'operation (indice susceptible de changer)
-        let cur_now = match self.cur { Some(PageRef::Free(k)) => Some(k), _ => None };
+        let cur_now = match self.cur { Some(PageRef(k)) => Some(k), None => None };
         match op {
             LayerOp::Add => {
                 if let Some(dm) = cur_k.and_then(|k| self.model.designs.free.get_mut(k)) { self.active_layer = add_layer(dm); }
@@ -1645,10 +1549,10 @@ impl App {
                 self.edit_gen += 1;
             }
             LayerOp::PageDelete(k) => {
-                if let Some(pi) = self.pages().into_iter().find(|p| p.r == PageRef::Free(k)) { pi.remove_design(&mut self.model.designs); }
+                if let Some(pi) = self.pages().into_iter().find(|p| p.r == PageRef(k)) { pi.remove_design(&mut self.model.designs); }
                 if let Some(ck) = cur_now {
                     if ck == k { self.sel_item = None; }
-                    self.cur = Some(PageRef::Free(if ck > k || (ck == k && k > 0) { ck - 1 } else { ck }));
+                    self.cur = Some(PageRef(if ck > k || (ck == k && k > 0) { ck - 1 } else { ck }));
                 }
                 // etats replie / deplie : indices decales
                 self.tree_pages = self.tree_pages.iter().filter(|e| *e.0 != k).map(|(&p, &o)| (if p > k { p - 1 } else { p }, o)).collect();
@@ -1658,7 +1562,7 @@ impl App {
             LayerOp::PageMove { from, to } => {
                 bdauthor_core::editor::move_page(&mut self.model, from, to);
                 let map = |c: usize| if c == from { to } else if from < to && c > from && c <= to { c - 1 } else if to < from && c >= to && c < from { c + 1 } else { c };
-                if let Some(ck) = cur_now { self.cur = Some(PageRef::Free(map(ck))); }
+                if let Some(ck) = cur_now { self.cur = Some(PageRef(map(ck))); }
                 self.tree_pages = self.tree_pages.iter().map(|(&p, &o)| (map(p), o)).collect();
                 self.tree_layers_closed = self.tree_layers_closed.iter().map(|&(p, l)| (map(p), l)).collect();
                 self.edit_gen += 1;

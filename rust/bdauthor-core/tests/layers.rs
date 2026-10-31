@@ -83,7 +83,6 @@ fn pages_reorder_and_transfers() {
     use bdauthor_core::model::*;
     let mut m = ProjectModel::default();
     m.videos.push(VideoEntry::new("a.mp4"));
-    m.designs.generic = true;
     for k in 0..3 {
         let mut p = PageDesign::blank_free(k);
         p.name = format!("P{}", k + 1);
@@ -139,7 +138,7 @@ fn subtitle_choice_per_button() {
     let mut d = PageDesign::default();
     let mut b = Item::nav(NavAction::Goto, 0, 0, 100, 50);
     if let Kind::Nav { target, .. } = &mut b.kind { *target = Some(Target::Video(1)); }
-    b.sub = SubChoice::Track(1);
+    b.sub = SubChoice::Lang(4);
     d.items.push(b);
     let mut t = txt("off");
     if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Stay(None)); }

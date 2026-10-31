@@ -2,41 +2,21 @@
 use bdauthor_core::design::*;
 use bdauthor_core::model::*;
 
-const LEGACY: &str = r##"{ "titre": "T", "langue": "fra",
-  "videos": [ {"fichier": "a.mp4", "soustitres": [ {"fichier":"f.srt","langue":"fra"}, {"fichier":"e.srt","langue":"eng"} ]},
-              {"fichier": "b.mp4", "soustitres": [ {"fichier":"e.srt","langue":"eng"}, {"fichier":"f.srt","langue":"fra"}, {"fichier":"d.srt","langue":"deu"} ]} ],
+const PROJECT: &str = r##"{ "titre": "T", "langue": "fra",
+  "langues": [ {"id":1,"nom":"Français","code":"fra"}, {"id":2,"nom":"Anglais","code":"eng"}, {"id":3,"nom":"Allemand","code":"deu"} ],
+  "videos": [ {"fichier": "a.mp4", "soustitres": [ {"fichier":"f.srt","langue":"fra","langue_id":1}, {"fichier":"e.srt","langue":"eng","langue_id":2} ]},
+              {"fichier": "b.mp4", "soustitres": [ {"fichier":"e.srt","langue":"eng","langue_id":2}, {"fichier":"f.srt","langue":"fra","langue_id":1}, {"fichier":"d.srt","langue":"deu","langue_id":3} ]} ],
   "mise_en_page": { "pages": [ { "nom": "P", "elements": [
-     {"type":"texte","texte":"EN","x":0,"y":0,"w":300,"h":80,"taille":40,"cible":{"rester":true},"soustitres":2} ] } ] } }"##;
+     {"type":"texte","texte":"EN","x":0,"y":0,"w":300,"h":80,"taille":40,"cible":{"rester":true},"soustitres":{"langue":2}} ] } ] } }"##;
 
 #[test]
-fn legacy_project_gets_languages() {
-    let mut m = ProjectModel::from_json(LEGACY).unwrap();
-    assert!(m.languages.is_empty());
-    m.ensure_languages();
-    // une langue par code, dans l'ordre de rencontre
-    let codes: Vec<&str> = m.languages.iter().map(|l| l.code.as_str()).collect();
-    assert_eq!(codes, ["fra", "eng", "deu"]);
-    assert_eq!(m.languages[0].name, "Français");
-    // chaque piste est rattachee a la langue de son code
-    assert_eq!(m.videos[1].subs.iter().map(|t| t.lang_id).collect::<Vec<_>>(), [2, 1, 3]);
-    // le bouton « piste 2 » (anglais dans la premiere video) devient « anglais »
-    let it = &m.designs.free[0].items[0];
-    assert_eq!(it.sub, SubChoice::Lang(2));
-    // sans effet la deuxieme fois
-    let again = m.clone();
-    m.ensure_languages();
-    assert_eq!(m, again);
+fn validation_of_languages() {
+    let mut m = ProjectModel::from_json(PROJECT).unwrap();
+    assert_eq!(m.designs.free[0].items[0].sub, SubChoice::Lang(2));
     // enregistrement et relecture
     let back = ProjectModel::from_json(&m.to_json()).unwrap();
     assert_eq!(back.languages, m.languages);
     assert_eq!(back.videos[1].subs[2].lang_id, 3);
-    assert_eq!(back.designs.free[0].items[0].sub, SubChoice::Lang(2));
-}
-
-#[test]
-fn validation_of_languages() {
-    let mut m = ProjectModel::from_json(LEGACY).unwrap();
-    m.ensure_languages();
     let probs = |m: &ProjectModel| -> Vec<String> { m.validate(std::path::Path::new("/nonexistent")).into_iter().filter(|p| !p.contains("introuvable")).collect() };
     assert!(probs(&m).is_empty(), "{:?}", probs(&m));
     // deux pistes de la meme langue dans une video
@@ -101,7 +81,7 @@ fn audio_language_action() {
 fn setting_then_exit_page() {
     // reglage des sous-titres puis page 2 ; reglage audio puis page 3 ; JSON, renumerotation et suppression de page
     let t = r#"{"videos":[{"fichier":"a"}],"langues":[{"id":4,"nom":"Anglais","code":"eng"}],
-      "mise_en_page":{"generique":true,"pages":[
+      "mise_en_page":{"pages":[
         {"nom":"P1","elements":[
           {"type":"texte","texte":"st","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"rester":true,"ensuite":2},"soustitres":{"langue":4}},
           {"type":"texte","texte":"au","x":0,"y":20,"w":10,"h":10,"taille":40,"cible":{"audio_langue":4,"ensuite":3}},

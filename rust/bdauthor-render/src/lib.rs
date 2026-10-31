@@ -2,7 +2,7 @@
 //! systeme, rectangles arrondis. Ce crate depend de `image` et `ab_glyph` (non compilables dans l'environnement hors ligne
 //! du developpement : valides par `cargo test` sous Windows).
 use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont};
-use bdauthor_core::design::{nav_applicable, Align, Kind, MenuType, PageDesign};
+use bdauthor_core::design::{nav_applicable, Align, Kind, PageDesign};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::Decor;
 use bdauthor_core::style::{BtnState, ButtonStyle};
@@ -784,9 +784,9 @@ impl FontRenderer {
     /// Apercu fidele d'une page (meme code de dessin que la construction du disque), a la taille `size`.
     /// `project_dir` sert a resoudre les chemins relatifs des images. Les boutons de navigation sans objet sur cette page sont attenues.
     /// `style` : apparence des boutons du projet ; `selected` : element (indice dans la page) montre dans son etat selectionne,
-    /// ou active si `activated`.
+    /// ou active si `activated`. `slots` : contenu de chaque vignette de la page, dans l'ordre des vignettes.
     #[allow(clippy::too_many_arguments)]
-    pub fn render_page_preview(&self, design: &PageDesign, menu: MenuType, page: usize, pages: usize, slots: &[PreviewSlot], base: Option<&RgbaImage>, size: (u32, u32), project_dir: &Path, style: &ButtonStyle, selected: Option<usize>, activated: bool) -> RgbaImage {
+    pub fn render_page_preview(&self, design: &PageDesign, page: usize, pages: usize, slots: &[PreviewSlot], base: Option<&RgbaImage>, size: (u32, u32), project_dir: &Path, style: &ButtonStyle, selected: Option<usize>, activated: bool) -> RgbaImage {
         use bdauthor_core::project::Renderer;
         let s = size.0 as f64 / 1920.0;
         let r = |v: i32| (v as f64 * s).round() as i32;
@@ -795,9 +795,8 @@ impl FontRenderer {
             Some(b) => b.clone(),
             None => self.cached_sprite(hkey(|h| ("degrade", size).hash(h)), || gradient(size)).as_ref().clone(),
         };
-        // dans l'ordre de superposition de la mise en page (le dernier est au premier plan)
-        let assignment = design.slot_assignment(slots.len());
-        let mut k = 0;
+        // dans l'ordre de superposition de la mise en page (le dernier est au premier plan) ; `k` : rang de la vignette
+        let mut k = 0usize;
         for (idx, it) in design.items.iter().enumerate() {
             let (x, y, w, h) = (r(it.x), r(it.y), r(it.w).max(1), r(it.h).max(1));
             let st = it.look.style.as_ref().unwrap_or(style).scaled(s);
@@ -849,18 +848,18 @@ impl FontRenderer {
                     });
                     blit(&mut im, &spr, x - mx, y - my, 1.0);
                 }
-                Kind::Slot { thumb_h, video, .. } => {
+                Kind::Slot { thumb_h, .. } => {
                     let th = r(*thumb_h).clamp(1, h);
-                    let element = if video.is_some() { usize::MAX } else { assignment.get(k).copied().unwrap_or(usize::MAX) };
-                    if video.is_none() { k += 1; }
-                    let slot = slots.get(element);
-                    let key = hkey(|hh| ("vignette", slot.map(|s| (&s.label, s.key)), element, w, h, th, &st, state).hash(hh));
+                    let rank = k;
+                    k += 1;
+                    let slot = slots.get(rank);
+                    let key = hkey(|hh| ("vignette", slot.map(|s| (&s.label, s.key)), rank, w, h, th, &st, state).hash(hh));
                     let n = self.cached_sprite(key, || {
                         let (label, thumb) = match slot {
                             Some(sl) => (sl.label.clone(), sl.thumb.as_ref().map(|t| cover_resize(t, w as u32, th as u32))),
-                            None => (if element == usize::MAX { "(vide)".to_string() } else { format!("Élément {}", element + 1) }, None),
+                            None => ("(vide)".to_string(), None),
                         };
-                        let thumb = thumb.unwrap_or_else(|| placeholder_thumb(w as u32, th as u32, element.wrapping_add(1), &self.font));
+                        let thumb = thumb.unwrap_or_else(|| placeholder_thumb(w as u32, th as u32, rank + 1, &self.font));
                         self.thumb_button(&thumb, &label, w as u32, h as u32, th as u32, &st)[state].as_ref().clone()
                     });
                     blit(&mut im, &n, x - mx, y - my, 1.0);
@@ -869,7 +868,7 @@ impl FontRenderer {
                     let n = if skinned { skin_state() } else { None }.unwrap_or_else(|| {
                         self.cached_sprite(hkey(|hh| ("bouton", text, w, h, &st, state).hash(hh)), || self.text_button(text, w as u32, h as u32, &st)[state].as_ref().clone())
                     });
-                    blit(&mut im, &n, x - mx, y - my, if nav_applicable(*action, menu, page, pages) { 1.0 } else { 0.35 });
+                    blit(&mut im, &n, x - mx, y - my, if nav_applicable(*action, page, pages) { 1.0 } else { 0.35 });
                 }
             }
         }

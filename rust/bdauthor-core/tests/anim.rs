@@ -56,7 +56,6 @@ fn animated_selected_state_in_menu() {
 
 #[test]
 fn custom_animation_json_and_weight() {
-    use bdauthor_core::design::*;
     use bdauthor_core::style::Skin;
     let sk = Skin { normal: "n.png".into(), sel_frames: vec!["a1.png".into(), "a2.png".into()], sel_once: true, ..Default::default() };
     assert_eq!(Skin::from_value(&sk.to_value()), sk);
@@ -64,8 +63,8 @@ fn custom_animation_json_and_weight() {
     // sans image normale, l'animation n'est pas utilisee
     assert_eq!(Skin { normal: String::new(), ..sk.clone() }.anim_frames(), 0);
     // cadence de page : JSON
-    let t = r#"{"videos":[{"fichier":"a"}],"mise_en_page":{"generique":true,"pages":[{"nom":"P","animation_ips":12,"elements":[
-        {"type":"navigation","action":"aller_a","texte":"x","cible":{"menu":"principal","page":1},"x":0,"y":0,"w":200,"h":80,
+    let t = r#"{"videos":[{"fichier":"a"}],"mise_en_page":{"pages":[{"nom":"P","animation_ips":12,"elements":[
+        {"type":"navigation","action":"aller_a","texte":"x","cible":{"page":1},"x":0,"y":0,"w":200,"h":80,
          "images_etats":{"normal":"n.png","animation_selection":["a1.png","a2.png","a3.png"]}}]}]}}"#;
     let m = bdauthor_core::model::ProjectModel::from_json(t).unwrap();
     let pg = &m.designs.free[0];
@@ -73,7 +72,7 @@ fn custom_animation_json_and_weight() {
     assert!(m.to_json().contains("\"animation_ips\": 12"));
     assert_eq!(pg.items[0].look.skin.sel_frames.len(), 3);
     // poids : image normale + 3 images d'animation (pas d'etat active distinct)
-    let w = pg.weight(1, &m.designs.style, MenuType::Main, 0, 1, (1920, 1080));
+    let w = pg.weight(&m.designs.style, 0, 1, (1920, 1080));
     assert_eq!(w.bytes, 200 * 80 * 4);
     // validation : images introuvables signalees
     let probs = m.validate(std::path::Path::new("/nonexistent"));
