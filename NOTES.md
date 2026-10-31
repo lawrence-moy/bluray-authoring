@@ -485,3 +485,15 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   drapeau repeat 0x80 sauf « une fois ». Poids : images ajoutees.
 - Interface : ligne « Normal » comme « Selectionne » (une image ou plusieurs, liste par glisser-deposer, lecture, apercu).
   L'apercu (« ▶ Apercu » ou simulation) joue les animations de l'etat normal de tous les elements non selectionnes, meme horloge.
+
+## Sons des menus
+- `sound.rs` : `make_sound_bdmv` / `parse_sound_bdmv`, format d'apres libbluray (`sound_parse.c`) : « BCLK0200 », debut des donnees
+  (u32), extension (u32 = 0), reserve jusqu'a l'octet 40, longueur de la table (u32), reserve (u8), nombre de sons (u8), puis par son :
+  attributs (canaux 4 bits : 1 mono / 3 stereo ; frequence 4 bits : 1 = 48 kHz ; 2 bits : 1 = 16 bits ; 6 bits de bourrage), position
+  relative au debut des donnees (u32), longueur en octets (u32) ; echantillons LPCM 16 bits gros-boutistes. Fichier BDMV/AUXDATA/sound.bdmv
+  (sans copie BACKUP). 255 sons au plus.
+- Style des boutons : `sound_select` / `sound_activate` (JSON `"son_selection"` / `"son_activation"`, ecrits seulement si non vides) ;
+  un style propre d'element remplace celui du projet (sons compris). Les identifiants (ordre de rencontre) vont dans les champs son des
+  etats selectionne / active des boutons IG (0xFF = aucun).
+- Construction : `ffmpeg::decode_menu_sound` (stereo 48 kHz s16be, 10 s au plus). Validation : fichiers introuvables.
+- Non verifie sur lecteur materiel.

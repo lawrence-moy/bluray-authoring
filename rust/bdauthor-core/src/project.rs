@@ -181,6 +181,8 @@ struct ButtonEnv<'a> {
     plane: (u32, u32),
     /// identifiants des langues de sous-titres du projet, dans l'ordre : le rang est le numero de piste
     langs: &'a [u32],
+    /// sons des menus : fichier (tel qu'ecrit dans le style) -> identifiant dans sound.bdmv
+    sounds: &'a BTreeMap<String, u8>,
 }
 
 /// Boutons (et surface d'objets graphiques de chacun) d'une page d'apres sa mise en page.
@@ -301,6 +303,10 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         let distinct = if nframes.is_empty() { distinct } else { distinct + nframes.len() as u64 + 1 };
         let [nrm, sel, act] = states;
         let mut btn = MenuButton::new("", go, bx + l, by + t, vec![nrm, sel, act]);
+        // sons du bouton (style propre ou style du projet)
+        let snd = |f: &str| if f.is_empty() { 0xFF } else { e.sounds.get(f).copied().unwrap_or(0xFF) };
+        btn.sound_select = snd(&st.sound_select);
+        btn.sound_activate = snd(&st.sound_activate);
         btn.sel_frames = frames;
         btn.normal_once = !nframes.is_empty() && skin.normal_once;
         btn.normal_frames = nframes;
@@ -912,6 +918,19 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         (env.log)(&format!("ancien projet : menus convertis en {} page(s) generique(s)", designs.free.len()));
     }
     let pages: Vec<PageDesign> = designs.free.clone();
+    // sons des menus : un identifiant par fichier distinct, dans l'ordre de rencontre (style du projet puis elements)
+    let sound_ids: BTreeMap<String, u8> = {
+        let mut order: Vec<String> = Vec::new();
+        let mut add = |f: &str| if !f.is_empty() && !order.iter().any(|x| x == f) { order.push(f.to_string()); };
+        let used = |st: &ButtonStyle, add: &mut dyn FnMut(&str)| { add(&st.sound_select); add(&st.sound_activate); };
+        for d in &pages {
+            for it in d.items.iter().filter(|it| it.is_button()) {
+                used(it.look.style.as_ref().unwrap_or(&designs.style), &mut add);
+            }
+        }
+        if order.len() > crate::sound::MAX_SOUNDS { return bad(format!("trop de sons de menu differents ({}, {} au plus)", order.len(), crate::sound::MAX_SOUNDS)); }
+        order.into_iter().enumerate().map(|(k, f)| (f, k as u8)).collect()
+    };
     let np = pages.len();
     if np == 0 {
         return bad("aucune page de menu : ajoutez au moins une page dans l'editeur");
@@ -1149,7 +1168,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         };
         let benv = ButtonEnv {
             tools: env.tools, renderer: env.renderer, style: &designs.style, abs: &p, to_decor: &to_decor, slot_spec: &slot_spec, s: sc_,
-            plane: (menu_size.0, menu_size.1), langs: &lang_ids,
+            plane: (menu_size.0, menu_size.1), langs: &lang_ids, sounds: &sound_ids,
         };
         let decor_r = scale_decor(d, sc_);
         let (buttons, pix) = page_buttons(&benv, d, &[], &decor_r, MenuType::Main, k, np, &[], &target)?;
@@ -1272,6 +1291,20 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     files.insert("MovieObject.bdmv".into(), MovieObjectBdmv { version: "0100".into(), objects: objs }.pack());
     let title_objs: Vec<u16> = (1..=total_titles as u16).collect();
     files.insert("index.bdmv".into(), make_index(fp, 0, &title_objs, b"bdauthor"));
+    // sons des menus (AUXDATA/sound.bdmv)
+    if !sound_ids.is_empty() {
+        let mut by_id: Vec<(&String, u8)> = sound_ids.iter().map(|(f, k)| (f, *k)).collect();
+        by_id.sort_by_key(|x| x.1);
+        let mut sounds = Vec::new();
+        for (f, _) in by_id {
+            let path = p(f);
+            if !path.is_file() { return bad(format!("son de menu introuvable : {f}")); }
+            sounds.push(ffmpeg::decode_menu_sound(env.tools, &path)?);
+        }
+        let data = crate::sound::make_sound_bdmv(&sounds);
+        (env.log)(&format!("sons des menus : {} son(s), {:.1} s en tout, {:.0} Ko", sounds.len(), sounds.iter().map(|s| s.seconds()).sum::<f64>(), data.len() as f64 / 1024.0));
+        files.insert("AUXDATA/sound.bdmv".into(), data);
+    }
 
     write_bdmv(out_dir, &files)?;
     let report = check_bdmv(&out_dir.join("BDMV"));

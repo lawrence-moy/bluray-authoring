@@ -415,6 +415,21 @@ impl ProjectModel {
             if self.languages[..k].iter().any(|o| o.name == l.name) { p.push(format!("Langue « {} » : nom en double.", l.name)); }
         }
         if !self.bg.is_empty() && !abs(&self.bg).is_file() { p.push(format!("Image de fond introuvable ({}).", self.bg)); }
+        // sons des menus (style du projet et styles propres des elements)
+        {
+            let mut missing: Vec<String> = Vec::new();
+            let mut check = |f: &str| if !f.is_empty() && !abs(f).is_file() && !missing.iter().any(|m| m == f) { missing.push(f.to_string()); };
+            let st = &self.designs.style;
+            check(&st.sound_select);
+            check(&st.sound_activate);
+            let d = &self.designs;
+            for pg in d.main.values().chain(d.chapters.values()).chain(d.free.iter()) {
+                for it in &pg.items {
+                    if let Some(st) = &it.look.style { check(&st.sound_select); check(&st.sound_activate); }
+                }
+            }
+            for f in missing { p.push(format!("Son de menu introuvable ({f}).")); }
+        }
         if !self.intro.is_empty() && !abs(&self.intro).is_file() { p.push(format!("Séquence d'ouverture introuvable ({}).", self.intro)); }
         if !self.bg_video.is_empty() && !abs(&self.bg_video).is_file() { p.push(format!("Vidéo de fond introuvable ({}).", self.bg_video)); }
         if !self.music.is_empty() && !abs(&self.music).is_file() { p.push(format!("Musique du menu introuvable ({}).", self.music)); }

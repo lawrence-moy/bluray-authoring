@@ -6,8 +6,12 @@ use eframe::egui::{self, Color32, Rect, Stroke};
 #[derive(Clone, Copy)]
 struct FrameDrag(usize, usize);
 
-/// Retourne vrai si le style a change.
-pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str) -> bool {
+/// Formats proposes pour les sons des menus.
+pub const SOUND_EXTS: [&str; 9] = ["wav", "mp3", "flac", "ogg", "m4a", "aac", "opus", "aif", "aiff"];
+
+/// Retourne vrai si le style a change. `pick_sound` recoit 1 (son de selection) ou 2 (son d'appui sur OK) quand l'utilisateur veut
+/// choisir le fichier.
+pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &mut Option<u8>) -> bool {
     let before = st.clone();
     let px = |ui: &mut egui::Ui, v: &mut i32, max: i32| { ui.add(egui::DragValue::new(v).range(0..=max).suffix(" px")); };
     let pct = |ui: &mut egui::Ui, v: &mut i32, max: i32| { ui.add(egui::DragValue::new(v).range(0..=max).suffix(" %")); };
@@ -48,8 +52,20 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str) -> bool {
     });
     ui.checkbox(&mut st.underline, "Souligner au lieu d'encadrer");
     ui.label(egui::RichText::new("Tailles données pour un menu 1920 × 1080. Le halo et l'agrandissement élargissent l'image des boutons : laissez de l'espace entre eux.").weak());
-    if ui.button("Valeurs par défaut").clicked() {
+    ui.strong("Sons");
+    for (k, label, path) in [(1u8, "Sélection", &mut st.sound_select), (2, "Appui sur OK", &mut st.sound_activate)] {
+        ui.horizontal_wrapped(|ui| {
+            ui.label(label);
+            ui.add(egui::TextEdit::singleline(path).desired_width(140.0).hint_text("aucun"));
+            if ui.small_button("Choisir…").clicked() { *pick_sound = Some(k); }
+            if !path.is_empty() && ui.small_button("✕").clicked() { path.clear(); }
+        });
+    }
+    ui.label(egui::RichText::new("Sons courts (moins d'une seconde), joués par le lecteur quand la sélection arrive sur le bouton ou à l'appui sur OK. Convertis en stéréo 48 kHz sur le disque (10 s au plus).").weak());
+    if ui.button("Valeurs par défaut").on_hover_text("Couleurs, cadre, halo… (les sons sont gardés)").clicked() {
+        let sounds = (std::mem::take(&mut st.sound_select), std::mem::take(&mut st.sound_activate));
         *st = ButtonStyle::default();
+        (st.sound_select, st.sound_activate) = sounds;
     }
     *st != before
 }

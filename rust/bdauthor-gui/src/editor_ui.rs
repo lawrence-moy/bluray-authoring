@@ -637,13 +637,22 @@ impl App {
         // fenetre du style des boutons du projet
         let mut open = self.show_style;
         let mut style_changed = false;
+        let mut pick_sound: Option<u8> = None;
         egui::Window::new("Style des boutons").open(&mut open).resizable(false).show(ctx, |ui| {
             egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
-                style_changed = crate::style_ui::style_ui(ui, &mut self.model.designs.style, "projet");
+                style_changed = crate::style_ui::style_ui(ui, &mut self.model.designs.style, "projet", &mut pick_sound);
             });
             ui.label(egui::RichText::new("S'applique à tous les boutons du projet, sauf ceux qui ont leur propre style (inspecteur).").weak());
         });
         self.show_style = open;
+        if let Some(k) = pick_sound {
+            if let Some(f) = rfd::FileDialog::new().add_filter("Sons", &crate::style_ui::SOUND_EXTS).pick_file() {
+                let rel = self.relative(&f);
+                let st = &mut self.model.designs.style;
+                if k == 1 { st.sound_select = rel; } else { st.sound_activate = rel; }
+                style_changed = true;
+            }
+        }
         if style_changed { self.bump(); }
 
         // aperçu régénéré hors glissement
@@ -1034,6 +1043,7 @@ impl App {
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
         let proj_style = self.model.designs.style.clone();
         let mut pick_skin: Option<usize> = None;
+        let mut pick_sound_el: Option<u8> = None;
         let mut anim_preview = self.anim_preview;
         let page_fps = info.design(&self.model.designs).map_or(0, |d| d.anim_fps);
         let page_fps = if page_fps == 0 { bdauthor_core::design::DEFAULT_ANIM_FPS } else { page_fps };
@@ -1267,7 +1277,7 @@ impl App {
                 }
                 if let Some(st) = &mut it.look.style {
                     egui::CollapsingHeader::new("Réglages de cet élément").default_open(true).show(ui, |ui| {
-                        changed |= crate::style_ui::style_ui(ui, st, "element");
+                        changed |= crate::style_ui::style_ui(ui, st, "element", &mut pick_sound_el);
                     });
                 }
                 if !matches!(it.kind, Kind::Slot { .. }) {
@@ -1285,6 +1295,15 @@ impl App {
             }
         }
         self.anim_preview = anim_preview;
+        if let Some(k) = pick_sound_el {
+            if let Some(f) = rfd::FileDialog::new().add_filter("Sons", &crate::style_ui::SOUND_EXTS).pick_file() {
+                let rel = self.relative(&f);
+                if let Some(st) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).and_then(|it| it.look.style.as_mut()) {
+                    if k == 1 { st.sound_select = rel; } else { st.sound_activate = rel; }
+                    changed = true;
+                }
+            }
+        }
         if let Some(state @ (0 | 1)) = pick_skin {
             // image(s) « normal » ou « selectionne » : une = etat fixe, plusieurs = animation (rangees par ordre de nom)
             if let Some(mut fs) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_files() {

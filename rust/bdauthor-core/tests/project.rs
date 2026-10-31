@@ -265,13 +265,17 @@ fn styled_buttons_project() {
             "-f", "lavfi", "-i", "sine=duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest"])
             .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
     }
+    // sons des menus : clic (selection, style du projet) et ok (activation, style propre de la vignette 2)
+    for (f, hz) in [("clic.wav", 880), ("ok.wav", 440)] {
+        assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", &format!("sine=frequency={hz}:duration=0.2")]).arg(dir.join(f)).status().unwrap().success());
+    }
     // halo + agrandissement + etat active ; une vignette collee au bord gauche (son halo doit etre rogne) ; un bouton dessine
     let proj = r##"{ "titre": "Style", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
       "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
-      "mise_en_page": { "style_boutons": {"halo": 24, "agrandir": 10, "etat_active": true, "halo_anime": true},
+      "mise_en_page": { "style_boutons": {"halo": 24, "agrandir": 10, "etat_active": true, "halo_anime": true, "son_selection": "clic.wav"},
         "principal": { "1": { "elements": [
           {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"style":{"halo":0,"agrandir":0}},
+          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"style":{"halo":0,"agrandir":0,"son_activation":"ok.wav"}},
           {"type":"navigation","action":"aller_a","texte":"B","cible":{"lire":"video","video":2},"x":800,"y":900,"w":300,"h":90,
            "images_etats":{"normal":"btn.png","animation_normal":["n1.png","n2.png"],"animation_selection":["f1.png","f2.png","f3.png"],"animation_une_fois":true}} ] } } } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
@@ -317,6 +321,16 @@ fn styled_buttons_project() {
     // etat normal anime (2 images, en boucle) ; les autres boutons ont un etat normal fixe
     assert_eq!((bb.normal.1 - bb.normal.0, bb.normal.2), (1, 0x80));
     assert_eq!((b1.normal.0, b1.normal.2), (b1.normal.1, 0));
+    // sons : sound.bdmv (2 sons stereo 48 kHz d'environ 0,2 s), pas de copie de secours ; identifiants dans les boutons
+    let snd = std::fs::read(dir.join("out/BDMV/AUXDATA/sound.bdmv")).expect("sound.bdmv");
+    let idx = bdauthor_core::sound::parse_sound_bdmv(&snd).unwrap();
+    assert_eq!(idx.len(), 2);
+    for (ch, rate, bits, _, len) in &idx { assert_eq!((*ch, *rate, *bits), (2, 48_000, 16)); assert!((*len as i64 - 38_400).abs() < 2_000, "{len}"); }
+    assert!(!dir.join("out/BDMV/BACKUP/AUXDATA").exists());
+    // b0 (style du projet) : clic a la selection, pas de son d'activation ; b1 (style propre, sans son de selection) : ok a l'activation
+    assert_eq!((b0.selected.0, b0.activated.0), (0, 0xFF));
+    assert_eq!((b1.selected.0, b1.activated.0), (0xFF, 1));
+    assert!(logs.iter().any(|l| l.contains("sons des menus : 2 son(s)")), "{logs:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

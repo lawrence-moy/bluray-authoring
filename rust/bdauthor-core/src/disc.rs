@@ -5,7 +5,8 @@ use std::path::Path;
 /// `files` : {chemin relatif a BDMV: octets}. Les copies BACKUP couvrent tout sauf STREAM.
 pub fn write_bdmv(out_dir: &Path, files: &BTreeMap<String, Vec<u8>>) -> std::io::Result<()> {
     let root = out_dir.join("BDMV");
-    let backups = files.iter().filter(|(k, _)| !k.starts_with("STREAM")).map(|(k, v)| (format!("BACKUP/{k}"), v));
+    // AUXDATA (sons des menus) n'a pas de copie de secours
+    let backups = files.iter().filter(|(k, _)| !k.starts_with("STREAM") && !k.starts_with("AUXDATA")).map(|(k, v)| (format!("BACKUP/{k}"), v));
     for (rel, data) in files.iter().map(|(k, v)| (k.clone(), v)).chain(backups) {
         let path = root.join(&rel);
         if let Some(d) = path.parent() {

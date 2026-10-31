@@ -32,11 +32,14 @@ pub struct MenuButton {
     pub normal_frames: Vec<Arc<RgbaImage>>,
     /// Animation de l'etat normal jouee une seule fois (sinon en boucle).
     pub normal_once: bool,
+    /// Sons (identifiants dans sound.bdmv, 0xFF = aucun) : arrivee de la selection, appui sur OK.
+    pub sound_select: u8,
+    pub sound_activate: u8,
 }
 
 impl MenuButton {
     pub fn new(label: &str, title: u32, x: i32, y: i32, images: Vec<Arc<RgbaImage>>) -> Self {
-        MenuButton { label: label.into(), title, x, y, images, neighbors: None, commands: vec![], sel_frames: vec![], sel_once: false, normal_frames: vec![], normal_once: false }
+        MenuButton { label: label.into(), title, x, y, images, neighbors: None, commands: vec![], sel_frames: vec![], sel_once: false, normal_frames: vec![], normal_once: false, sound_select: 0xFF, sound_activate: 0xFF }
     }
     pub fn width(&self) -> i32 { self.images.first().map_or(0, |i| i.width as i32) }
     pub fn height(&self) -> i32 { self.images.first().map_or(0, |i| i.height as i32) }
@@ -180,7 +183,7 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
         let btn = Button {
             button_id: n as u16, numeric_select_value: 0xFFFF, auto_action_flags: 0, x: b.x as u16, y: b.y as u16,
             upper: up, lower: down, left, right,
-            normal: (base, base_end, base_flags), selected: (0xFF, sel, sel_end, sel_flags), activated: (0xFF, act, act),
+            normal: (base, base_end, base_flags), selected: (b.sound_select, sel, sel_end, sel_flags), activated: (b.sound_activate, act, act),
             commands: if b.commands.is_empty() { vec![Command::new(JUMP_TITLE_INSN, b.title, 0)] } else { b.commands.clone() },
         };
         bogs.push(Bog { default_valid_button: n as u16, buttons: vec![btn] });

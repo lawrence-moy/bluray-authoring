@@ -44,6 +44,10 @@ pub struct ButtonStyle {
     pub act_bg: [u8; 3],
     pub act_text: [u8; 3],
     pub act_border: [u8; 3],
+    /// Son joue quand la selection arrive sur le bouton (fichier audio ; vide = aucun).
+    pub sound_select: String,
+    /// Son joue a l'appui sur OK (fichier audio ; vide = aucun).
+    pub sound_activate: String,
 }
 
 impl Default for ButtonStyle {
@@ -53,6 +57,7 @@ impl Default for ButtonStyle {
             sel_bg: [60, 100, 190], sel_text: [255, 255, 255], sel_border: [255, 255, 255], sel_border_w: 5, radius: 0,
             glow: 0, glow_color: [120, 180, 255], glow_pulse: false, zoom: 0, backdrop: 60, underline: false,
             activated: false, act_bg: [240, 150, 40], act_text: [255, 255, 255], act_border: [255, 230, 150],
+            sound_select: String::new(), sound_activate: String::new(),
         }
     }
 }
@@ -121,7 +126,7 @@ impl ButtonStyle {
     pub fn to_value(&self) -> Value {
         let hex = |c: [u8; 3]| Value::Str(format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]));
         let n = |v: i32| Value::Num(v as f64);
-        Value::Obj(vec![
+        let mut o = vec![
             ("fond".into(), hex(self.normal_bg)), ("texte".into(), hex(self.normal_text)), ("cadre".into(), hex(self.normal_border)),
             ("cadre_epaisseur".into(), n(self.normal_border_w)), ("assombrir".into(), n(self.dim)),
             ("fond_selection".into(), hex(self.sel_bg)), ("texte_selection".into(), hex(self.sel_text)), ("cadre_selection".into(), hex(self.sel_border)),
@@ -130,7 +135,10 @@ impl ButtonStyle {
             ("fond_cliquable".into(), n(self.backdrop)), ("souligner".into(), Value::Bool(self.underline)),
             ("etat_active".into(), Value::Bool(self.activated)), ("fond_active".into(), hex(self.act_bg)),
             ("texte_active".into(), hex(self.act_text)), ("cadre_active".into(), hex(self.act_border)),
-        ])
+        ];
+        if !self.sound_select.is_empty() { o.push(("son_selection".into(), Value::Str(self.sound_select.clone()))); }
+        if !self.sound_activate.is_empty() { o.push(("son_activation".into(), Value::Str(self.sound_activate.clone()))); }
+        Value::Obj(o)
     }
 
     /// Lecture tolerante : les champs absents gardent leur valeur par defaut.
@@ -166,6 +174,9 @@ impl ButtonStyle {
         col("fond_active", &mut s.act_bg)?;
         col("texte_active", &mut s.act_text)?;
         col("cadre_active", &mut s.act_border)?;
+        let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
+        s.sound_select = text("son_selection");
+        s.sound_activate = text("son_activation");
         Ok(s.clamped())
     }
 }

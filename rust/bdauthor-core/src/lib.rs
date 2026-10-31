@@ -16,6 +16,7 @@ pub mod mobj;
 pub mod model;
 pub mod mpls;
 pub mod menu;
+pub mod sound;
 pub mod mux;
 pub mod nav;
 pub mod palette;

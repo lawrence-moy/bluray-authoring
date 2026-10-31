@@ -586,6 +586,21 @@ pub fn extract_thumbnail_rgba(tools: &Tools, src: &Path, size: (u32, u32), at: O
     crate::palette::RgbaImage::from_raw(size.0, size.1, data?).map_err(|_| Error::Format("miniature : taille inattendue (video trop courte ?)".into()))
 }
 
+/// Son de menu : echantillons 16 bits gros-boutistes, stereo, 48 kHz (10 s au plus), pour sound.bdmv.
+pub fn decode_menu_sound(tools: &Tools, src: &Path) -> Result<crate::sound::Sound> {
+    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let tmp = std::env::temp_dir().join(format!("bdauthor_son_{}_{nanos}.pcm", std::process::id()));
+    let a: Vec<String> = vec!["-i".into(), s(src), "-vn".into(), "-t".into(), "10".into(), "-ac".into(), "2".into(), "-ar".into(), "48000".into(),
+        "-f".into(), "s16be".into(), s(&tmp)];
+    let r = run_ffmpeg(tools, &a, 0.0, &mut |_| {}, &AtomicBool::new(false));
+    let data = std::fs::read(&tmp);
+    let _ = std::fs::remove_file(&tmp);
+    r?;
+    let samples = data?;
+    if samples.is_empty() { return Err(Error::Format(format!("son de menu vide : {}", src.display()))); }
+    Ok(crate::sound::Sound { channels: 2, samples })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
