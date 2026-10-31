@@ -385,9 +385,11 @@ impl ProjectModel {
                     if it.fixed_video().map_or(false, |v| v >= self.videos.len()) { p.push("Vignette : la vidéo choisie n'existe pas.".into()); }
                     // animation de l'etat selectionne : image normale requise, fichiers presents
                     let sk = &it.look.skin;
-                    if !sk.sel_frames.is_empty() && it.is_button() && !matches!(it.kind, Kind::Slot { .. }) {
-                        if sk.normal.is_empty() { p.push("Animation d'un élément : choisissez aussi une image « normale » (sinon l'animation est ignorée).".into()); }
-                        for f in sk.sel_frames.iter().filter(|f| !abs(f).is_file()) { p.push(format!("Animation d'un élément : image introuvable ({f}).")); }
+                    if !sk.sel_frames.is_empty() && it.is_button() && !matches!(it.kind, Kind::Slot { .. }) && !sk.has_normal() {
+                        p.push("Animation d'un élément : choisissez aussi une image « normale » (sinon l'animation est ignorée).".into());
+                    }
+                    if it.is_button() && !matches!(it.kind, Kind::Slot { .. }) {
+                        for f in sk.sel_frames.iter().chain(sk.normal_frames.iter()).filter(|f| !abs(f).is_file()) { p.push(format!("Animation d'un élément : image introuvable ({f}).")); }
                     }
                     match it.sub {
                         crate::design::SubChoice::Track(k) => {

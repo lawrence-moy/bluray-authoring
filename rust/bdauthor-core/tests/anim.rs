@@ -102,3 +102,35 @@ fn selected_images_one_or_many() {
     let one = Skin::from_value(&v);
     assert_eq!((one.selected.as_str(), one.sel_frames.len()), ("a.png", 0));
 }
+
+#[test]
+fn animated_normal_state() {
+    use bdauthor_core::style::Skin;
+    // modele : une image = fixe, plusieurs = animation ; relecture
+    let mut sk = Skin::default();
+    sk.set_normal(vec!["n1.png".into(), "n2.png".into(), "n3.png".into()]);
+    assert!(sk.has_normal() && sk.normal.is_empty());
+    assert_eq!((sk.normal_file(), sk.normal_anim_frames()), ("n1.png", 3));
+    sk.normal_once = true;
+    sk.set_selected(vec!["a.png".into(), "b.png".into()]);
+    assert_eq!(sk.anim_frames(), 2); // l'image normale animee suffit pour animer la selection
+    assert_eq!(Skin::from_value(&sk.to_value()), sk);
+    sk.set_normal(vec!["n.png".into()]);
+    assert_eq!((sk.normal.as_str(), sk.normal_anim_frames(), sk.normal_once), ("n.png", 0, false));
+    // menu : objets consecutifs pour l'etat normal, en boucle ou une fois
+    let (n, s, a) = (img(40, 20, [10, 10, 10, 255]), img(40, 20, [200, 30, 30, 255]), img(40, 20, [30, 200, 30, 255]));
+    let mut b0 = MenuButton::new("", 1, 100, 100, vec![n.clone(), s.clone(), a.clone()]);
+    b0.normal_frames = vec![img(40, 20, [20, 20, 20, 255]), img(40, 20, [30, 30, 30, 255])];
+    let mut b1 = MenuButton::new("", 2, 300, 100, vec![n.clone(), s.clone(), a.clone()]);
+    b1.normal_frames = vec![img(40, 20, [40, 40, 40, 255])];
+    b1.normal_once = true;
+    let o = MenuOptions { frame_rate_code: 3, ..Default::default() };
+    let m = build_menu(&[b0, b1], &o).unwrap();
+    let page = &m.ics.pages[0];
+    let (n0, n1) = (page.bogs[0].buttons[0].normal, page.bogs[1].buttons[0].normal);
+    assert_eq!((n0.1 - n0.0, n0.2), (2, 0x80));
+    assert_eq!((n1.1 - n1.0, n1.2), (1, 0));
+    assert_eq!(page.frame_rate_code, anim_rate_code(3, 8.0));
+    // l'etat selectionne (fixe) reste partage par les deux boutons
+    assert_eq!(page.bogs[0].buttons[0].selected.1, page.bogs[1].buttons[0].selected.1);
+}

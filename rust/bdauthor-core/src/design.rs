@@ -554,8 +554,11 @@ impl PageDesign {
             let st = it.look.style.as_ref().unwrap_or(base).scaled(k);
             let (_, _, w, h) = it.scaled(k);
             let (mx, my) = st.margins(w, h);
-            let anim = if matches!(it.kind, Kind::Slot { .. }) { 0 } else { it.look.skin.anim_frames() as u64 };
-            let states = if anim > 0 {
+            let slot = matches!(it.kind, Kind::Slot { .. });
+            let anim = if slot { 0 } else { it.look.skin.anim_frames() as u64 };
+            // animation de l'etat normal : ses images (exemplaires propres) s'ajoutent a l'image normale de reference
+            let nanim = if slot || !it.look.skin.has_normal() { 0 } else { it.look.skin.normal_anim_frames() as u64 };
+            let states = nanim + if anim > 0 {
                 // image normale + animation (exemplaires propres) + etat active s'il est distinct
                 1 + anim + u64::from(!it.look.skin.activated.is_empty() || st.activated)
             } else if !it.look.skin.activated.is_empty() { 3 + st.pulse_frames() as u64 - 1 } else { st.state_count() };

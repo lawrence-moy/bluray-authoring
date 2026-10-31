@@ -273,7 +273,7 @@ fn styled_buttons_project() {
           {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356},
           {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"style":{"halo":0,"agrandir":0}},
           {"type":"navigation","action":"aller_a","texte":"B","cible":{"lire":"video","video":2},"x":800,"y":900,"w":300,"h":90,
-           "images_etats":{"normal":"btn.png","animation_selection":["f1.png","f2.png","f3.png"],"animation_une_fois":true}} ] } } } }"##;
+           "images_etats":{"normal":"btn.png","animation_normal":["n1.png","n2.png"],"animation_selection":["f1.png","f2.png","f3.png"],"animation_une_fois":true}} ] } } } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let mut logs = Vec::new();
     let info = {
@@ -314,6 +314,9 @@ fn styled_buttons_project() {
     // bouton dessine avec animation personnalisee (3 images, une fois) : prioritaire sur le halo anime du style du projet
     let bb = btns.iter().find(|b| b.x > 400 && b.y > 500).expect("bouton B");
     assert_eq!((bb.selected.2 - bb.selected.1, bb.selected.3), (2, 0));
+    // etat normal anime (2 images, en boucle) ; les autres boutons ont un etat normal fixe
+    assert_eq!((bb.normal.1 - bb.normal.0, bb.normal.2), (1, 0x80));
+    assert_eq!((b1.normal.0, b1.normal.2), (b1.normal.1, 0));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

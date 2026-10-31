@@ -804,14 +804,14 @@ impl FontRenderer {
             let (mx, my) = st.margins(w, h);
             let state = if selected == Some(idx) { if activated { 2usize } else { 1 } } else { 0 };
             let skin = &it.look.skin;
-            let skinned = !skin.normal.is_empty() && !matches!(it.kind, Kind::Slot { .. });
+            let skinned = skin.has_normal() && !matches!(it.kind, Kind::Slot { .. });
             // etat choisi d'un bouton dessine par l'utilisateur ; None si ses images sont illisibles
             let skin_state = || -> Option<Arc<RgbaImage>> {
                 let key = hkey(|hh| ("habillage", skin, project_dir, w, h, &st, state).hash(hh));
                 let one = |p: &str| if p.is_empty() { None } else { Some(abs(p)) };
                 // etat selectionne anime : premiere image de l'animation (l'editeur fait defiler les suivantes)
                 let sel = if skin.selected.is_empty() { skin.sel_frames.first().map_or("", |f| f.as_str()) } else { skin.selected.as_str() };
-                let states = self.skin_button(&[one(&skin.normal), one(sel), one(&skin.activated)], w as u32, h as u32, &st).ok()?;
+                let states = self.skin_button(&[one(skin.normal_file()), one(sel), one(&skin.activated)], w as u32, h as u32, &st).ok()?;
                 Some(self.cached_sprite(key, || states[state].as_ref().clone()))
             };
             match &it.kind {

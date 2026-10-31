@@ -477,3 +477,11 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   multiple) = animation (`Skin::sel_frames`, au moins deux). `Skin::set_selected` / `selected_files` gardent cet invariant ; a la
   lecture, une animation prime sur une image « selectionne » et une animation d'une image devient image fixe. Apercu statique de
   l'etat selectionne d'un element anime : premiere image (bdauthor-render).
+
+## Etat normal anime
+- `Skin::normal_frames` / `normal_once` (JSON `"animation_normal"`, `"animation_normal_une_fois"`), meme invariant que l'etat
+  selectionne (`set_normal`, `normal_files`) ; `has_normal()` / `normal_file()` (premiere image) remplacent `normal.is_empty()` / `normal`.
+- Disque : chaque image passe par `skin_button` en etat normal (assombrissement) ; `MenuButton::normal_frames`, objets consecutifs,
+  drapeau repeat 0x80 sauf « une fois ». Poids : images ajoutees.
+- Interface : ligne « Normal » comme « Selectionne » (une image ou plusieurs, liste par glisser-deposer, lecture, apercu).
+  L'apercu (« ▶ Apercu » ou simulation) joue les animations de l'etat normal de tous les elements non selectionnes, meme horloge.

@@ -197,12 +197,12 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         // textes et images places au-dessus de ce bouton dans l'ordre de superposition : poses sur ses images
         let above: Vec<Decor> = decor.iter().filter(|(i, d)| *i > idx && d.intersects((bx, by, bw, bh))).map(|(_, d)| d.shifted(-bx, -by)).collect();
         let skin = &it.look.skin;
-        let skinned = !skin.normal.is_empty() && !matches!(it.kind, Kind::Slot { .. });
+        let skinned = skin.has_normal() && !matches!(it.kind, Kind::Slot { .. });
         // dessin des etats pour un style donne (appele une fois par image du halo anime)
         type Draw<'d> = Box<dyn Fn(&ButtonStyle) -> Result<[Arc<RgbaImage>; 3]> + 'd>;
         let skin_draw = || -> Draw<'_> {
             let one = |p: &str| if p.is_empty() { None } else { Some((e.abs)(p)) };
-            let paths = [one(&skin.normal), one(&skin.selected), one(&skin.activated)];
+            let paths = [one(skin.normal_file()), one(&skin.selected), one(&skin.activated)];
             Box::new(move |st: &ButtonStyle| renderer.skin_button(&paths, w as u32, h as u32, st).map_err(Error::Format))
         };
         let (draw, go, commands): (Draw<'_>, u32, Vec<Command>) = match &it.kind {
@@ -258,7 +258,7 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
             let one = |p: &str| if p.is_empty() { None } else { Some((e.abs)(p)) };
             let mut all = Vec::new();
             for f in &skin.sel_frames {
-                let paths = [one(&skin.normal), one(f), one(&skin.activated)];
+                let paths = [one(skin.normal_file()), one(f), one(&skin.activated)];
                 all.push(renderer.skin_button(&paths, w as u32, h as u32, &st).map_err(|m| Error::Format(format!("animation ({f}) : {m}")))?[1].clone());
             }
             states[1] = all.remove(0);
@@ -269,9 +269,22 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
                 frames.push(draw(&st.pulse_style(i))?[1].clone());
             }
         }
+        // etat normal anime (images de l'auteur) : chaque image passe par les effets de l'etat normal (assombrissement)
+        let mut nframes: Vec<Arc<RgbaImage>> = Vec::new();
+        if skinned && skin.normal_anim_frames() >= 2 {
+            let one = |p: &str| if p.is_empty() { None } else { Some((e.abs)(p)) };
+            let mut all = Vec::new();
+            for f in &skin.normal_frames {
+                let paths = [one(f), one(&skin.selected), one(&skin.activated)];
+                all.push(renderer.skin_button(&paths, w as u32, h as u32, &st).map_err(|m| Error::Format(format!("animation ({f}) : {m}")))?[0].clone());
+            }
+            // la premiere image est deja l'etat normal ; les suivantes forment l'animation
+            nframes = all.into_iter().skip(1).collect();
+        }
         let cover = |im: Arc<RgbaImage>| if above.is_empty() { im } else { renderer.overlay([im.clone(), im.clone(), im], &above)[0].clone() };
         let states = if above.is_empty() { states } else { renderer.overlay(states, &above) };
         let frames: Vec<Arc<RgbaImage>> = frames.into_iter().map(cover).collect();
+        let nframes: Vec<Arc<RgbaImage>> = nframes.into_iter().map(cover).collect();
         // taille attendue, puis rognage aux bords du menu (le halo ne doit pas deborder du plan graphique)
         let (l, t) = ((-bx).max(0), (-by).max(0));
         let (r, b) = ((bx + bw - e.plane.0 as i32).max(0), (by + bh - e.plane.1 as i32).max(0));
@@ -282,11 +295,15 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, assignment: &[usize], decor:
         };
         let (states, distinct) = map_states(states, &fit);
         let frames: Vec<Arc<RgbaImage>> = frames.iter().map(|im| Arc::new(fit(im))).collect();
-        // une animation a son propre exemplaire de l'image selectionnee (objets consecutifs)
+        let nframes: Vec<Arc<RgbaImage>> = nframes.iter().map(|im| Arc::new(fit(im))).collect();
+        // une animation a son propre exemplaire de l'image de depart (objets consecutifs)
         let distinct = if frames.is_empty() { distinct } else { distinct + frames.len() as u64 + 1 };
+        let distinct = if nframes.is_empty() { distinct } else { distinct + nframes.len() as u64 + 1 };
         let [nrm, sel, act] = states;
         let mut btn = MenuButton::new("", go, bx + l, by + t, vec![nrm, sel, act]);
         btn.sel_frames = frames;
+        btn.normal_once = !nframes.is_empty() && skin.normal_once;
+        btn.normal_frames = nframes;
         btn.sel_once = skinned && skin.anim_frames() > 1 && skin.sel_once;
         // sous-titres choisis par le bouton : regles avant ses autres commandes
         let mut commands = commands;

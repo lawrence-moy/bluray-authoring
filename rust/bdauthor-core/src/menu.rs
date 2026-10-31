@@ -28,11 +28,15 @@ pub struct MenuButton {
     pub sel_frames: Vec<Arc<RgbaImage>>,
     /// Animation jouee une seule fois (sinon en boucle).
     pub sel_once: bool,
+    /// Etat normal anime : images suivantes de l'animation, apres `images[0]` (vide = image fixe).
+    pub normal_frames: Vec<Arc<RgbaImage>>,
+    /// Animation de l'etat normal jouee une seule fois (sinon en boucle).
+    pub normal_once: bool,
 }
 
 impl MenuButton {
     pub fn new(label: &str, title: u32, x: i32, y: i32, images: Vec<Arc<RgbaImage>>) -> Self {
-        MenuButton { label: label.into(), title, x, y, images, neighbors: None, commands: vec![], sel_frames: vec![], sel_once: false }
+        MenuButton { label: label.into(), title, x, y, images, neighbors: None, commands: vec![], sel_frames: vec![], sel_once: false, normal_frames: vec![], normal_once: false }
     }
     pub fn width(&self) -> i32 { self.images.first().map_or(0, |i| i.width as i32) }
     pub fn height(&self) -> i32 { self.images.first().map_or(0, |i| i.height as i32) }
@@ -106,6 +110,7 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
     }
     // etats selectionnes animes : images propres (objets consecutifs exiges par la norme), sans partage avec d'autres boutons
     let mut anim: Vec<Vec<usize>> = Vec::new();
+    let mut nanim: Vec<Vec<usize>> = Vec::new();
     for b in buttons {
         let mut keys = Vec::new();
         if !b.sel_frames.is_empty() {
@@ -115,6 +120,14 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
             }
         }
         anim.push(keys);
+        let mut keys = Vec::new();
+        if !b.normal_frames.is_empty() {
+            for im in std::iter::once(&b.images[0]).chain(b.normal_frames.iter()) {
+                flat.push(im.clone());
+                keys.push(flat.len() - 1);
+            }
+        }
+        nanim.push(keys);
     }
     let refs: Vec<&RgbaImage> = flat.iter().map(|a| a.as_ref()).collect();
     let (entries, rows) = quantize_images(&refs, o.rgb_colors, &ALPHA_LEVELS, ALPHA_MIN, true)?;
@@ -140,7 +153,18 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
                 (ods.len() - 1) as u16
             });
         }
-        let (base, mut sel, act) = (oid[0], oid[1], oid[2]);
+        let (mut base, mut sel, act) = (oid[0], oid[1], oid[2]);
+        // etat normal anime : objets consecutifs, en boucle sauf « une fois »
+        let (mut base_end, mut base_flags) = (base, 0u8);
+        if !nanim[n].is_empty() {
+            for (j, &key) in nanim[n].iter().enumerate() {
+                let im = &flat[key];
+                ods.push(Ods { object_id: ods.len() as u16, version: 0, sequence_flag: 0xC0, width: im.width as u16, height: im.height as u16, rle: rle_encode(&rows[key]) });
+                if j == 0 { base = (ods.len() - 1) as u16; }
+            }
+            base_end = (ods.len() - 1) as u16;
+            base_flags = if b.normal_once { 0 } else { 0x80 };
+        }
         // animation : objets consecutifs [debut, fin], lecture en boucle (bit « repeat »)
         let (mut sel_end, mut sel_flags) = (sel, 0u8);
         if !anim[n].is_empty() {
@@ -156,13 +180,13 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
         let btn = Button {
             button_id: n as u16, numeric_select_value: 0xFFFF, auto_action_flags: 0, x: b.x as u16, y: b.y as u16,
             upper: up, lower: down, left, right,
-            normal: (base, base, 0), selected: (0xFF, sel, sel_end, sel_flags), activated: (0xFF, act, act),
+            normal: (base, base_end, base_flags), selected: (0xFF, sel, sel_end, sel_flags), activated: (0xFF, act, act),
             commands: if b.commands.is_empty() { vec![Command::new(JUMP_TITLE_INSN, b.title, 0)] } else { b.commands.clone() },
         };
         bogs.push(Bog { default_valid_button: n as u16, buttons: vec![btn] });
     }
     // cadence des animations : une image toutes les (code + 1) images video, soit environ 8 images par seconde
-    let animated = anim.iter().any(|a| !a.is_empty());
+    let animated = anim.iter().chain(nanim.iter()).any(|a| !a.is_empty());
     let page = Page { default_activated: 0xFFFF, bogs, frame_rate_code: if animated { anim_rate_code(o.frame_rate_code, o.anim_fps) } else { 0 }, ..Default::default() };
     let ics = Ics {
         video_width: o.video_size.0 as u16, video_height: o.video_size.1 as u16, frame_rate_byte: o.frame_rate_code << 4,

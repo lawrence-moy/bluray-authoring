@@ -520,6 +520,20 @@ impl App {
                 }
             }
         }
+        // etat normal anime des autres elements : image courante
+        if self.preview_nstep > 0 {
+            let k = self.preview_nstep - 1;
+            for (idx, it) in design.items.iter_mut().enumerate() {
+                if Some(idx) == sel || matches!(it.kind, Kind::Slot { .. }) { continue; }
+                let sk = &mut it.look.skin;
+                let n = sk.normal_frames.len();
+                if n >= 2 {
+                    let i = if sk.normal_once { k.min(n - 1) } else { k % n };
+                    sk.normal = sk.normal_frames[i].clone();
+                    sk.normal_frames.clear();
+                }
+            }
+        }
         let act = self.sim_pressed();
         let img = renderer.render_page_preview(&design, info.menu, info.page, info.pages, &slots, base.as_ref(), PREVIEW, &base_dir, &self.model.designs.style, sel, act);
         self.preview_sel = self.sel_item;
@@ -706,8 +720,17 @@ impl App {
         let step = (self.anim_t0.elapsed().as_secs_f64() * fps as f64) as usize;
         let pulse = if n_frames == 0 { 0 } else if once { step.min(n_frames - 1) + 1 } else { step % n_frames + 1 };
         if n_frames > 0 && !(once && step >= n_frames - 1) { ctx.request_repaint_after(std::time::Duration::from_millis(30)); }
-        if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() || (self.preview_sel != self.sel_item && self.drag.is_none()) || self.preview_act != self.sim_pressed() || self.preview_pulse != pulse {
+        // animations de l'etat normal des elements de la page (simulation ou « Apercu ») : meme horloge
+        let (nmax, nloop) = if self.sim.is_some() || self.anim_preview {
+            info.design(&self.model.designs).map_or((0, false), |d| d.items.iter()
+                .filter(|it| !matches!(it.kind, Kind::Slot { .. }) && it.look.skin.normal_anim_frames() >= 2)
+                .fold((0, false), |(m, l), it| (m.max(it.look.skin.normal_anim_frames()), l || !it.look.skin.normal_once)))
+        } else { (0, false) };
+        let nstep = if nmax == 0 { 0 } else if nloop { step + 1 } else { step.min(nmax - 1) + 1 };
+        if nmax > 0 && (nloop || step < nmax - 1) { ctx.request_repaint_after(std::time::Duration::from_millis(30)); }
+        if (self.preview_gen != self.edit_gen && due) || self.preview_tex.is_none() || (self.preview_sel != self.sel_item && self.drag.is_none()) || self.preview_act != self.sim_pressed() || self.preview_pulse != pulse || self.preview_nstep != nstep {
             self.preview_pulse = pulse;
+            self.preview_nstep = nstep;
             let t = std::time::Instant::now();
             self.refresh_preview(ctx, &info);
             self.render_ms = t.elapsed().as_secs_f32() * 1000.0;
@@ -1262,14 +1285,14 @@ impl App {
             }
         }
         self.anim_preview = anim_preview;
-        if pick_skin == Some(1) {
-            // image(s) « selectionne » : une = etat fixe, plusieurs = animation (rangees par ordre de nom)
+        if let Some(state @ (0 | 1)) = pick_skin {
+            // image(s) « normal » ou « selectionne » : une = etat fixe, plusieurs = animation (rangees par ordre de nom)
             if let Some(mut fs) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_files() {
                 fs.sort();
                 let rel: Vec<String> = fs.iter().map(|f| self.relative(f)).collect();
                 if let Some(it) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)) {
-                    it.look.skin.set_selected(rel);
-                    if it.look.skin.sel_frames.is_empty() { self.anim_preview = false; }
+                    if state == 0 { it.look.skin.set_normal(rel); } else { it.look.skin.set_selected(rel); }
+                    if it.look.skin.sel_frames.is_empty() && it.look.skin.normal_frames.is_empty() { self.anim_preview = false; }
                     changed = true;
                 }
             }
