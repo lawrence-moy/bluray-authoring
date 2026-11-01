@@ -211,6 +211,9 @@ fn align_button(ui: &mut egui::Ui, a: ItemAlign, tip: &str) -> bool {
     resp.on_hover_text(tip).clicked()
 }
 
+/// Couleur de chaque fleche de la telecommande (haut, bas, gauche, droite) : nom dans le panneau et lien sur l'apercu.
+const NAV_COLORS: [Color32; 4] = [Color32::from_rgb(255, 170, 60), Color32::from_rgb(90, 160, 255), Color32::from_rgb(110, 220, 120), Color32::from_rgb(235, 100, 210)];
+
 /// Texte depose dans le presse-papiers systeme a la copie de widgets (le contenu reel reste dans l'application).
 const CLIP_MARK: &str = "bdauthor:widgets";
 
@@ -929,7 +932,7 @@ impl App {
                     }
                 }
             }
-            // liens de navigation choisis a la main depuis l'element selectionne (fleches cyan)
+            // liens de navigation choisis a la main depuis l'element selectionne (fleches colorees comme les noms Haut / Bas / Gauche / Droite)
             if let (Some(s), true) = (self.sel_item, self.extra_sel.is_empty()) {
                 if let Some(d) = info.design(&self.model.designs) {
                     if let Some(from) = d.items.get(s) {
@@ -938,7 +941,7 @@ impl App {
                             if let NavLink::Item(id) = from.nav.get(dir) {
                                 if let Some(to) = d.item_by_id(id).and_then(|t| d.items.get(t)) {
                                     let (a, b) = (c(from), c(to));
-                                    painter.arrow(a, b - a, Stroke::new(2.5_f32, Color32::from_rgb(70, 220, 230)));
+                                    painter.arrow(a, b - a, Stroke::new(2.5_f32, NAV_COLORS[dir]));
                                 }
                             }
                         }
@@ -1126,7 +1129,7 @@ impl App {
                     ui.label(egui::RichText::new("Par défaut, chaque flèche va au bouton le plus proche dans sa direction. Choisissez ici un autre bouton, ou « Aucun » pour que la flèche ne déplace rien.").weak());
                     for (d, name) in ["↑ Haut", "↓ Bas", "← Gauche", "→ Droite"].into_iter().enumerate() {
                         ui.horizontal(|ui| {
-                            ui.label(name);
+                            ui.label(egui::RichText::new(name).strong().color(NAV_COLORS[d]));
                             egui::ComboBox::from_id_salt(("nav_fleche", d)).selected_text(shown[d].clone()).width(230.0).show_ui(ui, |ui| {
                                 if ui.selectable_label(shown[d] == "Automatique", "Automatique").clicked() { pick = Some((d, Err(None))); }
                                 if ui.selectable_label(shown[d].starts_with("Aucun"), "Aucun (reste sur place)").clicked() { pick = Some((d, Err(Some(())))); }
