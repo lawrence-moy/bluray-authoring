@@ -512,3 +512,18 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Sans aucune page, la construction genere des pages de depart (`convert::generate_pages`) ; l'editeur propose
   « Creer les pages de depart » (`editor::ensure_pages`).
 - `projet_test.json` converti (copie : `projet_test.avant_nettoyage.json`).
+
+## Image ISO UDF 2.50 (etape 1 : coeur)
+
+- `iso.rs` (std seul) : `write_iso(dossier, sortie, &IsoOptions, annulation, avancement)`, `read_iso` (controle des
+  etiquettes, CRC, positions, arborescence), `verify_iso` (structure + contenu octet par octet), `iso_size` (taille exacte
+  sans ecrire), `fit_label` / `fit_info` (ce qui sera garde des noms), `CAPACITIES` (BD-25/50/100).
+- Disposition : VRS 16-18, VDS principale 32, reserve 48, LVID 64, ancres 256 et dernier secteur, partition physique a 288.
+  Partition de metadonnees (carte de type 2, unite 32 blocs) : FSD, entrees etendues (EFE) et repertoires ; donnees des
+  fichiers en descripteurs longs dans la partition physique ; miroir distinct si l'option est active.
+- Options : nom du volume (30 car. latins / 15 sinon), proprietaire/organisation/contact (IUVD), UDF 2.50/2.60,
+  alignement des .m2ts sur 64 Ko, ordre « lecture » (navigation, videos, BACKUP, CERTIFICATE), miroir, date fixe
+  (2000-01-01, identifiant de volume = empreinte du contenu : image reproductible).
+- Ecriture dans `<sortie>.iso.part` puis renommage ; seuls BDMV et CERTIFICATE du dossier sont repris.
+- Outil `bdiso <dossier> <image.iso> [nom]` (cree puis verifie) et `bdiso --lire <image.iso>`.
+- Premier essai : `sortie_test.iso` (694 Mo) cree depuis `sortie_test`, a valider dans Windows et un lecteur.
