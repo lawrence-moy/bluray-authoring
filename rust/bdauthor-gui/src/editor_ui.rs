@@ -136,7 +136,7 @@ fn palette() -> Vec<(NewWidget, &'static str, String)> {
 fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
     match w {
         NewWidget::Text => Item::text("Texte", 660, 470, 600, 120, 60),
-        NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() },
+        NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() },
         NewWidget::VideoSlot | NewWidget::ChapterSlot => {
             let mut it = Item::video_slot(100, 300, 400, 250, 200, 0, None, "");
             if let Kind::Slot { video, start, .. } = &mut it.kind {
@@ -617,7 +617,7 @@ impl App {
             if pick_image {
                 if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                     let rel = self.relative(&f);
-                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
+                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
                 }
             }
             if let Some(it) = add {
@@ -1100,6 +1100,7 @@ impl App {
         if group.len() == 1 {
             let label = |d: &PageDesign, k: usize| -> String {
                 match d.items.get(k) {
+                    Some(it) if !it.name.is_empty() => format!("{}. {}", k + 1, it.name),
                     Some(it) => match it.fixed_video() {
                         Some(v) if matches!(it.kind, Kind::Slot { .. }) => format!("{}. {} (vidéo {})", k + 1, kind_name(&it.kind), v + 1),
                         _ => format!("{}. {}", k + 1, kind_name(&it.kind)),
@@ -1187,6 +1188,10 @@ impl App {
             let cur_layer = d.items.get(i).map_or(0, |it| it.layer);
             let Some(it) = d.items.get_mut(i) else { self.sel_item = None; return };
             ui.colored_label(kind_color(&it.kind), kind_name(&it.kind));
+            ui.horizontal(|ui| {
+                ui.label("Nom");
+                changed |= ui.add(egui::TextEdit::singleline(&mut it.name).hint_text("(facultatif : pour s'y retrouver)").desired_width(220.0)).changed();
+            });
             if !layers.is_empty() {
                 let shown = layers.iter().find(|(id, _)| *id == cur_layer).map(|(_, n)| n.clone()).unwrap_or_default();
                 egui::ComboBox::from_label("Calque").selected_text(shown).show_ui(ui, |ui| {
@@ -1687,6 +1692,7 @@ impl App {
                                 Kind::Slot { video, link, start, .. } => format!("Vignette{}{}{}", match video { Some(v) => format!(" (vidéo {})", v + 1), None => " (sans vidéo)".to_string() },
                                     start.map(|t| format!(" à {}", mmss(t))).unwrap_or_default(), if link.is_some() { " →" } else { "" }),
                             };
+                            let what = if it.name.is_empty() { what } else { format!("{} ({what})", it.name) };
                             let mut col = kind_color(&it.kind);
                             if d.item_hidden(i) { col = col.gamma_multiply(0.45); }
                             let r = ui.horizontal(|ui| {

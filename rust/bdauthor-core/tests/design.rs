@@ -3,7 +3,7 @@ use bdauthor_core::json::parse;
 
 /// Vignette de la video `v` en (x, y).
 fn slot(x: i32, y: i32, v: Option<usize>) -> Item {
-    Item { x, y, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, video: v, link: None, start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() }
+    Item { x, y, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, video: v, link: None, start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
 }
 
 /// Page : titre, `n` vignettes des videos 0..n, « Suivant ».
@@ -45,7 +45,7 @@ fn pages_json_swap_remove() {
     let mut t = Item::text("Chapitres", 100, 90, 1720, 110, 84);
     if let Kind::Text { color, align, font, .. } = &mut t.kind { *color = [10, 200, 30]; *align = Align::Left; *font = "georgia.ttf".into(); }
     p.items.push(t);
-    p.items.push(Item { x: 50, y: 60, w: 300, h: 200, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
+    p.items.push(Item { x: 50, y: 60, w: 300, h: 200, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     ds.free.push(p);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("\"pages\"") && text.contains("georgia.ttf"));
@@ -71,7 +71,7 @@ fn goto_buttons_json_remap_and_check() {
     let mut ds = Designs::default();
     let mut p = page(2);
     p.items.push(Item::nav(NavAction::Goto, 100, 900, 300, 80)); // cible par defaut : page 1
-    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "Lire".into(), target: Some(Target::Video(2)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
+    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "Lire".into(), target: Some(Target::Video(2)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     ds.free.push(p);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("aller_a") && text.contains("\"cible\""));
@@ -90,7 +90,7 @@ fn goto_buttons_json_remap_and_check() {
     assert!(y.free[0].validate(0, 2, 2).iter().any(|p| p.error && p.msg.contains("cible")));
     // suppression de la page 1 : le bouton qui y menait perd sa cible, les pages suivantes sont decalees
     let mut z = ds.clone();
-    z.free[0].items.push(Item { x: 900, y: 900, w: 200, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "p3".into(), target: Some(Target::Main(2)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
+    z.free[0].items.push(Item { x: 900, y: 900, w: 200, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "p3".into(), target: Some(Target::Main(2)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     z.page_removed(0);
     assert_eq!(targets(&z), vec![None, Some(Target::Video(2)), Some(Target::Main(1))]);
     // verification des cibles
@@ -105,9 +105,9 @@ fn clickable_text_image_and_video_targets() {
     let mut t = Item::text("Lire", 100, 900, 300, 80, 50);
     if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Video(2)); }
     p.items.push(t);
-    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Image { path: "logo.png".into(), link: Some(Target::Main(1)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
-    p.items.push(Item { x: 900, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "b".into(), target: Some(Target::Video(1)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
-    p.items.push(Item { x: 1300, y: 900, w: 300, h: 80, kind: Kind::Image { path: "deco.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
+    p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Image { path: "logo.png".into(), link: Some(Target::Main(1)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
+    p.items.push(Item { x: 900, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "b".into(), target: Some(Target::Video(1)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
+    p.items.push(Item { x: 1300, y: 900, w: 300, h: 80, kind: Kind::Image { path: "deco.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     ds.free.push(p);
     let text = ds.to_value().to_pretty();
     assert!(text.contains("\"lire\": \"video\""), "{text}");
@@ -129,7 +129,7 @@ fn clickable_text_image_and_video_targets() {
     assert_eq!(links(&z)[1], None);
     // chevauchement : un texte cliquable compte comme un bouton
     let mut o = PageDesign::default();
-    o.items.push(Item { x: 0, y: 0, w: 400, h: 100, kind: Kind::Image { path: "a.png".into(), link: Some(Target::Video(0)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
+    o.items.push(Item { x: 0, y: 0, w: 400, h: 100, kind: Kind::Image { path: "a.png".into(), link: Some(Target::Video(0)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     o.items.push(Item::nav(NavAction::Goto, 100, 50, 300, 80));
     assert!(o.validate(0, 1, 1).iter().any(|p| p.msg.contains("chevauchent")));
     // destinations inexistantes
@@ -143,7 +143,7 @@ fn clickable_text_image_and_video_targets() {
 #[test]
 fn slot_with_destination() {
     let mut p = page(2);
-    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, video: Some(2), link: Some(Target::Main(1)), start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
+    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, video: Some(2), link: Some(Target::Main(1)), start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     assert_eq!(p.slot_count(), 3);
     let mut ds = Designs::default();
     ds.free.push(p);

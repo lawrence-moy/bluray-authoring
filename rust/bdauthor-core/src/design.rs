@@ -172,6 +172,8 @@ pub struct Item {
     pub id: u32,
     /// Voisins choisis a la main pour les fleches de la telecommande (sinon calcules automatiquement).
     pub nav: NavLinks,
+    /// Nom donne par l'auteur (arbre des elements, choix de navigation) ; vide = nom par defaut.
+    pub name: String,
 }
 
 /// Destination d'une fleche de la telecommande depuis un bouton.
@@ -267,7 +269,7 @@ impl Item {
     pub fn fixed_video(&self) -> Option<usize> { if let Kind::Slot { video, .. } = self.kind { video } else { None } }
     /// Vignette d'une video du projet (`start` : instant de depart pour une vignette de chapitre).
     pub fn video_slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32, video: usize, start: Option<f64>, label: &str) -> Item {
-        Item { x, y, w, h, kind: Kind::Slot { thumb_h, video: Some(video), link: None, start, chapter: None, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() }
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, video: Some(video), link: None, start, chapter: None, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
     }
     /// Instant de depart d'une vignette de chapitre.
     pub fn chapter_start(&self) -> Option<f64> {
@@ -298,10 +300,10 @@ impl Item {
         (r(self.x), r(self.y), r(self.w), r(self.h))
     }
     pub fn text(text: &str, x: i32, y: i32, w: i32, h: i32, size: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() }
+        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
     }
     pub fn nav(action: NavAction, x: i32, y: i32, w: i32, h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() }
+        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
     }
 }
 
@@ -593,6 +595,7 @@ impl PageDesign {
             if let Some(s) = &it.look.sounds { put("sons", s.to_value()); }
             if !self.layers.is_empty() { put("calque", num(it.layer as i32)); }
             if let Some(v) = it.sub.to_value() { put("soustitres", v); }
+            if !it.name.is_empty() { put("nom", Value::Str(it.name.clone())); }
             if it.id != 0 { put("id", num(it.id as i32)); }
             if let Some(v) = it.nav.to_value() { put("navigation", v); }
             Value::Obj(o)
@@ -653,7 +656,7 @@ impl PageDesign {
                 sounds: e.get("sons").map(crate::style::ItemSounds::from_value),
             };
             let layer = e.get("calque").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32);
-            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer, sub: SubChoice::from_value(e.get("soustitres")), id: e.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), nav: NavLinks::from_value(e.get("navigation")) });
+            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer, sub: SubChoice::from_value(e.get("soustitres")), id: e.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), nav: NavLinks::from_value(e.get("navigation")), name: e.get("nom").and_then(Value::as_str).unwrap_or("").to_string() });
         }
         let layers = v.get("calques").and_then(Value::as_array).map(|a| a.iter().enumerate().map(|(k, l)| Layer {
             id: l.get("id").and_then(Value::as_f64).map_or(k as u32 + 1, |x| x.max(1.0) as u32),

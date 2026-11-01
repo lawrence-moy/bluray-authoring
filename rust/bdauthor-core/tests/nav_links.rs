@@ -65,3 +65,12 @@ fn moving_an_item_to_another_page_drops_its_links() {
     assert_eq!(ds.free[1].items[k].id, 0);
     assert_eq!(ds.free[0].items[0].nav, NavLinks::default(), "le lien vers l'element parti est efface");
 }
+
+#[test]
+fn item_name_roundtrip() {
+    let mut d = page();
+    d.items[1].name = "Bouton « Film 2 »".into();
+    let back = PageDesign::from_value(&d.to_value()).unwrap();
+    assert_eq!(back.items[1].name, "Bouton « Film 2 »");
+    assert!(back.items[0].name.is_empty());
+}

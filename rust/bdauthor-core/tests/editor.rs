@@ -12,7 +12,7 @@ fn page(n: usize, title: &str) -> PageDesign {
 
 #[test]
 fn drag_and_hit() {
-    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, video: None, link: None, start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() };
+    let it = |x, y, w, h| Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, video: None, link: None, start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() };
     let items = vec![it(100, 100, 300, 200), it(250, 150, 300, 200)];
     assert_eq!(hit_test(&items, 260.0, 160.0, None, 8.0), Some((1, Handle::Body)), "l'element du dessus gagne");
     assert_eq!(hit_test(&items, 120.0, 120.0, None, 8.0), Some((0, Handle::Body)));
@@ -42,7 +42,7 @@ fn ordering_and_decor_copy() {
     assert_eq!(to_back(&mut d, 4), 0);
     assert!(matches!(d.items[0].kind, Kind::Text { .. }));
     let mut src = page(3, "Titre commun");
-    src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
+    src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     let mut target = page(2, "Autre");
     target.items.retain(|i| matches!(i.kind, Kind::Slot { .. }));
     let out = copy_decor(&src, target.clone());
@@ -92,7 +92,7 @@ fn remote_simulation() {
     let mut t = Item::text("Page 2", 100, 600, 400, 80, 40);
     if let Kind::Text { link, .. } = &mut t.kind { *link = Some(Target::Main(1)); }
     d.items.push(t);
-    d.items.push(Item { x: 1500, y: 60, w: 200, h: 120, kind: Kind::Slot { thumb_h: 100, video: None, link: None, start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
+    d.items.push(Item { x: 1500, y: 60, w: 200, h: 120, kind: Kind::Slot { thumb_h: 100, video: None, link: None, start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     let st = ButtonStyle::default();
     let b = sim_buttons(&info, &d, &st, 4);
     let acts: Vec<SimAction> = b.iter().map(|x| x.action).collect();
