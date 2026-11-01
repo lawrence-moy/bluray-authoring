@@ -1113,7 +1113,7 @@ impl App {
                     NavLink::Stay => "Aucun (reste sur place)".to_string(),
                     NavLink::Item(id) => label(d, d.item_by_id(id).unwrap_or(usize::MAX)),
                 }).collect();
-                (cands, shown, d.items.get(i).map_or(false, |it| sim_buttons(&info, d, &self.model.designs.style, self.model.videos.len()).iter().any(|b| b.item == i)))
+                (cands, shown, sim_buttons(&info, d, &self.model.designs.style, self.model.videos.len()).iter().any(|b| b.item == i))
             });
             if let Some((cands, shown, is_button)) = state {
                 // (direction, choix) : Err(None) automatique, Err(Some(None)) aucun, Ok(rang de l'element)
