@@ -710,7 +710,8 @@ impl App {
             if resp.drag_started() {
                 if let Some(pos) = resp.interact_pointer_pos() {
                     let (px, py) = to_plane(pos);
-                    match hit_test_where(&snapshot, px, py, self.sel_item, 12.0 / k, &can) {
+                    let prio = if self.extra_sel.is_empty() { self.sel_item } else { None };
+                    match hit_test_where(&snapshot, px, py, prio, 12.0 / k, &can) {
                         Some((i, h)) => {
                             // element deja dans une selection multiple : on deplace tout le groupe ; sinon la selection se reduit a lui
                             let in_group = self.sel_item == Some(i) || self.extra_sel.contains(&i);
@@ -860,9 +861,10 @@ impl App {
                     let r = Rect::from_min_max(to_screen(it.x as f32, it.y as f32), to_screen((it.x + it.w) as f32, (it.y + it.h) as f32));
                     let selected = self.sel_item == Some(i);
                     let col = kind_color(&it.kind);
-                    if !selected && self.extra_sel.contains(&i) {
-                        painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 20));
-                        painter.rect_stroke(r, 0.0, Stroke::new(2.0_f32, Color32::from_rgb(120, 190, 255)));
+                    let multi = !self.extra_sel.is_empty() && (selected || self.extra_sel.contains(&i));
+                    if multi {
+                        // selection multiple : contour fin par element, le cadre epais englobe l'ensemble (dessine apres la boucle)
+                        painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_rgb(120, 190, 255)));
                     } else if selected && self.preview_pulse > 0 {
                         // animation en cours dans l'apercu : ni voile ni cadre epais (ils la cacheraient), un contour fin seulement
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_white_alpha(140)));
@@ -880,16 +882,33 @@ impl App {
                         let shown = if it.link().is_some() { format!("{shown} →") } else { shown };
                         painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(14.0), col);
                     }
-                    if selected {
+                    if selected && !multi {
                         for c in [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] {
                             painter.rect_filled(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Color32::WHITE);
                         }
                     }
                 }
             }
+            if !self.extra_sel.is_empty() {
+                // cadre englobant de la selection multiple
+                let mut b: Option<(i32, i32, i32, i32)> = None;
+                let live: Vec<Item> = info.design(&self.model.designs).map(|d| d.items.clone()).unwrap_or_default();
+                for &i in self.sel_item.iter().chain(self.extra_sel.iter()) {
+                    if let Some(it) = live.get(i) {
+                        b = Some(match b { None => (it.x, it.y, it.x + it.w, it.y + it.h), Some((x0, y0, x1, y1)) => (x0.min(it.x), y0.min(it.y), x1.max(it.x + it.w), y1.max(it.y + it.h)) });
+                    }
+                }
+                if let Some((x0, y0, x1, y1)) = b {
+                    let r = Rect::from_min_max(to_screen(x0 as f32, y0 as f32), to_screen(x1 as f32, y1 as f32));
+                    painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 18));
+                    painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
+                }
+            }
             if let Some(pos) = resp.hover_pos() {
                 let (px, py) = to_plane(pos);
-                match hit_test_where(&snapshot, px, py, self.sel_item, 12.0 / k, &can) {
+                // en selection multiple : pas de poignees de redimensionnement
+                let prio = if self.extra_sel.is_empty() { self.sel_item } else { None };
+                match hit_test_where(&snapshot, px, py, prio, 12.0 / k, &can) {
                     Some((_, Handle::TopLeft)) | Some((_, Handle::BottomRight)) => ctx.set_cursor_icon(egui::CursorIcon::ResizeNwSe),
                     Some((_, Handle::TopRight)) | Some((_, Handle::BottomLeft)) => ctx.set_cursor_icon(egui::CursorIcon::ResizeNeSw),
                     Some((_, Handle::Body)) => ctx.set_cursor_icon(egui::CursorIcon::Grab),
