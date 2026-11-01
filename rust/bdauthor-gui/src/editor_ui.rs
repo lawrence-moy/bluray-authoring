@@ -1,7 +1,7 @@
 //! Editeur visuel de mise en page (onglet « Mise en page ») : apercu fidele, glisser/redimensionner, inspecteur.
 use crate::App;
 use bdauthor_core::design::{Align, Item, Kind, NavAction, PageDesign, SlotReturn, Target};
-use bdauthor_core::editor::{add_layer, dragged_rect, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
+use bdauthor_core::editor::{align_items, add_layer, ItemAlign, dragged_rect, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -21,6 +21,8 @@ pub(crate) struct DragState {
     pub handle: Handle,
     pub start: (f32, f32),
     pub orig: Item,
+    /// autres elements deplaces avec celui-ci (selection multiple) : (rang, etat d'origine)
+    pub group: Vec<(usize, Item)>,
 }
 
 pub(crate) enum Job {
@@ -710,10 +712,19 @@ impl App {
                     let (px, py) = to_plane(pos);
                     match hit_test_where(&snapshot, px, py, self.sel_item, 12.0 / k, &can) {
                         Some((i, h)) => {
+                            // element deja dans une selection multiple : on deplace tout le groupe ; sinon la selection se reduit a lui
+                            let in_group = self.sel_item == Some(i) || self.extra_sel.contains(&i);
+                            if in_group {
+                                if let Some(old) = self.sel_item.filter(|&o| o != i) { if !self.extra_sel.contains(&old) { self.extra_sel.push(old); } }
+                                self.extra_sel.retain(|&e| e != i);
+                            } else {
+                                self.extra_sel.clear();
+                            }
                             self.sel_item = Some(i);
-                            self.drag = Some(DragState { idx: i, handle: h, start: (px, py), orig: snapshot[i].clone() });
+                            let group: Vec<(usize, Item)> = if h == Handle::Body { self.extra_sel.iter().filter(|&&e| e < snapshot.len() && can(e)).map(|&e| (e, snapshot[e].clone())).collect() } else { Vec::new() };
+                            self.drag = Some(DragState { idx: i, handle: h, start: (px, py), orig: snapshot[i].clone(), group });
                         }
-                        None => self.sel_item = None,
+                        None => { self.sel_item = None; self.extra_sel.clear(); }
                     }
                 }
             }
@@ -723,10 +734,20 @@ impl App {
                     let r = dragged_rect((d.orig.x, d.orig.y, d.orig.w, d.orig.h), d.handle, px - d.start.0, py - d.start.1, grid, 16);
                     let orig = d.orig.clone();
                     let idx = d.idx;
-                    if let Some(it) = info.design_mut(&mut self.model.designs).and_then(|dd| dd.items.get_mut(idx)) {
-                        set_rect(it, &orig, r);
-                        self.dirty = true;
-                        self.edit_gen += 1;
+                    let group = d.group.clone();
+                    let (gdx, gdy) = (r.0 - orig.x, r.1 - orig.y);
+                    if let Some(dd) = info.design_mut(&mut self.model.designs) {
+                        if let Some(it) = dd.items.get_mut(idx) {
+                            set_rect(it, &orig, r);
+                            self.dirty = true;
+                            self.edit_gen += 1;
+                        }
+                        for (gi, go) in &group {
+                            if let Some(it) = dd.items.get_mut(*gi) {
+                                it.x = (go.x + gdx).clamp(0, (1920 - go.w).max(0));
+                                it.y = (go.y + gdy).clamp(0, (1080 - go.h).max(0));
+                            }
+                        }
                     }
                 }
             }
@@ -736,14 +757,35 @@ impl App {
             } else if resp.clicked() {
                 if let Some(pos) = resp.interact_pointer_pos() {
                     let (px, py) = to_plane(pos);
-                    self.sel_item = hit_test_where(&snapshot, px, py, None, 0.0, &can).map(|h| h.0);
+                    let hit = hit_test_where(&snapshot, px, py, None, 0.0, &can).map(|h| h.0);
+                    if ctx.input(|i| i.modifiers.shift || i.modifiers.command) {
+                        // Maj+clic : ajoute ou retire l'element de la selection
+                        if let Some(h) = hit {
+                            if self.extra_sel.contains(&h) {
+                                self.extra_sel.retain(|&e| e != h);
+                            } else if self.sel_item == Some(h) {
+                                self.sel_item = self.extra_sel.pop();
+                            } else if self.sel_item.is_none() {
+                                self.sel_item = Some(h);
+                            } else {
+                                self.extra_sel.push(h);
+                            }
+                        }
+                    } else {
+                        self.sel_item = hit;
+                        self.extra_sel.clear();
+                    }
                 }
             }
             // clic droit : selection de l'element sous la souris et menu contextuel
             if resp.secondary_clicked() {
                 if let Some(pos) = resp.interact_pointer_pos() {
                     let (px, py) = to_plane(pos);
-                    self.sel_item = hit_test_where(&snapshot, px, py, None, 0.0, &can).map(|h| h.0);
+                    let hit = hit_test_where(&snapshot, px, py, None, 0.0, &can).map(|h| h.0);
+                    if hit.map_or(true, |h| self.sel_item != Some(h) && !self.extra_sel.contains(&h)) {
+                        self.sel_item = hit;
+                        self.extra_sel.clear();
+                    }
                     self.drag = None;
                 }
             }
@@ -767,15 +809,24 @@ impl App {
                     if i.key_pressed(Key::ArrowDown) { dy += step; }
                     (dx, dy, i.key_pressed(Key::Delete))
                 });
+                let mut all: Vec<usize> = self.extra_sel.clone();
+                all.extend(self.sel_item);
                 if let (Some(s), Some(d)) = (self.sel_item, info.design_mut(&mut self.model.designs)) {
                     if del && s < d.items.len() {
-                        d.items.remove(s);
+                        all.sort_unstable();
+                        all.dedup();
+                        for &k in all.iter().rev() { if k < d.items.len() && can(k) { d.items.remove(k); } }
                         self.sel_item = None;
+                        self.extra_sel.clear();
                         self.bump();
-                    } else if (dx != 0 || dy != 0) && s < d.items.len() && can(s) {
-                        let it = &mut d.items[s];
-                        it.x = (it.x + dx).clamp(0, 1920 - it.w);
-                        it.y = (it.y + dy).clamp(0, 1080 - it.h);
+                    } else if dx != 0 || dy != 0 {
+                        for &k in &all {
+                            if k < d.items.len() && can(k) {
+                                let it = &mut d.items[k];
+                                it.x = (it.x + dx).clamp(0, (1920 - it.w).max(0));
+                                it.y = (it.y + dy).clamp(0, (1080 - it.h).max(0));
+                            }
+                        }
                         self.bump();
                     }
                 }
@@ -787,7 +838,10 @@ impl App {
                     let r = Rect::from_min_max(to_screen(it.x as f32, it.y as f32), to_screen((it.x + it.w) as f32, (it.y + it.h) as f32));
                     let selected = self.sel_item == Some(i);
                     let col = kind_color(&it.kind);
-                    if selected && self.preview_pulse > 0 {
+                    if !selected && self.extra_sel.contains(&i) {
+                        painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 20));
+                        painter.rect_stroke(r, 0.0, Stroke::new(2.0_f32, Color32::from_rgb(120, 190, 255)));
+                    } else if selected && self.preview_pulse > 0 {
                         // animation en cours dans l'apercu : ni voile ni cadre epais (ils la cacheraient), un contour fin seulement
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_white_alpha(140)));
                     } else if selected {
@@ -927,6 +981,36 @@ impl App {
         ui.heading("Élément");
         ui.label(egui::RichText::new("Réglages de la page (fond, musique, animations, page d'accueil) : cliquez dans une zone vide de l'aperçu.").weak());
         let Some(i) = self.sel_item else { return };
+        // selection multiple (Maj+clic) et alignement : seul l'ensemble ou, pour un element seul, la page sert de reference
+        self.extra_sel.retain(|&e| e != i);
+        let mut group: Vec<usize> = self.extra_sel.clone();
+        group.push(i);
+        let mut align: Option<ItemAlign> = None;
+        ui.collapsing(if group.len() > 1 { format!("Alignement ({} éléments)", group.len()) } else { "Alignement et centrage".to_string() }, |ui| {
+            ui.label(egui::RichText::new("Maj+clic sur l'aperçu ajoute ou retire un élément de la sélection ; glisser l'un d'eux déplace tout le groupe. Avec plusieurs éléments, l'alignement se fait sur leur cadre commun ; avec un seul, sur la page.").weak());
+            ui.horizontal_wrapped(|ui| {
+                for (t, tip, a) in [("⇤", "Aligner à gauche", ItemAlign::Left), ("↔", "Centrer horizontalement", ItemAlign::CenterH), ("⇥", "Aligner à droite", ItemAlign::Right),
+                                    ("⤒", "Aligner en haut", ItemAlign::Top), ("↕", "Centrer verticalement", ItemAlign::CenterV), ("⤓", "Aligner en bas", ItemAlign::Bottom)] {
+                    if ui.button(t).on_hover_text(tip).clicked() { align = Some(a); }
+                }
+            });
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Centrer sur la page (↔)").clicked() { align = Some(ItemAlign::PageH); }
+                if ui.button("Centrer sur la page (↕)").clicked() { align = Some(ItemAlign::PageV); }
+            });
+            if group.len() >= 3 {
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Répartir horizontalement").clicked() { align = Some(ItemAlign::DistributeH); }
+                    if ui.button("Répartir verticalement").clicked() { align = Some(ItemAlign::DistributeV); }
+                });
+            }
+            if group.len() > 1 && ui.button("Ne garder que cet élément").clicked() { self.extra_sel.clear(); }
+        });
+        if let Some(a) = align {
+            if let Some(d) = info.design_mut(&mut self.model.designs) {
+                if align_items(&mut d.items, &group, a) { self.bump(); }
+            }
+        }
         let mut op: Option<Op> = None;
         let mut pick_image = false;
         let mut changed = false;

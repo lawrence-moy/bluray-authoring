@@ -31,8 +31,10 @@ enum Msg {
 }
 
 /// Reglages de l'application, enregistres dans un petit fichier texte (cle=valeur) du dossier de configuration de l'utilisateur.
-#[derive(Clone, Copy, PartialEq)]
+#[derive(Clone, PartialEq)]
 struct Config {
+    /// Dossier de ffmpeg/ffprobe (ou chemin de ffmpeg) ; vide = recherche automatique.
+    ffmpeg_path: String,
     /// Pendant un glissement, espace les rendus de l'apercu selon la duree du dernier rendu (sinon : a chaque image).
     adaptive_preview: bool,
 }
@@ -47,14 +49,17 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new() };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
-                if let Some(("adaptive_preview", v)) = l.split_once('=') {
-                    c.adaptive_preview = v.trim() != "false";
+                match l.split_once('=') {
+                    Some(("adaptive_preview", v)) => c.adaptive_preview = v.trim() != "false",
+                    Some(("ffmpeg_path", v)) => c.ffmpeg_path = v.trim().to_string(),
+                    _ => {}
                 }
             }
         }
+        Tools::set_custom_path(&c.ffmpeg_path);
         c
     }
     fn save(&self) {
@@ -62,7 +67,7 @@ impl Config {
             if let Some(d) = p.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
-            let _ = std::fs::write(p, format!("adaptive_preview={}\n", self.adaptive_preview));
+            let _ = std::fs::write(p, format!("adaptive_preview={}\nffmpeg_path={}\n", self.adaptive_preview, self.ffmpeg_path));
         }
     }
 }
@@ -104,6 +109,8 @@ struct App {
     /// simulation de la telecommande en cours
     sim: Option<sim_ui::Sim>,
     sel_item: Option<usize>,
+    /// autres elements selectionnes avec `sel_item` (Maj+clic) : deplaces et alignes ensemble
+    extra_sel: Vec<usize>,
     /// calque ou vont les nouveaux elements (identifiant ; 0 : celui de l'element selectionne, sinon le premier plan)
     active_layer: u32,
     /// calque en cours de renommage : (page, identifiant, nom saisi)
@@ -146,7 +153,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -181,6 +188,7 @@ impl App {
     fn reset_editor(&mut self) {
         self.cur = None;
         self.sel_item = None;
+        self.extra_sel.clear();
         self.drag = None;
         self.edit_gen += 1;
         self.base_cache = None;
@@ -363,11 +371,42 @@ impl eframe::App for App {
         self.request_durations();
         let mut open = self.show_config;
         egui::Window::new("Configuration").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
-            let before = self.cfg;
+            let before = self.cfg.clone();
             ui.checkbox(&mut self.cfg.adaptive_preview, "Ajuster le rafraîchissement de l'aperçu pendant le déplacement");
             ui.label(format!("Dernier rendu de l'aperçu : {:.1} ms", self.render_ms));
             ui.label(egui::RichText::new("Activé : l'aperçu est redessiné au rythme que votre machine peut tenir (le cadre suit toujours la souris sans retard). Désactivé : l'aperçu est redessiné à chaque image, ce qui est plus fluide sur une machine rapide mais peut ralentir sur une page chargée.").weak());
-            if self.cfg != before { self.cfg.save(); }
+            ui.separator();
+            ui.label("Chemin de ffmpeg (dossier contenant ffmpeg et ffprobe, ou ffmpeg lui-même) :");
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.cfg.ffmpeg_path).hint_text("(automatique : à côté du programme, puis PATH)").desired_width(320.0));
+                if ui.button("Dossier…").clicked() {
+                    if let Some(d) = rfd::FileDialog::new().set_title("Dossier de ffmpeg").pick_folder() { self.cfg.ffmpeg_path = clean(&d); }
+                }
+                if ui.button("Fichier…").clicked() {
+                    if let Some(f) = rfd::FileDialog::new().set_title("ffmpeg").pick_file() { self.cfg.ffmpeg_path = clean(&f); }
+                }
+                if !self.cfg.ffmpeg_path.is_empty() && ui.button("Auto").clicked() { self.cfg.ffmpeg_path.clear(); }
+            });
+            // la detection lance ffmpeg : refaite seulement quand le chemin change (resultat gardé en memoire d'interface)
+            let key = egui::Id::new("ffmpeg_status");
+            let cached: Option<(String, Option<String>)> = ui.data(|d| d.get_temp(key));
+            let found = match cached {
+                Some((p, r)) if p == self.cfg.ffmpeg_path => r,
+                _ => {
+                    Tools::set_custom_path(&self.cfg.ffmpeg_path);
+                    let r = Tools::locate().ok().map(|t| t.ffmpeg.display().to_string());
+                    ui.data_mut(|d| d.insert_temp(key, (self.cfg.ffmpeg_path.clone(), r.clone())));
+                    r
+                }
+            };
+            match found {
+                Some(p) => { ui.label(egui::RichText::new(format!("Utilisé : {p}")).weak()); }
+                None => { ui.colored_label(egui::Color32::from_rgb(220, 90, 90), "ffmpeg/ffprobe introuvables avec ce réglage."); }
+            }
+            ui.separator();
+            if ui.checkbox(&mut self.model.cache, "Réutiliser les vidéos déjà encodées (cache)").changed() { self.dirty = true; }
+            ui.label(egui::RichText::new("Réglage enregistré avec le projet.").weak());
+            if self.cfg != before { Tools::set_custom_path(&self.cfg.ffmpeg_path); self.cfg.save(); }
         });
         self.show_config = open;
 
@@ -613,6 +652,8 @@ impl eframe::App for App {
                     let sub_base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
                     // vignettes liees a chaque chapitre de la video selectionnee : (identifiant, nombre)
                     let chapter_uses: Vec<(u32, usize)> = self.sel.and_then(|i| self.model.videos.get(i).map(|v| v.chapters.iter().map(|c| (c.id, self.model.designs.chapter_uses(i, c.id))).collect::<Vec<_>>())).unwrap_or_default();
+                    // duree de la video selectionnee (si connue) : borne des instants de chapitre et de vignette
+                    let max_t: f64 = self.sel.and_then(|i| self.model.videos.get(i)).and_then(|v| self.durations.get(&v.file).copied()).filter(|d| *d > 0.0).unwrap_or(1.0e6);
                     if let Some(v) = self.sel.and_then(|i| self.model.videos.get_mut(i)) {
                         ui.heading("Vidéo sélectionnée");
                         ui.label(egui::RichText::new(&v.file).weak());
@@ -627,7 +668,7 @@ impl eframe::App for App {
                                 changed = true;
                             }
                             if let Some(t) = &mut v.thumb_s {
-                                changed |= ui.add(egui::DragValue::new(t).speed(0.5).range(0.0..=1.0e6).suffix(" s")).changed();
+                                changed |= ui.add(egui::DragValue::new(t).speed(0.5).range(0.0..=max_t).suffix(" s")).changed();
                             }
                         });
                         ui.separator();
@@ -646,7 +687,7 @@ impl eframe::App for App {
                         let mut del = None;
                         for (k, c) in v.chapters.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
-                                changed |= ui.add(egui::DragValue::new(&mut c.t).speed(1.0).range(0.0..=1.0e6).suffix(" s")).changed();
+                                changed |= ui.add(egui::DragValue::new(&mut c.t).speed(1.0).range(0.0..=max_t).suffix(" s")).changed();
                                 ui.label(mmss(c.t));
                                 changed |= ui.add(egui::TextEdit::singleline(&mut c.title).hint_text("nom (facultatif)")).changed();
                                 if let Some(n) = chapter_uses.iter().find(|u| u.0 == c.id).map(|u| u.1).filter(|n| *n > 0) {
@@ -656,9 +697,10 @@ impl eframe::App for App {
                             });
                         }
                         if let Some(k) = del { v.chapters.remove(k); changed = true; }
+                        if max_t < 1.0e6 { ui.label(egui::RichText::new(format!("Durée de la vidéo : {} — les instants sont limités à cette durée.", duration_text(max_t))).weak()); }
                         if ui.button("Ajouter un chapitre").clicked() {
                             let t = v.chapters.iter().map(|c| c.t).fold(f64::NEG_INFINITY, f64::max);
-                            let t = if t.is_finite() { t + 60.0 } else { 0.0 };
+                            let t = if t.is_finite() { (t + 60.0).min(max_t) } else { 0.0 };
                             let id = v.next_chapter_id();
                             v.chapters.push(ChapterEntry { id, t, title: String::new() });
                             changed = true;
@@ -707,7 +749,6 @@ impl eframe::App for App {
                     changed |= ui.checkbox(&mut m.loop_menu, "Rejouer le fond en boucle (sinon : arrêt sur la dernière image)").changed();
                     // « vignettes par page generee » retire de l'interface : seules les pages personnalisees sont utilisees (la valeur
                     // eventuelle du fichier reste lue pour la premiere conversion d'un ancien projet)
-                    changed |= ui.checkbox(&mut m.cache, "Réutiliser les vidéos déjà encodées (cache)").changed();
                     if changed {
                         self.dirty = true;
                     }

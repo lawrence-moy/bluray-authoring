@@ -461,3 +461,76 @@ pub fn ensure_pages(m: &mut ProjectModel, durations: &HashMap<String, f64>) -> R
     m.link_chapters_by_time();
     Ok(true)
 }
+
+/// Operation d'alignement de plusieurs elements (ou d'un seul, par rapport a la page).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ItemAlign {
+    Left,
+    CenterH,
+    Right,
+    Top,
+    CenterV,
+    Bottom,
+    /// repartit les centres a intervalles egaux entre les deux elements les plus eloignes (3 elements ou plus)
+    DistributeH,
+    DistributeV,
+    /// centre l'ensemble (son cadre englobant) sur la page, horizontalement / verticalement
+    PageH,
+    PageV,
+}
+
+/// Aligne les elements `sel` de `items`. Avec au moins deux elements, la reference est leur cadre englobant ; avec un seul, c'est la
+/// page (1920x1080). Les elements restent dans la page. Renvoie vrai si quelque chose a bouge.
+pub fn align_items(items: &mut [crate::design::Item], sel: &[usize], op: ItemAlign) -> bool {
+    let mut idx: Vec<usize> = sel.iter().copied().filter(|&i| i < items.len()).collect();
+    idx.sort_unstable();
+    idx.dedup();
+    if idx.is_empty() {
+        return false;
+    }
+    let (mut x0, mut y0, mut x1, mut y1) = (i32::MAX, i32::MAX, i32::MIN, i32::MIN);
+    for &i in &idx {
+        let it = &items[i];
+        x0 = x0.min(it.x);
+        y0 = y0.min(it.y);
+        x1 = x1.max(it.x + it.w);
+        y1 = y1.max(it.y + it.h);
+    }
+    let (rx0, ry0, rx1, ry1) = if idx.len() >= 2 { (x0, y0, x1, y1) } else { (0, 0, 1920, 1080) };
+    let before: Vec<(i32, i32)> = idx.iter().map(|&i| (items[i].x, items[i].y)).collect();
+    match op {
+        ItemAlign::Left => idx.iter().for_each(|&i| items[i].x = rx0),
+        ItemAlign::Right => idx.iter().for_each(|&i| items[i].x = rx1 - items[i].w),
+        ItemAlign::CenterH => idx.iter().for_each(|&i| items[i].x = (rx0 + rx1 - items[i].w) / 2),
+        ItemAlign::Top => idx.iter().for_each(|&i| items[i].y = ry0),
+        ItemAlign::Bottom => idx.iter().for_each(|&i| items[i].y = ry1 - items[i].h),
+        ItemAlign::CenterV => idx.iter().for_each(|&i| items[i].y = (ry0 + ry1 - items[i].h) / 2),
+        ItemAlign::DistributeH | ItemAlign::DistributeV => {
+            if idx.len() >= 3 {
+                let horiz = op == ItemAlign::DistributeH;
+                let centre = |it: &crate::design::Item| if horiz { it.x * 2 + it.w } else { it.y * 2 + it.h };
+                idx.sort_by_key(|&i| centre(&items[i]));
+                let (first, last) = (centre(&items[idx[0]]), centre(&items[*idx.last().unwrap()]));
+                let n = idx.len() as i32 - 1;
+                for (k, &i) in idx.iter().enumerate() {
+                    let c = first + (last - first) * k as i32 / n; // double du centre
+                    if horiz { items[i].x = (c - items[i].w) / 2; } else { items[i].y = (c - items[i].h) / 2; }
+                }
+            }
+        }
+        ItemAlign::PageH => {
+            let dx = (1920 - (x1 - x0)) / 2 - x0;
+            idx.iter().for_each(|&i| items[i].x += dx);
+        }
+        ItemAlign::PageV => {
+            let dy = (1080 - (y1 - y0)) / 2 - y0;
+            idx.iter().for_each(|&i| items[i].y += dy);
+        }
+    }
+    for &i in &idx {
+        let it = &mut items[i];
+        it.x = it.x.clamp(0, (1920 - it.w).max(0));
+        it.y = it.y.clamp(0, (1080 - it.h).max(0));
+    }
+    idx.iter().zip(&before).any(|(&i, b)| (items[i].x, items[i].y) != *b)
+}

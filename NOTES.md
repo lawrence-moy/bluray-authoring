@@ -572,3 +572,9 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   (pages de depart liees a leurs chapitres manuels). La construction du disque n'est pas modifiee.
 - Interface : inspecteur de la vignette = liste « Chapitre de la vidéo » + « Créer le chapitre » + « Détacher » ;
   « Vidéo sélectionnée » affiche le nombre de vignettes liees a chaque chapitre.
+
+## Reglages, chapitres, alignement
+- Chemin de ffmpeg : Fichier > Configuration (`ffmpeg_path` dans config.txt). `Tools::set_custom_path` : dossier ou ffmpeg.exe, essaye avant BDAUTHOR_FFMPEG_DIR, le dossier du programme et le PATH.
+- « Reutiliser les videos deja encodees (cache) » : deplace de la fenetre Projet vers Configuration (reste enregistre dans le projet).
+- Chapitres / vignette d'une video : instants limites a la duree connue de la video.
+- Editeur : Maj+clic = selection multiple (cadre bleu), glisser/fleches/Suppr s'appliquent au groupe ; panneau « Alignement » (gauche/centre/droite, haut/milieu/bas, centrer sur la page, repartir) : `editor::align_items`.

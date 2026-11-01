@@ -70,10 +70,25 @@ fn works(p: &Path) -> bool {
     c.status().map(|s| s.success()).unwrap_or(false)
 }
 
+static CUSTOM_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
 impl Tools {
+    /// Chemin choisi par l'utilisateur (dossier contenant ffmpeg et ffprobe, ou chemin de ffmpeg lui-meme), essaye avant tout le reste.
+    /// Chaine vide = aucun.
+    pub fn set_custom_path(p: &str) {
+        let p = p.trim();
+        if let Ok(mut g) = CUSTOM_DIR.lock() {
+            *g = if p.is_empty() { None } else { Some(PathBuf::from(p)) };
+        }
+    }
+
     /// Cherche ffmpeg et ffprobe : `BDAUTHOR_FFMPEG_DIR`, dossier de l'executable (et son sous-dossier `ffmpeg`/`bin`), puis PATH.
     pub fn locate() -> Result<Tools> {
         let mut dirs: Vec<PathBuf> = Vec::new();
+        if let Some(c) = CUSTOM_DIR.lock().ok().and_then(|g| g.clone()) {
+            // un fichier (ffmpeg.exe) designe son dossier ; ffprobe est cherche a cote
+            dirs.push(if c.is_file() { c.parent().map(Path::to_path_buf).unwrap_or(c) } else { c });
+        }
         if let Some(d) = std::env::var_os("BDAUTHOR_FFMPEG_DIR") {
             dirs.push(PathBuf::from(d));
         }
