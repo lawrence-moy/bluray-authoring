@@ -701,11 +701,49 @@ impl App {
             None => vec![],
         };
         let reserve = if probs.is_empty() { 6.0 } else { 10.0 + 20.0 * probs.len().min(4) as f32 };
+        // vue : zoom et deplacement de l'apercu (reinitialises a chaque changement de page)
+        if self.view_page != Some(info.r) { self.view_page = Some(info.r); self.view_zoom = 1.0; self.view_pan = egui::Vec2::ZERO; }
+        ui.horizontal(|ui| {
+            let z = self.view_zoom;
+            if ui.small_button("−").on_hover_text("Dézoomer").clicked() { let nz = (z / 1.25).max(0.25); self.view_pan *= nz / z; self.view_zoom = nz; }
+            if ui.small_button("+").on_hover_text("Zoomer").clicked() { let nz = (z * 1.25).min(8.0); self.view_pan *= nz / z; self.view_zoom = nz; }
+            if ui.small_button("Ajuster").on_hover_text("Page entière dans la fenêtre").clicked() { self.view_zoom = 1.0; self.view_pan = egui::Vec2::ZERO; }
+            ui.label(format!("{:.0} %", self.view_zoom * 100.0));
+            ui.label(egui::RichText::new("Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue").weak());
+        });
         let avail = ui.available_size();
         let w = avail.x.min((avail.y - reserve).max(200.0) * 16.0 / 9.0).max(320.0);
         let (resp, painter) = ui.allocate_painter(vec2(w, w * 9.0 / 16.0), Sense::click_and_drag());
-        let rect = resp.rect;
+        let viewport = resp.rect;
+        // deplacement (clic molette ou Espace + bouton gauche) et zoom a la molette, centre sur le curseur
+        let panning = (resp.hovered() || self.view_panning) && !ctx.wants_keyboard_input()
+            && ctx.input(|i| i.pointer.middle_down() || (i.key_down(Key::Space) && i.pointer.primary_down()));
+        let skip_input = panning || self.view_panning; // pas de clic ni de glissement d'element pendant (et juste apres) le deplacement
+        self.view_panning = panning;
+        if panning {
+            self.view_pan += ctx.input(|i| i.pointer.delta());
+            ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
+        }
+        if resp.hovered() {
+            let (scroll, zd, ptr) = ctx.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta(), i.pointer.hover_pos()));
+            let f = (scroll * 0.0015).exp() * zd;
+            if (f - 1.0).abs() > 1e-4 {
+                let z = self.view_zoom;
+                let nz = (z * f).clamp(0.25, 8.0);
+                if let Some(p) = ptr {
+                    let c0 = viewport.center() + self.view_pan;
+                    self.view_pan = (p - (p - c0) * (nz / z)) - viewport.center();
+                }
+                self.view_zoom = nz;
+                // la molette sert au zoom : le panneau ne defile pas en meme temps
+                ctx.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+            }
+        }
+        let half = viewport.size() * (0.5 + self.view_zoom * 0.5) - vec2(40.0, 40.0);
+        self.view_pan = vec2(self.view_pan.x.clamp(-half.x.max(0.0), half.x.max(0.0)), self.view_pan.y.clamp(-half.y.max(0.0), half.y.max(0.0)));
+        let rect = Rect::from_center_size(viewport.center() + self.view_pan, viewport.size() * self.view_zoom);
         let k = rect.width() / 1920.0;
+        if self.view_zoom != 1.0 || self.view_pan != egui::Vec2::ZERO { painter.rect_filled(viewport, 0.0, Color32::from_gray(18)); }
         match &self.preview_tex {
             Some(t) => painter.image(t.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE),
             None => painter.rect_filled(rect, 0.0, Color32::from_gray(30)),
@@ -758,7 +796,8 @@ impl App {
             let usable: Vec<bool> = info.design(&self.model.designs).map(|d| (0..d.items.len()).map(|i| !d.item_hidden(i) && !d.item_locked(i)).collect()).unwrap_or_default();
             let can = |i: usize| usable.get(i).copied().unwrap_or(false);
             let grid = if self.snap { 10 } else { 0 };
-            if resp.drag_started() {
+            let (r_started, r_dragged, r_stopped, r_clicked, r_secondary) = if skip_input { (false, false, false, false, false) } else { (resp.drag_started(), resp.dragged(), resp.drag_stopped(), resp.clicked(), resp.secondary_clicked()) };
+            if r_started {
                 if let Some(pos) = resp.interact_pointer_pos() {
                     let (px, py) = to_plane(pos);
                     let prio = if self.extra_sel.is_empty() { self.sel_item } else { None };
@@ -786,7 +825,7 @@ impl App {
                     }
                 }
             }
-            if resp.dragged() {
+            if r_dragged {
                 if let (Some(d), Some(pos)) = (&self.drag, resp.interact_pointer_pos()) {
                     let (px, py) = to_plane(pos);
                     let r = dragged_rect((d.orig.x, d.orig.y, d.orig.w, d.orig.h), d.handle, px - d.start.0, py - d.start.1, grid, 16);
@@ -810,7 +849,7 @@ impl App {
                 }
             }
             if let (Some((s0, base)), Some(pos)) = (self.marquee.clone(), resp.interact_pointer_pos()) {
-                if resp.dragged() {
+                if r_dragged {
                     let (px, py) = to_plane(pos);
                     let (x0, x1, y0, y1) = (s0.0.min(px), s0.0.max(px), s0.1.min(py), s0.1.max(py));
                     let mut sel = base;
@@ -824,11 +863,11 @@ impl App {
                     painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_rgb(120, 190, 255)));
                 }
             }
-            if resp.drag_stopped() {
+            if r_stopped {
                 self.marquee = None;
                 self.drag = None;
                 self.bump();
-            } else if resp.clicked() {
+            } else if r_clicked {
                 if let Some(pos) = resp.interact_pointer_pos() {
                     let (px, py) = to_plane(pos);
                     let hit = hit_test_where(&snapshot, px, py, None, 0.0, &can).map(|h| h.0);
@@ -852,7 +891,7 @@ impl App {
                 }
             }
             // clic droit : selection de l'element sous la souris et menu contextuel
-            if resp.secondary_clicked() {
+            if r_secondary {
                 if let Some(pos) = resp.interact_pointer_pos() {
                     let (px, py) = to_plane(pos);
                     let hit = hit_test_where(&snapshot, px, py, None, 0.0, &can).map(|h| h.0);

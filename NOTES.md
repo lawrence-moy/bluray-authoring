@@ -583,3 +583,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - `Item.id` (identifiant stable dans la page, attribue seulement quand un lien le vise) et `Item.nav: NavLinks` (haut/bas/gauche/droite : `Auto` | `Stay` | `Item(id)`). JSON : `"id"`, `"navigation": {"haut": id | "aucun", ...}` (seules les fleches non automatiques sont ecrites).
 - Disque : `MenuButton.nav_set` ([Option<u16>;4]) applique par-dessus `auto_neighbors` (menu.rs) ; `page_buttons` (project.rs) resout les identifiants en rangs de boutons. Lien perdu = automatique. Simulation : meme regle dans `editor::sim_buttons`.
 - Editeur : rubrique « Navigation (fleches de la telecommande) » du widget selectionne ; fleches cyan sur l'apercu. Dupliquer / coller / changer de page efface id et liens de l'element copie ; supprimer un element efface les liens qui le visaient (`prune_nav`).
+
+## Zoom de l'apercu, noms de widgets
+- Apercu : molette = zoom (25 % a 800 %, centre sur le curseur), clic molette ou Espace + glisser = deplacer ; boutons − / + / Ajuster ; reinitialise au changement de page. Le rendu reste en 960x540 (flou a fort zoom, cadres nets).
+- `Item.name` (JSON `nom`) ; copies nommees « Nom (copie N) » (`copy_name`), sauf couper/coller.
