@@ -35,6 +35,10 @@ struct Config {
     adaptive_preview: bool,
 }
 
+/// Charge du glisser-deposer de la liste des videos (rang de la video).
+#[derive(Clone, Copy)]
+struct VideoDrag(usize);
+
 impl Config {
     fn path() -> Option<PathBuf> {
         let base = std::env::var_os("APPDATA").map(PathBuf::from).or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))?;
@@ -415,7 +419,7 @@ impl eframe::App for App {
                     }
                 });
                 ui.separator();
-                ui.selectable_value(&mut self.mode, Mode::Projet, "Projet");
+                ui.selectable_value(&mut self.mode, Mode::Projet, "Vidéos");
                 ui.selectable_value(&mut self.mode, Mode::MiseEnPage, "Mise en page");
                 ui.separator();
                 let name = self.path.as_ref().map(|p| clean(p)).unwrap_or_else(|| "(projet non enregistré)".into());
@@ -469,30 +473,54 @@ impl eframe::App for App {
                 if ui.button("Ajouter des vidéos…").clicked() { self.add_videos(); }
             });
             ui.separator();
-            let mut action: Option<(usize, i32)> = None; // (index, -1 haut / 1 bas / 0 retirer)
-            egui::ScrollArea::vertical().show(ui, |ui| {
+            // (rang, Some(destination)) : deplacement par glisser-deposer ; (rang, None) : retrait
+            let mut op: Option<(usize, Option<usize>)> = None;
+            let mut rows: Vec<egui::Rect> = Vec::new();
+            let list = egui::ScrollArea::vertical().id_salt("liste_videos").auto_shrink([false, false]).show(ui, |ui| {
                 for (i, v) in self.model.videos.iter().enumerate() {
                     let label = if v.title.is_empty() { Path::new(&v.file).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default() } else { v.title.clone() };
-                    ui.horizontal(|ui| {
-                        if ui.selectable_label(self.sel == Some(i), format!("{:>2}. {}", i + 1, label)).clicked() { self.sel = Some(i); }
+                    let r = ui.horizontal(|ui| {
+                        if busy {
+                            ui.label(egui::RichText::new("☰").weak());
+                        } else {
+                            let _ = ui.dnd_drag_source(egui::Id::new(("video", i)), VideoDrag(i), |ui| ui.label(egui::RichText::new("☰").strong()))
+                                .response.on_hover_text("Glisser pour changer l'ordre des vidéos");
+                        }
+                        if ui.selectable_label(self.sel == Some(i), format!("{:>2}. {}", i + 1, label)).on_hover_text(v.file.as_str()).clicked() { self.sel = Some(i); }
                         ui.add_enabled_ui(!busy, |ui| {
-                            if ui.small_button("Monter").clicked() { action = Some((i, -1)); }
-                            if ui.small_button("Descendre").clicked() { action = Some((i, 1)); }
-                            if ui.small_button("Retirer").clicked() { action = Some((i, 0)); }
+                            if ui.small_button("✕").on_hover_text("Retirer cette vidéo").clicked() { op = Some((i, None)); }
                         });
-                    });
+                    }).response;
+                    rows.push(r.rect);
                 }
             });
-            if let Some((i, a)) = action {
-                let n = self.model.videos.len();
-                match a {
-                    -1 if i > 0 => { self.model.swap_videos(i, i - 1); self.sel = Some(i - 1); }
-                    1 if i + 1 < n => { self.model.swap_videos(i, i + 1); self.sel = Some(i + 1); }
-                    0 => {
+            // glisser-deposer (meme mecanique que la liste des pages) : une ligne bleue montre la place d'arrivee
+            let area = list.inner_rect;
+            if let (Some(drag), Some(pos)) = (egui::DragAndDrop::payload::<VideoDrag>(ctx), ctx.pointer_hover_pos()) {
+                if area.expand(8.0).contains(pos) && !rows.is_empty() {
+                    let r = rows.iter().filter(|rect| rect.center().y < pos.y).count();
+                    let y = if r < rows.len() { rows[r].top() } else { rows[rows.len() - 1].bottom() };
+                    ui.painter().hline(area.x_range(), y, egui::Stroke::new(2.5_f32, egui::Color32::from_rgb(90, 170, 255)));
+                    if ui.input(|i| i.pointer.any_released()) {
+                        egui::DragAndDrop::clear_payload(ctx);
+                        let from = drag.0;
+                        let to = if r > from { r - 1 } else { r };
+                        if to != from { op = Some((from, Some(to))); }
+                    }
+                }
+            }
+            if let Some((i, dest)) = op {
+                match dest {
+                    Some(to) => {
+                        // echanges successifs : les vignettes et liens des pages suivent leur video
+                        if to > i { for k in i..to { self.model.swap_videos(k, k + 1); } } else { for k in (to..i).rev() { self.model.swap_videos(k, k + 1); } }
+                        // la selection suit la video deplacee (ou celle decalee par le deplacement)
+                        self.sel = self.sel.map(|s| if s == i { to } else if i < s && s <= to { s - 1 } else if to <= s && s < i { s + 1 } else { s });
+                    }
+                    None => {
                         self.model.remove_video(i);
                         self.sel = if self.model.videos.is_empty() { None } else { Some(i.min(self.model.videos.len() - 1)) };
                     }
-                    _ => {}
                 }
                 self.dirty = true;
                 self.reset_editor();
