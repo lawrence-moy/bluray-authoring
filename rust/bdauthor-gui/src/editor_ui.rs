@@ -1817,8 +1817,13 @@ impl App {
     }
 
     fn after_history(&mut self) {
-        self.sel_item = None;
+        // la selection (multiple comprise) est conservee tant que ses elements existent encore dans la page affichee
+        let n = self.current_info().and_then(|info| info.design(&self.model.designs).map(|d| d.items.len())).unwrap_or(0);
+        self.sel_item = self.sel_item.filter(|&s| s < n);
+        self.extra_sel.retain(|&e| e < n);
+        if self.sel_item.is_none() { self.sel_item = self.extra_sel.pop(); }
         self.drag = None;
+        self.marquee = None;
         self.bump();
     }
 
