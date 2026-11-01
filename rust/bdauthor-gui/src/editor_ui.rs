@@ -982,7 +982,7 @@ impl App {
                     if let (Some(o), Some(nv)) = (old_video, *video) {
                         if o != nv && *link == Some(Target::Video(o)) { *link = Some(Target::Video(nv)); }
                     }
-                    let dur = *video.and_then(|v| video_durations.get(v).copied().flatten());
+                    let dur = (*video).and_then(|v| video_durations.get(v).copied().flatten());
                     // depart : debut de la video ou instant (vignette de chapitre)
                     let mut chapter = start.is_some();
                     ui.horizontal(|ui| {
@@ -1002,7 +1002,7 @@ impl App {
                     // libelle et image
                     ui.horizontal(|ui| {
                         ui.label("Libellé :");
-                        let hint = match start { Some(t) => mmss(*t), None => *video.and_then(|v| video_labels.get(v).cloned()).unwrap_or_default() };
+                        let hint = match start { Some(t) => mmss(*t), None => (*video).and_then(|v| video_labels.get(v).cloned()).unwrap_or_default() };
                         changed |= ui.add(egui::TextEdit::singleline(label).hint_text(hint)).changed();
                     });
                     let mut own_img = thumb_at.is_some();
