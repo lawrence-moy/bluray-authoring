@@ -536,6 +536,7 @@ impl eframe::App for App {
             ui.separator();
             // (rang, Some(destination)) : deplacement par glisser-deposer ; (rang, None) : retrait
             let mut op: Option<(usize, Option<usize>)> = None;
+            let mut reload: Option<String> = None;
             let mut rows: Vec<egui::Rect> = Vec::new();
             let list = egui::ScrollArea::vertical().id_salt("liste_videos").auto_shrink([false, false]).show(ui, |ui| {
                 for (i, v) in self.model.videos.iter().enumerate() {
@@ -554,11 +555,24 @@ impl eframe::App for App {
                         }).on_hover_text(v.file.as_str()).clicked() { self.sel = Some(i); }
                         ui.add_enabled_ui(!busy, |ui| {
                             if ui.small_button("✕").on_hover_text("Retirer cette vidéo").clicked() { op = Some((i, None)); }
+                            if ui.small_button("↻").on_hover_text("Recharger cette vidéo (relire la durée, les pistes et les vignettes)").clicked() { reload = Some(v.file.clone()); }
                         });
                     }).response;
                     rows.push(r.rect);
                 }
             });
+            if let Some(f) = reload {
+                self.durations.remove(&f);
+                self.probe_failed.remove(&f);
+                self.video_sizes.remove(&f);
+                self.sub_probes.remove(&f);
+                self.audio_probes.remove(&f);
+                self.thumbs.retain(|(k, _), _| *k != f);
+                let pp = format!("P|{f}");
+                let tp = format!("T|{f}|");
+                self.requested.retain(|k| *k != pp && !k.starts_with(&tp));
+                self.edit_gen += 1;
+            }
             // glisser-deposer (meme mecanique que la liste des pages) : une ligne bleue montre la place d'arrivee
             let area = list.inner_rect;
             if let (Some(drag), Some(pos)) = (egui::DragAndDrop::payload::<VideoDrag>(ctx), ctx.pointer_hover_pos()) {
