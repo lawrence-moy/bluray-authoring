@@ -2,6 +2,9 @@
 pub mod audio;
 pub mod check;
 pub mod convert;
+pub mod cover;
+pub mod deflate;
+pub mod pdf;
 pub mod clpi;
 pub mod ffmpeg;
 pub mod design;

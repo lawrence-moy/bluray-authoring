@@ -296,6 +296,43 @@ impl FontRenderer {
         }
         Ok(im)
     }
+
+    /// Jaquette entiere (fond perdu compris) a `dpi` points par pouce : zones colorees, image de fond, puis elements dans leur ordre.
+    /// Un element tourne est dessine a plat sur le morceau correspondant, tourne dans l'autre sens, puis remis en place.
+    pub fn render_cover(&self, cover: &bdauthor_core::cover::Cover, dpi: u32, project_dir: &Path) -> Result<RgbaImage> {
+        use bdauthor_core::cover::{crop, rotate_quarters};
+        let lay = cover.layout(dpi, project_dir);
+        let mut im = lay.background();
+        if let Some(p) = &lay.bg_image {
+            let src = self.cached_image(p)?;
+            blit(&mut im, &cover_resize(&src, lay.size.0, lay.size.1), 0, 0, 1.0);
+        }
+        for (d, rot) in lay.items {
+            // image introuvable : l'element est ignore (l'apercu reste affiche)
+            if let Decor::Image { path, .. } = &d {
+                if self.cached_image(path).is_err() { continue; }
+            }
+            if rot == 0 {
+                im = self.compose_on(im, &[d])?;
+                continue;
+            }
+            let q: u32 = if rot == 90 { 1 } else { 3 };
+            let (x, y, w, h) = d.rect();
+            let region = crop(&im, x, y, w, h);
+            if region.width == 0 || region.height == 0 {
+                continue;
+            }
+            let flat = rotate_quarters(&region, 4 - q);
+            let (fw, fh) = (flat.width as i32, flat.height as i32);
+            let local = match d {
+                Decor::Text { text, size, color, align, font, .. } => Decor::Text { text, x: 0, y: 0, w: fw, h: fh, size, color, align, font },
+                Decor::Image { path, .. } => Decor::Image { path, x: 0, y: 0, w: fw, h: fh },
+            };
+            let done = self.compose_on(flat, &[local])?;
+            blit(&mut im, &rotate_quarters(&done, q), x.max(0), y.max(0), 1.0);
+        }
+        Ok(im)
+    }
 }
 
 // ------------------------------------------------------------------ apparence des boutons (styles)

@@ -587,3 +587,9 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 ## Zoom de l'apercu, noms de widgets
 - Apercu : molette = zoom (25 % a 800 %, centre sur le curseur), clic molette ou Espace + glisser = deplacer ; boutons − / + / Ajuster ; reinitialise au changement de page. Le rendu reste en 960x540 (flou a fort zoom, cadres nets).
 - `Item.name` (JSON `nom`) ; copies nommees « Nom (copie N) » (`copy_name`), sauf couper/coller.
+
+## Jaquette (version A : PDF image)
+- Noyau : `cover.rs` (modele `Cover` / `CoverItem`, mm depuis le coin de la jaquette rognee, fond perdu en negatif, JSON cle `jaquette`, `layout(dpi)` -> `Decor` en pixels, `to_pdf`), `deflate.rs` (zlib LZ77 + Huffman fixe, sans dependance), `pdf.rs` (une page, image RVB Flate, traits de coupe / pliage). Formats : `FORMATS` (Blu-ray 14 / 11 mm, DVD 14 / 7 mm).
+- Rendu : `FontRenderer::render_cover` (bdauthor-render) : zones colorees, image de fond, elements (rotation 90 / 270 : dessines a plat sur le morceau puis remis en place).
+- Interface : onglet « Jaquette » (`cover_ui.rs`) : format, fond, liste d'elements, apercu avec reperes (rognage, pliages), glisser pour deplacer, export PDF. Pas d'annuler / refaire pour la jaquette.
+- Valide : PDF relu par `pdfinfo` et `qpdf --check`. Pas encore : champs automatiques (titre, liste des videos), code-barres, etiquette de disque, PDF vectoriel.
