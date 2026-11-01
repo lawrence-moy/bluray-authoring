@@ -724,7 +724,13 @@ impl App {
                             let group: Vec<(usize, Item)> = if h == Handle::Body { self.extra_sel.iter().filter(|&&e| e < snapshot.len() && can(e)).map(|&e| (e, snapshot[e].clone())).collect() } else { Vec::new() };
                             self.drag = Some(DragState { idx: i, handle: h, start: (px, py), orig: snapshot[i].clone(), group });
                         }
-                        None => { self.sel_item = None; self.extra_sel.clear(); }
+                        None => {
+                            // depart dans le vide : rectangle de selection (Maj : s'ajoute a la selection actuelle)
+                            let keep = ctx.input(|i| i.modifiers.shift || i.modifiers.command);
+                            let base: Vec<usize> = if keep { self.sel_item.into_iter().chain(self.extra_sel.iter().copied()).collect() } else { Vec::new() };
+                            if !keep { self.sel_item = None; self.extra_sel.clear(); }
+                            self.marquee = Some(((px, py), base));
+                        }
                     }
                 }
             }
@@ -751,7 +757,23 @@ impl App {
                     }
                 }
             }
+            if let (Some((s0, base)), Some(pos)) = (self.marquee.clone(), resp.interact_pointer_pos()) {
+                if resp.dragged() {
+                    let (px, py) = to_plane(pos);
+                    let (x0, x1, y0, y1) = (s0.0.min(px), s0.0.max(px), s0.1.min(py), s0.1.max(py));
+                    let mut sel = base;
+                    for (i, it) in snapshot.iter().enumerate() {
+                        if can(i) && (it.x as f32) < x1 && ((it.x + it.w) as f32) > x0 && (it.y as f32) < y1 && ((it.y + it.h) as f32) > y0 && !sel.contains(&i) { sel.push(i); }
+                    }
+                    self.sel_item = sel.pop();
+                    self.extra_sel = sel;
+                    let r = Rect::from_two_pos(to_screen(x0, y0), to_screen(x1, y1));
+                    painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(120, 190, 255, 30));
+                    painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_rgb(120, 190, 255)));
+                }
+            }
             if resp.drag_stopped() {
+                self.marquee = None;
                 self.drag = None;
                 self.bump();
             } else if resp.clicked() {
