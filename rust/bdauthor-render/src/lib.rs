@@ -297,11 +297,12 @@ impl FontRenderer {
         Ok(im)
     }
 
-    /// Jaquette entiere (fond perdu compris) a `dpi` points par pouce : zones colorees, image de fond, puis elements dans leur ordre.
+    /// Feuille entiere (jaquette ou etiquette, fond perdu compris) a `dpi` points par pouce : zones colorees, image de fond, puis
+    /// elements dans leur ordre ; `vars` remplit les champs automatiques des textes.
     /// Un element tourne est dessine a plat sur le morceau correspondant, tourne dans l'autre sens, puis remis en place.
-    pub fn render_cover(&self, cover: &bdauthor_core::cover::Cover, dpi: u32, project_dir: &Path) -> Result<RgbaImage> {
+    pub fn render_sheet(&self, doc: &dyn bdauthor_core::cover::SheetDoc, dpi: u32, project_dir: &Path, vars: &std::collections::BTreeMap<String, String>) -> Result<RgbaImage> {
         use bdauthor_core::cover::{crop, rotate_quarters};
-        let lay = cover.layout(dpi, project_dir);
+        let lay = doc.layout_with(dpi, project_dir, vars);
         let mut im = lay.background();
         if let Some(p) = &lay.bg_image {
             let src = self.cached_image(p)?;

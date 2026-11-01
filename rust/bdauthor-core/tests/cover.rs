@@ -129,3 +129,53 @@ fn pdf_structure() {
     let with = String::from_utf8_lossy(&c.to_pdf(&sheet, "t")).into_owned();
     assert!(with.contains("/MediaBox [0 0 844.724 493.228]") && with.contains(" l S"));
 }
+
+#[test]
+fn history_undo_redo() {
+    let mut cur = 0i32;
+    let mut h = EditHistory::new(&cur);
+    cur = 1; h.observe(&cur, 1000);
+    cur = 2; h.observe(&cur, 1100); // fusionne avec la precedente
+    cur = 5; h.observe(&cur, 5000);
+    assert!(h.can_undo() && !h.can_redo());
+    assert!(h.undo(&mut cur)); assert_eq!(cur, 2);
+    assert!(h.undo(&mut cur)); assert_eq!(cur, 0);
+    assert!(!h.undo(&mut cur));
+    assert!(h.redo(&mut cur)); assert_eq!(cur, 2);
+    cur = 9; h.observe(&cur, 9000);
+    assert!(!h.can_redo());
+}
+
+#[test]
+fn label_json_layout_pdf() {
+    assert!(DiscLabel::default().to_value().is_none());
+    let mut l = DiscLabel::default();
+    l.marks = true;
+    l.color = [10, 20, 30];
+    l.items.push(CoverItem::text("{titre}", 20.0, 10.0, 80.0, 20.0, 20.0));
+    let back = DiscLabel::from_value(l.to_value().as_ref()).unwrap();
+    assert_eq!(back, l);
+    let mut m = ProjectModel::default();
+    m.label = l.clone();
+    assert_eq!(ProjectModel::from_json(&m.to_json()).unwrap().label, l);
+    assert_eq!(l.sheet_mm(), (122.0, 122.0));
+    let lay = l.layout_with(72, Path::new("."), &Default::default());
+    let pdf = l.to_pdf(&lay.background(), "etiquette");
+    assert!(pdf.starts_with(b"%PDF-1.4"));
+    std::fs::write(std::env::temp_dir().join("bd_label_demo.pdf"), &pdf).unwrap();
+}
+
+#[test]
+fn token_substitution_and_vars() {
+    let mut v = std::collections::BTreeMap::new();
+    v.insert("titre".to_string(), "Mon film".to_string());
+    assert_eq!(apply_vars("« {titre} » {inconnu}", &v), "« Mon film » {inconnu}");
+    assert_eq!(clock(3725.0), "1:02:05");
+    assert_eq!(clock(65.0), "1:05");
+    let mut m = ProjectModel::default();
+    m.title = "Titre".into();
+    let vars = m.cover_vars(&Default::default(), 2026);
+    assert_eq!(vars["titre"], "Titre");
+    assert_eq!(vars["nb_videos"], "0");
+    assert_eq!(vars["annee"], "2026");
+}

@@ -123,6 +123,16 @@ struct App {
     cover_tex: Option<egui::TextureHandle>,
     cover_gen: u64,
     cover_seen: u64,
+    /// 0 : jaquette, 1 : etiquette de disque
+    cover_page: u8,
+    /// historique annuler / refaire de (jaquette, etiquette)
+    cover_hist: Option<bdauthor_core::cover::EditHistory<(bdauthor_core::cover::Cover, bdauthor_core::cover::DiscLabel)>>,
+    /// redimensionnement / deplacement a la souris en cours
+    cover_drag: Option<cover_ui::CoverDrag>,
+    /// export PDF en arriere-plan : message final
+    cover_export_rx: Option<Receiver<String>>,
+    /// valeurs des champs automatiques utilisees pour l'apercu
+    cover_vars_seen: std::collections::BTreeMap<String, String>,
     /// vue de l'apercu : zoom (1 = page entiere), decalage en pixels, page a laquelle elle se rapporte, deplacement en cours
     view_zoom: f32,
     view_pan: egui::Vec2,
@@ -173,7 +183,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_tex: None, cover_gen: 1, cover_seen: 0, view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -205,6 +215,9 @@ impl App {
         self.sel_item = None;
         self.extra_sel.clear();
         self.drag = None;
+        self.cover_hist = None;
+        self.cover_sel = None;
+        self.cover_gen += 1;
         self.edit_gen += 1;
         self.base_cache = None;
         self.history.reset(&self.model.designs);

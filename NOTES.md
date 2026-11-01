@@ -593,3 +593,16 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Rendu : `FontRenderer::render_cover` (bdauthor-render) : zones colorees, image de fond, elements (rotation 90 / 270 : dessines a plat sur le morceau puis remis en place).
 - Interface : onglet « Jaquette » (`cover_ui.rs`) : format, fond, liste d'elements, apercu avec reperes (rognage, pliages), glisser pour deplacer, export PDF. Pas d'annuler / refaire pour la jaquette.
 - Valide : PDF relu par `pdfinfo` et `qpdf --check`. Pas encore : champs automatiques (titre, liste des videos), code-barres, etiquette de disque, PDF vectoriel.
+
+### Jaquette : annuler/refaire, redimensionnement, champs, etiquette, export en arriere-plan
+- Annuler/refaire (Ctrl+Z, Ctrl+Y ou Ctrl+Maj+Z, boutons ↶ ↷) : `cover::EditHistory<T>` generique, instantanes de (jaquette, etiquette),
+  modifications rapprochees (< 600 ms, ex. un glissement) fusionnees en une etape, 200 etapes max. Remis a zero au chargement d'un projet.
+- Redimensionnement a la souris : poignees aux 4 coins de l'element selectionne (rayon 9 px, curseurs adaptes), taille min 2 mm,
+  valeurs arrondies a 0,1 mm ; le glisser part de l'element sous la souris (plus de deplacement de l'element precedent si on clique dans le vide).
+- Champs automatiques dans les textes : {titre}, {liste_videos}, {nb_videos}, {duree_totale}, {nb_chapitres}, {annee}
+  (`cover::FIELDS`, `apply_vars`, `ProjectModel::cover_vars`). Menu « Inserer un champ automatique ». La duree totale reste vide tant
+  qu'une duree video est inconnue.
+- Etiquette de disque (`cover::DiscLabel`, cle JSON « etiquette », ecrite seulement si modifiee) : diametre 118 mm, trou 25 mm, fond perdu 2 mm ;
+  feuille carree ; le PDF decoupe la couronne (`pdf::image_pdf_shaped`, clip `W* n`) et peut tracer des cercles de repere.
+  Editeur partage avec la jaquette via le trait `cover::SheetDoc` ; onglet Jaquette | Etiquette de disque.
+- Export PDF dans un fil separe (message de progression, canal mpsc) ; `FontRenderer::render_sheet(&dyn SheetDoc, dpi, dir, vars)` remplace `render_cover`.

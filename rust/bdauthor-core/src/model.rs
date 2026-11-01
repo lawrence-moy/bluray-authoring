@@ -109,6 +109,8 @@ pub struct ProjectModel {
     pub iso: crate::iso::IsoSettings,
     /// Jaquette du boitier (cle « jaquette »).
     pub cover: crate::cover::Cover,
+    /// Etiquette de disque (cle « etiquette »).
+    pub label: crate::cover::DiscLabel,
     raw: Value,
 }
 
@@ -116,7 +118,7 @@ impl Default for ProjectModel {
     fn default() -> Self {
         ProjectModel {
             title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), bg: String::new(), intro: String::new(), bg_video: String::new(), bg_video_audio: false, music: String::new(), bg_seconds: 5.0,
-            menu_1080: false, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], iso: Default::default(), cover: Default::default(), raw: Value::Obj(vec![]),
+            menu_1080: false, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], iso: Default::default(), cover: Default::default(), label: Default::default(), raw: Value::Obj(vec![]),
         }
     }
 }
@@ -176,6 +178,7 @@ impl ProjectModel {
         m.languages = crate::subtitle::languages_from_value(v.get("langues"))?;
         m.iso = crate::iso::IsoSettings::from_value(v.get("iso"))?;
         m.cover = crate::cover::Cover::from_value(v.get("jaquette"))?;
+        m.label = crate::cover::DiscLabel::from_value(v.get("etiquette"))?;
         m.sync_chapters();
         Ok(m)
     }
@@ -230,11 +233,35 @@ impl ProjectModel {
         set(&mut root, "langues", crate::subtitle::languages_to_value(&self.languages));
         set(&mut root, "iso", self.iso.to_value());
         set(&mut root, "jaquette", self.cover.to_value());
+        set(&mut root, "etiquette", self.label.to_value());
         set(&mut root, "mise_en_page", if self.designs.is_empty() { None } else { Some(self.designs.to_value()) });
         root
     }
 
     pub fn to_json(&self) -> String { self.to_value().to_pretty() }
+
+    /// Valeurs des champs automatiques de la jaquette et de l'etiquette (voir `cover::FIELDS`) ; `durations` : duree de chaque
+    /// fichier video connue.
+    pub fn cover_vars(&self, durations: &std::collections::HashMap<String, f64>, year: i32) -> std::collections::BTreeMap<String, String> {
+        let mut total = 0.0;
+        let mut known = true;
+        let mut lines = Vec::new();
+        for (i, v) in self.videos.iter().enumerate() {
+            let t = crate::editor::video_title(self, i);
+            match durations.get(&v.file) {
+                Some(d) => { total += d; lines.push(format!("{}. {}  —  {}", i + 1, t, crate::cover::clock(*d))); }
+                None => { known = false; lines.push(format!("{}. {}", i + 1, t)); }
+            }
+        }
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("titre".to_string(), self.title.clone());
+        m.insert("liste_videos".to_string(), lines.join("\n"));
+        m.insert("nb_videos".to_string(), self.videos.len().to_string());
+        m.insert("duree_totale".to_string(), if known && !self.videos.is_empty() { crate::cover::clock(total) } else { String::new() });
+        m.insert("nb_chapitres".to_string(), self.videos.iter().map(|v| v.chapters.len()).sum::<usize>().to_string());
+        m.insert("annee".to_string(), year.to_string());
+        m
+    }
 
     /// Aligne les vignettes liees a un chapitre sur l'instant de ce chapitre (a appeler apres toute modification des chapitres ou
     /// de la video d'une vignette). Rend vrai si une vignette a change.
