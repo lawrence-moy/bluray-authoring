@@ -154,6 +154,12 @@ fn clean(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
 
+/// Duree d'une video : « m:ss », ou « h:mm:ss » a partir d'une heure.
+fn duration_text(t: f64) -> String {
+    let s = t.round().max(0.0) as u64;
+    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
+}
+
 fn mmss(t: f64) -> String {
     let s = t.round().max(0.0) as u64;
     format!("{}:{:02}", s / 60, s % 60)
@@ -351,6 +357,8 @@ impl eframe::App for App {
         let busy = self.running();
         // vignettes liees a un chapitre : elles suivent l'instant du chapitre (et se detachent si le chapitre disparait)
         if self.model.sync_chapters() { self.dirty = true; self.bump(); }
+        // durees des videos (affichees dans la liste) : sondees une fois, en tache de fond
+        self.request_durations();
         let mut open = self.show_config;
         egui::Window::new("Configuration").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             let before = self.cfg;
@@ -537,7 +545,7 @@ impl eframe::App for App {
                             let _ = ui.dnd_drag_source(egui::Id::new(("video", i)), VideoDrag(i), |ui| ui.label(egui::RichText::new("☰").strong()))
                                 .response.on_hover_text("Glisser pour changer l'ordre des vidéos");
                         }
-                        if ui.selectable_label(self.sel == Some(i), format!("{:>2}. {}", i + 1, label)).on_hover_text(v.file.as_str()).clicked() { self.sel = Some(i); }
+                        if ui.selectable_label(self.sel == Some(i), match self.durations.get(&v.file) { Some(d) => format!("{:>2}. {} ({})", i + 1, label, duration_text(*d)), None => format!("{:>2}. {}", i + 1, label) }).on_hover_text(v.file.as_str()).clicked() { self.sel = Some(i); }
                         ui.add_enabled_ui(!busy, |ui| {
                             if ui.small_button("✕").on_hover_text("Retirer cette vidéo").clicked() { op = Some((i, None)); }
                         });

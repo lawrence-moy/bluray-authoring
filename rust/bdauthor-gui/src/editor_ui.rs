@@ -280,8 +280,8 @@ impl App {
         self.dirty = true;
     }
 
-    /// Demande au thread de travail la duree des videos et les miniatures utiles a la page affichee.
-    pub(crate) fn request_media(&mut self, info: &PageInfo) {
+    /// Demande au thread de travail la duree des videos du projet (une seule fois par fichier).
+    pub(crate) fn request_durations(&mut self) {
         let base = self.base_dir();
         for v in &self.model.videos {
             if !self.durations.contains_key(&v.file) && self.requested.insert(format!("P|{}", v.file)) {
@@ -290,6 +290,12 @@ impl App {
                 }
             }
         }
+    }
+
+    /// Demande au thread de travail la duree des videos et les miniatures utiles a la page affichee.
+    pub(crate) fn request_media(&mut self, info: &PageInfo) {
+        let base = self.base_dir();
+        self.request_durations();
         // video de fond anime : sa duree puis une image
         let bgv = self.page_visual(info).1.unwrap_or_default();
         if !bgv.is_empty() && !self.durations.contains_key(&bgv) && self.requested.insert(format!("P|{bgv}")) {
