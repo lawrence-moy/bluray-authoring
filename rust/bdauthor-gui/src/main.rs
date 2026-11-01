@@ -169,11 +169,6 @@ fn duration_text(t: f64) -> String {
     if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
 }
 
-fn mmss(t: f64) -> String {
-    let s = t.round().max(0.0) as u64;
-    format!("{}:{:02}", s / 60, s % 60)
-}
-
 impl App {
     fn running(&self) -> bool {
         self.rx.is_some()
@@ -688,7 +683,7 @@ impl eframe::App for App {
                         for (k, c) in v.chapters.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
                                 changed |= ui.add(egui::DragValue::new(&mut c.t).speed(1.0).range(0.0..=max_t).suffix(" s")).changed();
-                                ui.label(mmss(c.t));
+                                if max_t < 1.0e6 { ui.label(egui::RichText::new(format!("/ {}", duration_text(max_t))).weak()).on_hover_text("Durée totale de la vidéo"); }
                                 changed |= ui.add(egui::TextEdit::singleline(&mut c.title).hint_text("nom (facultatif)")).changed();
                                 if let Some(n) = chapter_uses.iter().find(|u| u.0 == c.id).map(|u| u.1).filter(|n| *n > 0) {
                                     ui.label(egui::RichText::new(format!("{n} vignette{}", if n > 1 { "s" } else { "" })).weak()).on_hover_text("Vignettes de pages liées à ce chapitre : elles suivent son instant. Si vous retirez le chapitre, elles gardent leur instant.");
@@ -697,7 +692,6 @@ impl eframe::App for App {
                             });
                         }
                         if let Some(k) = del { v.chapters.remove(k); changed = true; }
-                        if max_t < 1.0e6 { ui.label(egui::RichText::new(format!("Durée de la vidéo : {} — les instants sont limités à cette durée.", duration_text(max_t))).weak()); }
                         if ui.button("Ajouter un chapitre").clicked() {
                             let t = v.chapters.iter().map(|c| c.t).fold(f64::NEG_INFINITY, f64::max);
                             let t = if t.is_finite() { (t + 60.0).min(max_t) } else { 0.0 };
