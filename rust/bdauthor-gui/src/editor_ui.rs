@@ -177,6 +177,37 @@ enum LayerOp {
     Transfer { what: DragRow, to: usize, copy: bool },
 }
 
+/// Bouton d'alignement dessine (les glyphes fleches/barres ne sont pas dans la police par defaut) : un trait de reference et deux barres.
+fn align_button(ui: &mut egui::Ui, a: ItemAlign, tip: &str) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
+    let vis = *ui.style().interact(&resp);
+    let p = ui.painter();
+    p.rect(rect, 3.0, vis.bg_fill, vis.bg_stroke);
+    let col = vis.fg_stroke.color;
+    let r = rect.shrink(6.0);
+    let (long, short, th) = (r.width(), r.width() * 0.55, 4.0_f32);
+    let line = Stroke::new(1.5_f32, col);
+    match a {
+        ItemAlign::Left | ItemAlign::CenterH | ItemAlign::Right => {
+            let ex = match a { ItemAlign::Left => r.left(), ItemAlign::Right => r.right(), _ => r.center().x };
+            p.line_segment([pos2(ex, r.top() - 1.0), pos2(ex, r.bottom() + 1.0)], line);
+            for (y, len) in [(r.top() + 1.0, long * 0.9), (r.bottom() - 1.0 - th, short)] {
+                let x0 = match a { ItemAlign::Left => r.left(), ItemAlign::Right => r.right() - len, _ => ex - len / 2.0 };
+                p.rect_filled(Rect::from_min_size(pos2(x0, y), vec2(len, th)), 0.0, col);
+            }
+        }
+        _ => {
+            let ey = match a { ItemAlign::Top => r.top(), ItemAlign::Bottom => r.bottom(), _ => r.center().y };
+            p.line_segment([pos2(r.left() - 1.0, ey), pos2(r.right() + 1.0, ey)], line);
+            for (x, len) in [(r.left() + 1.0, long * 0.9), (r.right() - 1.0 - th, short)] {
+                let y0 = match a { ItemAlign::Top => r.top(), ItemAlign::Bottom => r.bottom() - len, _ => ey - len / 2.0 };
+                p.rect_filled(Rect::from_min_size(pos2(x, y0), vec2(th, len)), 0.0, col);
+            }
+        }
+    }
+    resp.on_hover_text(tip).clicked()
+}
+
 fn mmss(t: f64) -> String {
     let s = t.max(0.0);
     let whole = s.floor() as i64;
@@ -1017,9 +1048,9 @@ impl App {
         ui.collapsing(if group.len() > 1 { format!("Alignement ({} éléments)", group.len()) } else { "Alignement et centrage".to_string() }, |ui| {
             ui.label(egui::RichText::new("Maj+clic sur l'aperçu ajoute ou retire un élément de la sélection ; glisser l'un d'eux déplace tout le groupe. Avec plusieurs éléments, l'alignement se fait sur leur cadre commun ; avec un seul, sur la page.").weak());
             ui.horizontal_wrapped(|ui| {
-                for (t, tip, a) in [("⇤", "Aligner à gauche", ItemAlign::Left), ("↔", "Centrer horizontalement", ItemAlign::CenterH), ("⇥", "Aligner à droite", ItemAlign::Right),
-                                    ("⤒", "Aligner en haut", ItemAlign::Top), ("↕", "Centrer verticalement", ItemAlign::CenterV), ("⤓", "Aligner en bas", ItemAlign::Bottom)] {
-                    if ui.button(t).on_hover_text(tip).clicked() { align = Some(a); }
+                for (tip, a) in [("Aligner à gauche", ItemAlign::Left), ("Centrer horizontalement", ItemAlign::CenterH), ("Aligner à droite", ItemAlign::Right),
+                                 ("Aligner en haut", ItemAlign::Top), ("Centrer verticalement", ItemAlign::CenterV), ("Aligner en bas", ItemAlign::Bottom)] {
+                    if align_button(ui, a, tip) { align = Some(a); }
                 }
             });
             ui.horizontal_wrapped(|ui| {
