@@ -121,7 +121,7 @@ fn options() {
     let stop = AtomicBool::new(false);
     // date fixe : image identique d'une construction a l'autre
     let mut o = opts("Été 2026 — vacances");
-    o.fixed_date = true;
+    o.date = IsoDate::Fixed;
     write_iso(&src, &dir.join("a.iso"), &o, &stop, &mut |_| {}).unwrap();
     write_iso(&src, &dir.join("b.iso"), &o, &stop, &mut |_| {}).unwrap();
     assert!(std::fs::read(dir.join("a.iso")).unwrap() == std::fs::read(dir.join("b.iso")).unwrap());
@@ -182,7 +182,9 @@ fn project_settings() {
     m.iso.opts.label = "VACANCES".into();
     m.iso.opts.udf = UdfRev::V260;
     m.iso.opts.mirror = false;
-    m.iso.opts.fixed_date = true;
+    m.iso.opts.date = IsoDate::Custom(IsoStamp { year: 2026, month: 12, day: 25, hour: 20, minute: 30 });
+    m.iso.margin = 90;
+    m.iso.opts.compat = false;
     m.iso.verify = false;
     m.iso.file = "disques/vacances.iso".into();
     let j = m.to_json();
@@ -230,4 +232,50 @@ fn finish_after_build() {
     assert!(!sum.contains("vérifiée"));
     assert!(iso2.is_file() && !tmpd.exists());
     verify_iso(&iso2, &src, &stop, &mut |_| {}).unwrap();
+}
+
+#[test]
+fn compat_date_and_margin() {
+    let src = disc("compat");
+    let dir = src.parent().unwrap().to_path_buf();
+    let stop = AtomicBool::new(false);
+    // compatibilite maximale (par defaut) : 3 ancres, sequence de reserve en fin de disque
+    write_iso(&src, &dir.join("a.iso"), &opts("A"), &stop, &mut |_| {}).unwrap();
+    let t = read_iso(&dir.join("a.iso")).unwrap();
+    assert_eq!(t.anchors, 3);
+    assert!(t.reserve_at as u64 > t.sectors - 300, "reserve en fin de disque : {} / {}", t.reserve_at, t.sectors);
+    assert_eq!(std::fs::metadata(dir.join("a.iso")).unwrap().len(), iso_size(&src, &opts("A")).unwrap());
+    verify_iso(&dir.join("a.iso"), &src, &stop, &mut |_| {}).unwrap();
+    // sans : 2 ancres, reserve au debut, image plus petite
+    let o = IsoOptions { compat: false, ..opts("B") };
+    write_iso(&src, &dir.join("b.iso"), &o, &stop, &mut |_| {}).unwrap();
+    let t2 = read_iso(&dir.join("b.iso")).unwrap();
+    assert_eq!((t2.anchors, t2.reserve_at), (2, 48));
+    assert_eq!(t.sectors - t2.sectors, 287);
+    // reserve abimee : detectee
+    let mut data = std::fs::read(dir.join("a.iso")).unwrap();
+    data[t.reserve_at as usize * 2048 + 40] ^= 1;
+    std::fs::write(dir.join("c.iso"), &data).unwrap();
+    assert!(read_iso(&dir.join("c.iso")).unwrap_err().to_string().contains("reserve"));
+    // date choisie : image reproductible, differente de la date fixe
+    let d = IsoStamp { year: 2026, month: 12, day: 25, hour: 20, minute: 30 };
+    let oc = IsoOptions { date: IsoDate::Custom(d), ..opts("D") };
+    write_iso(&src, &dir.join("d1.iso"), &oc, &stop, &mut |_| {}).unwrap();
+    write_iso(&src, &dir.join("d2.iso"), &oc, &stop, &mut |_| {}).unwrap();
+    let (d1, d2) = (std::fs::read(dir.join("d1.iso")).unwrap(), std::fs::read(dir.join("d2.iso")).unwrap());
+    assert!(d1 == d2);
+    // horodatage du descripteur principal (secteur 32, octet 376) : annee 2026, mois 12, jour 25, 20 h 30
+    assert_eq!(&d1[32 * 2048 + 378..32 * 2048 + 384], &[0xEA, 0x07, 12, 25, 20, 30]);
+    assert_eq!(IsoStamp::parse("2026-12-25 20:30"), Some(d));
+    assert_eq!(IsoStamp::parse("2026-02-29"), None, "2026 n'est pas bissextile");
+    assert_eq!(IsoStamp::parse("2028-02-29").map(|s| s.day), Some(29));
+    assert_eq!(IsoStamp { year: 2026, month: 2, day: 31, hour: 25, minute: 0 }.clamped().text(), "2026-02-28 23:00");
+    // marge de securite : avertissement au-dela du pourcentage, rien si desactivee ; au-dela du disque : depassement
+    let cap = CAPACITIES[0].1;
+    assert!(capacity_warning(cap / 2, 0, 95).is_none());
+    let w = capacity_warning(cap * 96 / 100, 0, 95).unwrap();
+    assert!(w.contains("96,0 %") && w.contains("marge de sécurité (95 %)"), "{w}");
+    assert!(capacity_warning(cap * 96 / 100, 0, 0).is_none());
+    assert!(capacity_warning(cap * 96 / 100, 1, 95).is_none(), "rentre largement sur un BD-50");
+    assert!(capacity_warning(cap + 1, 0, 0).unwrap().contains("dépasse la capacité"));
 }

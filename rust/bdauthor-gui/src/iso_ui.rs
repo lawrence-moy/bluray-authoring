@@ -1,5 +1,5 @@
 //! Onglet « Génération ISO » de la fenêtre Projet : ce que la construction produit (dossier, image, les deux) et réglages de l'image.
-use bdauthor_core::iso::{fit_info, IsoKeep, IsoSettings, UdfRev, CAPACITIES, MAX_LABEL};
+use bdauthor_core::iso::{fit_info, IsoDate, IsoKeep, IsoSettings, IsoStamp, UdfRev, CAPACITIES, DEFAULT_MARGIN, MAX_LABEL};
 use eframe::egui;
 
 /// Rend vrai si un réglage a changé ; `browse` : l'utilisateur veut choisir le fichier de l'image.
@@ -65,6 +65,18 @@ pub fn iso_ui(ui: &mut egui::Ui, s: &mut IsoSettings, title: &str, browse: &mut 
             });
         });
         ui.label(egui::RichText::new("Sert à prévenir si l'image ne rentre pas sur le disque ; l'image elle-même ne change pas.").weak());
+        ui.horizontal_wrapped(|ui| {
+            let mut on = s.margin > 0;
+            if ui.checkbox(&mut on, "Marge de sécurité : prévenir au-delà de").on_hover_text("La gravure est moins fiable tout au bord d'un BD-R : un avertissement apparaît quand l'image dépasse ce pourcentage du disque visé.").changed() {
+                s.margin = if on { DEFAULT_MARGIN } else { 0 };
+                changed = true;
+            }
+            ui.add_enabled_ui(on, |ui| {
+                let mut m = if on { s.margin } else { DEFAULT_MARGIN };
+                if ui.add(egui::DragValue::new(&mut m).range(50..=99).suffix(" %")).changed() && on { s.margin = m; changed = true; }
+            });
+            ui.label("du disque");
+        });
         ui.horizontal(|ui| {
             ui.label("Version UDF :");
             if ui.radio(s.opts.udf == UdfRev::V250, "2.50 (recommandé)").on_hover_text("Norme des Blu-ray : lue par toutes les platines.").clicked() && s.opts.udf != UdfRev::V250 { s.opts.udf = UdfRev::V250; changed = true; }
@@ -75,11 +87,35 @@ pub fn iso_ui(ui: &mut egui::Ui, s: &mut IsoSettings, title: &str, browse: &mut 
         ui.heading("Disposition");
         changed |= ui.checkbox(&mut s.opts.align, "Aligner les vidéos sur 64 Ko").on_hover_text("Chaque fichier vidéo (.m2ts) commence au début d'un bloc de correction d'erreurs du disque. Coûte quelques Ko ; certaines platines lisent mieux un disque aligné.").changed();
         changed |= ui.checkbox(&mut s.opts.play_order, "Ordonner les fichiers selon la lecture").on_hover_text("Navigation et menus en tête, puis les vidéos dans l'ordre, puis les copies de secours : déplacements de la tête de lecture plus courts.").changed();
+        changed |= ui.checkbox(&mut s.opts.compat, "Compatibilité maximale").on_hover_text("Ajoute une troisième « ancre » du système de fichiers et place la copie de réserve des descripteurs du volume en fin de disque, où certains vieux lecteurs les cherchent. Coûte 576 Ko.").changed();
         changed |= ui.checkbox(&mut s.opts.mirror, "Copie miroir des métadonnées").on_hover_text("L'arborescence des fichiers est écrite deux fois, à deux endroits du disque : il reste lisible si une copie est rayée.").changed();
         ui.separator();
 
         ui.heading("Contrôle");
-        changed |= ui.checkbox(&mut s.opts.fixed_date, "Date fixe (image reproductible)").on_hover_text("Toutes les dates internes sont identiques : le même disque donne exactement la même image, octet pour octet.").changed();
+        ui.label("Date inscrite dans l'image :");
+        let cur = s.opts.date;
+        if ui.radio(cur == IsoDate::Now, "date et heure de la construction").clicked() && cur != IsoDate::Now { s.opts.date = IsoDate::Now; changed = true; }
+        if ui.radio(cur == IsoDate::Fixed, "date fixe (1er janvier 2000)").on_hover_text("Toutes les dates internes sont identiques : le même disque donne exactement la même image, octet pour octet.").clicked() && cur != IsoDate::Fixed { s.opts.date = IsoDate::Fixed; changed = true; }
+        ui.horizontal_wrapped(|ui| {
+            let custom = matches!(cur, IsoDate::Custom(_));
+            if ui.radio(custom, "date choisie :").on_hover_text("Date affichée pour le disque et ses fichiers (temps universel). L'image est reproductible elle aussi.").clicked() && !custom {
+                s.opts.date = IsoDate::Custom(IsoStamp::now());
+                changed = true;
+            }
+            if let IsoDate::Custom(mut d) = s.opts.date {
+                let before = d;
+                ui.add(egui::DragValue::new(&mut d.day).range(1..=31));
+                ui.label("/");
+                ui.add(egui::DragValue::new(&mut d.month).range(1..=12));
+                ui.label("/");
+                ui.add(egui::DragValue::new(&mut d.year).range(1900..=2100));
+                ui.label("à");
+                ui.add(egui::DragValue::new(&mut d.hour).range(0..=23).suffix(" h"));
+                ui.add(egui::DragValue::new(&mut d.minute).range(0..=59).custom_formatter(|v, _| format!("{:02}", v as u32)));
+                let d = d.clamped();
+                if d != before { s.opts.date = IsoDate::Custom(d); changed = true; }
+            }
+        });
         changed |= ui.checkbox(&mut s.verify, "Vérifier l'image après création").on_hover_text("Relit toute l'image et la compare au dossier, fichier par fichier. Recommandé avant de graver un BD-R.").changed();
     });
     changed

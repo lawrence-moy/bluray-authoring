@@ -548,3 +548,13 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Mesure (test palette_alpha) : halo de 24 px -> 85 niveaux d'opacite et 0,9 d'erreur moyenne, contre 4 niveaux et 18.
   Pire cas (12 vignettes de bruit + 8 images de halo) : ~2 s en release.
 - `quantize_images` reste pour les sous-titres (PGS).
+
+## Image ISO : marge de securite, date choisie, compatibilite maximale
+
+- `IsoSettings.margin` (cle « marge », defaut 95, 0 = desactivee) : `capacity_warning` previent au-dela de ce % du disque
+  vise (en plus du depassement).
+- `IsoOptions.date` : `IsoDate::Now` / `Fixed` (2000-01-01, cle « date_fixe ») / `Custom(IsoStamp)` (cle « date »,
+  « AAAA-MM-JJ HH:MM », temps universel). Fixe ou choisie : identifiant du volume = empreinte du contenu (reproductible).
+- `IsoOptions.compat` (cle « compatibilite », defaut vrai) : 288 secteurs en fin d'image, sequence de reserve a +16,
+  ancre a N-257 et sur le dernier secteur ; sinon reserve au secteur 48 et ancre finale seule. `read_iso` controle la
+  sequence de reserve et la troisieme ancre (`IsoTree.anchors`, `reserve_at`).

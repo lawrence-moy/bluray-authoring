@@ -35,6 +35,45 @@ pub fn fit_label(s: &str) -> String { cs0_decode(&cs0(s, 31)) }
 /// Ce qui sera garde d'une information du volume (proprietaire, organisation, contact : 34 ou 17 caracteres).
 pub fn fit_info(s: &str) -> String { cs0_decode(&cs0(s, 35)) }
 
+/// Date et heure choisies (temps universel).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct IsoStamp { pub year: u16, pub month: u8, pub day: u8, pub hour: u8, pub minute: u8 }
+
+impl IsoStamp {
+    pub fn days_in_month(year: u16, month: u8) -> u8 {
+        match month { 4 | 6 | 9 | 11 => 30, 2 => if (year % 4 == 0 && year % 100 != 0) || year % 400 == 0 { 29 } else { 28 }, _ => 31 }
+    }
+    /// Ramene chaque champ dans sa plage (annee 1900 a 2100).
+    pub fn clamped(self) -> IsoStamp {
+        let year = self.year.clamp(1900, 2100);
+        let month = self.month.clamp(1, 12);
+        IsoStamp { year, month, day: self.day.clamp(1, Self::days_in_month(year, month)), hour: self.hour.min(23), minute: self.minute.min(59) }
+    }
+    /// « AAAA-MM-JJ HH:MM » (l'heure est facultative a la lecture).
+    pub fn parse(t: &str) -> Option<IsoStamp> {
+        let t = t.trim();
+        let (d, h) = t.split_once(' ').unwrap_or((t, "00:00"));
+        let mut dp = d.split('-').map(|x| x.trim().parse::<u16>().ok());
+        let mut hp = h.trim().split(':').map(|x| x.trim().parse::<u8>().ok());
+        let st = IsoStamp { year: dp.next()??, month: dp.next()?? as u8, day: dp.next()?? as u8, hour: hp.next()??, minute: hp.next().flatten().unwrap_or(0) };
+        (st.clamped() == st).then_some(st)
+    }
+    pub fn text(&self) -> String { format!("{:04}-{:02}-{:02} {:02}:{:02}", self.year, self.month, self.day, self.hour, self.minute) }
+    /// Maintenant (temps universel, a la minute).
+    pub fn now() -> IsoStamp { let t = Stamp::now(false); IsoStamp { year: t.year as u16, month: t.month, day: t.day, hour: t.hour, minute: t.minute } }
+}
+
+/// Date inscrite dans l'image.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsoDate {
+    /// date et heure de la construction
+    Now,
+    /// 1er janvier 2000 : le meme dossier donne exactement la meme image
+    Fixed,
+    /// date choisie (image reproductible elle aussi)
+    Custom(IsoStamp),
+}
+
 /// Revision UDF ecrite dans l'image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UdfRev { V250, V260 }
@@ -59,13 +98,15 @@ pub struct IsoOptions {
     pub play_order: bool,
     /// Copie miroir des metadonnees (arborescence lisible meme si sa premiere copie est abimee).
     pub mirror: bool,
-    /// Dates internes fixes : le meme dossier donne exactement la meme image.
-    pub fixed_date: bool,
+    /// Date inscrite dans l'image (creation du volume et des fichiers).
+    pub date: IsoDate,
+    /// Compatibilite maximale : troisieme ancre (secteur N-257) et sequence de reserve des descripteurs en fin de disque.
+    pub compat: bool,
 }
 
 impl Default for IsoOptions {
     fn default() -> Self {
-        IsoOptions { label: String::new(), owner: String::new(), organization: String::new(), contact: String::new(), udf: UdfRev::V250, align: true, play_order: true, mirror: true, fixed_date: false }
+        IsoOptions { label: String::new(), owner: String::new(), organization: String::new(), contact: String::new(), udf: UdfRev::V250, align: true, play_order: true, mirror: true, date: IsoDate::Now, compat: true }
     }
 }
 
@@ -245,6 +286,13 @@ const IMPL_SUFFIX: [u8; 8] = [0; 8];
 struct Stamp { year: i16, month: u8, day: u8, hour: u8, minute: u8, second: u8 }
 
 impl Stamp {
+    fn of(d: IsoDate) -> Stamp {
+        match d {
+            IsoDate::Now => Stamp::now(false),
+            IsoDate::Fixed => Stamp::now(true),
+            IsoDate::Custom(c) => { let c = c.clamped(); Stamp { year: c.year as i16, month: c.month, day: c.day, hour: c.hour, minute: c.minute, second: 0 } }
+        }
+    }
     fn now(fixed: bool) -> Stamp {
         if fixed { return Stamp { year: 2000, month: 1, day: 1, hour: 0, minute: 0, second: 0 }; }
         let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs() as i64).unwrap_or(0);
@@ -487,12 +535,23 @@ fn plan(src: &Path, opt: &IsoOptions, max_extent: u32, date: &Stamp) -> Result<P
 /// Taille de l'image qu'on obtiendrait (octets), sans l'ecrire.
 pub fn iso_size(src: &Path, opt: &IsoOptions) -> Result<u64> {
     let p = plan(src, opt, MAX_EXTENT, &Stamp::now(true))?;
-    Ok((PART_START as u64 + p.part_len as u64 + 1) * SECTOR)
+    Ok(layout(&p, opt).0 * SECTOR)
+}
+
+/// Fin de l'image en mode compatibilite : sequence de reserve a +16, ancres a N-257 (+31) et sur le dernier secteur.
+const TAIL: u32 = 288;
+const TAIL_RESERVE: u32 = 16;
+
+/// (nombre total de secteurs, secteur de la sequence de reserve).
+fn layout(p: &Plan, opt: &IsoOptions) -> (u64, u32) {
+    let end = PART_START + p.part_len;
+    if opt.compat { ((end + TAIL) as u64, end + TAIL_RESERVE) } else { ((end + 1) as u64, 48) }
 }
 
 // ------------------------------------------------------------------ descripteurs de volume
 
-fn volume_area(p: &Plan, opt: &IsoOptions, date: &Stamp) -> Vec<u8> {
+/// Zone des descripteurs (secteurs 0..PART_START) et sequence de reserve (6 secteurs, a placer a `reserve`).
+fn volume_area(p: &Plan, opt: &IsoOptions, date: &Stamp, reserve: u32) -> (Vec<u8>, Vec<u8>) {
     let rev = opt.udf.code();
     let mut a = vec![0u8; PART_START as usize * BS];
     // sequence de reconnaissance
@@ -502,8 +561,9 @@ fn volume_area(p: &Plan, opt: &IsoOptions, date: &Stamp) -> Vec<u8> {
         a[o + 1..o + 6].copy_from_slice(*id);
         a[o + 6] = 1;
     }
-    // identifiant de l'ensemble de volumes : 16 chiffres hexadecimaux uniques (date, ou empreinte du contenu si date fixe)
-    let uniq: u64 = if opt.fixed_date {
+    // identifiant de l'ensemble de volumes : 16 chiffres hexadecimaux uniques (date, ou empreinte du contenu si la date est
+    // fixe ou choisie : image reproductible)
+    let uniq: u64 = if opt.date != IsoDate::Now {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
         for n in &p.nodes { for b in n.name.bytes().chain(n.size.to_le_bytes()) { h = (h ^ b as u64).wrapping_mul(0x100_0000_01b3); } }
         h
@@ -511,8 +571,9 @@ fn volume_area(p: &Plan, opt: &IsoOptions, date: &Stamp) -> Vec<u8> {
         std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos() as u64).unwrap_or(0)
     };
     let vsid = format!("{uniq:016X}{}", opt.label);
-    let sequence = |a: &mut [u8], start: u32| {
-        let s = |i: u32| ((start + i) as usize) * BS;
+    let sequence = |start: u32| -> Vec<u8> {
+        let mut a = vec![0u8; 6 * BS];
+        let s = |i: u32| i as usize * BS;
         // PVD
         {
             let b = &mut a[s(0)..s(0) + BS];
@@ -602,9 +663,11 @@ fn volume_area(p: &Plan, opt: &IsoOptions, date: &Stamp) -> Vec<u8> {
         }
         let b = &mut a[s(5)..s(5) + BS];
         tag(b, T_TD, start + 5, 512 - 16);
+        a
     };
-    sequence(&mut a, 32);
-    sequence(&mut a, 48);
+    a[32 * BS..38 * BS].copy_from_slice(&sequence(32));
+    let res = sequence(reserve);
+    if reserve == 48 { a[48 * BS..54 * BS].copy_from_slice(&res); }
     // LVID : volume ferme
     {
         let o = 64 * BS;
@@ -629,16 +692,16 @@ fn volume_area(p: &Plan, opt: &IsoOptions, date: &Stamp) -> Vec<u8> {
         let t = &mut a[65 * BS..66 * BS];
         tag(t, T_TD, 65, 512 - 16);
     }
-    a[256 * BS..257 * BS].copy_from_slice(&avdp(256));
-    a
+    a[256 * BS..257 * BS].copy_from_slice(&avdp(256, reserve));
+    (a, res)
 }
 
-fn avdp(loc: u32) -> Vec<u8> {
+fn avdp(loc: u32, reserve: u32) -> Vec<u8> {
     let mut b = vec![0u8; BS];
     put32(&mut b, 16, 16 * BS as u32);
     put32(&mut b, 20, 32);
     put32(&mut b, 24, 16 * BS as u32);
-    put32(&mut b, 28, 48);
+    put32(&mut b, 28, reserve);
     tag(&mut b, T_AVDP, loc, 512 - 16);
     b
 }
@@ -654,14 +717,15 @@ pub fn write_iso(src: &Path, out: &Path, opt: &IsoOptions, cancel: &AtomicBool, 
 #[doc(hidden)]
 pub fn write_iso_ext(src: &Path, out: &Path, opt: &IsoOptions, max_extent: u32, cancel: &AtomicBool, progress: &mut dyn FnMut(f64)) -> Result<IsoReport> {
     let max_extent = (max_extent / BS as u32).max(1) * BS as u32;
-    let date = Stamp::now(opt.fixed_date);
+    let date = Stamp::of(opt.date);
     let p = plan(src, opt, max_extent, &date)?;
-    let total_sectors = PART_START as u64 + p.part_len as u64 + 1;
+    let (total_sectors, reserve) = layout(&p, opt);
     let total = total_sectors * SECTOR;
     let tmp = out.with_extension("iso.part");
     let res = (|| -> Result<()> {
         let mut w = BufWriter::with_capacity(4 << 20, File::create(&tmp)?);
-        w.write_all(&volume_area(&p, opt, &date))?;
+        let (area, reserve_seq) = volume_area(&p, opt, &date, reserve);
+        w.write_all(&area)?;
         // partition physique
         let zeros = vec![0u8; BS * 64];
         let pad_to = |w: &mut BufWriter<File>, cur: &mut u32, to: u32| -> Result<()> {
@@ -708,7 +772,19 @@ pub fn write_iso_ext(src: &Path, out: &Path, opt: &IsoOptions, max_extent: u32, 
             cur += p.meta_blocks;
         }
         pad_to(&mut w, &mut cur, p.part_len)?;
-        w.write_all(&avdp((total_sectors - 1) as u32))?;
+        if opt.compat {
+            // fin du disque : sequence de reserve, ancre a N-257, ancre sur le dernier secteur
+            let end = PART_START + p.part_len;
+            let mut tail = vec![0u8; TAIL as usize * BS];
+            tail[TAIL_RESERVE as usize * BS..(TAIL_RESERVE as usize + 6) * BS].copy_from_slice(&reserve_seq);
+            let n = total_sectors as u32;
+            let o = (n - 257 - end) as usize * BS;
+            tail[o..o + BS].copy_from_slice(&avdp(n - 257, reserve));
+            tail[(TAIL as usize - 1) * BS..].copy_from_slice(&avdp(n - 1, reserve));
+            w.write_all(&tail)?;
+        } else {
+            w.write_all(&avdp((total_sectors - 1) as u32, reserve))?;
+        }
         w.flush()?;
         let f = w.into_inner().map_err(|e| Error::Io(e.into_error()))?;
         f.sync_all()?;
@@ -749,6 +825,10 @@ pub struct IsoTree {
     /// le miroir est-il une copie distincte, identique aux metadonnees ?
     pub mirror_ok: bool,
     pub sectors: u64,
+    /// ancres trouvees (secteur 256, N-257 si present, dernier secteur)
+    pub anchors: u8,
+    /// secteur de la sequence de reserve des descripteurs de volume
+    pub reserve_at: u32,
     pub entries: Vec<IsoEntry>,
 }
 
@@ -852,6 +932,21 @@ pub fn read_iso(path: &Path) -> Result<IsoTree> {
     let last = r.sectors - 1;
     let a2 = r.sector(last)?;
     check_tag(&a2, T_AVDP, last as u32, "ancre (dernier secteur)")?;
+    let mut anchors = 2u8;
+    if r.sectors > 257 + 300 {
+        let s3 = r.sectors - 257;
+        let a3 = r.sector(s3)?;
+        if get16(&a3, 0) == T_AVDP { check_tag(&a3, T_AVDP, s3 as u32, "ancre (secteur N-257)")?; anchors = 3; }
+    }
+    // sequence de reserve : chaque descripteur controle
+    let (res_len, res_at) = (get32(&a, 24), get32(&a, 28));
+    for i in 0..res_len / BS as u32 {
+        let s = res_at + i;
+        let b = r.sector(s as u64)?;
+        let id = get16(&b, 0);
+        check_tag(&b, id, s, &format!("descripteur de reserve (secteur {s})"))?;
+        if id == T_TD { break; }
+    }
     let (vds_len, vds) = (get32(&a, 16), get32(&a, 20));
     let mut label = String::new();
     let (mut owner, mut organization, mut contact) = (String::new(), String::new(), String::new());
@@ -949,7 +1044,7 @@ pub fn read_iso(path: &Path) -> Result<IsoTree> {
             return bad(format!("« {path} » : type de fichier {} inattendu", fe.file_type));
         }
     }
-    Ok(IsoTree { label, owner, organization, contact, udf_rev, mirror, mirror_ok, sectors: r.sectors, entries })
+    Ok(IsoTree { label, owner, organization, contact, udf_rev, mirror, mirror_ok, sectors: r.sectors, anchors, reserve_at: res_at, entries })
 }
 
 /// Verifie une image contre le dossier source : structure, liste des fichiers et contenu octet par octet. Rend le nombre
@@ -1007,6 +1102,9 @@ pub enum IsoKeep {
     Both,
 }
 
+/// Marge de securite par defaut (% de la capacite) : la gravure est moins fiable tout au bord d'un BD-R.
+pub const DEFAULT_MARGIN: u8 = 95;
+
 /// Reglages de la generation ISO enregistres dans le projet (seuls les reglages differents des valeurs par defaut sont ecrits).
 #[derive(Debug, Clone, PartialEq)]
 pub struct IsoSettings {
@@ -1019,10 +1117,12 @@ pub struct IsoSettings {
     pub opts: IsoOptions,
     /// Verification apres creation.
     pub verify: bool,
+    /// Marge de securite : avertir au-dela de ce pourcentage de la capacite (0 : desactive).
+    pub margin: u8,
 }
 
 impl Default for IsoSettings {
-    fn default() -> Self { IsoSettings { keep: IsoKeep::Folder, file: String::new(), capacity: 0, opts: IsoOptions::default(), verify: true } }
+    fn default() -> Self { IsoSettings { keep: IsoKeep::Folder, file: String::new(), capacity: 0, opts: IsoOptions::default(), verify: true, margin: DEFAULT_MARGIN } }
 }
 
 impl IsoSettings {
@@ -1058,7 +1158,15 @@ impl IsoSettings {
         s.opts.align = flag("aligner", true);
         s.opts.play_order = flag("ordre_lecture", true);
         s.opts.mirror = flag("miroir", true);
-        s.opts.fixed_date = flag("date_fixe", false);
+        s.opts.date = match v.get("date").and_then(crate::json::Value::as_str) {
+            Some(t) => IsoDate::Custom(IsoStamp::parse(t).ok_or(format!("iso.date : « {t} » invalide (AAAA-MM-JJ HH:MM)"))?),
+            None => if flag("date_fixe", false) { IsoDate::Fixed } else { IsoDate::Now },
+        };
+        s.opts.compat = flag("compatibilite", true);
+        if let Some(m) = v.get("marge").and_then(crate::json::Value::as_f64) {
+            if !(0.0..=100.0).contains(&m) { return Err(format!("iso.marge : 0 a 100 (0 : desactivee), {m} donne")); }
+            s.margin = m.round() as u8;
+        }
         s.verify = flag("verifier", true);
         Ok(s)
     }
@@ -1077,9 +1185,11 @@ impl IsoSettings {
         text("organisation", &self.opts.organization);
         text("contact", &self.opts.contact);
         text("udf", if self.opts.udf == UdfRev::V260 { "2.60" } else { "" });
-        for (k, v, dv) in [("aligner", self.opts.align, d.opts.align), ("ordre_lecture", self.opts.play_order, d.opts.play_order), ("miroir", self.opts.mirror, d.opts.mirror), ("date_fixe", self.opts.fixed_date, d.opts.fixed_date), ("verifier", self.verify, d.verify)] {
+        for (k, v, dv) in [("aligner", self.opts.align, d.opts.align), ("ordre_lecture", self.opts.play_order, d.opts.play_order), ("miroir", self.opts.mirror, d.opts.mirror), ("date_fixe", self.opts.date == IsoDate::Fixed, false), ("compatibilite", self.opts.compat, d.opts.compat), ("verifier", self.verify, d.verify)] {
             if v != dv { o.push((k.into(), Value::Bool(v))); }
         }
+        if let IsoDate::Custom(c) = self.opts.date { o.push(("date".into(), Value::Str(c.text()))); }
+        if self.margin != d.margin { o.push(("marge".into(), Value::Num(self.margin as f64))); }
         if o.is_empty() { None } else { Some(Value::Obj(o)) }
     }
 
@@ -1096,6 +1206,20 @@ impl IsoSettings {
 
 fn gb(b: u64) -> String { format!("{:.1} Go", b as f64 / 1e9).replace('.', ",") }
 
+/// Avertissement de capacite pour une image de `size` octets : au-dela du disque vise, ou de la marge de securite (`margin` %,
+/// 0 : desactivee).
+pub fn capacity_warning(size: u64, capacity: usize, margin: u8) -> Option<String> {
+    let (cap_name, cap) = CAPACITIES[capacity.min(CAPACITIES.len() - 1)];
+    if size > cap {
+        Some(format!("Avertissement : l'image ({}) dépasse la capacité d'un {cap_name} ({}).", gb(size), gb(cap)))
+    } else if margin > 0 && size as f64 > cap as f64 * margin as f64 / 100.0 {
+        let pct = format!("{:.1}", size as f64 / cap as f64 * 100.0).replace('.', ",");
+        Some(format!("Avertissement : l'image occupe {pct} % d'un {cap_name}, au-delà de la marge de sécurité ({margin} %) : la gravure est moins fiable tout au bord du disque."))
+    } else {
+        None
+    }
+}
+
 /// Apres la construction : ecrit l'image du dossier `out_dir` dans `iso`, la verifie si demande, previent si elle depasse la
 /// capacite visee, puis supprime le dossier si seule l'image est gardee. Rend un resume pour l'utilisateur.
 pub fn finish_build(out_dir: &Path, iso: &Path, s: &IsoSettings, title: &str, cancel: &AtomicBool, log: &mut dyn FnMut(&str), progress: &mut dyn FnMut(f64)) -> Result<String> {
@@ -1103,8 +1227,8 @@ pub fn finish_build(out_dir: &Path, iso: &Path, s: &IsoSettings, title: &str, ca
     let size = iso_size(out_dir, &opt)?;
     let (cap_name, cap) = CAPACITIES[s.capacity.min(CAPACITIES.len() - 1)];
     let mut summary = String::new();
-    if size > cap {
-        let m = format!("Avertissement : l'image ({}) dépasse la capacité d'un {cap_name} ({}).", gb(size), gb(cap));
+    let warn = capacity_warning(size, s.capacity, s.margin);
+    if let Some(m) = warn {
         log(&m);
         summary += &m;
         summary.push('\n');
