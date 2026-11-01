@@ -74,3 +74,19 @@ fn out_of_screen_rejected() {
     let buttons = vec![MenuButton::new("x", 1, 1800, 100, vec![solid(300, 80, [1, 2, 3, 255])])];
     assert!(build_menu(&buttons, &MenuOptions::default()).is_err());
 }
+
+#[test]
+fn manual_neighbors_reach_the_disc() {
+    let n = solid(300, 80, [30, 60, 140, 255]);
+    let s = solid(300, 80, [90, 150, 230, 255]);
+    let a = solid(300, 80, [240, 150, 40, 255]);
+    let mk = |t, x, y| MenuButton::new("b", t, x, y, vec![n.clone(), s.clone(), a.clone()]);
+    let mut buttons = vec![mk(1, 100, 100), mk(2, 500, 100), mk(3, 900, 100)];
+    buttons[0].nav_set[3] = Some(2); // droite : directement le 3e
+    buttons[1].nav_set[2] = Some(1); // gauche : reste sur place
+    let clip = build_menu_clip(&buttons, &MenuOptions::default()).unwrap();
+    let b = |i: usize| clip.menu.ics.pages[0].bogs[i].buttons[0].clone();
+    assert_eq!(b(0).right, 2);
+    assert_eq!(b(1).left, 1);
+    assert_eq!(b(2).left, 1, "non modifie : automatique");
+}

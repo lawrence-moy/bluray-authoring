@@ -343,6 +343,20 @@ pub fn sim_buttons(info: &PageInfo, design: &PageDesign, style: &crate::style::B
     for (b, n) in out.iter_mut().zip(crate::menu::auto_neighbors(&rects)) {
         b.neighbors = (n.0 as usize, n.1 as usize, n.2 as usize, n.3 as usize);
     }
+    // voisins choisis a la main (meme regle que le disque : « aucun » = on reste sur place, lien perdu = automatique)
+    let pos: std::collections::HashMap<u32, usize> = out.iter().enumerate().filter_map(|(k, b)| Some((design.items[b.item].id, k)).filter(|(id, _)| *id != 0)).collect();
+    for k in 0..out.len() {
+        let nav = design.items[out[k].item].nav;
+        let mut v = [out[k].neighbors.0, out[k].neighbors.1, out[k].neighbors.2, out[k].neighbors.3];
+        for (d, slot) in v.iter_mut().enumerate() {
+            match nav.get(d) {
+                crate::design::NavLink::Auto => {}
+                crate::design::NavLink::Stay => *slot = k,
+                crate::design::NavLink::Item(id) => if let Some(p) = pos.get(&id) { *slot = *p; },
+            }
+        }
+        out[k].neighbors = (v[0], v[1], v[2], v[3]);
+    }
     out
 }
 
@@ -405,7 +419,11 @@ fn ensure_layered(d: &mut PageDesign) {
 /// Retourne son indice dans la page `to`.
 pub fn transfer_item(d: &mut Designs, from: usize, i: usize, to: usize, copy: bool) -> Option<usize> {
     if from == to || to >= d.free.len() || i >= d.free.get(from)?.items.len() { return None; }
-    let it = if copy { d.free[from].items[i].clone() } else { d.free[from].items.remove(i) };
+    let mut it = if copy { d.free[from].items[i].clone() } else { d.free[from].items.remove(i) };
+    // identifiant et navigation propres a une page : l'element arrive sans lien (et les liens qui menaient a lui s'effacent)
+    it.id = 0;
+    it.nav = Default::default();
+    if !copy { d.free[from].prune_nav(); }
     let dst = &mut d.free[to];
     let top = dst.layers.last().map_or(0, |l| l.id);
     Some(insert_item(dst, it, top))
@@ -430,9 +448,12 @@ pub fn transfer_layer(d: &mut Designs, from: usize, layer: u32, to: usize, copy:
     dst.layers.push(Layer { id, ..l });
     for mut it in items {
         it.layer = id;
+        it.id = 0;
+        it.nav = Default::default();
         dst.items.push(it);
     }
     dst.normalize_layers();
+    if !copy { d.free[from].prune_nav(); }
     Some(id)
 }
 

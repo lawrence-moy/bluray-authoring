@@ -1,7 +1,7 @@
 //! Editeur visuel de mise en page (onglet « Mise en page ») : apercu fidele, glisser/redimensionner, inspecteur.
 use crate::App;
-use bdauthor_core::design::{Align, Item, Kind, NavAction, PageDesign, SlotReturn, Target};
-use bdauthor_core::editor::{align_items, add_layer, ItemAlign, dragged_rect, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
+use bdauthor_core::design::{Align, Item, Kind, NavAction, NavLink, PageDesign, SlotReturn, Target};
+use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -95,9 +95,12 @@ fn item_edit(d: &mut PageDesign, i: usize, dup: bool) -> Option<usize> {
     if i >= d.items.len() { return None; }
     if !dup {
         d.items.remove(i);
+        d.prune_nav();
         return None;
     }
     let mut c = d.items[i].clone();
+    c.id = 0; // la copie n'a ni identifiant ni navigation manuelle
+    c.nav = Default::default();
     c.x = (c.x + 30).min(1920 - c.w);
     c.y = (c.y + 30).min(1080 - c.h);
     d.items.insert(i + 1, c);
@@ -133,7 +136,7 @@ fn palette() -> Vec<(NewWidget, &'static str, String)> {
 fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
     match w {
         NewWidget::Text => Item::text("Texte", 660, 470, 600, 120, 60),
-        NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0, sub: Default::default() },
+        NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() },
         NewWidget::VideoSlot | NewWidget::ChapterSlot => {
             let mut it = Item::video_slot(100, 300, 400, 250, 200, 0, None, "");
             if let Kind::Slot { video, start, .. } = &mut it.kind {
@@ -611,7 +614,7 @@ impl App {
             if pick_image {
                 if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                     let rel = self.relative(&f);
-                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None }, look: Default::default(), layer: 0, sub: Default::default() });
+                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() });
                 }
             }
             if let Some(it) = add {
@@ -873,6 +876,7 @@ impl App {
                         all.sort_unstable();
                         all.dedup();
                         for &k in all.iter().rev() { if k < d.items.len() && can(k) { d.items.remove(k); } }
+                        d.prune_nav();
                         self.sel_item = None;
                         self.extra_sel.clear();
                         self.bump();
@@ -921,6 +925,22 @@ impl App {
                     if selected && !multi {
                         for c in [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] {
                             painter.rect_filled(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Color32::WHITE);
+                        }
+                    }
+                }
+            }
+            // liens de navigation choisis a la main depuis l'element selectionne (fleches cyan)
+            if let (Some(s), true) = (self.sel_item, self.extra_sel.is_empty()) {
+                if let Some(d) = info.design(&self.model.designs) {
+                    if let Some(from) = d.items.get(s) {
+                        let c = |it: &Item| to_screen(it.x as f32 + it.w as f32 / 2.0, it.y as f32 + it.h as f32 / 2.0);
+                        for dir in 0..4 {
+                            if let NavLink::Item(id) = from.nav.get(dir) {
+                                if let Some(to) = d.item_by_id(id).and_then(|t| d.items.get(t)) {
+                                    let (a, b) = (c(from), c(to));
+                                    painter.arrow(a, b - a, Stroke::new(2.5_f32, Color32::from_rgb(70, 220, 230)));
+                                }
+                            }
                         }
                     }
                 }
@@ -1071,6 +1091,64 @@ impl App {
         if let Some(a) = align {
             if let Some(d) = info.design_mut(&mut self.model.designs) {
                 if align_items(&mut d.items, &group, a) { self.bump(); }
+            }
+        }
+        // navigation aux fleches de la telecommande : voisins choisis a la main (sinon calcules automatiquement)
+        if group.len() == 1 {
+            let label = |d: &PageDesign, k: usize| -> String {
+                match d.items.get(k) {
+                    Some(it) => match it.fixed_video() {
+                        Some(v) if matches!(it.kind, Kind::Slot { .. }) => format!("{}. {} (vidéo {})", k + 1, kind_name(&it.kind), v + 1),
+                        _ => format!("{}. {}", k + 1, kind_name(&it.kind)),
+                    },
+                    None => "(supprimé)".to_string(),
+                }
+            };
+            // boutons du disque (hors l'element lui-meme) et reglage actuel
+            let state = info.design(&self.model.designs).map(|d| {
+                let cands: Vec<(usize, String)> = sim_buttons(&info, d, &self.model.designs.style, self.model.videos.len()).iter().filter(|b| b.item != i).map(|b| (b.item, label(d, b.item))).collect();
+                let cur = d.items.get(i).map(|it| it.nav).unwrap_or_default();
+                let shown: Vec<String> = (0..4).map(|k| match cur.get(k) {
+                    NavLink::Auto => "Automatique".to_string(),
+                    NavLink::Stay => "Aucun (reste sur place)".to_string(),
+                    NavLink::Item(id) => label(d, d.item_by_id(id).unwrap_or(usize::MAX)),
+                }).collect();
+                (cands, shown, d.items.get(i).map_or(false, |it| sim_buttons(&info, d, &self.model.designs.style, self.model.videos.len()).iter().any(|b| b.item == i)))
+            });
+            if let Some((cands, shown, is_button)) = state {
+                // (direction, choix) : Err(None) automatique, Err(Some(None)) aucun, Ok(rang de l'element)
+                let mut pick: Option<(usize, Result<usize, Option<()>>)> = None;
+                ui.collapsing("Navigation (flèches de la télécommande)", |ui| {
+                    if !is_button {
+                        ui.label(egui::RichText::new("Cet élément n'est pas un bouton du disque : la navigation ne s'applique pas.").weak());
+                        return;
+                    }
+                    ui.label(egui::RichText::new("Par défaut, chaque flèche va au bouton le plus proche dans sa direction. Choisissez ici un autre bouton, ou « Aucun » pour que la flèche ne déplace rien.").weak());
+                    for (d, name) in ["↑ Haut", "↓ Bas", "← Gauche", "→ Droite"].into_iter().enumerate() {
+                        ui.horizontal(|ui| {
+                            ui.label(name);
+                            egui::ComboBox::from_id_salt(("nav_fleche", d)).selected_text(shown[d].clone()).width(230.0).show_ui(ui, |ui| {
+                                if ui.selectable_label(shown[d] == "Automatique", "Automatique").clicked() { pick = Some((d, Err(None))); }
+                                if ui.selectable_label(shown[d].starts_with("Aucun"), "Aucun (reste sur place)").clicked() { pick = Some((d, Err(Some(())))); }
+                                for (k, l) in &cands {
+                                    if ui.selectable_label(shown[d] == *l, l).clicked() { pick = Some((d, Ok(*k))); }
+                                }
+                            });
+                        });
+                    }
+                });
+                if let Some((dir, what)) = pick {
+                    if let Some(d) = info.design_mut(&mut self.model.designs) {
+                        let link = match what {
+                            Err(None) => NavLink::Auto,
+                            Err(Some(())) => NavLink::Stay,
+                            Ok(k) if k < d.items.len() => NavLink::Item(d.ensure_id(k)),
+                            Ok(_) => NavLink::Auto,
+                        };
+                        if let Some(it) = d.items.get_mut(i) { it.nav.set(dir, link); }
+                        self.bump();
+                    }
+                }
             }
         }
         let mut op: Option<Op> = None;
@@ -1868,6 +1946,7 @@ impl App {
         let n = idx.len();
         if cut {
             for &i in idx.iter().rev() { d.items.remove(i); }
+            d.prune_nav();
             self.sel_item = None;
             self.extra_sel.clear();
             self.bump();
@@ -1887,6 +1966,8 @@ impl App {
         let Some(d) = info.design_mut(&mut self.model.designs) else { return };
         let mut added = Vec::new();
         for mut it in items {
+            it.id = 0;
+            it.nav = Default::default();
             it.x = (it.x + off).clamp(0, (1920 - it.w).max(0));
             it.y = (it.y + off).clamp(0, (1080 - it.h).max(0));
             added.push(insert_item(d, it, layer));

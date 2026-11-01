@@ -2,7 +2,7 @@ use bdauthor_core::design::{Item, Kind};
 use bdauthor_core::editor::{align_items, ItemAlign};
 
 fn it(x: i32, y: i32, w: i32, h: i32) -> Item {
-    Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, video: None, link: None, start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() }
+    Item { x, y, w, h, kind: Kind::Slot { thumb_h: h - 40, video: None, link: None, start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() }
 }
 
 #[test]

@@ -23,6 +23,8 @@ pub struct MenuButton {
     /// Images (normal, selectionne, active) ; 1 ou 2 elements acceptes, les images identiques (meme `Arc`) sont partagees.
     pub images: Vec<Arc<RgbaImage>>,
     pub neighbors: Option<(u16, u16, u16, u16)>, // (haut, bas, gauche, droite)
+    /// voisins choisis a la main, direction par direction (haut, bas, gauche, droite) ; `None` = calcul automatique
+    pub nav_set: [Option<u16>; 4],
     pub commands: Vec<Command>,                  // vide = JUMP_TITLE `title`
     /// Etat selectionne anime : images suivantes de l'animation, apres `images[1]` (vide = image fixe).
     pub sel_frames: Vec<Arc<RgbaImage>>,
@@ -39,7 +41,7 @@ pub struct MenuButton {
 
 impl MenuButton {
     pub fn new(label: &str, title: u32, x: i32, y: i32, images: Vec<Arc<RgbaImage>>) -> Self {
-        MenuButton { label: label.into(), title, x, y, images, neighbors: None, commands: vec![], sel_frames: vec![], sel_once: false, normal_frames: vec![], normal_once: false, sound_select: 0xFF, sound_activate: 0xFF }
+        MenuButton { label: label.into(), title, x, y, images, neighbors: None, nav_set: [None; 4], commands: vec![], sel_frames: vec![], sel_once: false, normal_frames: vec![], normal_once: false, sound_select: 0xFF, sound_activate: 0xFF }
     }
     pub fn width(&self) -> i32 { self.images.first().map_or(0, |i| i.width as i32) }
     pub fn height(&self) -> i32 { self.images.first().map_or(0, |i| i.height as i32) }
@@ -180,7 +182,10 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
             sel_end = (ods.len() - 1) as u16;
             sel_flags = if b.sel_once { 0 } else { 0x80 };
         }
-        let (up, down, left, right) = b.neighbors.unwrap_or(nbs[n]);
+        let (mut up, mut down, mut left, mut right) = b.neighbors.unwrap_or(nbs[n]);
+        for (slot, set) in [&mut up, &mut down, &mut left, &mut right].into_iter().zip(b.nav_set) {
+            if let Some(v) = set.filter(|v| (*v as usize) < buttons.len()) { *slot = v; }
+        }
         let btn = Button {
             button_id: n as u16, numeric_select_value: 0xFFFF, auto_action_flags: 0, x: b.x as u16, y: b.y as u16,
             upper: up, lower: down, left, right,

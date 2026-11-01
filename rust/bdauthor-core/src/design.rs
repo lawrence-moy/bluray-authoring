@@ -168,6 +168,64 @@ pub struct Item {
     pub layer: u32,
     /// Sous-titres regles par le clic sur cet element (avant la lecture qu'il lance).
     pub sub: SubChoice,
+    /// Identifiant stable dans la page (0 = pas encore attribue) : les liens de navigation designent un element par cet identifiant.
+    pub id: u32,
+    /// Voisins choisis a la main pour les fleches de la telecommande (sinon calcules automatiquement).
+    pub nav: NavLinks,
+}
+
+/// Destination d'une fleche de la telecommande depuis un bouton.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum NavLink {
+    /// calculee automatiquement (le plus proche dans cette direction)
+    #[default]
+    Auto,
+    /// la fleche ne deplace pas la selection
+    Stay,
+    /// bouton de la page, par identifiant d'element
+    Item(u32),
+}
+
+/// Les quatre fleches (haut, bas, gauche, droite) d'un bouton.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct NavLinks {
+    pub up: NavLink,
+    pub down: NavLink,
+    pub left: NavLink,
+    pub right: NavLink,
+}
+
+impl NavLinks {
+    pub const KEYS: [&'static str; 4] = ["haut", "bas", "gauche", "droite"];
+    pub fn is_auto(&self) -> bool { *self == NavLinks::default() }
+    pub fn get(&self, d: usize) -> NavLink { [self.up, self.down, self.left, self.right][d] }
+    pub fn set(&mut self, d: usize, l: NavLink) {
+        match d { 0 => self.up = l, 1 => self.down = l, 2 => self.left = l, _ => self.right = l }
+    }
+    pub fn to_value(&self) -> Option<Value> {
+        let mut o = Vec::new();
+        for (d, k) in Self::KEYS.iter().enumerate() {
+            match self.get(d) {
+                NavLink::Auto => {}
+                NavLink::Stay => o.push((k.to_string(), Value::Str("aucun".into()))),
+                NavLink::Item(id) => o.push((k.to_string(), Value::Num(id as f64))),
+            }
+        }
+        if o.is_empty() { None } else { Some(Value::Obj(o)) }
+    }
+    pub fn from_value(v: Option<&Value>) -> NavLinks {
+        let mut n = NavLinks::default();
+        if let Some(v) = v {
+            for (d, k) in Self::KEYS.iter().enumerate() {
+                match v.get(k) {
+                    Some(Value::Str(s)) if s == "aucun" => n.set(d, NavLink::Stay),
+                    Some(x) => if let Some(id) = x.as_f64().filter(|i| *i >= 1.0) { n.set(d, NavLink::Item(id as u32)); },
+                    None => {}
+                }
+            }
+        }
+        n
+    }
 }
 
 /// Sous-titres choisis par un bouton.
@@ -209,7 +267,7 @@ impl Item {
     pub fn fixed_video(&self) -> Option<usize> { if let Kind::Slot { video, .. } = self.kind { video } else { None } }
     /// Vignette d'une video du projet (`start` : instant de depart pour une vignette de chapitre).
     pub fn video_slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32, video: usize, start: Option<f64>, label: &str) -> Item {
-        Item { x, y, w, h, kind: Kind::Slot { thumb_h, video: Some(video), link: None, start, chapter: None, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0, sub: Default::default() }
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, video: Some(video), link: None, start, chapter: None, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() }
     }
     /// Instant de depart d'une vignette de chapitre.
     pub fn chapter_start(&self) -> Option<f64> {
@@ -240,10 +298,10 @@ impl Item {
         (r(self.x), r(self.y), r(self.w), r(self.h))
     }
     pub fn text(text: &str, x: i32, y: i32, w: i32, h: i32, size: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default(), layer: 0, sub: Default::default() }
+        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() }
     }
     pub fn nav(action: NavAction, x: i32, y: i32, w: i32, h: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default(), layer: 0, sub: Default::default() }
+        Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default() }
     }
 }
 
@@ -367,6 +425,16 @@ impl PageDesign {
                     None => p.push(warn(format!("Vignette {slot_no} : sans vidéo, elle n'apparaîtra pas sur le disque."))),
                     Some(v) if v >= n_videos => p.push(err(format!("Vignette {slot_no} : la vidéo {} n'existe pas.", v + 1))),
                     _ => {}
+                }
+            }
+            for d in 0..4 {
+                if let NavLink::Item(id) = it.nav.get(d) {
+                    let name = ["haut", "bas", "gauche", "droite"][d];
+                    match self.item_by_id(id) {
+                        None => p.push(warn(format!("Élément {} : la flèche {name} mène à un élément supprimé (navigation automatique à la place).", k + 1))),
+                        Some(t) if t == k => p.push(warn(format!("Élément {} : la flèche {name} mène à lui-même.", k + 1))),
+                        _ => {}
+                    }
                 }
             }
             if let Kind::Nav { action: NavAction::Goto, target: None, .. } = it.kind {
@@ -525,6 +593,8 @@ impl PageDesign {
             if let Some(s) = &it.look.sounds { put("sons", s.to_value()); }
             if !self.layers.is_empty() { put("calque", num(it.layer as i32)); }
             if let Some(v) = it.sub.to_value() { put("soustitres", v); }
+            if it.id != 0 { put("id", num(it.id as i32)); }
+            if let Some(v) = it.nav.to_value() { put("navigation", v); }
             Value::Obj(o)
         }).collect();
         let mut o = vec![("elements".into(), Value::Arr(items))];
@@ -583,7 +653,7 @@ impl PageDesign {
                 sounds: e.get("sons").map(crate::style::ItemSounds::from_value),
             };
             let layer = e.get("calque").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32);
-            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer, sub: SubChoice::from_value(e.get("soustitres")) });
+            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer, sub: SubChoice::from_value(e.get("soustitres")), id: e.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), nav: NavLinks::from_value(e.get("navigation")) });
         }
         let layers = v.get("calques").and_then(Value::as_array).map(|a| a.iter().enumerate().map(|(k, l)| Layer {
             id: l.get("id").and_then(Value::as_f64).map_or(k as u32 + 1, |x| x.max(1.0) as u32),
@@ -594,7 +664,41 @@ impl PageDesign {
         let mut d = PageDesign { items, layers, name: v.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default(),
             anim_fps: v.get("animation_ips").and_then(Value::as_f64).map_or(0, |x| x.round().clamp(0.0, 60.0) as u32) };
         d.normalize_layers();
+        d.normalize_ids();
         Ok(d)
+    }
+
+    /// Identifiants d'elements : les doublons (fichier modifie a la main) sont remis a zero.
+    pub fn normalize_ids(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        for it in &mut self.items {
+            if it.id != 0 && !seen.insert(it.id) { it.id = 0; }
+        }
+    }
+
+    /// Identifiant de l'element `i` (attribue au besoin : le plus grand + 1).
+    pub fn ensure_id(&mut self, i: usize) -> u32 {
+        if self.items[i].id == 0 {
+            let next = self.items.iter().map(|it| it.id).max().unwrap_or(0) + 1;
+            self.items[i].id = next;
+        }
+        self.items[i].id
+    }
+
+    /// Rang de l'element portant l'identifiant `id`.
+    pub fn item_by_id(&self, id: u32) -> Option<usize> {
+        if id == 0 { return None; }
+        self.items.iter().position(|it| it.id == id)
+    }
+
+    /// Oublie les liens de navigation qui designent un element disparu de la page (ils redeviennent automatiques).
+    pub fn prune_nav(&mut self) {
+        let ids: std::collections::HashSet<u32> = self.items.iter().map(|it| it.id).filter(|i| *i != 0).collect();
+        for it in &mut self.items {
+            for d in 0..4 {
+                if let NavLink::Item(id) = it.nav.get(d) { if !ids.contains(&id) { it.nav.set(d, NavLink::Auto); } }
+            }
+        }
     }
 }
 

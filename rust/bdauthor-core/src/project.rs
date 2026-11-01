@@ -190,6 +190,7 @@ struct ButtonEnv<'a> {
 fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], page: usize, pages: usize, target: &dyn Fn(NavAction, Option<Target>) -> (u32, Vec<Command>)) -> Result<(Vec<MenuButton>, Vec<u64>)> {
     let (renderer, s) = (e.renderer, e.s);
     let (mut buttons, mut pix) = (Vec::new(), Vec::new());
+    let mut item_nav: Vec<(u32, crate::design::NavLinks)> = Vec::new();
     for (idx, it) in design.items.iter().enumerate() {
         let (x, y, w, h) = it.scaled(s);
         let st = it.look.style.as_ref().unwrap_or(e.style).scaled(s);
@@ -311,7 +312,19 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], pa
         }
         btn.commands = commands;
         buttons.push(btn);
+        item_nav.push((it.id, it.nav));
         pix.push(distinct * cw as u64 * ch as u64);
+    }
+    // voisins choisis a la main (les liens vers un element qui n'est pas un bouton du disque restent automatiques)
+    let pos: std::collections::HashMap<u32, usize> = item_nav.iter().enumerate().filter(|(_, (id, _))| *id != 0).map(|(k, (id, _))| (*id, k)).collect();
+    for (k, (_, nav)) in item_nav.iter().enumerate() {
+        for d in 0..4 {
+            buttons[k].nav_set[d] = match nav.get(d) {
+                crate::design::NavLink::Auto => None,
+                crate::design::NavLink::Stay => Some(k as u16),
+                crate::design::NavLink::Item(id) => pos.get(&id).map(|p| *p as u16),
+            };
+        }
     }
     Ok((buttons, pix))
 }

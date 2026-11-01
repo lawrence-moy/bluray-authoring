@@ -578,3 +578,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - « Reutiliser les videos deja encodees (cache) » : deplace de la fenetre Projet vers Configuration (reste enregistre dans le projet).
 - Chapitres / vignette d'une video : instants limites a la duree connue de la video.
 - Editeur : Maj+clic = selection multiple (cadre bleu), glisser/fleches/Suppr s'appliquent au groupe ; panneau « Alignement » (gauche/centre/droite, haut/milieu/bas, centrer sur la page, repartir) : `editor::align_items`.
+
+## Navigation manuelle aux fleches
+- `Item.id` (identifiant stable dans la page, attribue seulement quand un lien le vise) et `Item.nav: NavLinks` (haut/bas/gauche/droite : `Auto` | `Stay` | `Item(id)`). JSON : `"id"`, `"navigation": {"haut": id | "aucun", ...}` (seules les fleches non automatiques sont ecrites).
+- Disque : `MenuButton.nav_set` ([Option<u16>;4]) applique par-dessus `auto_neighbors` (menu.rs) ; `page_buttons` (project.rs) resout les identifiants en rangs de boutons. Lien perdu = automatique. Simulation : meme regle dans `editor::sim_buttons`.
+- Editeur : rubrique « Navigation (fleches de la telecommande) » du widget selectionne ; fleches cyan sur l'apercu. Dupliquer / coller / changer de page efface id et liens de l'element copie ; supprimer un element efface les liens qui le visaient (`prune_nav`).
