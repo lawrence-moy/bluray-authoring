@@ -101,10 +101,21 @@ fn item_edit(d: &mut PageDesign, i: usize, dup: bool) -> Option<usize> {
     let mut c = d.items[i].clone();
     c.id = 0; // la copie n'a ni identifiant ni navigation manuelle
     c.nav = Default::default();
+    c.name = copy_name(d, &c);
     c.x = (c.x + 30).min(1920 - c.w);
     c.y = (c.y + 30).min(1080 - c.h);
     d.items.insert(i + 1, c);
     Some(i + 1)
+}
+
+/// Nom d'une copie : « Nom (copie) », « Nom (copie 2) »… (premier libre dans la page) ; sans nom, le type du widget sert de base.
+fn copy_name(d: &PageDesign, it: &Item) -> String {
+    let base = if it.name.is_empty() { kind_name(&it.kind).to_string() } else { it.name.clone() };
+    let base = match base.rfind(" (copie") { Some(p) if base.ends_with(')') => base[..p].to_string(), _ => base };
+    let used = |n: &str| d.items.iter().any(|x| x.name == n);
+    let first = format!("{base} (copie)");
+    if !used(&first) { return first; }
+    (2..).map(|k| format!("{base} (copie {k})")).find(|n| !used(n)).unwrap_or(first)
 }
 
 /// Menu contextuel d'un element (clic droit) : `Some(true)` dupliquer, `Some(false)` supprimer.
@@ -1951,6 +1962,7 @@ impl App {
         if idx.is_empty() { return; }
         self.clipboard = idx.iter().map(|&i| d.items[i].clone()).collect();
         self.clip_from = Some(info.r);
+        self.clip_cut = cut;
         self.paste_n = 0;
         let n = idx.len();
         if cut {
@@ -1977,6 +1989,7 @@ impl App {
         for mut it in items {
             it.id = 0;
             it.nav = Default::default();
+            if !self.clip_cut { it.name = copy_name(d, &it); }
             it.x = (it.x + off).clamp(0, (1920 - it.w).max(0));
             it.y = (it.y + off).clamp(0, (1080 - it.h).max(0));
             added.push(insert_item(d, it, layer));
