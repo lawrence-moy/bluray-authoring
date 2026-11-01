@@ -6,12 +6,14 @@ mod audio_ui;
 mod subs_ui;
 mod style_ui;
 mod sim_ui;
+mod iso_ui;
 
 use bdauthor_core::check::Kind;
 use bdauthor_core::editor::{History, PageRef};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::ffmpeg::Tools;
 use bdauthor_core::model::{ChapterEntry, ProjectModel, VideoEntry, PRESETS};
+use bdauthor_core::iso::{finish_build, temp_build_dir, IsoKeep};
 use bdauthor_core::project::{build_project, BuildEnv};
 use bdauthor_render::FontRenderer;
 use eframe::egui;
@@ -230,7 +232,29 @@ impl App {
             self.result = Some((false, format!("Corrigez d'abord :\n- {}", problems.join("\n- "))));
             return;
         }
-        let Some(out) = rfd::FileDialog::new().set_title("Dossier de sortie du disque").pick_folder() else { return };
+        // destination : dossier, image, ou les deux (reglages de l'onglet « Génération ISO »)
+        let iso_cfg = self.model.iso.clone();
+        let title = self.model.title.clone();
+        let (out, iso_path) = match iso_cfg.keep {
+            IsoKeep::Folder | IsoKeep::Both => {
+                let Some(out) = rfd::FileDialog::new().set_title("Dossier de sortie du disque").pick_folder() else { return };
+                let iso = (iso_cfg.keep == IsoKeep::Both).then(|| iso_cfg.iso_path(&base, &out));
+                (out, iso)
+            }
+            IsoKeep::Iso => {
+                let iso = if iso_cfg.file.trim().is_empty() {
+                    let name = format!("{}.iso", title.chars().map(|c| if r#"\/:*?"<>|"#.contains(c) { '_' } else { c }).collect::<String>().trim());
+                    let Some(f) = rfd::FileDialog::new().set_title("Image ISO du disque").add_filter("Image ISO", &["iso"]).set_file_name(name).save_file() else { return };
+                    f
+                } else {
+                    iso_cfg.iso_path(&base, &base)
+                };
+                match temp_build_dir(&iso) {
+                    Ok(d) => (d, Some(iso)),
+                    Err(e) => { self.result = Some((false, format!("Échec : {e}"))); return; }
+                }
+            }
+        };
         self.log.clear();
         self.progress = 0.0;
         self.cancel = Arc::new(AtomicBool::new(false));
@@ -248,11 +272,21 @@ impl App {
                 let mut log = |m: &str| send(Msg::Log(m.to_string()));
                 let mut prog = |f: f64| send(Msg::Progress(f));
                 let mut env = BuildEnv { tools: &tools, renderer: &renderer, cancel: &cancel, log: &mut log, progress: &mut prog };
-                let info = build_project(&project, &out, &mut env).map_err(|e| e.to_string())?;
+                let built = build_project(&project, &out, &mut env).map_err(|e| e.to_string());
+                // image seule : le dossier de construction temporaire ne doit pas rester apres un echec
+                if built.is_err() && iso_cfg.keep == IsoKeep::Iso { let _ = std::fs::remove_dir_all(&out); }
+                let info = built?;
                 let mut s = format!(
-                    "{} vidéo(s), {} page(s) de menu, format {}x{} à {} i/s, {:.1} Mo de flux.\nDisque écrit dans {}\n",
-                    info.videos, info.main_pages, info.format.0, info.format.1, info.format.2, info.total_stream_bytes as f64 / 1e6, out.display()
+                    "{} vidéo(s), {} page(s) de menu, format {}x{} à {} i/s, {:.1} Mo de flux.\n",
+                    info.videos, info.main_pages, info.format.0, info.format.1, info.format.2, info.total_stream_bytes as f64 / 1e6
                 );
+                if iso_cfg.keep != IsoKeep::Iso { s += &format!("Disque écrit dans {}\n", out.display()); }
+                if let Some(iso) = &iso_path {
+                    let r = finish_build(&out, iso, &iso_cfg, &title, &cancel, env.log, env.progress).map_err(|e| e.to_string());
+                    if r.is_err() && iso_cfg.keep == IsoKeep::Iso { let _ = std::fs::remove_dir_all(&out); }
+                    s += &r.map_err(|e| format!("image ISO : {e}"))?;
+                    s.push('\n');
+                }
                 for (k, m) in &info.report.items {
                     match k {
                         Kind::Error => s += &format!("ERREUR : {m}\n"),
@@ -331,6 +365,7 @@ impl eframe::App for App {
             let mut changed = false;
             let mut style_changed = false;
             let mut pick_sound: Option<u8> = None;
+            let mut pick_iso = false;
             let tab = &mut self.project_tab;
             let m = &mut self.model;
             egui::Window::new("Projet").open(&mut open).resizable(false).show(ctx, |ui| {
@@ -338,6 +373,7 @@ impl eframe::App for App {
                     ui.selectable_value(tab, 0, "Général");
                     ui.selectable_value(tab, 1, "Style des boutons");
                     ui.selectable_value(tab, 2, "Langues des sous-titres");
+                    ui.selectable_value(tab, 3, "Génération ISO");
                 });
                 ui.separator();
                 ui.add_enabled_ui(!busy, |ui| match *tab {
@@ -350,6 +386,12 @@ impl eframe::App for App {
                     2 => {
                         egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
                             changed |= subs_ui::languages_ui(ui, m);
+                        });
+                    }
+                    3 => {
+                        egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
+                            let title = m.title.clone();
+                            changed |= iso_ui::iso_ui(ui, &mut m.iso, &title, &mut pick_iso);
                         });
                     }
                     _ => {
@@ -386,6 +428,13 @@ impl eframe::App for App {
                     style_changed = true;
                 }
             }
+            if pick_iso {
+                let name = format!("{}.iso", self.model.title.chars().map(|c| if r#"\/:*?"<>|"#.contains(c) { '_' } else { c }).collect::<String>().trim());
+                if let Some(f) = rfd::FileDialog::new().set_title("Image ISO du disque").add_filter("Image ISO", &["iso"]).set_file_name(name).save_file() {
+                    self.model.iso.file = self.relative(&f);
+                    changed = true;
+                }
+            }
             // style : l'apercu de la mise en page est redessine
             if style_changed { self.bump(); }
             if changed { self.dirty = true; }
@@ -413,7 +462,7 @@ impl eframe::App for App {
                         ui.label(egui::RichText::new("Concerne l'onglet « Mise en page »").weak());
                     }
                     ui.separator();
-                    if ui.button("Projet…").on_hover_text("Disque et encodage, style des boutons, langues").clicked() {
+                    if ui.button("Projet…").on_hover_text("Disque et encodage, style des boutons, langues, génération ISO").clicked() {
                         self.show_project = true;
                         ui.close_menu();
                     }

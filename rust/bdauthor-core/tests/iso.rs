@@ -167,3 +167,67 @@ fn big_files_split_and_cancel() {
     // pas de BDMV : erreur claire
     assert!(write_iso(dir, &dir.join("g.iso"), &opts("G"), &AtomicBool::new(false), &mut |_| {}).unwrap_err().to_string().contains("BDMV"));
 }
+
+#[test]
+fn project_settings() {
+    use bdauthor_core::json::parse;
+    use bdauthor_core::model::ProjectModel;
+    // par defaut : rien n'est ecrit dans le projet
+    let mut m = ProjectModel::default();
+    assert!(!m.to_json().contains("\"iso\""));
+    assert_eq!(m.iso.label("Mes vidéos"), "Mes vidéos");
+    // reglages modifies : seuls ceux-ci sont ecrits, et relus a l'identique
+    m.iso.keep = IsoKeep::Both;
+    m.iso.capacity = 1;
+    m.iso.opts.label = "VACANCES".into();
+    m.iso.opts.udf = UdfRev::V260;
+    m.iso.opts.mirror = false;
+    m.iso.opts.fixed_date = true;
+    m.iso.verify = false;
+    m.iso.file = "disques/vacances.iso".into();
+    let j = m.to_json();
+    let v = parse(&j).unwrap();
+    let iso = v.get("iso").unwrap();
+    assert_eq!(iso.get("conserver").and_then(|x| x.as_str()), Some("les_deux"));
+    assert_eq!(iso.get("capacite").and_then(|x| x.as_str()), Some("BD-50"));
+    assert!(iso.get("aligner").is_none(), "valeur par defaut non ecrite");
+    let back = ProjectModel::from_json(&j).unwrap();
+    assert_eq!(back.iso, m.iso);
+    assert_eq!(back.iso.iso_path(Path::new("/p"), Path::new("/x/out")), Path::new("/p/disques/vacances.iso"));
+    let d = IsoSettings::default();
+    assert_eq!(d.iso_path(Path::new("/p"), Path::new("/x/out")), Path::new("/x/out.iso"));
+    // valeurs inconnues refusees
+    assert!(ProjectModel::from_json(r#"{"videos": [], "iso": {"capacite": "BD-30"}}"#).is_err());
+    assert!(ProjectModel::from_json(r#"{"videos": [], "iso": {"conserver": "tout"}}"#).is_err());
+}
+
+#[test]
+fn finish_after_build() {
+    let src = disc("fin");
+    let dir = src.parent().unwrap().to_path_buf();
+    let stop = AtomicBool::new(false);
+    let mut logs: Vec<String> = Vec::new();
+    // les deux : image verifiee, dossier garde ; le titre sert de nom de volume
+    let s = IsoSettings { keep: IsoKeep::Both, ..IsoSettings::default() };
+    let iso = s.iso_path(&dir, &src);
+    assert_eq!(iso, dir.join("disque.iso"));
+    let sum = finish_build(&src, &iso, &s, "Mon titre", &stop, &mut |l| logs.push(l.into()), &mut |_| {}).unwrap();
+    assert!(sum.contains("vérifiée") && sum.contains("BD-25"), "{sum}");
+    assert!(logs.iter().any(|l| l.contains("fichiers identiques")));
+    assert_eq!(read_iso(&iso).unwrap().label, "Mon titre");
+    assert!(src.join("BDMV").is_dir());
+    // image seule, dans un dossier de construction temporaire supprime ensuite
+    let s2 = IsoSettings { keep: IsoKeep::Iso, file: "sous/seule.iso".into(), verify: false, ..IsoSettings::default() };
+    let iso2 = s2.iso_path(&dir, &src);
+    let tmpd = temp_build_dir(&iso2).unwrap();
+    assert_eq!(tmpd, dir.join("sous/seule.construction"));
+    std::fs::create_dir_all(&tmpd).unwrap();
+    for e in std::fs::read_dir(&src).unwrap() {
+        let e = e.unwrap();
+        let _ = std::process::Command::new("cp").arg("-r").arg(e.path()).arg(&tmpd).status();
+    }
+    let sum = finish_build(&tmpd, &iso2, &s2, "T", &stop, &mut |_| {}, &mut |_| {}).unwrap();
+    assert!(!sum.contains("vérifiée"));
+    assert!(iso2.is_file() && !tmpd.exists());
+    verify_iso(&iso2, &src, &stop, &mut |_| {}).unwrap();
+}

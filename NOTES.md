@@ -527,3 +527,14 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Ecriture dans `<sortie>.iso.part` puis renommage ; seuls BDMV et CERTIFICATE du dossier sont repris.
 - Outil `bdiso <dossier> <image.iso> [nom]` (cree puis verifie) et `bdiso --lire <image.iso>`.
 - Premier essai : `sortie_test.iso` (694 Mo) cree depuis `sortie_test`, a valider dans Windows et un lecteur.
+
+## Image ISO (etapes 2 et 3 : construction + onglet « Génération ISO »)
+
+- `IsoSettings` (cle « iso » du projet, seuls les reglages non par defaut sont ecrits) : `conserver` (dossier / iso /
+  les_deux), `fichier`, `capacite` (BD-25/50/100), `nom_volume` (vide = titre), `proprietaire`, `organisation`, `contact`,
+  `udf` (2.50/2.60), `aligner`, `ordre_lecture`, `miroir`, `date_fixe`, `verifier`.
+- Construction (interface) : dossier seul = comme avant ; les deux = dossier choisi + `<dossier>.iso` (ou le fichier
+  regle) ; image seule = construction dans `<image>.construction` (supprime apres l'image, ou apres un echec).
+  `iso::finish_build` : avertissement de capacite, ecriture, verification, suppression du dossier temporaire.
+- `bdauthor-build` ecrit aussi l'image si le projet la demande (le dossier est toujours garde en ligne de commande).
+- Onglet « Génération ISO » (iso_ui.rs) : tous les reglages, compteur de caracteres du nom du volume.

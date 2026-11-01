@@ -993,3 +993,143 @@ pub fn verify_iso(iso: &Path, src: &Path, cancel: &AtomicBool, progress: &mut dy
     progress(1.0);
     Ok(count)
 }
+
+// ------------------------------------------------------------------ reglages du projet (cle « iso »)
+
+/// Ce que la construction laisse sur le disque dur.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IsoKeep {
+    /// dossier BDMV seul (pas d'image)
+    Folder,
+    /// image seule : le dossier construit est supprime une fois l'image ecrite (et verifiee si demande)
+    Iso,
+    /// dossier et image
+    Both,
+}
+
+/// Reglages de la generation ISO enregistres dans le projet (seuls les reglages differents des valeurs par defaut sont ecrits).
+#[derive(Debug, Clone, PartialEq)]
+pub struct IsoSettings {
+    pub keep: IsoKeep,
+    /// Fichier de l'image (relatif au projet ou absolu) ; vide : a cote du dossier construit, ou demande a la construction.
+    pub file: String,
+    /// Capacite visee : rang dans `CAPACITIES`.
+    pub capacity: usize,
+    /// Reglages de l'image ; nom du volume vide : titre du disque.
+    pub opts: IsoOptions,
+    /// Verification apres creation.
+    pub verify: bool,
+}
+
+impl Default for IsoSettings {
+    fn default() -> Self { IsoSettings { keep: IsoKeep::Folder, file: String::new(), capacity: 0, opts: IsoOptions::default(), verify: true } }
+}
+
+impl IsoSettings {
+    pub fn enabled(&self) -> bool { self.keep != IsoKeep::Folder }
+
+    /// Nom du volume effectivement ecrit (titre du disque si vide, tronque a la limite UDF).
+    pub fn label(&self, title: &str) -> String { fit_label(if self.opts.label.trim().is_empty() { title } else { &self.opts.label }) }
+
+    pub fn from_value(v: Option<&crate::json::Value>) -> std::result::Result<IsoSettings, String> {
+        let mut s = IsoSettings::default();
+        let Some(v) = v else { return Ok(s) };
+        let st = |k: &str| v.get(k).and_then(crate::json::Value::as_str).unwrap_or("").to_string();
+        let flag = |k: &str, d: bool| v.get(k).and_then(crate::json::Value::as_bool).unwrap_or(d);
+        s.keep = match v.get("conserver").and_then(crate::json::Value::as_str) {
+            None | Some("dossier") => IsoKeep::Folder,
+            Some("iso") => IsoKeep::Iso,
+            Some("les_deux") => IsoKeep::Both,
+            Some(x) => return Err(format!("iso.conserver : « {x} » inconnu (dossier, iso, les_deux)")),
+        };
+        s.file = st("fichier");
+        if let Some(c) = v.get("capacite").and_then(crate::json::Value::as_str) {
+            s.capacity = CAPACITIES.iter().position(|(n, _)| *n == c).ok_or(format!("iso.capacite : « {c} » inconnue (BD-25, BD-50, BD-100)"))?;
+        }
+        s.opts.label = st("nom_volume");
+        s.opts.owner = st("proprietaire");
+        s.opts.organization = st("organisation");
+        s.opts.contact = st("contact");
+        s.opts.udf = match v.get("udf").and_then(crate::json::Value::as_str) {
+            None | Some("2.50") => UdfRev::V250,
+            Some("2.60") => UdfRev::V260,
+            Some(x) => return Err(format!("iso.udf : « {x} » inconnue (2.50, 2.60)")),
+        };
+        s.opts.align = flag("aligner", true);
+        s.opts.play_order = flag("ordre_lecture", true);
+        s.opts.mirror = flag("miroir", true);
+        s.opts.fixed_date = flag("date_fixe", false);
+        s.verify = flag("verifier", true);
+        Ok(s)
+    }
+
+    /// `None` si tout est par defaut (la cle est alors retiree du projet).
+    pub fn to_value(&self) -> Option<crate::json::Value> {
+        use crate::json::Value;
+        let d = IsoSettings::default();
+        let mut o: Vec<(String, Value)> = Vec::new();
+        let mut text = |k: &str, v: &str| if !v.is_empty() { o.push((k.into(), Value::Str(v.into()))); };
+        text("conserver", match self.keep { IsoKeep::Folder => "", IsoKeep::Iso => "iso", IsoKeep::Both => "les_deux" });
+        text("fichier", &self.file);
+        text("capacite", if self.capacity == 0 { "" } else { CAPACITIES.get(self.capacity).map_or("", |c| c.0) });
+        text("nom_volume", &self.opts.label);
+        text("proprietaire", &self.opts.owner);
+        text("organisation", &self.opts.organization);
+        text("contact", &self.opts.contact);
+        text("udf", if self.opts.udf == UdfRev::V260 { "2.60" } else { "" });
+        for (k, v, dv) in [("aligner", self.opts.align, d.opts.align), ("ordre_lecture", self.opts.play_order, d.opts.play_order), ("miroir", self.opts.mirror, d.opts.mirror), ("date_fixe", self.opts.fixed_date, d.opts.fixed_date), ("verifier", self.verify, d.verify)] {
+            if v != dv { o.push((k.into(), Value::Bool(v))); }
+        }
+        if o.is_empty() { None } else { Some(Value::Obj(o)) }
+    }
+
+    /// Fichier de l'image : reglage (relatif au dossier du projet), sinon `<dossier construit>.iso`.
+    pub fn iso_path(&self, project_dir: &Path, out_dir: &Path) -> PathBuf {
+        if !self.file.trim().is_empty() {
+            let q = Path::new(self.file.trim());
+            return if q.is_absolute() { q.to_path_buf() } else { project_dir.join(q) };
+        }
+        let name = out_dir.file_name().map(|n| n.to_string_lossy().into_owned()).filter(|n| !n.is_empty()).unwrap_or_else(|| "disque".into());
+        out_dir.with_file_name(format!("{name}.iso"))
+    }
+}
+
+fn gb(b: u64) -> String { format!("{:.1} Go", b as f64 / 1e9).replace('.', ",") }
+
+/// Apres la construction : ecrit l'image du dossier `out_dir` dans `iso`, la verifie si demande, previent si elle depasse la
+/// capacite visee, puis supprime le dossier si seule l'image est gardee. Rend un resume pour l'utilisateur.
+pub fn finish_build(out_dir: &Path, iso: &Path, s: &IsoSettings, title: &str, cancel: &AtomicBool, log: &mut dyn FnMut(&str), progress: &mut dyn FnMut(f64)) -> Result<String> {
+    let opt = IsoOptions { label: s.label(title), ..s.opts.clone() };
+    let size = iso_size(out_dir, &opt)?;
+    let (cap_name, cap) = CAPACITIES[s.capacity.min(CAPACITIES.len() - 1)];
+    let mut summary = String::new();
+    if size > cap {
+        let m = format!("Avertissement : l'image ({}) dépasse la capacité d'un {cap_name} ({}).", gb(size), gb(cap));
+        log(&m);
+        summary += &m;
+        summary.push('\n');
+    }
+    log(&format!("image ISO : écriture de {} ({}, volume « {} »)", iso.display(), gb(size), opt.label));
+    if let Some(d) = iso.parent() { if !d.as_os_str().is_empty() { std::fs::create_dir_all(d)?; } }
+    let verify = s.verify;
+    let rep = write_iso(out_dir, iso, &opt, cancel, &mut |p| progress(if verify { p * 0.6 } else { p }))?;
+    if verify {
+        log("image ISO : vérification…");
+        let n = verify_iso(iso, out_dir, cancel, &mut |p| progress(0.6 + p * 0.4))?;
+        log(&format!("image ISO : vérifiée, {n} fichiers identiques au dossier"));
+    }
+    summary += &format!("Image ISO : {} ({}, {:.0} % d'un {cap_name}){}", iso.display(), gb(rep.bytes), rep.bytes as f64 / cap as f64 * 100.0, if verify { ", vérifiée" } else { "" });
+    if s.keep == IsoKeep::Iso {
+        std::fs::remove_dir_all(out_dir)?;
+        log("dossier de construction supprimé (seule l'image est gardée)");
+    }
+    Ok(summary)
+}
+
+/// Dossier de construction temporaire quand seule l'image est gardee : a cote de l'image, vide.
+pub fn temp_build_dir(iso: &Path) -> Result<PathBuf> {
+    let stem = iso.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| "disque".into());
+    let d = iso.with_file_name(format!("{stem}.construction"));
+    if d.exists() { std::fs::remove_dir_all(&d)?; }
+    Ok(d)
+}

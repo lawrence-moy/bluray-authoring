@@ -77,6 +77,8 @@ pub struct ProjectModel {
     pub designs: Designs,
     /// Langues de sous-titres du projet (cle « langues ») : le rang d'une langue est son numero de piste sur le disque.
     pub languages: Vec<Language>,
+    /// Generation de l'image ISO (cle « iso »).
+    pub iso: crate::iso::IsoSettings,
     raw: Value,
 }
 
@@ -84,7 +86,7 @@ impl Default for ProjectModel {
     fn default() -> Self {
         ProjectModel {
             title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), bg: String::new(), intro: String::new(), bg_video: String::new(), bg_video_audio: false, music: String::new(), bg_seconds: 5.0,
-            menu_1080: false, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], raw: Value::Obj(vec![]),
+            menu_1080: false, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], iso: Default::default(), raw: Value::Obj(vec![]),
         }
     }
 }
@@ -141,6 +143,7 @@ impl ProjectModel {
         }
         if let Some(d) = v.get("mise_en_page") { m.designs = Designs::from_value(d)?; }
         m.languages = crate::subtitle::languages_from_value(v.get("langues"))?;
+        m.iso = crate::iso::IsoSettings::from_value(v.get("iso"))?;
         Ok(m)
     }
 
@@ -183,6 +186,7 @@ impl ProjectModel {
         set(&mut menu, "cache", Some(Value::Bool(self.cache)));
         set(&mut root, "menu", Some(menu));
         set(&mut root, "langues", crate::subtitle::languages_to_value(&self.languages));
+        set(&mut root, "iso", self.iso.to_value());
         set(&mut root, "mise_en_page", if self.designs.is_empty() { None } else { Some(self.designs.to_value()) });
         root
     }

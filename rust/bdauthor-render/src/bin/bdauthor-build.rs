@@ -1,4 +1,5 @@
-//! `bdauthor-build projet.json dossier_sortie` : construit un dossier BDMV complet d'apres un projet JSON.
+//! `bdauthor-build projet.json dossier_sortie` : construit un dossier BDMV complet d'apres un projet JSON, puis l'image ISO si le
+//! projet la demande (cle « iso » ; le dossier est toujours garde ici).
 use bdauthor_core::ffmpeg::Tools;
 use bdauthor_core::project::{build_project, BuildEnv};
 use bdauthor_core::check::Kind;
@@ -31,6 +32,15 @@ fn main() {
             if *k != Kind::Info { println!("[{}] {m}", if *k == Kind::Error { "ERREUR" } else { "avertissement" }); }
         }
         println!("verification : {}", if info.report.ok() { "aucune erreur" } else { "ERREURS" });
+        let model = bdauthor_core::model::ProjectModel::from_json(&std::fs::read_to_string(&args[0]).map_err(|e| e.to_string())?)?;
+        if model.iso.enabled() {
+            let mut s = model.iso.clone();
+            s.keep = bdauthor_core::iso::IsoKeep::Both;
+            let base = std::fs::canonicalize(&args[0]).ok().and_then(|p| p.parent().map(Path::to_path_buf)).unwrap_or_default();
+            let iso = s.iso_path(&base, Path::new(&args[1]));
+            let sum = bdauthor_core::iso::finish_build(Path::new(&args[1]), &iso, &s, &model.title, &cancel, &mut log, &mut prog).map_err(|e| e.to_string())?;
+            println!("{sum}");
+        }
         Ok(info.report.ok())
     };
     match run() {
