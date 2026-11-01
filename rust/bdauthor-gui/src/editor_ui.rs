@@ -33,6 +33,8 @@ pub(crate) enum Job {
 pub(crate) enum Event {
     /// (fichier, duree, hauteur, cadence)
     Duration(String, f64, u32, f64),
+    /// (fichier, message) : la video n'a pas pu etre lue (duree inconnue)
+    ProbeFailed(String, String),
     Thumb(String, i64, RgbaImage),
     Error(String),
 }
@@ -54,7 +56,7 @@ impl Worker {
                     (Err(e), _) => Event::Error(format!("ffmpeg introuvable : {e}")),
                     (Ok(t), Job::Probe { key, path }) => match probe(t, &path) {
                         Ok(i) => Event::Duration(key, i.duration_s, i.height, i.fps()),
-                        Err(e) => Event::Error(format!("Lecture de {key} impossible : {e}")),
+                        Err(e) => { let m = format!("Lecture de {key} impossible : {e}"); Event::ProbeFailed(key, m) }
                     },
                     (Ok(t), Job::ProbeAudio { key, path }) => match bdauthor_core::ffmpeg::probe_duration(t, &path) {
                         Ok(d) => Event::Duration(key, d, 0, 0.0),
@@ -1718,6 +1720,7 @@ impl App {
             match e {
                 Event::Duration(k, d, h, f) => { self.video_sizes.insert(k.clone(), (h, f)); self.durations.insert(k, d); self.edit_gen += 1; }
                 Event::Thumb(k, ms, im) => { self.thumbs.insert((k, ms), std::sync::Arc::new(im)); self.edit_gen += 1; }
+                Event::ProbeFailed(k, m) => { self.probe_failed.insert(k); self.notice = m; self.edit_gen += 1; }
                 Event::Error(m) => self.notice = m,
             }
         }
