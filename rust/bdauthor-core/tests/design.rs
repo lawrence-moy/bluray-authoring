@@ -3,7 +3,7 @@ use bdauthor_core::json::parse;
 
 /// Vignette de la video `v` en (x, y).
 fn slot(x: i32, y: i32, v: Option<usize>) -> Item {
-    Item { x, y, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, video: v, link: None, start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() }
+    Item { x, y, w: 400, h: 300, kind: Kind::Slot { thumb_h: 240, video: v, link: None, start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() }
 }
 
 /// Page : titre, `n` vignettes des videos 0..n, « Suivant ».
@@ -143,7 +143,7 @@ fn clickable_text_image_and_video_targets() {
 #[test]
 fn slot_with_destination() {
     let mut p = page(2);
-    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, video: Some(2), link: Some(Target::Main(1)), start: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() });
+    p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, video: Some(2), link: Some(Target::Main(1)), start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default() });
     assert_eq!(p.slot_count(), 3);
     let mut ds = Designs::default();
     ds.free.push(p);

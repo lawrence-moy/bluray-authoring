@@ -932,6 +932,15 @@ impl App {
         let sub_langs: Vec<(u32, String)> = self.model.languages.iter().map(|l| (l.id, l.name.clone())).collect();
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
         let proj_style = self.model.designs.style.clone();
+        // chapitres de chaque video (identifiant, instant, titre), par instant croissant ; videos aux chapitres automatiques
+        let video_chapters: Vec<Vec<(u32, f64, String)>> = self.model.videos.iter().map(|v| {
+            let mut c: Vec<(u32, f64, String)> = v.chapters.iter().map(|c| (c.id, c.t, c.title.clone())).collect();
+            c.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal));
+            c
+        }).collect();
+        let video_auto: Vec<bool> = self.model.videos.iter().map(|v| v.chapters.is_empty() && v.auto_s.is_some()).collect();
+        // « Creer le chapitre » : (video, instant, titre), traite apres l'edition de la vignette
+        let mut new_chapter: Option<(usize, f64, String)> = None;
         let mut pick_skin: Option<usize> = None;
         let mut pick_sound_el: Option<u8> = None;
         let mut anim_preview = self.anim_preview;
@@ -961,7 +970,7 @@ impl App {
             });
             let h = it.h;
             match &mut it.kind {
-                Kind::Slot { thumb_h, video, link, start, label, thumb_at, ret, .. } => {
+                Kind::Slot { thumb_h, video, link, start, chapter, label, thumb_at, ret } => {
                     let mut lab = (h - *thumb_h).max(0);
                     ui.horizontal(|ui| {
                         ui.label("Hauteur du libellé :");
@@ -976,26 +985,64 @@ impl App {
                     let shown = match *video { Some(v) => vname(v), None => "(aucune vidéo : à choisir)".to_string() };
                     egui::ComboBox::from_label("Vidéo").selected_text(shown).show_ui(ui, |ui| {
                         for v in 0..video_labels.len() {
-                            if ui.selectable_label(*video == Some(v), vname(v)).clicked() { *video = Some(v); changed = true; }
+                            if ui.selectable_label(*video == Some(v), vname(v)).clicked() {
+                                // les identifiants de chapitre sont propres a chaque video : le lien ne suit pas
+                                if *video != Some(v) { *chapter = None; }
+                                *video = Some(v);
+                                changed = true;
+                            }
                         }
                     });
                     if let (Some(o), Some(nv)) = (old_video, *video) {
                         if o != nv && *link == Some(Target::Video(o)) { *link = Some(Target::Video(nv)); }
                     }
                     let dur = (*video).and_then(|v| video_durations.get(v).copied().flatten());
-                    // depart : debut de la video ou instant (vignette de chapitre)
-                    let mut chapter = start.is_some();
+                    // depart : debut de la video, ou un chapitre de la video (liste de la video) ou un instant libre
+                    let vch: &[(u32, f64, String)] = (*video).and_then(|v| video_chapters.get(v)).map_or(&[] as &[(u32, f64, String)], |c| c.as_slice());
+                    let chap_text = |t: f64, title: &str| if title.is_empty() { mmss(t) } else { format!("{title} ({})", mmss(t)) };
+                    let mut is_chapter = start.is_some();
                     ui.horizontal(|ui| {
-                        if ui.radio_value(&mut chapter, false, "Depuis le début").changed() { *start = None; changed = true; }
-                        if ui.radio_value(&mut chapter, true, "Chapitre, à partir de :").changed() { *start = Some(0.0); changed = true; }
+                        if ui.radio_value(&mut is_chapter, false, "Depuis le début").changed() { *start = None; *chapter = None; changed = true; }
+                        if ui.radio_value(&mut is_chapter, true, "Chapitre").changed() { *start = Some(0.0); *chapter = None; changed = true; }
                     });
                     if let Some(t) = start {
-                        ui.horizontal(|ui| {
-                            let max = dur.unwrap_or(f64::MAX);
-                            changed |= ui.add(egui::DragValue::new(t).range(0.0..=max).speed(0.5)
-                                .custom_formatter(|v, _| mmss(v)).custom_parser(parse_mmss)).on_hover_text("Glissez, ou tapez « m:ss » (ex. 12:30) ou des secondes").changed();
-                            if let Some(d) = dur { ui.label(egui::RichText::new(format!("sur {}", mmss(d))).weak()); }
+                        let cur = chapter.and_then(|id| vch.iter().find(|c| c.0 == id));
+                        let shown = cur.map_or_else(|| "Instant libre (saisi à la main)".to_string(), |c| chap_text(c.1, &c.2));
+                        let prev_title = cur.map(|c| c.2.clone());
+                        egui::ComboBox::from_label("Chapitre de la vidéo").selected_text(shown).show_ui(ui, |ui| {
+                            if ui.selectable_label(chapter.is_none(), "Instant libre (saisi à la main)").clicked() && chapter.is_some() { *chapter = None; changed = true; }
+                            for (id, ct, title) in vch {
+                                if ui.selectable_label(*chapter == Some(*id), chap_text(*ct, title)).clicked() && *chapter != Some(*id) {
+                                    *chapter = Some(*id);
+                                    *t = *ct;
+                                    // le libelle suit le nom du chapitre tant qu'il n'a pas ete saisi a la main
+                                    if label.is_empty() || Some(label.as_str()) == prev_title.as_deref() { *label = title.clone(); }
+                                    changed = true;
+                                }
+                            }
                         });
+                        if vch.is_empty() && video.is_some() { ui.label(egui::RichText::new("Cette vidéo n'a pas encore de chapitre : « Créer le chapitre » en ajoute un à l'instant ci-dessous.").weak()); }
+                        if chapter.is_some() {
+                            ui.horizontal(|ui| {
+                                ui.label(format!("à {}", mmss(*t)));
+                                if let Some(d) = dur { ui.label(egui::RichText::new(format!("sur {}", mmss(d))).weak()); }
+                                if ui.small_button("Détacher").on_hover_text("La vignette garde cet instant mais ne suit plus le chapitre.").clicked() { *chapter = None; changed = true; }
+                            });
+                            ui.label(egui::RichText::new("L'instant se règle dans « Vidéo sélectionnée » : toutes les vignettes liées à ce chapitre le suivent.").weak());
+                        } else {
+                            ui.horizontal(|ui| {
+                                let max = dur.unwrap_or(f64::MAX);
+                                changed |= ui.add(egui::DragValue::new(t).range(0.0..=max).speed(0.5)
+                                    .custom_formatter(|v, _| mmss(v)).custom_parser(parse_mmss)).on_hover_text("Glissez, ou tapez « m:ss » (ex. 12:30) ou des secondes").changed();
+                                if let Some(d) = dur { ui.label(egui::RichText::new(format!("sur {}", mmss(d))).weak()); }
+                                if ui.add_enabled(video.is_some(), egui::Button::new("Créer le chapitre")).on_hover_text("Ajoute un chapitre à cet instant dans la liste des chapitres de la vidéo (ou reprend celui qui s'y trouve déjà) et y lie la vignette.").clicked() {
+                                    if let Some(v) = *video { new_chapter = Some((v, *t, label.trim().to_string())); }
+                                }
+                            });
+                            if let Some(v) = *video { if video_auto.get(v).copied().unwrap_or(false) {
+                                ui.label(egui::RichText::new("Cette vidéo a des chapitres automatiques : en créer un à la main les remplace.").weak());
+                            } }
+                        }
                         if dur.map_or(false, |d| *t >= d) { ui.colored_label(Color32::from_rgb(230, 100, 90), "Après la fin de la vidéo."); }
                         ui.label(egui::RichText::new("Le lecteur démarre à l'image clé la plus proche avant cet instant (au plus 1 s plus tôt).").weak());
                     }
@@ -1231,6 +1278,13 @@ impl App {
                     *path = rel;
                     changed = true;
                 }
+            }
+        }
+        if let Some((v, t, title)) = new_chapter {
+            if let Some(ve) = self.model.videos.get_mut(v) {
+                let id = ve.add_chapter(t, &title);
+                if let Some(Kind::Slot { chapter, .. }) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).map(|it| &mut it.kind) { *chapter = Some(id); }
+                changed = true;
             }
         }
         if let Some(op) = op {

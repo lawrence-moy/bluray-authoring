@@ -31,7 +31,7 @@ fn edits_and_validation() {
     let mut m = ProjectModel::from_json(EX).unwrap();
     m.videos[1].title = "Seconde".into();
     m.videos[1].auto_s = None;
-    m.videos[1].chapters.push(ChapterEntry { t: 10.0, title: String::new() });
+    m.videos[1].chapters.push(ChapterEntry { id: 1, t: 10.0, title: String::new() });
     let v = parse(&m.to_json()).unwrap();
     let v1 = &v.get("videos").unwrap().as_array().unwrap()[1];
     assert_eq!(v1.get("titre").unwrap().as_str(), Some("Seconde"));
@@ -83,7 +83,7 @@ fn chapter_list_matches_builder_rules() {
     assert!(m.videos[1].chapter_list(None).is_empty());
     assert_eq!(m.videos[1].chapter_list(Some(200.0)).iter().map(|c| c.0).collect::<Vec<_>>(), vec![0.0, 60.0, 120.0]);
     let mut v = VideoEntry::new("x.mp4");
-    v.chapters.push(ChapterEntry { t: 30.0, title: String::new() });
+    v.chapters.push(ChapterEntry { id: 1, t: 30.0, title: String::new() });
     assert_eq!(v.chapter_list(Some(100.0)).len(), 2); // 0 insere automatiquement
     assert!(v.chapter_list(Some(20.0)).is_empty());   // 30 s au-dela de la fin : un seul chapitre reste
 }

@@ -9,7 +9,12 @@ use std::path::Path;
 pub const PRESETS: [&str; 9] = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"];
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct ChapterEntry { pub t: f64, pub title: String }
+pub struct ChapterEntry {
+    /// Identifiant stable dans la liste de sa video (les vignettes s'y lient par lui, pas par le rang) ; jamais 0.
+    pub id: u32,
+    pub t: f64,
+    pub title: String,
+}
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct VideoEntry {
@@ -46,6 +51,29 @@ impl VideoEntry {
         }
         if out.len() < 2 { return vec![]; }
         out.into_iter().enumerate().map(|(j, (t, n))| (t, if n.is_empty() { format!("Chapitre {}", j + 1) } else { n })).collect()
+    }
+
+    /// Identifiant libre pour un nouveau chapitre.
+    pub fn next_chapter_id(&self) -> u32 { self.chapters.iter().map(|c| c.id).max().unwrap_or(0) + 1 }
+
+    /// Ajoute un chapitre a l'instant `t` (secondes) et rend son identifiant ; s'il y en a deja un a cet instant (a 10 ms pres),
+    /// c'est lui qui est rendu.
+    pub fn add_chapter(&mut self, t: f64, title: &str) -> u32 {
+        if let Some(c) = self.chapters.iter().find(|c| (c.t - t).abs() < 0.01) { return c.id; }
+        let id = self.next_chapter_id();
+        self.chapters.push(ChapterEntry { id, t, title: title.into() });
+        id
+    }
+
+    pub fn chapter(&self, id: u32) -> Option<&ChapterEntry> { self.chapters.iter().find(|c| c.id == id) }
+
+    /// Donne un identifiant a chaque chapitre qui n'en a pas (ou qui reprend celui d'un autre).
+    fn fix_chapter_ids(&mut self) {
+        let mut seen = std::collections::HashSet::new();
+        let mut next = self.chapters.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+        for c in &mut self.chapters {
+            if c.id == 0 || !seen.insert(c.id) { c.id = next; seen.insert(next); next += 1; }
+        }
     }
 
     pub fn new(file: &str) -> Self {
@@ -120,10 +148,11 @@ impl ProjectModel {
             e.audio = crate::audio::tracks_from_value(x.get("pistes_audio"))?;
             for c in x.get("chapitres").and_then(Value::as_array).unwrap_or(&[]) {
                 e.chapters.push(match c {
-                    Value::Obj(_) => ChapterEntry { t: c.get("t").and_then(Value::as_f64).ok_or("chapitre sans « t »")?, title: c.get("titre").and_then(Value::as_str).unwrap_or("").into() },
-                    _ => ChapterEntry { t: c.as_f64().ok_or("chapitre : nombre attendu")?, title: String::new() },
+                    Value::Obj(_) => ChapterEntry { id: c.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), t: c.get("t").and_then(Value::as_f64).ok_or("chapitre sans « t »")?, title: c.get("titre").and_then(Value::as_str).unwrap_or("").into() },
+                    _ => ChapterEntry { id: 0, t: c.as_f64().ok_or("chapitre : nombre attendu")?, title: String::new() },
                 });
             }
+            e.fix_chapter_ids();
             m.videos.push(e);
         }
         if let Some(e) = v.get("encodage") {
@@ -144,6 +173,7 @@ impl ProjectModel {
         if let Some(d) = v.get("mise_en_page") { m.designs = Designs::from_value(d)?; }
         m.languages = crate::subtitle::languages_from_value(v.get("langues"))?;
         m.iso = crate::iso::IsoSettings::from_value(v.get("iso"))?;
+        m.sync_chapters();
         Ok(m)
     }
 
@@ -151,7 +181,8 @@ impl ProjectModel {
         let mut root = self.raw.clone();
         set(&mut root, "titre", Some(s(&self.title)));
         set(&mut root, "langue", Some(s(&self.lang)));
-        let vids: Vec<Value> = self.videos.iter().map(|e| {
+        let linked = self.designs.linked_chapters();
+        let vids: Vec<Value> = self.videos.iter().enumerate().map(|(vi, e)| {
             let mut o = e.raw.clone();
             set(&mut o, "fichier", Some(s(&e.file)));
             set(&mut o, "titre", if e.title.is_empty() { None } else { Some(s(&e.title)) });
@@ -162,7 +193,15 @@ impl ProjectModel {
             let audio: Vec<crate::audio::AudioTrackCfg> = e.audio.iter().map(|t| { let mut t = t.clone(); if let Some(l) = self.language(t.lang_id) { t.lang = l.code.clone(); } t }).collect();
             set(&mut o, "pistes_audio", crate::audio::tracks_to_value(&audio));
             set(&mut o, "chapitres", if e.chapters.is_empty() { None } else {
-                Some(Value::Arr(e.chapters.iter().map(|c| if c.title.is_empty() { n(c.t) } else { Value::Obj(vec![("t".into(), n(c.t)), ("titre".into(), s(&c.title))]) }).collect()))
+                // l'identifiant n'est ecrit que pour les chapitres auxquels une vignette est liee
+                Some(Value::Arr(e.chapters.iter().map(|c| {
+                    let used = linked.contains(&(vi, c.id));
+                    if c.title.is_empty() && !used { return n(c.t); }
+                    let mut o = vec![("t".to_string(), n(c.t))];
+                    if !c.title.is_empty() { o.push(("titre".into(), s(&c.title))); }
+                    if used { o.push(("id".into(), n(c.id as f64))); }
+                    Value::Obj(o)
+                }).collect()))
             });
             o
         }).collect();
@@ -192,6 +231,28 @@ impl ProjectModel {
     }
 
     pub fn to_json(&self) -> String { self.to_value().to_pretty() }
+
+    /// Aligne les vignettes liees a un chapitre sur l'instant de ce chapitre (a appeler apres toute modification des chapitres ou
+    /// de la video d'une vignette). Rend vrai si une vignette a change.
+    pub fn sync_chapters(&mut self) -> bool {
+        let videos = &self.videos;
+        self.designs.sync_chapters(&|v, id| videos.get(v).and_then(|x| x.chapter(id)).map(|c| c.t))
+    }
+
+    /// Lie chaque vignette a instant libre au chapitre de sa video qui tombe a cet instant (a 10 ms pres), s'il y en a un.
+    pub fn link_chapters_by_time(&mut self) {
+        let videos = &self.videos;
+        for d in &mut self.designs.free {
+            for it in &mut d.items {
+                if let crate::design::Kind::Slot { video: Some(v), start: Some(t), chapter: chapter @ None, .. } = &mut it.kind {
+                    if let Some(c) = videos.get(*v).and_then(|x| x.chapters.iter().find(|c| (c.t - *t).abs() < 0.01)) { *chapter = Some(c.id); }
+                }
+            }
+        }
+    }
+
+    /// Nombre de vignettes liees au chapitre `id` de la video `video`.
+    pub fn chapter_uses(&self, video: usize, id: u32) -> usize { self.designs.chapter_uses(video, id) }
 
     /// Piste dont le code de langue est celui de sa langue du projet (si elle en a une).
     fn synced_track(&self, t: &SubTrackCfg) -> SubTrackCfg {

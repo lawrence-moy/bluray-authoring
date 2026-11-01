@@ -457,5 +457,7 @@ pub fn ensure_pages(m: &mut ProjectModel, durations: &HashMap<String, f64>) -> R
     let gv = gen_videos(m, durations)?;
     let gen = crate::convert::generate_pages(&gv, &m.title, &m.designs.style)?;
     m.designs.free = gen.free;
+    // les vignettes de chapitre des pages de depart suivent les chapitres de la liste de leur video
+    m.link_chapters_by_time();
     Ok(true)
 }

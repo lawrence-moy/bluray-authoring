@@ -349,6 +349,8 @@ impl eframe::App for App {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
         let busy = self.running();
+        // vignettes liees a un chapitre : elles suivent l'instant du chapitre (et se detachent si le chapitre disparait)
+        if self.model.sync_chapters() { self.dirty = true; self.bump(); }
         let mut open = self.show_config;
         egui::Window::new("Configuration").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             let before = self.cfg;
@@ -581,6 +583,8 @@ impl eframe::App for App {
                 ui.add_enabled_ui(!busy, |ui| {
                     let mut changed = false;
                     let sub_base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+                    // vignettes liees a chaque chapitre de la video selectionnee : (identifiant, nombre)
+                    let chapter_uses: Vec<(u32, usize)> = self.sel.and_then(|i| self.model.videos.get(i).map(|v| v.chapters.iter().map(|c| (c.id, self.model.designs.chapter_uses(i, c.id))).collect::<Vec<_>>())).unwrap_or_default();
                     if let Some(v) = self.sel.and_then(|i| self.model.videos.get_mut(i)) {
                         ui.heading("Vidéo sélectionnée");
                         ui.label(egui::RichText::new(&v.file).weak());
@@ -599,7 +603,7 @@ impl eframe::App for App {
                             }
                         });
                         ui.separator();
-                        ui.label("Chapitres (au moins 2 pour créer un menu de chapitres) :");
+                        ui.label("Repères de chapitre (touches suivant / précédent de la télécommande, vignettes de chapitre, pages de départ) :");
                         ui.horizontal(|ui| {
                             let mut on = v.auto_s.is_some();
                             if ui.checkbox(&mut on, "Automatiques, un toutes les").changed() {
@@ -610,20 +614,25 @@ impl eframe::App for App {
                                 changed |= ui.add(egui::DragValue::new(a).speed(1.0).range(1.0..=1.0e6).suffix(" s")).changed();
                             }
                         });
-                        ui.label(egui::RichText::new("Les chapitres manuels, s'il y en a, remplacent les automatiques.").weak());
+                        ui.label(egui::RichText::new("Les chapitres manuels, s'il y en a, remplacent les automatiques. Une vignette de chapitre (page) peut se lier à l'un d'eux, ou en créer un.").weak());
                         let mut del = None;
                         for (k, c) in v.chapters.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
                                 changed |= ui.add(egui::DragValue::new(&mut c.t).speed(1.0).range(0.0..=1.0e6).suffix(" s")).changed();
                                 ui.label(mmss(c.t));
                                 changed |= ui.add(egui::TextEdit::singleline(&mut c.title).hint_text("nom (facultatif)")).changed();
+                                if let Some(n) = chapter_uses.iter().find(|u| u.0 == c.id).map(|u| u.1).filter(|n| *n > 0) {
+                                    ui.label(egui::RichText::new(format!("{n} vignette{}", if n > 1 { "s" } else { "" })).weak()).on_hover_text("Vignettes de pages liées à ce chapitre : elles suivent son instant. Si vous retirez le chapitre, elles gardent leur instant.");
+                                }
                                 if ui.small_button("Retirer").clicked() { del = Some(k); }
                             });
                         }
                         if let Some(k) = del { v.chapters.remove(k); changed = true; }
                         if ui.button("Ajouter un chapitre").clicked() {
-                            let t = v.chapters.last().map_or(0.0, |c| c.t + 60.0);
-                            v.chapters.push(ChapterEntry { t, title: String::new() });
+                            let t = v.chapters.iter().map(|c| c.t).fold(f64::NEG_INFINITY, f64::max);
+                            let t = if t.is_finite() { t + 60.0 } else { 0.0 };
+                            let id = v.next_chapter_id();
+                            v.chapters.push(ChapterEntry { id, t, title: String::new() });
                             changed = true;
                         }
                         ui.separator();

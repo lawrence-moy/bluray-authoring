@@ -56,7 +56,7 @@ fn model(n: usize) -> ProjectModel {
 #[test]
 fn editing_pages() {
     let mut m = model(2);
-    m.videos[0].chapters = vec![ChapterEntry { t: 0.0, title: "Debut".into() }, ChapterEntry { t: 30.0, title: "Suite".into() }];
+    m.videos[0].chapters = vec![ChapterEntry { id: 1, t: 0.0, title: "Debut".into() }, ChapterEntry { id: 2, t: 30.0, title: "Suite".into() }];
     // chapitres automatiques sans duree connue : pages de depart differees
     m.videos[1].auto_s = Some(60.0);
     assert!(ensure_pages(&mut m, &HashMap::new()).is_err());

@@ -141,9 +141,11 @@ pub enum Kind {
     /// `link` : destination au clic ; `None` = comportement habituel (video : son menu de chapitres s'il existe, sinon la lecture ;
     /// chapitre : lecture depuis ce chapitre).
     /// `start` : vignette de chapitre — la video demarre a cet instant (secondes) ; `None` = depuis le debut.
+    /// `chapter` : identifiant du chapitre de la video auquel la vignette est liee (liste des chapitres de la video) ; `start`
+    /// suit alors l'instant de ce chapitre (`Designs::sync_chapters`). `None` = instant libre.
     /// `label` : libelle (vide = titre de la video, ou « mm:ss » pour un chapitre) ; `thumb_at` : instant de l'image montree
     /// (`None` = depart du chapitre, ou image habituelle de la video) ; `ret` : ou revenir a la fin de la video.
-    Slot { thumb_h: i32, video: Option<usize>, link: Option<Target>, start: Option<f64>, label: String, thumb_at: Option<f64>, ret: SlotReturn },
+    Slot { thumb_h: i32, video: Option<usize>, link: Option<Target>, start: Option<f64>, chapter: Option<u32>, label: String, thumb_at: Option<f64>, ret: SlotReturn },
     /// `target` : page visee par une action `Goto` (ignore pour les autres actions).
     Nav { action: NavAction, text: String, target: Option<Target> },
     /// `font` : vide = police par defaut ; sinon fichier .ttf/.otf (chemin absolu ou relatif au projet) ou nom d'un fichier de police installe.
@@ -207,7 +209,7 @@ impl Item {
     pub fn fixed_video(&self) -> Option<usize> { if let Kind::Slot { video, .. } = self.kind { video } else { None } }
     /// Vignette d'une video du projet (`start` : instant de depart pour une vignette de chapitre).
     pub fn video_slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32, video: usize, start: Option<f64>, label: &str) -> Item {
-        Item { x, y, w, h, kind: Kind::Slot { thumb_h, video: Some(video), link: None, start, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0, sub: Default::default() }
+        Item { x, y, w, h, kind: Kind::Slot { thumb_h, video: Some(video), link: None, start, chapter: None, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0, sub: Default::default() }
     }
     /// Instant de depart d'une vignette de chapitre.
     pub fn chapter_start(&self) -> Option<f64> {
@@ -492,11 +494,12 @@ impl PageDesign {
             let mut o: Vec<(String, Value)> = Vec::new();
             let mut put = |k: &str, v: Value| o.push((k.to_string(), v));
             match &it.kind {
-                Kind::Slot { thumb_h, video, link, start, label, thumb_at, ret } => {
+                Kind::Slot { thumb_h, video, link, start, chapter, label, thumb_at, ret } => {
                     put("type", Value::Str("vignette".into())); put("vignette_h", num(*thumb_h));
                     put("video", video.map_or(Value::Null, |v| num(v as i32 + 1)));
                     if let Some(t) = link { put("cible", t.to_value()); }
                     if let Some(t) = start { put("depart_s", Value::Num(*t)); }
+                    if let (Some(c), Some(_)) = (chapter, start) { put("chapitre", num(*c as i32)); }
                     if !label.is_empty() { put("libelle", Value::Str(label.clone())); }
                     if let Some(t) = thumb_at { put("image_s", Value::Num(*t)); }
                     if let Some(r) = ret.to_value() { put("retour", r); }
@@ -553,7 +556,8 @@ impl PageDesign {
                     let one = |key: &str| e.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
                     let video = one("video");
                     let num = |key: &str| e.get(key).and_then(Value::as_f64).map(|x| x.max(0.0));
-                    Kind::Slot { thumb_h: at("vignette_h")?, video, link: link()?, start: num("depart_s"), label: st("libelle").unwrap_or("").to_string(),
+                    Kind::Slot { thumb_h: at("vignette_h")?, video, link: link()?, start: num("depart_s"),
+                                 chapter: num("depart_s").and_then(|_| e.get("chapitre").and_then(Value::as_f64)).map(|c| c.max(0.0) as u32), label: st("libelle").unwrap_or("").to_string(),
                                  thumb_at: num("image_s"), ret: SlotReturn::from_value(e.get("retour")) }
                 }
                 "navigation" => {
@@ -624,6 +628,38 @@ impl Designs {
     pub fn pages(&self) -> &[PageDesign] { &self.free }
 
     /// Echange deux videos (vignettes et destinations suivent leur video).
+    /// Aligne l'instant des vignettes liees a un chapitre sur celui du chapitre (`lookup(video, id)` : instant, s'il existe).
+    /// Une vignette dont le chapitre n'existe plus (ou dont la video a change) devient une vignette a instant libre : elle
+    /// garde son instant. Rend vrai si quelque chose a change.
+    pub fn sync_chapters(&mut self, lookup: &dyn Fn(usize, u32) -> Option<f64>) -> bool {
+        let mut changed = false;
+        for d in &mut self.free {
+            for it in &mut d.items {
+                if let Kind::Slot { video, start, chapter, .. } = &mut it.kind {
+                    let Some(id) = *chapter else { continue };
+                    match video.and_then(|v| lookup(v, id)) {
+                        Some(t) => if *start != Some(t) { *start = Some(t); changed = true; },
+                        None => { *chapter = None; changed = true; }
+                    }
+                }
+            }
+        }
+        changed
+    }
+
+    /// Chapitres (video, identifiant) utilises par des vignettes.
+    pub fn linked_chapters(&self) -> std::collections::BTreeSet<(usize, u32)> {
+        self.free.iter().flat_map(|d| d.items.iter()).filter_map(|it| match it.kind {
+            Kind::Slot { video: Some(v), chapter: Some(c), start: Some(_), .. } => Some((v, c)),
+            _ => None,
+        }).collect()
+    }
+
+    /// Nombre de vignettes liees au chapitre `id` de la video `video`.
+    pub fn chapter_uses(&self, video: usize, id: u32) -> usize {
+        self.free.iter().flat_map(|d| d.items.iter()).filter(|it| matches!(it.kind, Kind::Slot { video: Some(v), chapter: Some(c), .. } if v == video && c == id)).count()
+    }
+
     pub fn swap_videos(&mut self, a: usize, b: usize) {
         for d in &mut self.free {
             for it in &mut d.items {

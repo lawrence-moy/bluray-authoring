@@ -558,3 +558,17 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - `IsoOptions.compat` (cle « compatibilite », defaut vrai) : 288 secteurs en fin d'image, sequence de reserve a +16,
   ancre a N-257 et sur le dernier secteur ; sinon reserve au secteur 48 et ancre finale seule. `read_iso` controle la
   sequence de reserve et la troisieme ancre (`IsoTree.anchors`, `reserve_at`).
+
+## Chapitres : liste unique par video, vignettes liees
+
+- `ChapterEntry.id` (stable, propre a la video, jamais 0). JSON : `{"t", "titre", "id"}` ; l'identifiant n'est ecrit que pour
+  les chapitres auxquels une vignette est liee (sinon un simple nombre ou `{t, titre}`). Les anciens fichiers recoivent des
+  identifiants au chargement (`fix_chapter_ids`).
+- `Kind::Slot.chapter: Option<u32>` (JSON `chapitre`, valable avec `depart_s`) : `start` reste l'instant utilise par la
+  construction et l'apercu ; `Designs::sync_chapters` / `ProjectModel::sync_chapters` le realignent sur le chapitre
+  (appele au chargement et a chaque image de l'interface). Chapitre disparu ou video changee : la vignette garde son
+  instant et devient libre. Changer la video d'une vignette la delie (fait par l'interface).
+- `VideoEntry::add_chapter` (reutilise un chapitre a 10 ms pres), `ProjectModel::chapter_uses`, `link_chapters_by_time`
+  (pages de depart liees a leurs chapitres manuels). La construction du disque n'est pas modifiee.
+- Interface : inspecteur de la vignette = liste « Chapitre de la vidéo » + « Créer le chapitre » + « Détacher » ;
+  « Vidéo sélectionnée » affiche le nombre de vignettes liees a chaque chapitre.
