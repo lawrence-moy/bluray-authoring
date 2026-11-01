@@ -208,6 +208,9 @@ fn align_button(ui: &mut egui::Ui, a: ItemAlign, tip: &str) -> bool {
     resp.on_hover_text(tip).clicked()
 }
 
+/// Texte depose dans le presse-papiers systeme a la copie de widgets (le contenu reel reste dans l'application).
+const CLIP_MARK: &str = "bdauthor:widgets";
+
 fn mmss(t: f64) -> String {
     let s = t.max(0.0);
     let whole = s.floor() as i64;
@@ -1833,6 +1836,67 @@ impl App {
         let undo = !redo && ctx.input_mut(|i| i.consume_key(Modifiers::COMMAND, Key::Z));
         if redo { self.redo_action(); }
         if undo { self.undo_action(); }
+        // copier / couper / coller : egui les transmet en evenements Copy / Cut / Paste (et non en touches)
+        let (copy, cut, paste) = ctx.input_mut(|i| {
+            let has = |i: &egui::InputState, f: fn(&egui::Event) -> bool| i.events.iter().any(f);
+            let copy = has(i, |e| matches!(e, egui::Event::Copy)) || i.consume_key(Modifiers::COMMAND, Key::C);
+            let cut = has(i, |e| matches!(e, egui::Event::Cut)) || i.consume_key(Modifiers::COMMAND, Key::X);
+            let paste = has(i, |e| matches!(e, egui::Event::Paste(t) if t == CLIP_MARK)) || i.consume_key(Modifiers::COMMAND, Key::V);
+            (copy, cut, paste)
+        });
+        if copy || cut {
+            self.copy_selection(cut);
+            // egui-winit ne transmet « coller » que si le presse-papiers systeme contient du texte : on y depose un marqueur
+            if !self.clipboard.is_empty() { ctx.copy_text(CLIP_MARK.to_string()); }
+        }
+        if paste { self.paste_clipboard(); }
+    }
+
+    /// Copie (ou coupe) les widgets selectionnes dans le presse-papiers de l'application.
+    fn copy_selection(&mut self, cut: bool) {
+        let Some(info) = self.current_info() else { return };
+        let mut idx: Vec<usize> = self.extra_sel.clone();
+        idx.extend(self.sel_item);
+        idx.sort_unstable();
+        idx.dedup();
+        let Some(d) = info.design_mut(&mut self.model.designs) else { return };
+        idx.retain(|&i| i < d.items.len() && !d.item_hidden(i) && !d.item_locked(i));
+        if idx.is_empty() { return; }
+        self.clipboard = idx.iter().map(|&i| d.items[i].clone()).collect();
+        self.clip_from = Some(info.r);
+        self.paste_n = 0;
+        let n = idx.len();
+        if cut {
+            for &i in idx.iter().rev() { d.items.remove(i); }
+            self.sel_item = None;
+            self.extra_sel.clear();
+            self.bump();
+        }
+        let (verb, pl) = (if cut { "coupé" } else { "copié" }, if n > 1 { "s" } else { "" });
+        self.notice = format!("{n} widget{pl} {verb}{pl}.");
+    }
+
+    /// Colle les widgets du presse-papiers dans la page affichee (decales si c'est la page d'origine).
+    fn paste_clipboard(&mut self) {
+        if self.clipboard.is_empty() { return; }
+        let Some(info) = self.current_info() else { return };
+        let layer = self.target_layer(&info);
+        self.paste_n += 1;
+        let off = if self.clip_from == Some(info.r) { 30 * self.paste_n } else { 0 };
+        let items = self.clipboard.clone();
+        let Some(d) = info.design_mut(&mut self.model.designs) else { return };
+        let mut added = Vec::new();
+        for mut it in items {
+            it.x = (it.x + off).clamp(0, (1920 - it.w).max(0));
+            it.y = (it.y + off).clamp(0, (1080 - it.h).max(0));
+            added.push(insert_item(d, it, layer));
+        }
+        // insert_item range chaque widget a la fin de son calque : les rangs precedents peuvent avoir bouge si le calque est le meme
+        // (insertions successives en fin de calque : rangs croissants, aucun decalage des precedents)
+        self.sel_item = added.pop();
+        self.extra_sel = added;
+        self.bump();
+        self.notice = "Widgets collés.".to_string();
     }
 
     pub(crate) fn undo_action(&mut self) {
