@@ -863,8 +863,10 @@ impl App {
                     let col = kind_color(&it.kind);
                     let multi = !self.extra_sel.is_empty() && (selected || self.extra_sel.contains(&i));
                     if multi {
-                        // selection multiple : contour fin par element, le cadre epais englobe l'ensemble (dessine apres la boucle)
-                        painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_rgb(120, 190, 255)));
+                        // selection multiple : contour en tirets sur chaque element (fond sombre + tirets clairs : visible sur tout decor)
+                        let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+                        painter.add(egui::Shape::line(pts.to_vec(), Stroke::new(3.0_f32, Color32::from_black_alpha(170))));
+                        painter.extend(egui::Shape::dashed_line(&pts, Stroke::new(2.0_f32, Color32::WHITE), 7.0, 5.0));
                     } else if selected && self.preview_pulse > 0 {
                         // animation en cours dans l'apercu : ni voile ni cadre epais (ils la cacheraient), un contour fin seulement
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_white_alpha(140)));
@@ -887,21 +889,6 @@ impl App {
                             painter.rect_filled(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Color32::WHITE);
                         }
                     }
-                }
-            }
-            if !self.extra_sel.is_empty() {
-                // cadre englobant de la selection multiple
-                let mut b: Option<(i32, i32, i32, i32)> = None;
-                let live: Vec<Item> = info.design(&self.model.designs).map(|d| d.items.clone()).unwrap_or_default();
-                for &i in self.sel_item.iter().chain(self.extra_sel.iter()) {
-                    if let Some(it) = live.get(i) {
-                        b = Some(match b { None => (it.x, it.y, it.x + it.w, it.y + it.h), Some((x0, y0, x1, y1)) => (x0.min(it.x), y0.min(it.y), x1.max(it.x + it.w), y1.max(it.y + it.h)) });
-                    }
-                }
-                if let Some((x0, y0, x1, y1)) = b {
-                    let r = Rect::from_min_max(to_screen(x0 as f32, y0 as f32), to_screen(x1 as f32, y1 as f32));
-                    painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 18));
-                    painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
                 }
             }
             if let Some(pos) = resp.hover_pos() {
