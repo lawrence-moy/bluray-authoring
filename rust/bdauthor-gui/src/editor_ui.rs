@@ -1111,7 +1111,8 @@ impl App {
         if group.len() == 1 {
             let label = |d: &PageDesign, k: usize| -> String {
                 match d.items.get(k) {
-                    Some(it) if !it.name.is_empty() => format!("{}. {}", k + 1, it.name),
+                    // widget nomme : son nom seul (suivi de son rang si un autre widget porte le meme nom)
+                    Some(it) if !it.name.is_empty() => if d.items.iter().filter(|x| x.name == it.name).count() > 1 { format!("{} ({})", it.name, k + 1) } else { it.name.clone() },
                     Some(it) => match it.fixed_video() {
                         Some(v) if matches!(it.kind, Kind::Slot { .. }) => format!("{}. {} (vidéo {})", k + 1, kind_name(&it.kind), v + 1),
                         _ => format!("{}. {}", k + 1, kind_name(&it.kind)),
