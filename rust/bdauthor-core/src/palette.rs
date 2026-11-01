@@ -3,6 +3,8 @@
 //!
 //! Les pixels (presque) transparents prennent l'indice 0 ; les autres sont quantifies en `rgb_colors` couleurs
 //! (sur l'ensemble des images) puis associes au palier d'alpha le plus proche. Une entree = (couleur, alpha).
+//! Menus : `quantize_rgba` choisit couleurs et opacites ensemble d'apres le contenu (degrades de halo et d'ombre fins) ;
+//! `quantize_images` (paliers d'alpha fixes) reste utilise pour les sous-titres.
 use crate::ig::{py_round, PalEntry};
 use std::collections::{BTreeMap, HashMap};
 
@@ -235,6 +237,113 @@ fn quantize_opaque(images: &[&RgbaImage], alpha_min: u8) -> Quantized {
             err_cur = std::mem::replace(&mut err_next, vec![[0i32; 3]; w + 2]);
         }
         out.push(rows);
+    }
+    (entries, out)
+}
+
+// ------------------------------------------------------------------ palette avec transparence (menus)
+
+/// Poids de l'alpha face aux composantes de couleur (coupe mediane et plus proche voisin) : une erreur d'opacite se voit plus
+/// qu'une erreur de teinte de meme amplitude, surtout dans un degrade (halo, ombre).
+const ALPHA_WEIGHT: i64 = 3;
+
+fn dist4(a: [u8; 4], b: [u8; 4]) -> i64 {
+    // l'erreur de couleur compte d'autant plus que le pixel est opaque
+    let op = (a[3] as i64 + b[3] as i64) / 2;
+    let c: i64 = (0..3).map(|k| { let d = a[k] as i64 - b[k] as i64; d * d }).sum();
+    let da = a[3] as i64 - b[3] as i64;
+    c * op / 255 + ALPHA_WEIGHT * da * da
+}
+
+/// Coupe mediane en (R, G, B, A) : au plus `k` entrees, reparties selon le contenu (un halo d'une seule couleur obtient
+/// beaucoup de niveaux d'opacite, des boutons opaques beaucoup de couleurs). On coupe le seau dont l'erreur (effectif x
+/// etendue ponderee) est la plus grande. Deterministe.
+pub fn median_cut_rgba(counts: &HashMap<[u8; 4], u32>, k: usize) -> Vec<[u8; 4]> {
+    let mut colors: Vec<([u8; 4], u32)> = counts.iter().map(|(c, n)| (*c, *n)).collect();
+    colors.sort();
+    if colors.is_empty() { return vec![]; }
+    // etendues ponderees d'un seau : couleur ponderee par l'opacite maximale, alpha par sqrt(ALPHA_WEIGHT) ~ 1.7
+    let ranges = |cs: &[([u8; 4], u32)]| -> [u64; 4] {
+        let (mut lo, mut hi) = ([255u8; 4], [0u8; 4]);
+        for (c, _) in cs { for j in 0..4 { lo[j] = lo[j].min(c[j]); hi[j] = hi[j].max(c[j]); } }
+        let op = hi[3] as u64;
+        [(hi[0] - lo[0]) as u64 * op / 255, (hi[1] - lo[1]) as u64 * op / 255, (hi[2] - lo[2]) as u64 * op / 255, (hi[3] - lo[3]) as u64 * 17 / 10]
+    };
+    struct B { colors: Vec<([u8; 4], u32)>, total: u64, r: [u64; 4] }
+    let mk = |colors: Vec<([u8; 4], u32)>| { let total = colors.iter().map(|c| c.1 as u64).sum(); let r = ranges(&colors); B { colors, total, r } };
+    let mut buckets = vec![mk(colors)];
+    while buckets.len() < k {
+        let pick = buckets.iter().enumerate().filter(|(_, b)| b.colors.len() > 1)
+            .max_by_key(|(i, b)| (b.total * b.r.iter().copied().max().unwrap_or(0), std::cmp::Reverse(*i)))
+            .map(|(i, _)| i);
+        let Some(i) = pick else { break };
+        let mut b = buckets.swap_remove(i);
+        let ch = (0..4).max_by_key(|&j| (b.r[j], std::cmp::Reverse(j))).unwrap();
+        b.colors.sort_by_key(|(c, _)| (c[ch], c[(ch + 1) % 4], c[(ch + 2) % 4], c[(ch + 3) % 4]));
+        let half = b.total / 2;
+        let (mut acc, mut cut) = (0u64, 0usize);
+        for (j, (_, n)) in b.colors.iter().enumerate() {
+            acc += *n as u64;
+            cut = j + 1;
+            if acc >= half { break; }
+        }
+        cut = cut.clamp(1, b.colors.len() - 1);
+        let right = b.colors.split_off(cut);
+        buckets.push(mk(b.colors));
+        buckets.push(mk(right));
+    }
+    let mut pal: Vec<[u8; 4]> = buckets.iter().map(|b| {
+        let t = b.total.max(1);
+        let mut s = [0u64; 4];
+        for (c, n) in &b.colors { for j in 0..4 { s[j] += c[j] as u64 * *n as u64; } }
+        [0, 1, 2, 3].map(|j| ((s[j] + t / 2) / t) as u8)
+    }).collect();
+    pal.sort();
+    pal.dedup();
+    pal
+}
+
+/// Quantification des images de menu : palette commune d'au plus `MAX_ENTRIES` entrees (couleur + opacite) choisies d'apres
+/// le contenu, au lieu de couleurs x paliers d'alpha fixes. Indice 0 = transparent (alpha < `alpha_min`). Les images toutes
+/// opaques (vignettes) gardent la quantification tramee de `quantize_opaque`.
+pub fn quantize_rgba(images: &[&RgbaImage], alpha_min: u8) -> Quantized {
+    if images.iter().all(|im| im.data.chunks_exact(4).all(|p| p[3] < alpha_min || p[3] >= 250)) {
+        return quantize_opaque(images, alpha_min);
+    }
+    // presque opaque = opaque (evite des entrees a 250..254 inutiles)
+    let norm = |p: &[u8]| -> [u8; 4] { [p[0], p[1], p[2], if p[3] >= 250 { 255 } else { p[3] }] };
+    let mut counts: HashMap<[u8; 4], u32> = HashMap::new();
+    for im in images {
+        for p in im.data.chunks_exact(4) {
+            if p[3] >= alpha_min { *counts.entry(norm(p)).or_insert(0) += 1; }
+        }
+    }
+    let mut pal = median_cut_rgba(&counts, MAX_ENTRIES - 1);
+    // aucune entree sous le seuil de visibilite (la moyenne d'un seau ne peut pas y tomber, par securite)
+    for e in pal.iter_mut() { e[3] = e[3].max(alpha_min); }
+    let mut cache: HashMap<[u8; 4], u8> = HashMap::new();
+    let mut out = Vec::with_capacity(images.len());
+    for im in images {
+        let mut rows = Vec::with_capacity(im.height as usize);
+        for y in 0..im.height as usize {
+            let row: Vec<u8> = im.data[y * im.width as usize * 4..(y + 1) * im.width as usize * 4].chunks_exact(4).map(|p| {
+                if p[3] < alpha_min { return 0; }
+                let c = norm(p);
+                *cache.entry(c).or_insert_with(|| {
+                    let mut best = (i64::MAX, 0usize);
+                    for (i, e) in pal.iter().enumerate() { let d = dist4(c, *e); if d < best.0 { best = (d, i); } }
+                    (best.1 + 1) as u8
+                })
+            }).collect();
+            rows.push(row);
+        }
+        out.push(rows);
+    }
+    let mut entries = BTreeMap::new();
+    entries.insert(0u8, (16, 128, 128, 0));
+    for (i, e) in pal.iter().enumerate() {
+        let (y, cr, cb) = rgb_to_ycrcb(e[0], e[1], e[2]);
+        entries.insert((i + 1) as u8, (y, cr, cb, e[3]));
     }
     (entries, out)
 }

@@ -7,7 +7,7 @@ use crate::ig::*;
 use crate::m2ts::Segment;
 use crate::mobj::Command;
 use crate::mux::{ig_pes_specs, mux_ig_clip, PesSpec};
-use crate::palette::{quantize_images, RgbaImage, ALPHA_LEVELS, ALPHA_MIN};
+use crate::palette::{quantize_rgba, RgbaImage, ALPHA_MIN};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -133,7 +133,8 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
         nanim.push(keys);
     }
     let refs: Vec<&RgbaImage> = flat.iter().map(|a| a.as_ref()).collect();
-    let (entries, rows) = quantize_images(&refs, o.rgb_colors, &ALPHA_LEVELS, ALPHA_MIN, true)?;
+    // palette choisie d'apres le contenu : couleurs et niveaux d'opacite (halo, ombres, bords adoucis)
+    let (entries, rows) = quantize_rgba(&refs, ALPHA_MIN);
     let mut pds = Pds::new(0, 0);
     for (i, e) in entries {
         pds.set(i, e);

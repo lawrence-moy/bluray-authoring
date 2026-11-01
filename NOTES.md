@@ -538,3 +538,13 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   `iso::finish_build` : avertissement de capacite, ecriture, verification, suppression du dossier temporaire.
 - `bdauthor-build` ecrit aussi l'image si le projet la demande (le dossier est toujours garde en ligne de commande).
 - Onglet « Génération ISO » (iso_ui.rs) : tous les reglages, compteur de caracteres du nom du volume.
+
+## Palette des menus avec transparence
+
+- Avant : 63 couleurs x 4 paliers d'alpha fixes (255/192/128/64) -> le halo (degrade d'opacite) devenait 2-3 bandes plates.
+- `palette::quantize_rgba` : coupe mediane en (R, G, B, A) sur 253 entrees, poids de l'alpha x3, erreur de couleur
+  ponderee par l'opacite ; seau coupe = effectif x etendue maximale. Images toutes opaques : `quantize_opaque` (tramage).
+  Pas de tramage pour les images translucides (eviterait un scintillement entre images d'une animation).
+- Mesure (test palette_alpha) : halo de 24 px -> 85 niveaux d'opacite et 0,9 d'erreur moyenne, contre 4 niveaux et 18.
+  Pire cas (12 vignettes de bruit + 8 images de halo) : ~2 s en release.
+- `quantize_images` reste pour les sous-titres (PGS).
