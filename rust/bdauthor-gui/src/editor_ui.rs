@@ -326,7 +326,7 @@ impl App {
         }
     }
 
-    fn base_dir(&self) -> PathBuf {
+    pub(crate) fn base_dir(&self) -> PathBuf {
         self.path.as_ref().and_then(|p| p.parent()).map(|p| p.to_path_buf()).unwrap_or_else(|| PathBuf::from("."))
     }
 
