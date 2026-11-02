@@ -338,7 +338,7 @@ impl FontRenderer {
             D::Image { path, x, y, w, h } => self.compose_on(im, &[Decor::Image { path: path.clone(), x: *x, y: *y, w: *w, h: *h }]),
             D::Shape { shape, x, y, w, h, fill, stroke, stroke_px, radius_px, flip } => {
                 if *shape == bdauthor_core::cover::ShapeKind::Line {
-                    if let Some(c) = stroke.or(*fill) { draw_line(&mut im, (*x, *y, *w, *h), *flip, c, *stroke_px); }
+                    if let Some(c) = stroke.or(*fill) { draw_segment(&mut im, (*x, *y, *w, *h), *flip, c, *stroke_px); }
                     return Ok(im);
                 }
                 draw_shape(&mut im, *shape, (*x, *y, *w, *h), *fill, *stroke, *stroke_px, *radius_px);
@@ -429,7 +429,7 @@ fn over_pixel(im: &mut RgbaImage, x: i32, y: i32, rgb: [u8; 3], a: f32) {
 }
 
 /// Segment d'epaisseur `stroke_px` (extremites arrondies) entre deux coins opposes du cadre `rect` ; `flip` : bas gauche -> haut droit.
-fn draw_line(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb: [u8; 3], stroke_px: i32) {
+fn draw_segment(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb: [u8; 3], stroke_px: i32) {
     let (x, y, w, h) = rect;
     let (x0, x1) = (x as f32, (x + w) as f32);
     let ((ax, ay), (bx, by)) = if flip { ((x0, (y + h) as f32), (x1, y as f32)) } else { ((x0, y as f32), (x1, (y + h) as f32)) };
