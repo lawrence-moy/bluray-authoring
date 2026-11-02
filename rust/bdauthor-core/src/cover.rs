@@ -55,7 +55,8 @@ pub enum CoverKind {
     Image { path: String },
     /// rectangle (coins arrondis de rayon `radius_mm`), ellipse inscrite dans le cadre, ou trait horizontal au milieu du cadre
     /// (tourne par `rot`) ; `fill` et `stroke` : couleurs, `None` = absent ; la bordure est a l'interieur du cadre
-    Shape { shape: ShapeKind, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_mm: f64, radius_mm: f64 },
+    /// `flip` (lignes) : la ligne va du coin bas gauche au coin haut droit du cadre au lieu de haut gauche -> bas droit
+    Shape { shape: ShapeKind, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_mm: f64, radius_mm: f64, flip: bool },
 }
 
 /// Element de jaquette. Position et taille en millimetres depuis le coin haut gauche de la jaquette *rognee* (le fond perdu a
@@ -78,9 +79,29 @@ impl CoverItem {
         CoverItem { kind: CoverKind::Text { text: text.into(), size_pt, color: [255, 255, 255], align: Align::Center, font: String::new(), fx: TextFx::default() }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
     }
     /// Rectangle plein blanc, ellipse pleine blanche, ou trait blanc de 0,5 mm.
+    /// Extremites d'une ligne (debut = a gauche) ; `None` pour tout autre element.
+    pub fn line_ends(&self) -> Option<((f64, f64), (f64, f64))> {
+        match &self.kind {
+            CoverKind::Shape { shape: ShapeKind::Line, flip, .. } => Some(if *flip { ((self.x, self.y + self.h), (self.x + self.w, self.y)) } else { ((self.x, self.y), (self.x + self.w, self.y + self.h)) }),
+            _ => None,
+        }
+    }
+
+    /// Place une ligne entre deux extremites (le cadre est le rectangle englobant). Sans effet sur un autre element.
+    pub fn set_line_ends(&mut self, a: (f64, f64), b: (f64, f64)) {
+        let r = |v: f64| (v * 100.0).round() / 100.0;
+        if let CoverKind::Shape { shape: ShapeKind::Line, flip, .. } = &mut self.kind {
+            *flip = (a.0 - b.0) * (a.1 - b.1) < 0.0;
+            self.x = r(a.0.min(b.0));
+            self.y = r(a.1.min(b.1));
+            self.w = r((a.0 - b.0).abs());
+            self.h = r((a.1 - b.1).abs());
+        }
+    }
+
     pub fn shape(shape: ShapeKind, x: f64, y: f64, w: f64, h: f64) -> CoverItem {
         let (fill, stroke) = if shape == ShapeKind::Line { (None, Some([255, 255, 255])) } else { (Some([255, 255, 255]), None) };
-        CoverItem { kind: CoverKind::Shape { shape, fill, stroke, stroke_mm: 0.5, radius_mm: 0.0 }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
+        CoverItem { kind: CoverKind::Shape { shape, fill, stroke, stroke_mm: 0.5, radius_mm: 0.0, flip: false }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
     }
     pub fn image(path: &str, x: f64, y: f64, w: f64, h: f64) -> CoverItem {
         CoverItem { kind: CoverKind::Image { path: path.into() }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
@@ -141,7 +162,7 @@ pub struct CoverLayout {
 pub enum CoverDecor {
     Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
-    Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32 },
+    Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, flip: bool },
 }
 
 impl CoverDecor {
@@ -205,7 +226,9 @@ impl Cover {
         let abs = |p: &str| -> PathBuf { let q = Path::new(p); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
         let items = draw_order(&self.items, &self.layers).into_iter().map(|i| &self.items[i]).filter_map(|it| {
             let (x, y) = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi));
-            let (iw, ih) = (mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
+            let is_line = matches!(&it.kind, CoverKind::Shape { shape: ShapeKind::Line, .. });
+            // une ligne peut etre exactement horizontale ou verticale (cadre de largeur ou hauteur nulle)
+            let (iw, ih) = if is_line { (mm_px(it.w, dpi).max(0), mm_px(it.h, dpi).max(0)) } else { (mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1)) };
             let d = match &it.kind {
                 CoverKind::Text { text, size_pt, color, align, font, fx } => {
                     let text = apply_vars(text, vars);
@@ -219,11 +242,11 @@ impl Cover {
                     if path.is_empty() { return None; }
                     CoverDecor::Image { path: abs(path), x, y, w: iw, h: ih }
                 }
-                CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm } => {
-                    CoverDecor::Shape { shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0) }
+                CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip } => {
+                    CoverDecor::Shape { flip: *flip, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0) }
                 }
             };
-            Some((d, it.rot))
+            Some((d, if is_line { 0 } else { it.rot }))
         }).collect();
         CoverLayout { size, fills, bg_image: if self.bg_image.is_empty() { None } else { Some(abs(&self.bg_image)) }, items }
     }
@@ -609,7 +632,8 @@ fn item_to_value(it: &CoverItem) -> Value {
             if fx.valign != d.valign { e.push(("alignement_v".into(), Value::Str(fx.valign.name().into()))); }
             if fx.autofit { e.push(("ajuster".into(), Value::Bool(true))); }
         }
-        CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm } => {
+        CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip } => {
+            if *flip { e.push(("inverse".into(), Value::Bool(true))); }
             e.push(("type".into(), Value::Str("forme".into())));
             e.push(("forme".into(), Value::Str(shape.name().into())));
             if let Some(c) = fill { e.push(("remplissage".into(), color_hex(*c))); }
@@ -658,12 +682,14 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
             stroke: e.get("bordure").map(|v| color_from(Some(v), [255, 255, 255])),
             stroke_mm: e.get("epaisseur_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.5).clamp(0.0, 50.0),
             radius_mm: e.get("rayon_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 200.0),
+            flip: matches!(e.get("inverse"), Some(Value::Bool(true))),
         },
         Some("image") => CoverKind::Image { path: e.get("fichier").and_then(Value::as_str).ok_or_else(|| format!("{what}, élément {} : « fichier » manquant", k + 1))?.to_string() },
         t => return Err(format!("{what}, élément {} : type {:?} inconnu", k + 1, t)),
     };
+    let min_side = if matches!(&kind, CoverKind::Shape { shape: ShapeKind::Line, .. }) { 0.0 } else { 1.0 };
     let rot = match f("rotation").round() as i64 { 90 => 90, 270 | -90 => 270, _ => 0 };
-    Ok(CoverItem { kind, x: f("x"), y: f("y"), w: f("w").max(1.0), h: f("h").max(1.0), rot, name: e.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), layer: f("calque").max(0.0) as usize })
+    Ok(CoverItem { kind, x: f("x"), y: f("y"), w: f("w").max(min_side), h: f("h").max(min_side), rot, name: e.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), layer: f("calque").max(0.0) as usize })
 }
 
 // ------------------------------------------------------------------ calques
@@ -755,7 +781,7 @@ pub fn snap_rect(handle: u8, r: (f64, f64, f64, f64), xs: &[f64], ys: &[f64], th
         match handle { 0 => y += d, 1 | 2 => { y += d; h -= d } _ => h += d }
         gy = Some(l);
     }
-    if w < 1.0 || h < 1.0 { return (r, None, None); }
+    if handle != 0 && (w < 1.0 || h < 1.0) { return (r, None, None); }
     ((x, y, w, h), gx, gy)
 }
 

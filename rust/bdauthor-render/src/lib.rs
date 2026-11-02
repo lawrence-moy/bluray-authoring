@@ -336,7 +336,11 @@ impl FontRenderer {
         use bdauthor_core::cover::CoverDecor as D;
         match d {
             D::Image { path, x, y, w, h } => self.compose_on(im, &[Decor::Image { path: path.clone(), x: *x, y: *y, w: *w, h: *h }]),
-            D::Shape { shape, x, y, w, h, fill, stroke, stroke_px, radius_px } => {
+            D::Shape { shape, x, y, w, h, fill, stroke, stroke_px, radius_px, flip } => {
+                if *shape == bdauthor_core::cover::ShapeKind::Line {
+                    if let Some(c) = stroke.or(*fill) { draw_line(&mut im, (*x, *y, *w, *h), *flip, c, *stroke_px); }
+                    return Ok(im);
+                }
                 draw_shape(&mut im, *shape, (*x, *y, *w, *h), *fill, *stroke, *stroke_px, *radius_px);
                 Ok(im)
             }
@@ -422,6 +426,25 @@ fn over_pixel(im: &mut RgbaImage, x: i32, y: i32, rgb: [u8; 3], a: f32) {
     if oa <= 0.0 { return; }
     let mix = |dc: u8, sc: u8| ((sc as f32 * a + dc as f32 * da * (1.0 - a)) / oa).round().clamp(0.0, 255.0) as u8;
     im.set(x as u32, y as u32, [mix(d[0], rgb[0]), mix(d[1], rgb[1]), mix(d[2], rgb[2]), (oa * 255.0).round() as u8]);
+}
+
+/// Segment d'epaisseur `stroke_px` (extremites arrondies) entre deux coins opposes du cadre `rect` ; `flip` : bas gauche -> haut droit.
+fn draw_line(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb: [u8; 3], stroke_px: i32) {
+    let (x, y, w, h) = rect;
+    let (x0, x1) = (x as f32, (x + w) as f32);
+    let ((ax, ay), (bx, by)) = if flip { ((x0, (y + h) as f32), (x1, y as f32)) } else { ((x0, y as f32), (x1, (y + h) as f32)) };
+    let half = stroke_px.max(1) as f32 / 2.0;
+    let (dx, dy) = (bx - ax, by - ay);
+    let len2 = dx * dx + dy * dy;
+    let m = half.ceil() as i32 + 1;
+    for py in (y - m).max(0)..(y + h + m).min(im.height as i32) {
+        for px in (x - m).max(0)..(x + w + m).min(im.width as i32) {
+            let (qx, qy) = (px as f32 + 0.5, py as f32 + 0.5);
+            let t = if len2 > 0.0 { (((qx - ax) * dx + (qy - ay) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
+            let d = ((qx - (ax + t * dx)).powi(2) + (qy - (ay + t * dy)).powi(2)).sqrt() - half;
+            over_pixel(im, px, py, rgb, (0.5 - d).clamp(0.0, 1.0));
+        }
+    }
 }
 
 /// Rectangle (arrondi), ellipse ou trait horizontal, avec remplissage et bordure interieure, bords lisses.

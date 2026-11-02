@@ -81,6 +81,16 @@ pub(crate) struct CoverDrag {
     start: (f64, f64),
     /// deplacement d'un groupe : tous les elements deplaces avec leur rectangle d'origine
     group: Vec<(usize, (f64, f64, f64, f64))>,
+    /// ligne : extremite qui reste fixe pendant qu'on deplace l'autre (poignees 5 et 6)
+    fixed: (f64, f64),
+}
+
+/// Distance (points ecran) d'un point `p` au segment [a, b].
+fn seg_dist(p: egui::Pos2, a: egui::Pos2, b: egui::Pos2) -> f32 {
+    let ab = b - a;
+    let l2 = ab.length_sq();
+    let t = if l2 > 0.0 { ((p - a).dot(ab) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    p.distance(a + ab * t)
 }
 
 /// Ligne de la liste, glissable par sa poignee ☰ (calque ou element).
@@ -541,7 +551,7 @@ impl App {
             for kind in [ShapeKind::Rect, ShapeKind::Ellipse, ShapeKind::Line] {
                 if ui.button(format!("+ {}", kind.label())).clicked() {
                     let w = (tw * 0.3).min(80.0);
-                    let h = if kind == ShapeKind::Line { 2.0 } else { w };
+                    let h = if kind == ShapeKind::Line { 0.0 } else { w };
                     let mut it = CoverItem::shape(kind, (tw - w) / 2.0, (th - h) / 2.0, w, h);
                     it.layer = active;
                     doc.items_mut().push(it);
@@ -675,7 +685,7 @@ impl App {
                     if ui.button("Choisir…").clicked() { pick_image = true; }
                 });
             }
-            CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm } => {
+            CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, .. } => {
                 if *shape == ShapeKind::Line {
                     ui.horizontal(|ui| {
                         ui.label("Couleur");
@@ -720,6 +730,21 @@ impl App {
             }
         }
         let it = &mut doc.items_mut()[i];
+        // ligne : seulement ses deux extremites (glisser les poignees sur la feuille, Maj : angle par pas de 45 degres)
+        if let Some((mut p, mut q)) = it.line_ends() {
+            let before = (p, q);
+            egui::Grid::new("jaquette_line").num_columns(4).show(ui, |ui| {
+                ui.label("Début X"); ui.add(egui::DragValue::new(&mut p.0).range(-bleed..=sw).speed(0.5).suffix(" mm"));
+                ui.label("Y"); ui.add(egui::DragValue::new(&mut p.1).range(-bleed..=sh).speed(0.5).suffix(" mm"));
+                ui.end_row();
+                ui.label("Fin X"); ui.add(egui::DragValue::new(&mut q.0).range(-bleed..=sw).speed(0.5).suffix(" mm"));
+                ui.label("Y"); ui.add(egui::DragValue::new(&mut q.1).range(-bleed..=sh).speed(0.5).suffix(" mm"));
+                ui.end_row();
+            });
+            if (p, q) != before { it.set_line_ends(p, q); changed = true; }
+            ui.label(egui::RichText::new("Déplacez les deux extrémités sur la feuille (Maj : angle par pas de 45°).").weak());
+            return changed;
+        }
         egui::Grid::new("jaquette_geom").num_columns(4).show(ui, |ui| {
             ui.label("X"); changed |= ui.add(egui::DragValue::new(&mut it.x).range(-bleed..=sw).speed(0.5).suffix(" mm")).changed();
             ui.label("Y"); changed |= ui.add(egui::DragValue::new(&mut it.y).range(-bleed..=sh).speed(0.5).suffix(" mm")).changed();
@@ -902,27 +927,42 @@ impl App {
         }
         let layers = doc.layers().clone();
         let usable = |it: &CoverItem| { let (v, l) = layer_state(&layers, it.layer); v && !l };
-        // cadres des elements : poignees pour un element seul, cadre plein pour une selection multiple
+        // cadres des elements : poignees pour un element seul, tirets pour une selection multiple ; une ligne n'a que ses deux extremites
         for (i, it) in doc.items().iter().enumerate() {
             if !layer_state(&layers, it.layer).0 { continue; }
             let r = Rect::from_min_max(to_screen(it.x, it.y), to_screen(it.x + it.w, it.y + it.h));
+            let pts: Vec<egui::Pos2> = match it.line_ends() {
+                Some((a, b)) => vec![to_screen(a.0, a.1), to_screen(b.0, b.1)],
+                None => vec![r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()],
+            };
+            let is_line = pts.len() == 2;
             if sel == Some(i) {
-                painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
-                for c in [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] {
+                if is_line {
+                    painter.add(egui::Shape::line(pts.clone(), Stroke::new(1.0_f32, Color32::from_black_alpha(170))));
+                } else {
+                    painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
+                }
+                let corners: Vec<egui::Pos2> = if is_line { pts.clone() } else { vec![r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] };
+                for c in corners {
                     painter.rect_filled(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Color32::WHITE);
                     painter.rect_stroke(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Stroke::new(1.0_f32, Color32::BLACK));
                 }
             } else if selection.contains(&i) {
                 // selection multiple : meme rendu que l'editeur de menu (fond sombre + tirets clairs, visible sur tout decor)
-                let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
-                painter.add(egui::Shape::line(pts.to_vec(), Stroke::new(3.0_f32, Color32::from_black_alpha(170))));
+                painter.add(egui::Shape::line(pts.clone(), Stroke::new(3.0_f32, Color32::from_black_alpha(170))));
                 painter.extend(egui::Shape::dashed_line(&pts, Stroke::new(2.0_f32, Color32::WHITE), 7.0, 5.0));
+            } else if is_line {
+                painter.add(egui::Shape::line(pts, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(120, 190, 255, 110))));
             } else {
                 painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(120, 190, 255, 110)));
             }
         }
         // poignee de coin sous le pointeur de l'element selectionne (1..4), 0 sinon
         let handle_at = |p: egui::Pos2, it: &CoverItem| -> u8 {
+            if let Some((a, b)) = it.line_ends() {
+                let (sa, sb) = (to_screen(a.0, a.1), to_screen(b.0, b.1));
+                return if sa.distance(p) <= HANDLE_PX { 5 } else if sb.distance(p) <= HANDLE_PX { 6 } else { 0 };
+            }
             let r = Rect::from_min_max(to_screen(it.x, it.y), to_screen(it.x + it.w, it.y + it.h));
             for (h, c) in [(1u8, r.left_top()), (2, r.right_top()), (3, r.left_bottom()), (4, r.right_bottom())] {
                 if c.distance(p) <= HANDLE_PX { return h; }
@@ -932,15 +972,26 @@ impl App {
         let hit = |p: egui::Pos2, items: &[CoverItem]| -> Option<usize> {
             if !viewport.contains(p) { return None; }
             let (x, y) = to_mm(p);
-            (0..items.len()).filter(|&i| { let it = &items[i]; usable(it) && x >= it.x && x <= it.x + it.w && y >= it.y && y <= it.y + it.h }).max_by_key(|&i| (items[i].layer, i))
+            (0..items.len()).filter(|&i| {
+                let it = &items[i];
+                if !usable(it) { return false; }
+                match it.line_ends() {
+                    Some((a, b)) => {
+                        let sw = match &it.kind { CoverKind::Shape { stroke_mm, .. } => *stroke_mm as f32 * k / 2.0, _ => 0.0 };
+                        seg_dist(p, to_screen(a.0, a.1), to_screen(b.0, b.1)) <= sw.max(6.0)
+                    }
+                    None => x >= it.x && x <= it.x + it.w && y >= it.y && y <= it.y + it.h,
+                }
+            }).max_by_key(|&i| (items[i].layer, i))
         };
         // curseur
         let icon_of = |h: u8| if h == 1 || h == 4 { CursorIcon::ResizeNwSe } else { CursorIcon::ResizeNeSw };
         if let Some(d) = &self.cover_drag {
-            ctx.set_cursor_icon(if d.handle == 0 { CursorIcon::Grabbing } else { icon_of(d.handle) });
+            ctx.set_cursor_icon(if d.handle == 0 { CursorIcon::Grabbing } else if d.handle >= 5 { CursorIcon::Crosshair } else { icon_of(d.handle) });
         } else if let Some(p) = hover_vp {
             let h = sel.filter(|&i| usable(&doc.items()[i])).map(|i| handle_at(p, &doc.items()[i])).unwrap_or(0);
-            if h != 0 { ctx.set_cursor_icon(icon_of(h)); }
+            if h >= 5 { ctx.set_cursor_icon(CursorIcon::Crosshair); }
+            else if h != 0 { ctx.set_cursor_icon(icon_of(h)); }
             else if hit(p, doc.items()).is_some() { ctx.set_cursor_icon(CursorIcon::Grab); }
         }
         let extend = ctx.input(|i| i.modifiers.shift || i.modifiers.command);
@@ -970,7 +1021,7 @@ impl App {
                             self.cover_selection(len).into_iter().filter(|&j| usable(&doc.items()[j])).map(|j| { let it = &doc.items()[j]; (j, (it.x, it.y, it.w, it.h)) }).collect()
                         } else { Vec::new() };
                         let it = &doc.items()[i];
-                        self.cover_drag = Some(CoverDrag { item: i, handle: h, orig: (it.x, it.y, it.w, it.h), start: to_mm(p), group });
+                        self.cover_drag = Some(CoverDrag { item: i, handle: h, orig: (it.x, it.y, it.w, it.h), start: to_mm(p), group, fixed: it.line_ends().map(|(a, b)| if h == 5 { b } else { a }).unwrap_or((0.0, 0.0)) });
                     }
                     None => if viewport.contains(p) {
                         let base = if extend { selection.clone() } else { Vec::new() };
@@ -996,7 +1047,7 @@ impl App {
         let mut snapped: (Option<f64>, Option<f64>) = (None, None);
         if resp.dragged() && !skip_input {
             if let (Some(d), Some(p)) = (self.cover_drag.clone(), resp.interact_pointer_pos()) {
-                if d.item < len {
+                if d.item < len && d.handle < 5 {
                     let (mx, my) = to_mm(p);
                     let (dx, dy) = (mx - d.start.0, my - d.start.1);
                     let (x, y, w, h) = d.orig;
@@ -1038,6 +1089,39 @@ impl App {
                         (it.x, it.y, it.w, it.h) = (r(nx), r(ny), r(nw), r(nh));
                         self.cover_changed();
                     }
+                }
+            }
+        }
+        // extremite d'une ligne deplacee : libre, aimantee (Alt : non) ou, avec Maj, par pas de 45 degres autour de l'autre extremite
+        if resp.dragged() && !skip_input {
+            if let (Some(d), Some(p)) = (self.cover_drag.clone(), resp.interact_pointer_pos()) {
+                if d.item < len && d.handle >= 5 {
+                    let (mut mx, mut my) = to_mm(p);
+                    let (fx, fy) = d.fixed;
+                    if ctx.input(|i| i.modifiers.shift) {
+                        let (ddx, ddy) = (mx - fx, my - fy);
+                        let step = std::f64::consts::FRAC_PI_4;
+                        let ang = (ddy.atan2(ddx) / step).round() * step;
+                        let len_mm = ddx.hypot(ddy);
+                        (mx, my) = (fx + len_mm * ang.cos(), fy + len_mm * ang.sin());
+                    } else if self.cover_snap && !ctx.input(|i| i.modifiers.alt) {
+                        let (mut xs, mut ys) = doc.snap_lines();
+                        for (j, it) in doc.items().iter().enumerate() {
+                            if j == d.item || !layer_state(&layers, it.layer).0 { continue; }
+                            xs.extend([it.x, it.x + it.w / 2.0, it.x + it.w]);
+                            ys.extend([it.y, it.y + it.h / 2.0, it.y + it.h]);
+                        }
+                        // l'autre extremite compte aussi : lignes parfaitement horizontales ou verticales
+                        xs.push(fx);
+                        ys.push(fy);
+                        let thr = 6.0 / k as f64;
+                        let near = |v: f64, l: &[f64]| l.iter().copied().filter(|g| (g - v).abs() <= thr).min_by(|a, b| (a - v).abs().total_cmp(&(b - v).abs()));
+                        if let Some(g) = near(mx, &xs) { mx = g; snapped.0 = Some(g); }
+                        if let Some(g) = near(my, &ys) { my = g; snapped.1 = Some(g); }
+                    }
+                    let before = doc.items()[d.item].line_ends();
+                    doc.items_mut()[d.item].set_line_ends((fx, fy), (mx, my));
+                    if doc.items()[d.item].line_ends() != before { self.cover_changed(); }
                 }
             }
         }

@@ -646,3 +646,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Jaquette : selection multiple en tirets (export 117)
 - Les elements en selection multiple ont le meme rendu que l editeur de menu (fond sombre + tirets blancs).
+
+## Jaquette : ligne manipulee par ses extremites (export 118)
+- CoverKind::Shape gagne `flip` (JSON "inverse") ; `CoverItem::line_ends/set_line_ends` ; cadre de largeur ou hauteur nulle autorise pour une ligne.
+- GUI : deux poignees (Maj : pas de 45 degres, aimantation, autre extremite comme repere), selection au clic sur le segment, champs Debut/Fin X,Y. Rendu : segment a bouts arrondis (`draw_line`).
+- Une ligne creee avant cet export (cadre h=2 mm) devient legerement oblique.

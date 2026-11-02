@@ -287,3 +287,25 @@ fn snapping_and_alignment() {
     assert!(c.snap_lines().0.contains(&129.0) && c.snap_lines().0.contains(&143.0));
     assert_eq!(DiscLabel::default().safe_guides().1.len(), 2);
 }
+
+#[test]
+fn line_endpoints() {
+    let mut it = CoverItem::shape(ShapeKind::Line, 0.0, 0.0, 10.0, 0.0);
+    it.set_line_ends((50.0, 10.0), (20.0, 40.0));
+    assert_eq!((it.x, it.y, it.w, it.h), (20.0, 10.0, 30.0, 30.0));
+    assert_eq!(it.line_ends(), Some(((20.0, 40.0), (50.0, 10.0))));
+    it.set_line_ends((5.0, 7.0), (45.0, 7.0));
+    assert_eq!((it.w, it.h), (40.0, 0.0));
+    let mut c = Cover::default();
+    it.set_line_ends((60.0, 80.0), (10.0, 20.0));
+    c.items.push(it);
+    let c2 = Cover::from_value(c.to_value().as_ref()).unwrap();
+    assert_eq!(c2.items[0].line_ends(), c.items[0].line_ends());
+    let mut h = CoverItem::shape(ShapeKind::Line, 0.0, 0.0, 10.0, 0.0);
+    h.set_line_ends((5.0, 7.0), (45.0, 7.0));
+    c.items.push(h);
+    let c3 = Cover::from_value(c.to_value().as_ref()).unwrap();
+    assert_eq!(c3.items[1].h, 0.0);
+    let lay = c3.layout(96, std::path::Path::new("."));
+    assert!(lay.items.iter().any(|(d, rot)| matches!(d, CoverDecor::Shape { h: 0, .. }) && *rot == 0));
+}
