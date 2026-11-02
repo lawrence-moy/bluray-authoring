@@ -4,15 +4,58 @@ use crate::design::Align;
 use crate::json::Value;
 use crate::palette::RgbaImage;
 use crate::pdf;
-use crate::project::Decor;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+
+/// Alignement vertical du texte dans son cadre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VAlign { Top, Middle, Bottom }
+
+impl VAlign {
+    pub fn name(self) -> &'static str { match self { VAlign::Top => "haut", VAlign::Middle => "milieu", VAlign::Bottom => "bas" } }
+    pub fn from_name(s: &str) -> Option<VAlign> { match s { "haut" => Some(VAlign::Top), "milieu" => Some(VAlign::Middle), "bas" => Some(VAlign::Bottom), _ => None } }
+}
+
+/// Effets et mise en forme d'un texte (valeurs par defaut = texte simple centre verticalement).
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextFx {
+    /// epaisseur du contour (mm), 0 : aucun
+    pub outline_mm: f64,
+    pub outline_color: [u8; 3],
+    /// decalage de l'ombre (mm, vers le bas et la droite), 0 : aucune
+    pub shadow_mm: f64,
+    pub shadow_color: [u8; 3],
+    /// interligne (1 = normal)
+    pub spacing: f64,
+    pub valign: VAlign,
+    /// reduit la taille du texte pour qu'il tienne dans le cadre (la taille indiquee est un maximum)
+    pub autofit: bool,
+}
+
+impl Default for TextFx {
+    fn default() -> TextFx {
+        TextFx { outline_mm: 0.0, outline_color: [0, 0, 0], shadow_mm: 0.0, shadow_color: [0, 0, 0], spacing: 1.0, valign: VAlign::Middle, autofit: false }
+    }
+}
+
+/// Forme geometrique.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShapeKind { Rect, Ellipse, Line }
+
+impl ShapeKind {
+    pub fn name(self) -> &'static str { match self { ShapeKind::Rect => "rectangle", ShapeKind::Ellipse => "ellipse", ShapeKind::Line => "ligne" } }
+    pub fn from_name(s: &str) -> Option<ShapeKind> { match s { "rectangle" => Some(ShapeKind::Rect), "ellipse" => Some(ShapeKind::Ellipse), "ligne" => Some(ShapeKind::Line), _ => None } }
+    pub fn label(self) -> &'static str { match self { ShapeKind::Rect => "Rectangle", ShapeKind::Ellipse => "Ellipse", ShapeKind::Line => "Ligne" } }
+}
 
 /// Contenu d'un element de jaquette.
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoverKind {
-    Text { text: String, size_pt: f64, color: [u8; 3], align: Align, font: String },
+    Text { text: String, size_pt: f64, color: [u8; 3], align: Align, font: String, fx: TextFx },
     Image { path: String },
+    /// rectangle (coins arrondis de rayon `radius_mm`), ellipse inscrite dans le cadre, ou trait horizontal au milieu du cadre
+    /// (tourne par `rot`) ; `fill` et `stroke` : couleurs, `None` = absent ; la bordure est a l'interieur du cadre
+    Shape { shape: ShapeKind, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_mm: f64, radius_mm: f64 },
 }
 
 /// Element de jaquette. Position et taille en millimetres depuis le coin haut gauche de la jaquette *rognee* (le fond perdu a
@@ -32,7 +75,12 @@ pub struct CoverItem {
 
 impl CoverItem {
     pub fn text(text: &str, x: f64, y: f64, w: f64, h: f64, size_pt: f64) -> CoverItem {
-        CoverItem { kind: CoverKind::Text { text: text.into(), size_pt, color: [255, 255, 255], align: Align::Center, font: String::new() }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
+        CoverItem { kind: CoverKind::Text { text: text.into(), size_pt, color: [255, 255, 255], align: Align::Center, font: String::new(), fx: TextFx::default() }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
+    }
+    /// Rectangle plein blanc, ellipse pleine blanche, ou trait blanc de 0,5 mm.
+    pub fn shape(shape: ShapeKind, x: f64, y: f64, w: f64, h: f64) -> CoverItem {
+        let (fill, stroke) = if shape == ShapeKind::Line { (None, Some([255, 255, 255])) } else { (Some([255, 255, 255]), None) };
+        CoverItem { kind: CoverKind::Shape { shape, fill, stroke, stroke_mm: 0.5, radius_mm: 0.0 }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
     }
     pub fn image(path: &str, x: f64, y: f64, w: f64, h: f64) -> CoverItem {
         CoverItem { kind: CoverKind::Image { path: path.into() }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
@@ -85,7 +133,27 @@ pub struct CoverLayout {
     pub fills: Vec<((i32, i32, i32, i32), [u8; 3])>,
     pub bg_image: Option<PathBuf>,
     /// elements : cadre et contenu en pixels, rotation
-    pub items: Vec<(Decor, u16)>,
+    pub items: Vec<(CoverDecor, u16)>,
+}
+
+/// Element pose, en pixels (cadre et contenu).
+#[derive(Debug, Clone, PartialEq)]
+pub enum CoverDecor {
+    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool },
+    Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
+    Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32 },
+}
+
+impl CoverDecor {
+    /// Cadre (x, y, largeur, hauteur).
+    pub fn rect(&self) -> (i32, i32, i32, i32) {
+        match self { CoverDecor::Text { x, y, w, h, .. } | CoverDecor::Image { x, y, w, h, .. } | CoverDecor::Shape { x, y, w, h, .. } => (*x, *y, *w, *h) }
+    }
+    /// Le meme element dans un autre cadre.
+    pub fn with_rect(mut self, nx: i32, ny: i32, nw: i32, nh: i32) -> CoverDecor {
+        match &mut self { CoverDecor::Text { x, y, w, h, .. } | CoverDecor::Image { x, y, w, h, .. } | CoverDecor::Shape { x, y, w, h, .. } => { *x = nx; *y = ny; *w = nw; *h = nh; } }
+        self
+    }
 }
 
 fn mm_px(mm: f64, dpi: u32) -> i32 { (mm / 25.4 * dpi as f64).round() as i32 }
@@ -139,15 +207,20 @@ impl Cover {
             let (x, y) = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi));
             let (iw, ih) = (mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
             let d = match &it.kind {
-                CoverKind::Text { text, size_pt, color, align, font } => {
+                CoverKind::Text { text, size_pt, color, align, font, fx } => {
                     let text = apply_vars(text, vars);
                     if text.is_empty() { return None; }
                     let font = if font.is_empty() || Path::new(font).is_absolute() { font.clone() } else if base.join(font).is_file() { base.join(font).to_string_lossy().into_owned() } else { font.clone() };
-                    Decor::Text { text, x, y, w: iw, h: ih, size: ((size_pt / 72.0 * dpi as f64).round() as i32).max(1), color: *color, align: *align, font }
+                    CoverDecor::Text { text, x, y, w: iw, h: ih, size: ((size_pt / 72.0 * dpi as f64).round() as i32).max(1), color: *color, align: *align, font, valign: fx.valign,
+                        spacing: fx.spacing as f32, outline: if fx.outline_mm > 0.0 { mm_px(fx.outline_mm, dpi).max(1) } else { 0 }, outline_color: fx.outline_color,
+                        shadow: if fx.shadow_mm > 0.0 { mm_px(fx.shadow_mm, dpi).max(1) } else { 0 }, shadow_color: fx.shadow_color, autofit: fx.autofit }
                 }
                 CoverKind::Image { path } => {
                     if path.is_empty() { return None; }
-                    Decor::Image { path: abs(path), x, y, w: iw, h: ih }
+                    CoverDecor::Image { path: abs(path), x, y, w: iw, h: ih }
+                }
+                CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm } => {
+                    CoverDecor::Shape { shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0) }
                 }
             };
             Some((d, it.rot))
@@ -303,6 +376,10 @@ pub trait SheetDoc {
     fn items(&self) -> &Vec<CoverItem>;
     fn items_mut(&mut self) -> &mut Vec<CoverItem>;
     fn layers(&self) -> &Vec<CoverLayer>;
+    /// Lignes d'aimantation : abscisses et ordonnees (mm) des bords, pliages, centres et marges de securite.
+    fn snap_lines(&self) -> (Vec<f64>, Vec<f64>);
+    /// Zone de securite (3 mm a l'interieur) : rectangles (x, y, w, h) et cercles (cx, cy, r), en mm.
+    fn safe_guides(&self) -> (Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64)>);
     fn layers_mut(&mut self) -> &mut Vec<CoverLayer>;
     /// Zones ou « Placer sur » met un element : (nom, rectangle en mm depuis le coin de la feuille rognee)
     fn zones(&self) -> Vec<(&'static str, (f64, f64, f64, f64))>;
@@ -322,6 +399,20 @@ impl SheetDoc for Cover {
     fn items_mut(&mut self) -> &mut Vec<CoverItem> { &mut self.items }
     fn layers(&self) -> &Vec<CoverLayer> { &self.layers }
     fn layers_mut(&mut self) -> &mut Vec<CoverLayer> { &mut self.layers }
+    fn snap_lines(&self) -> (Vec<f64>, Vec<f64>) {
+        let (tw, th) = self.trim_mm();
+        let (f, sp, b, m) = (self.face_mm, self.spine_mm, self.bleed_mm, SAFE_MM);
+        let mut xs = vec![-b, 0.0, f / 2.0, f, f + sp / 2.0, f + sp, f + sp + f / 2.0, tw, tw + b, m, tw - m];
+        if f > 2.0 * m { xs.extend([f - m, f + sp + m]); }
+        (xs, vec![-b, 0.0, th / 2.0, th, th + b, m, th - m])
+    }
+    fn safe_guides(&self) -> (Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64)>) {
+        let (_, th) = self.trim_mm();
+        let (f, sp, m) = (self.face_mm, self.spine_mm, SAFE_MM);
+        let mut r = vec![(m, m, f - 2.0 * m, th - 2.0 * m), (f + sp + m, m, f - 2.0 * m, th - 2.0 * m)];
+        if sp > 2.0 * m { r.push((f + m, m, sp - 2.0 * m, th - 2.0 * m)); }
+        (r, vec![])
+    }
     fn zones(&self) -> Vec<(&'static str, (f64, f64, f64, f64))> {
         vec![("le dos", self.zone_mm(Zone::Back)), ("la tranche", self.zone_mm(Zone::Spine)), ("la face", self.zone_mm(Zone::Front))]
     }
@@ -400,6 +491,15 @@ impl SheetDoc for DiscLabel {
     fn items_mut(&mut self) -> &mut Vec<CoverItem> { &mut self.items }
     fn layers(&self) -> &Vec<CoverLayer> { &self.layers }
     fn layers_mut(&mut self) -> &mut Vec<CoverLayer> { &mut self.layers }
+    fn snap_lines(&self) -> (Vec<f64>, Vec<f64>) {
+        let (d, b, h) = (self.diameter_mm, self.bleed_mm, self.hole_mm);
+        let l = vec![-b, 0.0, d / 2.0 - h / 2.0, d / 2.0, d / 2.0 + h / 2.0, d, d + b];
+        (l.clone(), l)
+    }
+    fn safe_guides(&self) -> (Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64)>) {
+        let r = self.diameter_mm / 2.0;
+        (vec![], vec![(r, r, (r - SAFE_MM).max(1.0)), (r, r, self.hole_mm / 2.0 + SAFE_MM)])
+    }
     fn zones(&self) -> Vec<(&'static str, (f64, f64, f64, f64))> {
         let (d, h) = (self.diameter_mm, self.hole_mm);
         // bande au-dessus du trou central et bande en dessous : la ou le texte reste lisible sur un disque
@@ -493,13 +593,29 @@ fn item_to_value(it: &CoverItem) -> Value {
     let n = |x: f64| Value::Num(x);
     let mut e: Vec<(String, Value)> = Vec::new();
     match &it.kind {
-        CoverKind::Text { text, size_pt, color, align, font } => {
+        CoverKind::Text { text, size_pt, color, align, font, fx } => {
             e.push(("type".into(), Value::Str("texte".into())));
             e.push(("texte".into(), Value::Str(text.clone())));
             e.push(("taille_pt".into(), n(*size_pt)));
             e.push(("couleur".into(), color_hex(*color)));
             e.push(("alignement".into(), Value::Str(align.name().into())));
             if !font.is_empty() { e.push(("police".into(), Value::Str(font.clone()))); }
+            let d = TextFx::default();
+            if fx.outline_mm != d.outline_mm { e.push(("contour_mm".into(), n(fx.outline_mm))); }
+            if fx.outline_color != d.outline_color { e.push(("contour_couleur".into(), color_hex(fx.outline_color))); }
+            if fx.shadow_mm != d.shadow_mm { e.push(("ombre_mm".into(), n(fx.shadow_mm))); }
+            if fx.shadow_color != d.shadow_color { e.push(("ombre_couleur".into(), color_hex(fx.shadow_color))); }
+            if fx.spacing != d.spacing { e.push(("interligne".into(), n(fx.spacing))); }
+            if fx.valign != d.valign { e.push(("alignement_v".into(), Value::Str(fx.valign.name().into()))); }
+            if fx.autofit { e.push(("ajuster".into(), Value::Bool(true))); }
+        }
+        CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm } => {
+            e.push(("type".into(), Value::Str("forme".into())));
+            e.push(("forme".into(), Value::Str(shape.name().into())));
+            if let Some(c) = fill { e.push(("remplissage".into(), color_hex(*c))); }
+            if let Some(c) = stroke { e.push(("bordure".into(), color_hex(*c))); }
+            e.push(("epaisseur_mm".into(), n(*stroke_mm)));
+            if *radius_mm != 0.0 { e.push(("rayon_mm".into(), n(*radius_mm))); }
         }
         CoverKind::Image { path } => {
             e.push(("type".into(), Value::Str("image".into())));
@@ -522,6 +638,26 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
             color: color_from(e.get("couleur"), [255, 255, 255]),
             align: e.get("alignement").and_then(Value::as_str).and_then(Align::from_name).unwrap_or(Align::Center),
             font: e.get("police").and_then(Value::as_str).unwrap_or("").to_string(),
+            fx: {
+                let d = TextFx::default();
+                let g = |k: &str, dv: f64| e.get(k).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(dv);
+                TextFx {
+                    outline_mm: g("contour_mm", d.outline_mm).clamp(0.0, 10.0),
+                    outline_color: color_from(e.get("contour_couleur"), d.outline_color),
+                    shadow_mm: g("ombre_mm", d.shadow_mm).clamp(0.0, 10.0),
+                    shadow_color: color_from(e.get("ombre_couleur"), d.shadow_color),
+                    spacing: g("interligne", d.spacing).clamp(0.3, 5.0),
+                    valign: e.get("alignement_v").and_then(Value::as_str).and_then(VAlign::from_name).unwrap_or(d.valign),
+                    autofit: e.get("ajuster").and_then(Value::as_bool).unwrap_or(false),
+                }
+            },
+        },
+        Some("forme") => CoverKind::Shape {
+            shape: e.get("forme").and_then(Value::as_str).and_then(ShapeKind::from_name).unwrap_or(ShapeKind::Rect),
+            fill: e.get("remplissage").map(|v| color_from(Some(v), [255, 255, 255])),
+            stroke: e.get("bordure").map(|v| color_from(Some(v), [255, 255, 255])),
+            stroke_mm: e.get("epaisseur_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.5).clamp(0.0, 50.0),
+            radius_mm: e.get("rayon_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 200.0),
         },
         Some("image") => CoverKind::Image { path: e.get("fichier").and_then(Value::as_str).ok_or_else(|| format!("{what}, élément {} : « fichier » manquant", k + 1))?.to_string() },
         t => return Err(format!("{what}, élément {} : type {:?} inconnu", k + 1, t)),
@@ -593,4 +729,74 @@ fn a4_page(tw: f64, th: f64, what: &str) -> Result<(f64, f64), String> {
     if nw <= 210.0 && nh <= 297.0 { Ok((210.0, 297.0)) }
     else if nw <= 297.0 && nh <= 210.0 { Ok((297.0, 210.0)) }
     else { Err(format!("{what} ({tw:.0} × {th:.0} mm, plus 8 mm de marge pour les repères) ne tient pas sur une page A4.")) }
+}
+
+/// Marge de securite : le texte important reste a au moins cette distance (mm) des bords.
+pub const SAFE_MM: f64 = 3.0;
+
+/// Aimante un rectangle (x, y, w, h) en mm sur des lignes verticales `xs` et horizontales `ys` a moins de `thr` mm. `handle` : 0 =
+/// deplacement (bords et centre), 1..4 = coin tire (haut gauche, haut droit, bas gauche, bas droit : seuls les bords qui bougent
+/// s'aimantent). Renvoie le rectangle corrige et les lignes (abscisse, ordonnee) sur lesquelles il s'est aimante.
+pub fn snap_rect(handle: u8, r: (f64, f64, f64, f64), xs: &[f64], ys: &[f64], thr: f64) -> ((f64, f64, f64, f64), Option<f64>, Option<f64>) {
+    let (mut x, mut y, mut w, mut h) = r;
+    let best = |edges: &[f64], lines: &[f64]| -> Option<(f64, f64)> {
+        let mut b: Option<(f64, f64)> = None;
+        for &e in edges { for &l in lines { let d = l - e; if d.abs() <= thr && b.map_or(true, |(bd, _)| d.abs() < (bd).abs()) { b = Some((d, l)); } } }
+        b
+    };
+    let xe: Vec<f64> = match handle { 0 => vec![x, x + w / 2.0, x + w], 1 | 3 => vec![x], _ => vec![x + w] };
+    let ye: Vec<f64> = match handle { 0 => vec![y, y + h / 2.0, y + h], 1 | 2 => vec![y], _ => vec![y + h] };
+    let (mut gx, mut gy) = (None, None);
+    if let Some((d, l)) = best(&xe, xs) {
+        match handle { 0 => x += d, 1 | 3 => { x += d; w -= d } _ => w += d }
+        gx = Some(l);
+    }
+    if let Some((d, l)) = best(&ye, ys) {
+        match handle { 0 => y += d, 1 | 2 => { y += d; h -= d } _ => h += d }
+        gy = Some(l);
+    }
+    if w < 1.0 || h < 1.0 { return (r, None, None); }
+    ((x, y, w, h), gx, gy)
+}
+
+/// Aligne les elements `sel` (indices) : avec au moins deux elements, par rapport a leur cadre englobant ; avec un seul, par rapport
+/// a la feuille rognee `page` (largeur, hauteur en mm). Repartition : au moins trois elements. Renvoie vrai si quelque chose a bouge.
+pub fn align_cover(items: &mut [CoverItem], sel: &[usize], op: crate::editor::ItemAlign, page: (f64, f64)) -> bool {
+    use crate::editor::ItemAlign as A;
+    let mut idx: Vec<usize> = sel.iter().copied().filter(|&i| i < items.len()).collect();
+    idx.sort_unstable();
+    idx.dedup();
+    if idx.is_empty() { return false; }
+    let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+    for &i in &idx { let it = &items[i]; x0 = x0.min(it.x); y0 = y0.min(it.y); x1 = x1.max(it.x + it.w); y1 = y1.max(it.y + it.h); }
+    let (rx0, ry0, rx1, ry1) = if idx.len() >= 2 { (x0, y0, x1, y1) } else { (0.0, 0.0, page.0, page.1) };
+    let before: Vec<(f64, f64)> = idx.iter().map(|&i| (items[i].x, items[i].y)).collect();
+    match op {
+        A::Left => idx.iter().for_each(|&i| items[i].x = rx0),
+        A::Right => idx.iter().for_each(|&i| items[i].x = rx1 - items[i].w),
+        A::CenterH => idx.iter().for_each(|&i| items[i].x = (rx0 + rx1 - items[i].w) / 2.0),
+        A::Top => idx.iter().for_each(|&i| items[i].y = ry0),
+        A::Bottom => idx.iter().for_each(|&i| items[i].y = ry1 - items[i].h),
+        A::CenterV => idx.iter().for_each(|&i| items[i].y = (ry0 + ry1 - items[i].h) / 2.0),
+        A::DistributeH | A::DistributeV => {
+            if idx.len() >= 3 {
+                let horiz = op == A::DistributeH;
+                let centre = |it: &CoverItem| if horiz { it.x + it.w / 2.0 } else { it.y + it.h / 2.0 };
+                idx.sort_by(|&a, &b| centre(&items[a]).partial_cmp(&centre(&items[b])).unwrap_or(std::cmp::Ordering::Equal));
+                let (first, last) = (centre(&items[idx[0]]), centre(&items[*idx.last().unwrap()]));
+                let n = (idx.len() - 1) as f64;
+                for (k, &i) in idx.iter().enumerate() {
+                    let c = first + (last - first) * k as f64 / n;
+                    if horiz { items[i].x = c - items[i].w / 2.0; } else { items[i].y = c - items[i].h / 2.0; }
+                }
+            }
+        }
+        A::PageH => { let dx = (page.0 - (x1 - x0)) / 2.0 - x0; idx.iter().for_each(|&i| items[i].x += dx); }
+        A::PageV => { let dy = (page.1 - (y1 - y0)) / 2.0 - y0; idx.iter().for_each(|&i| items[i].y += dy); }
+    }
+    // arrondi au centieme de mm : l'enregistrement fait de meme
+    for &i in &idx { items[i].x = (items[i].x * 100.0).round() / 100.0; items[i].y = (items[i].y * 100.0).round() / 100.0; }
+    let mut moved = false;
+    for (k, &i) in idx.iter().enumerate() { if (items[i].x, items[i].y) != before[k] { moved = true; } }
+    moved
 }

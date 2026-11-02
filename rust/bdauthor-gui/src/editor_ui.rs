@@ -192,7 +192,7 @@ enum LayerOp {
 }
 
 /// Bouton d'alignement dessine (les glyphes fleches/barres ne sont pas dans la police par defaut) : un trait de reference et deux barres.
-fn align_button(ui: &mut egui::Ui, a: ItemAlign, tip: &str) -> bool {
+pub(crate) fn align_button(ui: &mut egui::Ui, a: ItemAlign, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(vec2(28.0, 28.0), Sense::click());
     let vis = *ui.style().interact(&resp);
     let p = ui.painter();

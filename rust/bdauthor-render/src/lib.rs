@@ -310,11 +310,11 @@ impl FontRenderer {
         }
         for (d, rot) in lay.items {
             // image introuvable : l'element est ignore (l'apercu reste affiche)
-            if let Decor::Image { path, .. } = &d {
+            if let bdauthor_core::cover::CoverDecor::Image { path, .. } = &d {
                 if self.cached_image(path).is_err() { continue; }
             }
             if rot == 0 {
-                im = self.compose_on(im, &[d])?;
+                im = self.draw_cover_decor(im, &d)?;
                 continue;
             }
             let q: u32 = if rot == 90 { 1 } else { 3 };
@@ -325,18 +325,137 @@ impl FontRenderer {
             }
             let flat = rotate_quarters(&region, 4 - q);
             let (fw, fh) = (flat.width as i32, flat.height as i32);
-            let local = match d {
-                Decor::Text { text, size, color, align, font, .. } => Decor::Text { text, x: 0, y: 0, w: fw, h: fh, size, color, align, font },
-                Decor::Image { path, .. } => Decor::Image { path, x: 0, y: 0, w: fw, h: fh },
-            };
-            let done = self.compose_on(flat, &[local])?;
+            let done = self.draw_cover_decor(flat, &d.with_rect(0, 0, fw, fh))?;
             blit(&mut im, &rotate_quarters(&done, q), x.max(0), y.max(0), 1.0);
         }
         Ok(im)
     }
+
+    /// Un element de jaquette (texte avec effets, image ou forme) pose sur `im`.
+    fn draw_cover_decor(&self, mut im: RgbaImage, d: &bdauthor_core::cover::CoverDecor) -> Result<RgbaImage> {
+        use bdauthor_core::cover::CoverDecor as D;
+        match d {
+            D::Image { path, x, y, w, h } => self.compose_on(im, &[Decor::Image { path: path.clone(), x: *x, y: *y, w: *w, h: *h }]),
+            D::Shape { shape, x, y, w, h, fill, stroke, stroke_px, radius_px } => {
+                draw_shape(&mut im, *shape, (*x, *y, *w, *h), *fill, *stroke, *stroke_px, *radius_px);
+                Ok(im)
+            }
+            D::Text { .. } => {
+                self.draw_cover_text(&mut im, d);
+                Ok(im)
+            }
+        }
+    }
+
+    /// Texte de jaquette : interligne, alignement vertical, ajustement a la taille du cadre, contour et ombre.
+    fn draw_cover_text(&self, im: &mut RgbaImage, d: &bdauthor_core::cover::CoverDecor) {
+        use bdauthor_core::cover::{CoverDecor as D, VAlign};
+        let D::Text { text, x, y, w, h, size, color, align, font, valign, spacing, outline, outline_color, shadow, shadow_color, autofit } = d else { return };
+        let custom = self.custom_font(font, Path::new(""));
+        let f: &FontVec = custom.as_deref().unwrap_or(&self.font);
+        let lines: Vec<&str> = text.split('\n').collect();
+        let mut sz = *size as f32;
+        let line_h = |s: f32| text_extent(f, "Ag", s).1 * 1.1 * *spacing;
+        if *autofit {
+            let widest = |s: f32| lines.iter().map(|l| text_extent(f, l, s).0).fold(0.0f32, f32::max);
+            for _ in 0..3 {
+                let (tw, th) = (widest(sz), line_h(sz) * lines.len() as f32);
+                let k = (*w as f32 / tw.max(1.0)).min(*h as f32 / th.max(1.0));
+                if k >= 0.999 { break; }
+                sz = (sz * k * 0.995).max(4.0);
+            }
+        }
+        let lh = line_h(sz);
+        let total = lh * lines.len() as f32;
+        let top = match valign { VAlign::Top => 0.0, VAlign::Middle => (*h as f32 - total) / 2.0, VAlign::Bottom => *h as f32 - total };
+        let paint = |img: &mut RgbaImage, ox: f32, oy: f32, col: [u8; 3]| {
+            for (k, l) in lines.iter().enumerate() {
+                draw_line_f(img, f, l, sz, col, (ox, oy + top + lh * k as f32, *w as f32, lh), *align);
+            }
+        };
+        if *outline == 0 && *shadow == 0 {
+            paint(im, *x as f32, *y as f32, *color);
+            return;
+        }
+        let pad = *outline + *shadow + 2;
+        let (lw, lhh) = ((*w + 2 * pad).max(1) as u32, (*h + 2 * pad).max(1) as u32);
+        let mut body = RgbaImage::new(lw, lhh);
+        if *outline > 0 {
+            // contour : le texte decale tout autour d'un cercle de rayon `outline`
+            let mut ring = RgbaImage::new(lw, lhh);
+            paint(&mut ring, pad as f32, pad as f32, *outline_color);
+            let r = *outline as f32;
+            let n = ((std::f32::consts::TAU * r).ceil() as usize).clamp(8, 72);
+            for i in 0..n {
+                let a = i as f32 / n as f32 * std::f32::consts::TAU;
+                blit(&mut body, &ring, (a.cos() * r).round() as i32, (a.sin() * r).round() as i32, 1.0);
+            }
+            blit(&mut body, &ring, 0, 0, 1.0);
+        }
+        paint(&mut body, pad as f32, pad as f32, *color);
+        if *shadow > 0 {
+            let mut tinted = body.clone();
+            for p in tinted.data.chunks_exact_mut(4) { p[0] = shadow_color[0]; p[1] = shadow_color[1]; p[2] = shadow_color[2]; }
+            let mut out = RgbaImage::new(lw, lhh);
+            blit(&mut out, &tinted, *shadow, *shadow, 1.0);
+            blit(&mut out, &body, 0, 0, 1.0);
+            body = out;
+        }
+        blit(im, &body, *x - pad, *y - pad, 1.0);
+    }
 }
 
 // ------------------------------------------------------------------ apparence des boutons (styles)
+/// Distance signee (negative a l'interieur) au bord d'un rectangle arrondi de demi-cotes `hw`, `hh`, centre en (0, 0).
+fn sd_round_rect(qx: f32, qy: f32, hw: f32, hh: f32, r: f32) -> f32 {
+    let r = r.min(hw).min(hh).max(0.0);
+    let (ax, ay) = (qx.abs() - (hw - r), qy.abs() - (hh - r));
+    (ax.max(0.0).powi(2) + ay.max(0.0).powi(2)).sqrt() + ax.max(ay).min(0.0) - r
+}
+
+/// Pose la couleur `rgb` avec l'opacite `a` (0..1) sur le pixel (x, y), qui peut etre transparent.
+fn over_pixel(im: &mut RgbaImage, x: i32, y: i32, rgb: [u8; 3], a: f32) {
+    if x < 0 || y < 0 || x >= im.width as i32 || y >= im.height as i32 || a <= 0.0 { return; }
+    let d = im.pixel(x as u32, y as u32);
+    let da = d[3] as f32 / 255.0;
+    let oa = a + da * (1.0 - a);
+    if oa <= 0.0 { return; }
+    let mix = |dc: u8, sc: u8| ((sc as f32 * a + dc as f32 * da * (1.0 - a)) / oa).round().clamp(0.0, 255.0) as u8;
+    im.set(x as u32, y as u32, [mix(d[0], rgb[0]), mix(d[1], rgb[1]), mix(d[2], rgb[2]), (oa * 255.0).round() as u8]);
+}
+
+/// Rectangle (arrondi), ellipse ou trait horizontal, avec remplissage et bordure interieure, bords lisses.
+fn draw_shape(im: &mut RgbaImage, shape: bdauthor_core::cover::ShapeKind, rect: (i32, i32, i32, i32), fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32) {
+    use bdauthor_core::cover::ShapeKind;
+    let (x, y, w, h) = rect;
+    if w <= 0 || h <= 0 { return; }
+    let (hw, hh) = (w as f32 / 2.0, h as f32 / 2.0);
+    let sw = stroke_px.max(0) as f32;
+    let line_h = sw.max(1.0);
+    let cover = |d: f32| (0.5 - d).clamp(0.0, 1.0);
+    for py in y.max(0)..(y + h).min(im.height as i32) {
+        for px in x.max(0)..(x + w).min(im.width as i32) {
+            let (qx, qy) = (px as f32 + 0.5 - (x as f32 + hw), py as f32 + 0.5 - (y as f32 + hh));
+            let d = match shape {
+                ShapeKind::Rect => sd_round_rect(qx, qy, hw, hh, radius_px as f32),
+                ShapeKind::Ellipse => (((qx / hw).powi(2) + (qy / hh).powi(2)).sqrt() - 1.0) * hw.min(hh),
+                ShapeKind::Line => sd_round_rect(qx, qy, hw, line_h / 2.0, line_h / 2.0),
+            };
+            let co = cover(d);
+            if co <= 0.0 { continue; }
+            if shape == ShapeKind::Line {
+                if let Some(c) = stroke.or(fill) { over_pixel(im, px, py, c, co); }
+                continue;
+            }
+            if let Some(c) = fill { over_pixel(im, px, py, c, co); }
+            if let (Some(c), true) = (stroke, sw > 0.0) {
+                let a = (co - cover(d + sw)).max(0.0);
+                over_pixel(im, px, py, c, a);
+            }
+        }
+    }
+}
+
 /// Couverture (0..1) du pixel (x, y) par un rectangle arrondi de `w` x `h` (rayon `r`) decale de (ox, oy).
 fn rr_cover(x: f32, y: f32, ox: f32, oy: f32, w: f32, h: f32, r: f32) -> f32 {
     if w <= 0.0 || h <= 0.0 {

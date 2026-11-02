@@ -1,8 +1,9 @@
 //! Onglet « Jaquette » : feuille a deplier du boitier (dos, tranche, face) et etiquette de disque ; edition a la souris,
 //! annuler / refaire, champs automatiques et export PDF en arriere-plan.
 use crate::App;
-use bdauthor_core::cover::{layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
+use bdauthor_core::cover::{ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
 use bdauthor_core::design::Align;
+use bdauthor_core::editor::ItemAlign;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Key, Rect, Sense, Stroke};
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -78,6 +79,8 @@ pub(crate) struct CoverDrag {
     handle: u8,
     orig: (f64, f64, f64, f64),
     start: (f64, f64),
+    /// deplacement d'un groupe : tous les elements deplaces avec leur rectangle d'origine
+    group: Vec<(usize, (f64, f64, f64, f64))>,
 }
 
 /// Ligne de la liste, glissable par sa poignee ☰ (calque ou element).
@@ -100,6 +103,7 @@ fn item_label(it: &CoverItem, i: usize) -> String {
     match &it.kind {
         CoverKind::Text { text, .. } => format!("{}. Texte « {} »", i + 1, text.lines().next().unwrap_or("").chars().take(24).collect::<String>()),
         CoverKind::Image { path } => format!("{}. Image {}", i + 1, std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+        CoverKind::Shape { shape, .. } => format!("{}. {}", i + 1, shape.label()),
     }
 }
 
@@ -264,8 +268,9 @@ impl App {
         };
         if ok {
             (self.model.cover, self.model.label) = cur;
-            self.cover_sel = None;
+            self.cover_select_only(None);
             self.cover_drag = None;
+            self.cover_marquee = None;
             self.cover_closed.clear();
             self.cover_layer_edit = None;
             self.cover_changed();
@@ -293,8 +298,9 @@ impl App {
             self.cover_layer = 0;
             self.cover_zoom = 1.0;
             self.cover_pan = egui::Vec2::ZERO;
-            self.cover_sel = None;
+            self.cover_select_only(None);
             self.cover_drag = None;
+            self.cover_marquee = None;
             self.cover_tex = None;
             self.cover_gen += 1;
         }
@@ -343,6 +349,7 @@ impl App {
         let mut layers = orig.clone();
         let nl = layers.len();
         let mut active = self.cover_layer.min(nl - 1);
+        let selected = self.cover_selection(n);
         let mut op: Option<CoverOp> = None;
         let mut pick: Option<usize> = None;
         let mut toggle: Option<usize> = None;
@@ -399,7 +406,7 @@ impl App {
                             ui.add_space(40.0);
                             let _ = ui.dnd_drag_source(egui::Id::new(("cel", i)), CoverRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak()))
                                 .response.on_hover_text("Glisser pour changer l'ordre ou le calque");
-                            if ui.selectable_label(self.cover_sel == Some(i), text).clicked() { pick = Some(i); }
+                            if ui.selectable_label(selected.contains(&i), text).clicked() { pick = Some(i); }
                         }).response;
                         rows.push((CoverRow::Item(i), r.rect));
                     }
@@ -450,7 +457,13 @@ impl App {
                 }
             }
         });
-        if let Some(i) = pick { self.cover_sel = Some(i); }
+        if let Some(i) = pick {
+            if ui.input(|inp| inp.modifiers.command || inp.modifiers.shift) {
+                let mut v = self.cover_selection(n);
+                if let Some(k) = v.iter().position(|&e| e == i) { v.remove(k); } else { v.push(i); }
+                match v.last().copied() { Some(last) => self.cover_set_selection(v, last), None => self.cover_select_only(None) }
+            } else { self.cover_select_only(Some(i)); }
+        }
         if let Some(l) = activate { active = l; }
         if let Some(l) = toggle { if !self.cover_closed.remove(&l) { self.cover_closed.insert(l); } }
         if rename_done {
@@ -471,7 +484,7 @@ impl App {
                 }
                 layers.remove(l);
                 active = active.min(layers.len() - 1);
-                self.cover_sel = None;
+                self.cover_select_only(None);
                 self.cover_closed.clear();
             }
             Some(CoverOp::MoveItem { from, layer, before }) if from < n && layer < nl => {
@@ -480,7 +493,7 @@ impl App {
                 it.layer = layer;
                 let at = match before { Some(j) => if j > from { j - 1 } else { j }, None => items.len() };
                 items.insert(at, it);
-                self.cover_sel = Some(at);
+                self.cover_select_only(Some(at));
                 changed = true;
             }
             Some(CoverOp::MoveLayer { from, to }) if from < nl && to < nl => {
@@ -504,13 +517,14 @@ impl App {
         let (sw, sh) = doc.sheet_mm();
         let bleed = doc.bleed_mm();
         let (tw, th) = (sw - 2.0 * bleed, sh - 2.0 * bleed);
+        let sel = self.cover_selection(n);
         ui.horizontal_wrapped(|ui| {
             if ui.button("+ Texte").clicked() {
                 let w = (tw * 0.4).min(100.0);
                 let mut it = CoverItem::text("Titre", (tw - w) / 2.0, 10.0, w, 30.0, 28.0);
                 it.layer = active;
                 doc.items_mut().push(it);
-                self.cover_sel = Some(doc.items().len() - 1);
+                self.cover_select_only(Some(doc.items().len() - 1));
                 changed = true;
             }
             if ui.button("+ Image…").clicked() {
@@ -520,35 +534,72 @@ impl App {
                     let mut it = CoverItem::image(&rel, (tw - w) / 2.0, 50.0, w, (th - 60.0).max(20.0).min(w));
                     it.layer = active;
                     doc.items_mut().push(it);
-                    self.cover_sel = Some(doc.items().len() - 1);
+                    self.cover_select_only(Some(doc.items().len() - 1));
                     changed = true;
                 }
             }
-            if let Some(i) = self.cover_sel.filter(|&i| i < n) {
-                if ui.button("Dupliquer").clicked() {
-                    let mut c = doc.items()[i].clone();
-                    c.x += 5.0;
-                    c.y += 5.0;
-                    c.name = if c.name.is_empty() { String::new() } else { format!("{} (copie)", c.name) };
-                    doc.items_mut().insert(i + 1, c);
-                    self.cover_sel = Some(i + 1);
+            for kind in [ShapeKind::Rect, ShapeKind::Ellipse, ShapeKind::Line] {
+                if ui.button(format!("+ {}", kind.label())).clicked() {
+                    let w = (tw * 0.3).min(80.0);
+                    let h = if kind == ShapeKind::Line { 2.0 } else { w };
+                    let mut it = CoverItem::shape(kind, (tw - w) / 2.0, (th - h) / 2.0, w, h);
+                    it.layer = active;
+                    doc.items_mut().push(it);
+                    self.cover_select_only(Some(doc.items().len() - 1));
                     changed = true;
-                }
-                if ui.button("Supprimer").clicked() {
-                    doc.items_mut().remove(i);
-                    self.cover_sel = None;
-                    changed = true;
-                }
-                let l = doc.items()[i].layer;
-                if let Some(j) = (0..i).rev().find(|&j| doc.items()[j].layer == l) {
-                    if ui.button("▼").on_hover_text("Reculer dans le calque").clicked() { doc.items_mut().swap(i, j); self.cover_sel = Some(j); changed = true; }
-                }
-                if let Some(j) = (i + 1..n).find(|&j| doc.items()[j].layer == l) {
-                    if ui.button("▲").on_hover_text("Avancer dans le calque").clicked() { doc.items_mut().swap(i, j); self.cover_sel = Some(j); changed = true; }
                 }
             }
         });
-        let Some(i) = self.cover_sel.filter(|&i| i < doc.items().len()) else { return changed };
+        ui.horizontal_wrapped(|ui| {
+            if !sel.is_empty() {
+                if ui.button("Dupliquer").clicked() { changed |= self.cover_duplicate(doc); }
+                if ui.button("Supprimer").clicked() { changed |= self.cover_delete(doc); }
+                if ui.button("Copier").on_hover_text("Ctrl+C").clicked() { self.cover_copy(&*doc); }
+                if ui.button("Couper").on_hover_text("Ctrl+X").clicked() { if self.cover_copy(&*doc) { changed |= self.cover_delete(doc); } }
+            }
+            if ui.add_enabled(!self.cover_clip.is_empty(), egui::Button::new("Coller")).on_hover_text("Ctrl+V — fonctionne aussi d'une feuille à l'autre (jaquette ↔ étiquette)").clicked() {
+                changed |= self.cover_paste(doc);
+            }
+            if sel.len() == 1 {
+                let i = sel[0];
+                let l = doc.items()[i].layer;
+                if let Some(j) = (0..i).rev().find(|&j| doc.items()[j].layer == l) {
+                    if ui.button("▼").on_hover_text("Reculer dans le calque").clicked() { doc.items_mut().swap(i, j); self.cover_select_only(Some(j)); changed = true; }
+                }
+                if let Some(j) = (i + 1..n).find(|&j| doc.items()[j].layer == l) {
+                    if ui.button("▲").on_hover_text("Avancer dans le calque").clicked() { doc.items_mut().swap(i, j); self.cover_select_only(Some(j)); changed = true; }
+                }
+            }
+        });
+        // alignement : sur le cadre commun de la selection, ou sur la feuille pour un element seul
+        if !sel.is_empty() {
+            let mut align = None;
+            ui.collapsing(if sel.len() > 1 { format!("Alignement ({} éléments)", sel.len()) } else { "Alignement et centrage".to_string() }, |ui| {
+                ui.horizontal_wrapped(|ui| {
+                    for (tip, a) in [("Aligner à gauche", ItemAlign::Left), ("Centrer horizontalement", ItemAlign::CenterH), ("Aligner à droite", ItemAlign::Right),
+                                     ("Aligner en haut", ItemAlign::Top), ("Centrer verticalement", ItemAlign::CenterV), ("Aligner en bas", ItemAlign::Bottom)] {
+                        if crate::editor_ui::align_button(ui, a, tip) { align = Some(a); }
+                    }
+                });
+                ui.horizontal_wrapped(|ui| {
+                    if ui.button("Centrer sur la feuille (↔)").clicked() { align = Some(ItemAlign::PageH); }
+                    if ui.button("Centrer sur la feuille (↕)").clicked() { align = Some(ItemAlign::PageV); }
+                });
+                if sel.len() >= 3 {
+                    ui.horizontal_wrapped(|ui| {
+                        if ui.button("Répartir horizontalement").clicked() { align = Some(ItemAlign::DistributeH); }
+                        if ui.button("Répartir verticalement").clicked() { align = Some(ItemAlign::DistributeV); }
+                    });
+                }
+            });
+            if let Some(a) = align { changed |= bdauthor_core::cover::align_cover(doc.items_mut(), &sel, a, (tw, th)); }
+        }
+        if sel.len() > 1 {
+            ui.separator();
+            ui.label(format!("{} éléments sélectionnés : glissez-les ensemble, alignez-les ou copiez-les. Sélectionnez-en un seul pour modifier ses réglages.", sel.len()));
+            return changed;
+        }
+        let Some(i) = sel.first().copied() else { return changed };
         ui.separator();
         let zones = doc.zones();
         let base_dir = self.base_dir();
@@ -560,7 +611,7 @@ impl App {
         let mut pick_image = false;
         let mut pick_font = false;
         match &mut it.kind {
-            CoverKind::Text { text, size_pt, color, align, font } => {
+            CoverKind::Text { text, size_pt, color, align, font, fx } => {
                 changed |= ui.add(egui::TextEdit::multiline(text).desired_rows(3).desired_width(f32::INFINITY)).changed();
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("jaquette_champs").selected_text("Insérer un champ automatique…").show_ui(ui, |ui| {
@@ -593,6 +644,23 @@ impl App {
                         if ui.button("Autre fichier…").clicked() { pick_font = true; ui.close_menu(); }
                     });
                 });
+                ui.horizontal(|ui| {
+                    ui.label("Position verticale");
+                    for (v, t) in [(VAlign::Top, "Haut"), (VAlign::Middle, "Milieu"), (VAlign::Bottom, "Bas")] {
+                        if ui.selectable_label(fx.valign == v, t).clicked() { fx.valign = v; changed = true; }
+                    }
+                    ui.label("Interligne");
+                    changed |= ui.add(egui::DragValue::new(&mut fx.spacing).range(0.5..=3.0).speed(0.02)).changed();
+                });
+                changed |= ui.checkbox(&mut fx.autofit, "Ajuster au cadre").on_hover_text("Réduit la taille du texte s'il déborde du cadre").changed();
+                ui.horizontal(|ui| {
+                    ui.label("Contour");
+                    changed |= ui.add(egui::DragValue::new(&mut fx.outline_mm).range(0.0..=5.0).speed(0.05).suffix(" mm")).changed();
+                    changed |= ui.color_edit_button_srgb(&mut fx.outline_color).changed();
+                    ui.label("Ombre");
+                    changed |= ui.add(egui::DragValue::new(&mut fx.shadow_mm).range(0.0..=5.0).speed(0.05).suffix(" mm")).changed();
+                    changed |= ui.color_edit_button_srgb(&mut fx.shadow_color).changed();
+                });
                 if !font.is_empty() {
                     if let Ok(r) = &self.renderer {
                         if r.custom_font(font, &base_dir).is_none() {
@@ -606,6 +674,37 @@ impl App {
                     changed |= ui.add(egui::TextEdit::singleline(path).desired_width(220.0)).changed();
                     if ui.button("Choisir…").clicked() { pick_image = true; }
                 });
+            }
+            CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm } => {
+                if *shape == ShapeKind::Line {
+                    ui.horizontal(|ui| {
+                        ui.label("Couleur");
+                        let mut col = stroke.or(*fill).unwrap_or([255, 255, 255]);
+                        if ui.color_edit_button_srgb(&mut col).changed() { *stroke = Some(col); *fill = None; changed = true; }
+                        ui.label("Épaisseur");
+                        changed |= ui.add(egui::DragValue::new(stroke_mm).range(0.1..=50.0).speed(0.05).suffix(" mm")).changed();
+                    });
+                } else {
+                    ui.horizontal(|ui| {
+                        let mut on = fill.is_some();
+                        if ui.checkbox(&mut on, "Remplissage").changed() { *fill = if on { Some([255, 255, 255]) } else { None }; changed = true; }
+                        if let Some(c) = fill { changed |= ui.color_edit_button_srgb(c).changed(); }
+                    });
+                    ui.horizontal(|ui| {
+                        let mut on = stroke.is_some();
+                        if ui.checkbox(&mut on, "Bordure").changed() { *stroke = if on { Some([0, 0, 0]) } else { None }; changed = true; }
+                        if let Some(c) = stroke {
+                            changed |= ui.color_edit_button_srgb(c).changed();
+                            changed |= ui.add(egui::DragValue::new(stroke_mm).range(0.1..=50.0).speed(0.05).suffix(" mm")).changed();
+                        }
+                    });
+                    if *shape == ShapeKind::Rect {
+                        ui.horizontal(|ui| {
+                            ui.label("Coins arrondis");
+                            changed |= ui.add(egui::DragValue::new(radius_mm).range(0.0..=100.0).speed(0.1).suffix(" mm")).changed();
+                        });
+                    }
+                }
             }
         }
         if pick_image {
@@ -773,12 +872,28 @@ impl App {
         for (x, y, w, h) in rects { painter.rect_stroke(Rect::from_min_max(to_screen(x, y), to_screen(x + w, y + h)), 0.0, guide); }
         for (x1, y1, x2, y2) in lines { painter.line_segment([to_screen(x1, y1), to_screen(x2, y2)], guide); }
         for (cx, cy, r) in circles { painter.circle_stroke(to_screen(cx, cy), r as f32 * k, guide); }
-        let sel = self.cover_sel.filter(|&i| i < doc.items().len());
+        let selection = self.cover_selection(doc.items().len());
+        // un seul element selectionne : poignees de redimensionnement
+        let sel = if selection.len() == 1 { Some(selection[0]) } else { None };
+        // zone de securite
+        if self.cover_safe {
+            let orange = Stroke::new(1.0_f32, Color32::from_rgb(255, 170, 60));
+            let (srects, scircles) = doc.safe_guides();
+            for (x, y, w, h) in srects {
+                let pts = [to_screen(x, y), to_screen(x + w, y), to_screen(x + w, y + h), to_screen(x, y + h), to_screen(x, y)];
+                painter.extend(egui::Shape::dashed_line(&pts, orange, 6.0, 4.0));
+            }
+            for (cx, cy, r) in scircles { painter.circle_stroke(to_screen(cx, cy), r as f32 * k, orange); }
+        }
         // regles graduees (mm ou pouces), zero au coin haut gauche de la feuille rognee ; reperes du pointeur et de la selection
         {
             let top = Rect::from_min_max(pos2(viewport.min.x, full.min.y), pos2(viewport.max.x, viewport.min.y));
             let left = Rect::from_min_max(pos2(full.min.x, viewport.min.y), pos2(viewport.min.x, viewport.max.y));
-            let band = sel.map(|i| { let it = &doc.items()[i]; (to_screen(it.x, it.y), to_screen(it.x + it.w, it.y + it.h)) });
+            let band = if selection.is_empty() { None } else {
+                let (mut x0, mut y0, mut x1, mut y1) = (f64::MAX, f64::MAX, f64::MIN, f64::MIN);
+                for &i in &selection { let it = &doc.items()[i]; x0 = x0.min(it.x); y0 = y0.min(it.y); x1 = x1.max(it.x + it.w); y1 = y1.max(it.y + it.h); }
+                Some((to_screen(x0, y0), to_screen(x1, y1)))
+            };
             draw_ruler(&full_painter, top, true, origin.x + bleed * k, k, self.cover_inch, hover_vp.map(|p| p.x), band.map(|b| (b.0.x, b.1.x)));
             draw_ruler(&full_painter, left, false, origin.y + bleed * k, k, self.cover_inch, hover_vp.map(|p| p.y), band.map(|b| (b.0.y, b.1.y)));
             let corner = Rect::from_min_max(full.min, viewport.min);
@@ -787,7 +902,7 @@ impl App {
         }
         let layers = doc.layers().clone();
         let usable = |it: &CoverItem| { let (v, l) = layer_state(&layers, it.layer); v && !l };
-        // cadres des elements
+        // cadres des elements : poignees pour un element seul, cadre plein pour une selection multiple
         for (i, it) in doc.items().iter().enumerate() {
             if !layer_state(&layers, it.layer).0 { continue; }
             let r = Rect::from_min_max(to_screen(it.x, it.y), to_screen(it.x + it.w, it.y + it.h));
@@ -797,6 +912,8 @@ impl App {
                     painter.rect_filled(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Color32::WHITE);
                     painter.rect_stroke(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Stroke::new(1.0_f32, Color32::BLACK));
                 }
+            } else if selection.contains(&i) {
+                painter.rect_stroke(r, 0.0, Stroke::new(1.5_f32, Color32::WHITE));
             } else {
                 painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(120, 190, 255, 110)));
             }
@@ -823,9 +940,12 @@ impl App {
             if h != 0 { ctx.set_cursor_icon(icon_of(h)); }
             else if hit(p, doc.items()).is_some() { ctx.set_cursor_icon(CursorIcon::Grab); }
         }
-        // debut : poignee de l'element selectionne, sinon l'element sous la souris (le plus au premier plan)
+        let extend = ctx.input(|i| i.modifiers.shift || i.modifiers.command);
+        let len = doc.items().len();
+        // debut : poignee de l'element selectionne ; sinon element sous la souris (Maj/Ctrl : s'ajoute a la selection) ; sinon rectangle de selection
         if skip_input {
             self.cover_drag = None;
+            self.cover_marquee = None;
         } else if resp.drag_started() {
             if let Some(p) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos()) {
                 let mut target = None;
@@ -834,20 +954,46 @@ impl App {
                     if h != 0 { target = Some((i, h)); }
                 }
                 if target.is_none() {
-                    if let Some(i) = hit(p, doc.items()) { self.cover_sel = Some(i); target = Some((i, 0)); }
+                    if let Some(i) = hit(p, doc.items()) {
+                        if !selection.contains(&i) {
+                            if extend { let mut v = selection.clone(); v.push(i); self.cover_set_selection(v, i); } else { self.cover_select_only(Some(i)); }
+                        }
+                        target = Some((i, 0));
+                    }
                 }
-                if let Some((i, h)) = target {
-                    let it = &doc.items()[i];
-                    self.cover_drag = Some(CoverDrag { item: i, handle: h, orig: (it.x, it.y, it.w, it.h), start: to_mm(p) });
+                match target {
+                    Some((i, h)) => {
+                        let group: Vec<(usize, (f64, f64, f64, f64))> = if h == 0 {
+                            self.cover_selection(len).into_iter().filter(|&j| usable(&doc.items()[j])).map(|j| { let it = &doc.items()[j]; (j, (it.x, it.y, it.w, it.h)) }).collect()
+                        } else { Vec::new() };
+                        let it = &doc.items()[i];
+                        self.cover_drag = Some(CoverDrag { item: i, handle: h, orig: (it.x, it.y, it.w, it.h), start: to_mm(p), group });
+                    }
+                    None => if viewport.contains(p) {
+                        let base = if extend { selection.clone() } else { Vec::new() };
+                        if !extend { self.cover_select_only(None); }
+                        self.cover_marquee = Some((to_mm(p), base));
+                    }
                 }
             }
         } else if resp.clicked() {
-            if let Some(p) = resp.interact_pointer_pos() { self.cover_sel = hit(p, doc.items()); }
+            if let Some(p) = resp.interact_pointer_pos() {
+                match hit(p, doc.items()) {
+                    Some(i) if extend => {
+                        let mut v = selection.clone();
+                        if let Some(k) = v.iter().position(|&e| e == i) { v.remove(k); } else { v.push(i); }
+                        match v.last().copied() { Some(last) => self.cover_set_selection(v, last), None => self.cover_select_only(None) }
+                    }
+                    Some(i) => self.cover_select_only(Some(i)),
+                    None => if !extend && viewport.contains(p) { self.cover_select_only(None); },
+                }
+            }
         }
         // en cours : la position est toujours calculee depuis le point de depart, sans derive
+        let mut snapped: (Option<f64>, Option<f64>) = (None, None);
         if resp.dragged() && !skip_input {
             if let (Some(d), Some(p)) = (self.cover_drag.clone(), resp.interact_pointer_pos()) {
-                if d.item < doc.items().len() {
+                if d.item < len {
                     let (mx, my) = to_mm(p);
                     let (dx, dy) = (mx - d.start.0, my - d.start.1);
                     let (x, y, w, h) = d.orig;
@@ -859,29 +1005,193 @@ impl App {
                         _ => (x, y, (w + dx).max(MIN_MM), (h + dy).max(MIN_MM)),
                     };
                     // Maj : coin tire en gardant les proportions d'origine (le coin oppose reste fixe)
-                    let (nx, ny, nw, nh) = if d.handle != 0 && ctx.input(|i| i.modifiers.shift) && w > 0.0 && h > 0.0 {
+                    let proportional = d.handle != 0 && ctx.input(|i| i.modifiers.shift) && w > 0.0 && h > 0.0;
+                    let (mut nx, mut ny, mut nw, mut nh) = if proportional {
                         let s = (nw / w).max(nh / h).max(MIN_MM / w).max(MIN_MM / h);
                         let (rw, rh) = (w * s, h * s);
                         (if d.handle == 1 || d.handle == 3 { x + w - rw } else { x }, if d.handle == 1 || d.handle == 2 { y + h - rh } else { y }, rw, rh)
                     } else { (nx, ny, nw, nh) };
-                    let r = |v: f64| (v * 10.0).round() / 10.0;
-                    let it = &mut doc.items_mut()[d.item];
-                    if (it.x, it.y, it.w, it.h) != (r(nx), r(ny), r(nw), r(nh)) {
+                    // aimantation (Alt : desactivee) sur les reperes de la feuille et les bords et centres des autres elements
+                    if self.cover_snap && !proportional && !ctx.input(|i| i.modifiers.alt) {
+                        let (mut xs, mut ys) = doc.snap_lines();
+                        for (j, it) in doc.items().iter().enumerate() {
+                            if j == d.item || d.group.iter().any(|g| g.0 == j) || !layer_state(&layers, it.layer).0 { continue; }
+                            xs.extend([it.x, it.x + it.w / 2.0, it.x + it.w]);
+                            ys.extend([it.y, it.y + it.h / 2.0, it.y + it.h]);
+                        }
+                        let (r2, gx, gy) = bdauthor_core::cover::snap_rect(d.handle, (nx, ny, nw, nh), &xs, &ys, 6.0 / k as f64);
+                        (nx, ny, nw, nh) = r2;
+                        snapped = (gx, gy);
+                    }
+                    let r = |v: f64| (v * 100.0).round() / 100.0;
+                    let items = doc.items_mut();
+                    let moved = (items[d.item].x, items[d.item].y, items[d.item].w, items[d.item].h) != (r(nx), r(ny), r(nw), r(nh));
+                    if moved {
+                        let (ddx, ddy) = (r(nx) - x, r(ny) - y);
+                        if d.handle == 0 && !d.group.is_empty() {
+                            for (j, o) in &d.group { if *j < len { items[*j].x = r(o.0 + ddx); items[*j].y = r(o.1 + ddy); } }
+                        }
+                        let it = &mut items[d.item];
                         (it.x, it.y, it.w, it.h) = (r(nx), r(ny), r(nw), r(nh));
                         self.cover_changed();
                     }
                 }
             }
         }
-        if resp.drag_stopped() { self.cover_drag = None; }
-        if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(Key::Delete)) {
-            if let Some(i) = sel {
-                doc.items_mut().remove(i);
-                self.cover_sel = None;
-                self.cover_changed();
+        // rectangle de selection
+        if let (Some((s0, base)), true) = (self.cover_marquee.clone(), resp.dragged() && !skip_input) {
+            if let Some(p) = resp.interact_pointer_pos() {
+                let (mx, my) = to_mm(p);
+                let (x0, x1, y0, y1) = (s0.0.min(mx), s0.0.max(mx), s0.1.min(my), s0.1.max(my));
+                let mut v = base;
+                for (j, it) in doc.items().iter().enumerate() {
+                    if usable(it) && it.x < x1 && it.x + it.w > x0 && it.y < y1 && it.y + it.h > y0 && !v.contains(&j) { v.push(j); }
+                }
+                match v.last().copied() { Some(last) => self.cover_set_selection(v, last), None => self.cover_select_only(None) }
+                let rc = Rect::from_two_pos(to_screen(x0, y0), to_screen(x1, y1));
+                painter.rect_filled(rc, 0.0, Color32::from_rgba_unmultiplied(120, 190, 255, 30));
+                painter.rect_stroke(rc, 0.0, Stroke::new(1.0_f32, Color32::from_rgb(120, 190, 255)));
             }
         }
+        // traits d'aimantation
+        if let (Some(g), true) = (snapped.0, self.cover_drag.is_some()) {
+            painter.line_segment([to_screen(g, -(bleed as f64)), to_screen(g, sh - bleed as f64)], Stroke::new(1.0_f32, Color32::from_rgb(255, 80, 200)));
+        }
+        if let (Some(g), true) = (snapped.1, self.cover_drag.is_some()) {
+            painter.line_segment([to_screen(-(bleed as f64), g), to_screen(sw - bleed as f64, g)], Stroke::new(1.0_f32, Color32::from_rgb(255, 80, 200)));
+        }
+        if resp.drag_stopped() { self.cover_drag = None; self.cover_marquee = None; }
+        if self.cover_keys(ctx, doc) { self.cover_changed(); }
         let pos_txt = hover_vp.map(|p| { let (x, y) = to_mm(p); if self.cover_inch { format!("X {:.2} in   Y {:.2} in   ·   ", x / 25.4, y / 25.4) } else { format!("X {x:.1} mm   Y {y:.1} mm   ·   ") } }).unwrap_or_default();
-        ui.label(egui::RichText::new(format!("{pos_txt}Glissez un élément pour le déplacer, ses coins pour le redimensionner (Maj : proportionnel) · Suppr : le retirer · Ctrl+Z / Ctrl+Y : annuler / refaire · les traits blancs montrent les limites de coupe et de pliage")).weak());
+        ui.label(egui::RichText::new(format!("{pos_txt}Glisser : déplacer · coins : redimensionner (Maj : proportionnel) · rectangle ou Maj+clic : sélection multiple · flèches : déplacer de 0,5 mm (Maj 5 mm, Ctrl 0,1 mm) · Alt : sans aimantation · Ctrl+C/X/V · Suppr · Ctrl+Z / Ctrl+Y")).weak());
     }
+
+    /// Elements selectionnes (principal et supplementaires), tries et sans doublon.
+    fn cover_selection(&self, len: usize) -> Vec<usize> {
+        let mut v: Vec<usize> = self.cover_sel.into_iter().chain(self.cover_extra.iter().copied()).filter(|&i| i < len).collect();
+        v.sort_unstable();
+        v.dedup();
+        v
+    }
+
+    fn cover_select_only(&mut self, i: Option<usize>) {
+        self.cover_sel = i;
+        self.cover_extra.clear();
+    }
+
+    /// Selection de `v`, `primary` etant l'element principal.
+    fn cover_set_selection(&mut self, v: Vec<usize>, primary: usize) {
+        self.cover_sel = Some(primary);
+        self.cover_extra = v.into_iter().filter(|&e| e != primary).collect();
+    }
+
+    /// Copie la selection dans le presse-papiers de l'application ; faux si rien n'est selectionne.
+    fn cover_copy(&mut self, doc: &dyn SheetDoc) -> bool {
+        let sel = self.cover_selection(doc.items().len());
+        if sel.is_empty() { return false; }
+        self.cover_clip = sel.iter().map(|&i| doc.items()[i].clone()).collect();
+        self.cover_paste_n = 0;
+        true
+    }
+
+    /// Supprime les elements selectionnes.
+    fn cover_delete(&mut self, doc: &mut dyn SheetDoc) -> bool {
+        let sel = self.cover_selection(doc.items().len());
+        for &i in sel.iter().rev() { doc.items_mut().remove(i); }
+        self.cover_select_only(None);
+        !sel.is_empty()
+    }
+
+    /// Colle le presse-papiers (decale de 5 mm a chaque collage, y compris d'un onglet a l'autre : jaquette <-> etiquette).
+    fn cover_paste(&mut self, doc: &mut dyn SheetDoc) -> bool {
+        if self.cover_clip.is_empty() { return false; }
+        self.cover_paste_n += 1;
+        let off = 5.0 * self.cover_paste_n as f64;
+        let nl = layers_or_default(doc.layers()).len();
+        let first = doc.items().len();
+        for it in self.cover_clip.clone() {
+            let mut c = it;
+            c.x += off;
+            c.y += off;
+            c.layer = c.layer.min(nl - 1);
+            if !c.name.is_empty() { c.name = unique_copy_name(&c.name, doc.items()); }
+            doc.items_mut().push(c);
+        }
+        let v: Vec<usize> = (first..doc.items().len()).collect();
+        if let Some(&last) = v.last() { self.cover_set_selection(v, last); }
+        true
+    }
+
+    /// Duplique les elements selectionnes (decales de 5 mm, au premier plan de leur calque).
+    fn cover_duplicate(&mut self, doc: &mut dyn SheetDoc) -> bool {
+        let sel = self.cover_selection(doc.items().len());
+        if sel.is_empty() { return false; }
+        let first = doc.items().len();
+        for &i in &sel {
+            let mut c = doc.items()[i].clone();
+            c.x += 5.0;
+            c.y += 5.0;
+            if !c.name.is_empty() { c.name = unique_copy_name(&c.name, doc.items()); }
+            doc.items_mut().push(c);
+        }
+        let v: Vec<usize> = (first..doc.items().len()).collect();
+        if let Some(&last) = v.last() { self.cover_set_selection(v, last); }
+        true
+    }
+
+    /// Clavier : copier / couper / coller (evenements egui, marqueur dans le presse-papiers systeme), fleches, Suppr.
+    fn cover_keys(&mut self, ctx: &egui::Context, doc: &mut dyn SheetDoc) -> bool {
+        if ctx.wants_keyboard_input() || self.cover_drag.is_some() { return false; }
+        use egui::Modifiers;
+        let (copy, cut, paste) = ctx.input_mut(|i| {
+            let has = |i: &egui::InputState, f: fn(&egui::Event) -> bool| i.events.iter().any(f);
+            let copy = has(i, |e| matches!(e, egui::Event::Copy)) || i.consume_key(Modifiers::COMMAND, Key::C);
+            let cut = has(i, |e| matches!(e, egui::Event::Cut)) || i.consume_key(Modifiers::COMMAND, Key::X);
+            let paste = has(i, |e| matches!(e, egui::Event::Paste(t) if t.as_str() == COVER_MARK)) || i.consume_key(Modifiers::COMMAND, Key::V);
+            (copy, cut, paste)
+        });
+        let mut changed = false;
+        if copy || cut {
+            if self.cover_copy(&*doc) {
+                // egui-winit ne transmet « coller » que si le presse-papiers systeme contient du texte : on y depose un marqueur
+                ctx.copy_text(COVER_MARK.to_string());
+                if cut { changed |= self.cover_delete(doc); }
+            }
+        }
+        if paste { changed |= self.cover_paste(doc); }
+        if ctx.input(|i| i.key_pressed(Key::Delete)) { changed |= self.cover_delete(doc); }
+        // fleches : 0,5 mm (Maj : 5 mm, Ctrl : 0,1 mm)
+        let (mut dx, mut dy) = (0.0_f64, 0.0_f64);
+        ctx.input_mut(|i| {
+            for (m, s) in [(Modifiers::NONE, 0.5), (Modifiers::SHIFT, 5.0), (Modifiers::COMMAND, 0.1)] {
+                if i.consume_key(m, Key::ArrowLeft) { dx -= s; }
+                if i.consume_key(m, Key::ArrowRight) { dx += s; }
+                if i.consume_key(m, Key::ArrowUp) { dy -= s; }
+                if i.consume_key(m, Key::ArrowDown) { dy += s; }
+            }
+        });
+        if dx != 0.0 || dy != 0.0 {
+            let layers = doc.layers().clone();
+            for i in self.cover_selection(doc.items().len()) {
+                let it = &mut doc.items_mut()[i];
+                if layer_state(&layers, it.layer) != (true, false) && layer_state(&layers, it.layer).1 { continue; }
+                it.x = ((it.x + dx) * 100.0).round() / 100.0;
+                it.y = ((it.y + dy) * 100.0).round() / 100.0;
+                changed = true;
+            }
+        }
+        changed
+    }
+}
+
+/// Texte depose dans le presse-papiers systeme a la copie d'elements de jaquette (le contenu reel reste dans l'application).
+const COVER_MARK: &str = "bdauthor:jaquette";
+
+/// « Nom (copie) », puis « Nom (copie 2) », « Nom (copie 3) »… : premier nom libre parmi les elements.
+fn unique_copy_name(name: &str, items: &[CoverItem]) -> String {
+    let base = match name.rfind(" (copie") { Some(k) if name.ends_with(')') => &name[..k], _ => name };
+    let taken = |n: &str| items.iter().any(|it| it.name == n);
+    let first = format!("{base} (copie)");
+    if !taken(&first) { return first; }
+    (2..).map(|k| format!("{base} (copie {k})")).find(|n| !taken(n)).unwrap_or(first)
 }

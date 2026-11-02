@@ -51,9 +51,9 @@ fn items_to_pixels() {
     let (d, rot) = &l.items[0];
     assert_eq!(*rot, 0);
     // 143 mm + fond perdu 3 mm a 300 dpi ; 36 pt = 150 px
-    match d { bdauthor_core::project::Decor::Text { x, w, size, .. } => assert_eq!((*x, *w, *size), (1724, 1524, 150)), _ => panic!() }
+    match d { CoverDecor::Text { x, w, size, .. } => assert_eq!((*x, *w, *size), (1724, 1524, 150)), _ => panic!() }
     assert_eq!(l.items[1].1, 90);
-    match &l.items[2].0 { bdauthor_core::project::Decor::Image { path, x, .. } => { assert_eq!(*x, 0); assert!(path.ends_with("img/logo.png") && path.starts_with("/proj")); } _ => panic!() }
+    match &l.items[2].0 { CoverDecor::Image { path, x, .. } => { assert_eq!(*x, 0); assert!(path.ends_with("img/logo.png") && path.starts_with("/proj")); } _ => panic!() }
 }
 
 #[test]
@@ -227,4 +227,63 @@ fn a4_and_png_outputs() {
     assert!(png.windows(4).any(|w| w == b"pHYs"));
     assert!(png.windows(4).any(|w| w == 11811u32.to_be_bytes()));
     std::fs::write(std::env::temp_dir().join("bd_cover.png"), &png).unwrap();
+}
+
+#[test]
+fn shapes_and_text_fx_json_layout() {
+    let mut c = Cover::default();
+    let mut t = CoverItem::text("Titre", 10.0, 10.0, 100.0, 30.0, 30.0);
+    if let CoverKind::Text { fx, .. } = &mut t.kind {
+        fx.outline_mm = 0.4; fx.outline_color = [255, 0, 0]; fx.shadow_mm = 0.6; fx.spacing = 1.3; fx.valign = VAlign::Bottom; fx.autofit = true;
+    }
+    c.items.push(t);
+    let mut r = CoverItem::shape(ShapeKind::Rect, 0.0, 0.0, 50.0, 20.0);
+    if let CoverKind::Shape { stroke, stroke_mm, radius_mm, .. } = &mut r.kind { *stroke = Some([10, 20, 30]); *stroke_mm = 1.0; *radius_mm = 3.0; }
+    c.items.push(r);
+    c.items.push(CoverItem::shape(ShapeKind::Ellipse, 5.0, 5.0, 20.0, 20.0));
+    c.items.push(CoverItem::shape(ShapeKind::Line, 5.0, 30.0, 80.0, 2.0));
+    let back = Cover::from_value(c.to_value().as_ref()).unwrap();
+    assert_eq!(back, c);
+    let l = c.layout(300, Path::new("."));
+    assert_eq!(l.items.len(), 4);
+    match &l.items[0].0 { CoverDecor::Text { outline, shadow, spacing, valign, autofit, .. } => { assert_eq!((*outline, *shadow, *autofit, *valign), (5, 7, true, VAlign::Bottom)); assert!((*spacing - 1.3).abs() < 1e-6); } _ => panic!() };
+    match &l.items[1].0 { CoverDecor::Shape { stroke_px, radius_px, fill, .. } => assert_eq!((*stroke_px, *radius_px, *fill), (12, 35, Some([255, 255, 255]))), _ => panic!() }
+    // un texte simple n'ecrit aucun effet
+    let plain = CoverItem::text("x", 0.0, 0.0, 10.0, 10.0, 12.0);
+    let mut c2 = Cover::default();
+    c2.items.push(plain);
+    let json = c2.to_value().unwrap().to_pretty();
+    assert!(!json.contains("contour") && !json.contains("ombre") && !json.contains("interligne"));
+}
+
+#[test]
+fn snapping_and_alignment() {
+    // deplacement : le bord gauche (x = 0.8) s'aimante sur 0 ; pas de ligne a portee en y
+    let (r, gx, gy) = snap_rect(0, (0.8, 40.0, 20.0, 10.0), &[0.0, 129.0], &[0.0], 1.5);
+    assert_eq!((r, gx, gy), ((0.0, 40.0, 20.0, 10.0), Some(0.0), None));
+    // le centre s'aimante sur 64.5 (centre de la face) : x + w/2 = 65 -> x = 54.5
+    let (r, gx, _) = snap_rect(0, (55.0, 0.0, 20.0, 10.0), &[64.5], &[], 1.0);
+    assert!((r.0 - 54.5).abs() < 1e-9 && gx == Some(64.5));
+    // coin bas droit : seuls le bord droit et le bord bas bougent
+    let (r, gx, gy) = snap_rect(4, (10.0, 10.0, 49.0, 29.0), &[60.0], &[40.0], 2.0);
+    assert_eq!(r, (10.0, 10.0, 50.0, 30.0));
+    assert_eq!((gx, gy), (Some(60.0), Some(40.0)));
+    // trop loin : rien ne change
+    assert_eq!(snap_rect(0, (10.0, 10.0, 5.0, 5.0), &[100.0], &[100.0], 1.0), ((10.0, 10.0, 5.0, 5.0), None, None));
+    // alignement
+    use bdauthor_core::editor::ItemAlign;
+    let mut items = vec![CoverItem::text("a", 10.0, 5.0, 20.0, 10.0, 12.0), CoverItem::text("b", 50.0, 30.0, 10.0, 10.0, 12.0), CoverItem::text("c", 100.0, 60.0, 30.0, 10.0, 12.0)];
+    assert!(align_cover(&mut items, &[0, 1, 2], ItemAlign::Left, (272.0, 148.0)));
+    assert!(items.iter().all(|i| i.x == 10.0));
+    assert!(align_cover(&mut items, &[0, 1, 2], ItemAlign::DistributeV, (272.0, 148.0)));
+    assert_eq!(items[1].y, (5.0 + 5.0 + 60.0 + 5.0) / 2.0 - 5.0);
+    // un seul : centre sur la feuille
+    let mut one = vec![CoverItem::text("a", 0.0, 0.0, 20.0, 10.0, 12.0)];
+    assert!(align_cover(&mut one, &[0], ItemAlign::CenterH, (272.0, 148.0)));
+    assert_eq!(one[0].x, 126.0);
+    // guides de securite : jaquette (dos, face, tranche) et etiquette (cercles)
+    let c = Cover::default();
+    assert_eq!(c.safe_guides().0.len(), 3);
+    assert!(c.snap_lines().0.contains(&129.0) && c.snap_lines().0.contains(&143.0));
+    assert_eq!(DiscLabel::default().safe_guides().1.len(), 2);
 }

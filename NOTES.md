@@ -637,3 +637,9 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 ### Redimensionnement proportionnel (Maj)
 - `editor::dragged_rect_ratio` : en tirant un coin avec Maj, le coin oppose reste fixe et les proportions d'origine sont conservees (echelle = la plus grande des deux dimensions, bornee par la taille minimale et par le plan 1920x1080).
   Valable pour tous les widgets de la mise en page (hors selection multiple, qui n'a pas de poignees) et pour les elements de la jaquette / etiquette (meme principe, en mm, sans borne de plan).
+
+## Jaquette : accrochage, sélection multiple, formes, texte enrichi (export 116)
+- Aimantation (case « Aimanter », Alt = désactivée) sur bords/centres de la feuille, pliages, autres éléments ; traits magenta ; zone de sécurité 3 mm (pointillés orange) ; flèches : 0,5 mm (Maj 5 mm, Ctrl 0,1 mm).
+- Sélection multiple (Maj/Ctrl+clic, rectangle de sélection, liste), déplacement de groupe, Ctrl+C/X/V (jaquette ↔ étiquette), Dupliquer/Supprimer, panneau d'alignement (`align_cover`).
+- Formes : rectangle, ellipse, ligne (remplissage, bordure, coins arrondis). Texte : contour, ombre, interligne, alignement vertical, ajustement au cadre.
+- Core testé (122 tests) ; render et gui à compiler avec recompiler.bat.
