@@ -13,6 +13,63 @@ const PREVIEW_DPI: u32 = 96;
 /// Taille minimale d'un element (mm) et rayon (pixels) de saisie d'une poignee.
 const MIN_MM: f64 = 2.0;
 const HANDLE_PX: f32 = 9.0;
+/// Epaisseur des regles (pixels) : largeur de celle de gauche, hauteur de celle du haut.
+const RULER_W: f32 = 30.0;
+const RULER_H: f32 = 18.0;
+/// Graduations (pas des chiffres, pas des petits traits) en mm et en pouces.
+const MM_STEPS: [(f64, f64); 8] = [(1.0, 0.2), (2.0, 0.5), (5.0, 1.0), (10.0, 2.0), (20.0, 5.0), (50.0, 10.0), (100.0, 20.0), (200.0, 50.0)];
+const INCH_STEPS: [(f64, f64); 7] = [(0.25, 0.0625), (0.5, 0.125), (1.0, 0.25), (2.0, 0.5), (5.0, 1.0), (10.0, 2.0), (20.0, 5.0)];
+
+fn ruler_text(v: f64, inch: bool) -> String {
+    if (v - v.round()).abs() < 1e-6 { return format!("{}", v.round() as i64); }
+    if inch { format!("{v:.3}").trim_end_matches('0').to_string() } else { format!("{v:.1}") }
+}
+
+/// Regle graduee : `horizontal` (en haut) ou verticale (a gauche) ; `origin` : position ecran du zero, `ppmm` : points par mm,
+/// `cursor` : position du pointeur, `band` : etendue de l'element selectionne.
+fn draw_ruler(p: &egui::Painter, area: Rect, horizontal: bool, origin: f32, ppmm: f32, inch: bool, cursor: Option<f32>, band: Option<(f32, f32)>) {
+    let p = p.with_clip_rect(area);
+    p.rect_filled(area, 0.0, Color32::from_gray(38));
+    let unit_px = if inch { ppmm * 25.4 } else { ppmm };
+    let steps: &[(f64, f64)] = if inch { &INCH_STEPS } else { &MM_STEPS };
+    let (major, minor) = *steps.iter().find(|s| s.0 as f32 * unit_px >= 56.0).unwrap_or(steps.last().unwrap());
+    let (lo, hi) = if horizontal { (area.min.x, area.max.x) } else { (area.min.y, area.max.y) };
+    if let Some((a, b)) = band {
+        let (a, b) = (a.min(b).max(lo), a.max(b).min(hi));
+        if b > a {
+            let r = if horizontal { Rect::from_min_max(pos2(a, area.min.y), pos2(b, area.max.y)) } else { Rect::from_min_max(pos2(area.min.x, a), pos2(area.max.x, b)) };
+            p.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(120, 190, 255, 70));
+        }
+    }
+    let thick = if horizontal { area.height() } else { area.width() };
+    let n0 = (((lo - origin) / unit_px) as f64 / minor).floor() as i64;
+    let n1 = (((hi - origin) / unit_px) as f64 / minor).ceil() as i64;
+    if n1 - n0 < 4000 {
+        let col = Color32::from_gray(170);
+        let font = egui::FontId::proportional(9.0);
+        for n in n0..=n1 {
+            let v = n as f64 * minor;
+            let pos = origin + v as f32 * unit_px;
+            if pos < lo || pos > hi { continue; }
+            let is_major = ((v / major).round() * major - v).abs() < minor * 0.01;
+            let len = thick * if is_major { 0.75 } else { 0.35 };
+            let stroke = Stroke::new(1.0_f32, col);
+            if horizontal {
+                p.line_segment([pos2(pos, area.max.y), pos2(pos, area.max.y - len)], stroke);
+                if is_major { p.text(pos2(pos + 2.0, area.min.y), egui::Align2::LEFT_TOP, ruler_text(v, inch), font.clone(), col); }
+            } else {
+                p.line_segment([pos2(area.max.x, pos), pos2(area.max.x - len, pos)], stroke);
+                if is_major { p.text(pos2(area.min.x + 1.0, pos + 1.0), egui::Align2::LEFT_TOP, ruler_text(v, inch), font.clone(), col); }
+            }
+        }
+    }
+    if let Some(c) = cursor.filter(|c| *c >= lo && *c <= hi) {
+        let stroke = Stroke::new(1.5_f32, Color32::from_rgb(255, 120, 90));
+        if horizontal { p.line_segment([pos2(c, area.min.y), pos2(c, area.max.y)], stroke); } else { p.line_segment([pos2(area.min.x, c), pos2(area.max.x, c)], stroke); }
+    }
+    let edge = Stroke::new(1.0_f32, Color32::from_gray(90));
+    if horizontal { p.line_segment([area.left_bottom(), area.right_bottom()], edge); } else { p.line_segment([area.right_top(), area.right_bottom()], edge); }
+}
 
 /// Deplacement ou redimensionnement a la souris en cours : `handle` 0 = deplacer, 1..4 = coins haut gauche, haut droit, bas gauche, bas droit.
 #[derive(Clone)]
@@ -213,6 +270,8 @@ impl App {
             self.cover_closed.clear();
             self.cover_layer_edit = None;
             self.cover_layer = 0;
+            self.cover_zoom = 1.0;
+            self.cover_pan = egui::Vec2::ZERO;
             self.cover_sel = None;
             self.cover_drag = None;
             self.cover_tex = None;
@@ -571,16 +630,68 @@ impl App {
     }
 
     fn sheet_central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, doc: &mut dyn SheetDoc) {
-        // apercu regenere quand le document ou les champs automatiques ont change
+        // apercu regenere quand le document, les champs automatiques ou la finesse necessaire ont change
         let vars = self.cover_vars();
         if vars != self.cover_vars_seen {
             self.cover_vars_seen = vars.clone();
             self.cover_gen += 1;
         }
-        if self.cover_gen != self.cover_seen || self.cover_tex.is_none() {
+        let (sw, sh) = doc.sheet_mm();
+        let bleed = doc.bleed_mm() as f32;
+        let avail = ui.available_size();
+        let area = vec2(avail.x, (avail.y - 54.0).max(120.0));
+        let vp_size = vec2((area.x - RULER_W).max(50.0), (area.y - RULER_H).max(50.0));
+        // echelle « page entiere dans la fenetre » (points par mm) ; le zoom la multiplie
+        let k0 = ((vp_size.x - 16.0) / sw as f32).min((vp_size.y - 16.0) / sh as f32).max(0.2);
+        let real = 96.0_f32 / 25.4; // points par mm a la taille reelle (ecran a 96 dpi)
+        ui.horizontal(|ui| {
+            let z = self.cover_zoom;
+            if ui.small_button("−").on_hover_text("Dézoomer").clicked() { let nz = (z / 1.25).max(0.25); self.cover_pan *= nz / z; self.cover_zoom = nz; }
+            if ui.small_button("+").on_hover_text("Zoomer").clicked() { let nz = (z * 1.25).min(16.0); self.cover_pan *= nz / z; self.cover_zoom = nz; }
+            if ui.small_button("Ajuster").on_hover_text("Feuille entière dans la fenêtre").clicked() { self.cover_zoom = 1.0; self.cover_pan = egui::Vec2::ZERO; }
+            if ui.small_button("1:1").on_hover_text("Taille réelle (approximative : écran supposé à 96 dpi)").clicked() { self.cover_zoom = (real / k0).clamp(0.25, 16.0); self.cover_pan = egui::Vec2::ZERO; }
+            ui.label(format!("{:.0} %", k0 * self.cover_zoom / real * 100.0)).on_hover_text("100 % = taille réelle");
+            ui.separator();
+            ui.selectable_value(&mut self.cover_inch, false, "mm");
+            ui.selectable_value(&mut self.cover_inch, true, "pouces");
+            ui.label(egui::RichText::new("Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue").weak());
+        });
+        let (resp, full_painter) = ui.allocate_painter(area, Sense::click_and_drag());
+        let full = resp.rect;
+        let viewport = Rect::from_min_max(full.min + vec2(RULER_W, RULER_H), full.max);
+        // deplacement (clic molette ou Espace + bouton gauche) et zoom a la molette, centre sur le curseur
+        let panning = (resp.hovered() || self.cover_panning) && !ctx.wants_keyboard_input()
+            && ctx.input(|i| i.pointer.middle_down() || (i.key_down(Key::Space) && i.pointer.primary_down()));
+        let skip_input = panning || self.cover_panning;
+        self.cover_panning = panning;
+        if panning {
+            self.cover_pan += ctx.input(|i| i.pointer.delta());
+            ctx.set_cursor_icon(CursorIcon::Grabbing);
+        }
+        let hover_vp = resp.hover_pos().filter(|p| viewport.contains(*p));
+        if let Some(ptr) = hover_vp {
+            let (scroll, zd) = ctx.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+            let f = (scroll * 0.0015).exp() * zd;
+            if (f - 1.0).abs() > 1e-4 {
+                let z = self.cover_zoom;
+                let nz = (z * f).clamp(0.25, 16.0);
+                let c0 = viewport.center() + self.cover_pan;
+                self.cover_pan = (ptr - (ptr - c0) * (nz / z)) - viewport.center();
+                self.cover_zoom = nz;
+                ctx.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
+            }
+        }
+        let k = k0 * self.cover_zoom;
+        let half = (viewport.size() + vec2(sw as f32 * k, sh as f32 * k)) * 0.5 - vec2(40.0, 40.0);
+        self.cover_pan = vec2(self.cover_pan.x.clamp(-half.x.max(0.0), half.x.max(0.0)), self.cover_pan.y.clamp(-half.y.max(0.0), half.y.max(0.0)));
+        let rect = Rect::from_center_size(viewport.center() + self.cover_pan, vec2(sw as f32 * k, sh as f32 * k));
+        // finesse de l'apercu selon le zoom : 96, 144 ou 192 dpi
+        let need = k * ctx.pixels_per_point() * 25.4;
+        let want_dpi = if need <= 110.0 { PREVIEW_DPI } else if need <= 165.0 { 144 } else { 192 };
+        if self.cover_gen != self.cover_seen || self.cover_tex.is_none() || self.cover_tex_dpi != want_dpi {
             let base = self.base_dir();
             if let Ok(r) = &self.renderer {
-                if let Ok(img) = r.render_sheet(&*doc, PREVIEW_DPI, &base, &vars) {
+                if let Ok(img) = r.render_sheet(&*doc, want_dpi, &base, &vars) {
                     let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data);
                     match &mut self.cover_tex {
                         Some(t) => t.set(ci, egui::TextureOptions::LINEAR),
@@ -589,17 +700,15 @@ impl App {
                 }
             }
             self.cover_seen = self.cover_gen;
+            self.cover_tex_dpi = want_dpi;
         }
-        let (sw, sh) = doc.sheet_mm();
-        let avail = ui.available_size();
-        let k = ((avail.x / sw as f32).min((avail.y - 24.0) / sh as f32)).max(0.5);
-        let (resp, painter) = ui.allocate_painter(vec2(sw as f32 * k, sh as f32 * k), Sense::click_and_drag());
+        let painter = full_painter.with_clip_rect(viewport);
+        painter.rect_filled(viewport, 0.0, Color32::from_gray(18));
         match &self.cover_tex {
-            Some(t) => painter.image(t.id(), resp.rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE),
-            None => painter.rect_filled(resp.rect, 0.0, Color32::from_gray(30)),
+            Some(t) => painter.image(t.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE),
+            None => painter.rect_filled(rect, 0.0, Color32::from_gray(30)),
         };
-        let bleed = doc.bleed_mm() as f32;
-        let origin = resp.rect.min;
+        let origin = rect.min;
         let to_screen = |x: f64, y: f64| pos2(origin.x + (x as f32 + bleed) * k, origin.y + (y as f32 + bleed) * k);
         let to_mm = |p: egui::Pos2| (((p.x - origin.x) / k - bleed) as f64, ((p.y - origin.y) / k - bleed) as f64);
         // reperes : feuille rognee, pliages, cercles
@@ -609,6 +718,17 @@ impl App {
         for (x1, y1, x2, y2) in lines { painter.line_segment([to_screen(x1, y1), to_screen(x2, y2)], guide); }
         for (cx, cy, r) in circles { painter.circle_stroke(to_screen(cx, cy), r as f32 * k, guide); }
         let sel = self.cover_sel.filter(|&i| i < doc.items().len());
+        // regles graduees (mm ou pouces), zero au coin haut gauche de la feuille rognee ; reperes du pointeur et de la selection
+        {
+            let top = Rect::from_min_max(pos2(viewport.min.x, full.min.y), pos2(viewport.max.x, viewport.min.y));
+            let left = Rect::from_min_max(pos2(full.min.x, viewport.min.y), pos2(viewport.min.x, viewport.max.y));
+            let band = sel.map(|i| { let it = &doc.items()[i]; (to_screen(it.x, it.y), to_screen(it.x + it.w, it.y + it.h)) });
+            draw_ruler(&full_painter, top, true, origin.x + bleed * k, k, self.cover_inch, hover_vp.map(|p| p.x), band.map(|b| (b.0.x, b.1.x)));
+            draw_ruler(&full_painter, left, false, origin.y + bleed * k, k, self.cover_inch, hover_vp.map(|p| p.y), band.map(|b| (b.0.y, b.1.y)));
+            let corner = Rect::from_min_max(full.min, viewport.min);
+            full_painter.rect_filled(corner, 0.0, Color32::from_gray(38));
+            full_painter.text(corner.center(), egui::Align2::CENTER_CENTER, if self.cover_inch { "in" } else { "mm" }, egui::FontId::proportional(9.0), Color32::from_gray(190));
+        }
         let layers = doc.layers().clone();
         let usable = |it: &CoverItem| { let (v, l) = layer_state(&layers, it.layer); v && !l };
         // cadres des elements
@@ -634,6 +754,7 @@ impl App {
             0
         };
         let hit = |p: egui::Pos2, items: &[CoverItem]| -> Option<usize> {
+            if !viewport.contains(p) { return None; }
             let (x, y) = to_mm(p);
             (0..items.len()).filter(|&i| { let it = &items[i]; usable(it) && x >= it.x && x <= it.x + it.w && y >= it.y && y <= it.y + it.h }).max_by_key(|&i| (items[i].layer, i))
         };
@@ -641,13 +762,15 @@ impl App {
         let icon_of = |h: u8| if h == 1 || h == 4 { CursorIcon::ResizeNwSe } else { CursorIcon::ResizeNeSw };
         if let Some(d) = &self.cover_drag {
             ctx.set_cursor_icon(if d.handle == 0 { CursorIcon::Grabbing } else { icon_of(d.handle) });
-        } else if let Some(p) = resp.hover_pos() {
+        } else if let Some(p) = hover_vp {
             let h = sel.filter(|&i| usable(&doc.items()[i])).map(|i| handle_at(p, &doc.items()[i])).unwrap_or(0);
             if h != 0 { ctx.set_cursor_icon(icon_of(h)); }
             else if hit(p, doc.items()).is_some() { ctx.set_cursor_icon(CursorIcon::Grab); }
         }
         // debut : poignee de l'element selectionne, sinon l'element sous la souris (le plus au premier plan)
-        if resp.drag_started() {
+        if skip_input {
+            self.cover_drag = None;
+        } else if resp.drag_started() {
             if let Some(p) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos()) {
                 let mut target = None;
                 if let Some(i) = sel.filter(|&i| usable(&doc.items()[i])) {
@@ -666,7 +789,7 @@ impl App {
             if let Some(p) = resp.interact_pointer_pos() { self.cover_sel = hit(p, doc.items()); }
         }
         // en cours : la position est toujours calculee depuis le point de depart, sans derive
-        if resp.dragged() {
+        if resp.dragged() && !skip_input {
             if let (Some(d), Some(p)) = (self.cover_drag.clone(), resp.interact_pointer_pos()) {
                 if d.item < doc.items().len() {
                     let (mx, my) = to_mm(p);
@@ -696,6 +819,7 @@ impl App {
                 self.cover_changed();
             }
         }
-        ui.label(egui::RichText::new("Glissez un élément pour le déplacer, ses coins pour le redimensionner · Suppr : le retirer · Ctrl+Z / Ctrl+Y : annuler / refaire · les traits blancs montrent les limites de coupe et de pliage").weak());
+        let pos_txt = hover_vp.map(|p| { let (x, y) = to_mm(p); if self.cover_inch { format!("X {:.2} in   Y {:.2} in   ·   ", x / 25.4, y / 25.4) } else { format!("X {x:.1} mm   Y {y:.1} mm   ·   ") } }).unwrap_or_default();
+        ui.label(egui::RichText::new(format!("{pos_txt}Glissez un élément pour le déplacer, ses coins pour le redimensionner · Suppr : le retirer · Ctrl+Z / Ctrl+Y : annuler / refaire · les traits blancs montrent les limites de coupe et de pliage")).weak());
     }
 }

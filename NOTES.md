@@ -618,3 +618,9 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Meme presentation que « Pages et calques » du mode Mise en page : cadre groupe, poignee ☰ (en gras pour un calque, grise pour un element), + / − pour replier, 👁/◌ masquer, 🔒/🔓 verrouiller,
   ✏ ou double-clic pour renommer, 🗑 (supprimer le calque, ses elements au voisin ou supprimes), « (n) » = nombre d'elements, + tout / − tout.
 - Depot : trait bleu a l'endroit d'insertion calcule d'apres la position du pointeur (sous un en-tete : premier plan du calque ; sous un element : juste derriere lui ; un calque s'insere entre deux calques).
+
+### Jaquette : zoom et regles
+- Zoom 25 % a 1600 % de la vue (molette centree sur le curseur, boutons − + Ajuster, 1:1 = taille reelle approximative a 96 dpi, pourcentage affiche relatif a la taille reelle) ; deplacement clic molette ou Espace + glisser.
+  Etat propre a l'onglet (cover_zoom, cover_pan), remis a zero au changement Jaquette | Etiquette.
+- Apercu plus fin quand on zoome : 96, 144 ou 192 dpi selon l'echelle a l'ecran (`cover_tex_dpi`), re-rendu seulement au changement de palier.
+- Regles graduees en haut et a gauche, mm ou pouces (bascule), zero au coin haut gauche de la feuille rognee, pas adapte au zoom, trait du pointeur, bande de l'element selectionne ; coordonnees du pointeur dans la ligne d'aide.
