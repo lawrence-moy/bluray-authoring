@@ -4,7 +4,8 @@ use bdauthor_core::film::MAX_SUB_TRACKS;
 use bdauthor_core::model::{ProjectModel, VideoEntry};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::Renderer;
-use bdauthor_core::subtitle::{check_quality, clear_positions, default_language_name, load_cues, merge, next_language_id, shift, strip_notes, Cue, CuePos, HAlign, Language, QualityIssue, QualityLimits, SubSource, SubStyle, SubTrackCfg, VPos};
+use bdauthor_core::charset::Charset;
+use bdauthor_core::subtitle::{check_quality, clear_positions, default_language_name, load_cues, load_cues_enc, merge, next_language_id, plain_text, shift, strip_format, strip_notes, Cue, CuePos, HAlign, Language, QualityIssue, QualityLimits, SubSource, SubStyle, SubTrackCfg, VPos};
 use bdauthor_render::FontRenderer;
 use eframe::egui;
 use std::collections::HashMap;
@@ -69,6 +70,19 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     });
                     if cur.is_none() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), "à choisir"); }
                 });
+                if let SubSource::File(_) = &t.source {
+                    let auto_cs = Charset::for_language(&t.lang);
+                    ui.horizontal(|ui| {
+                        ui.label("Encodage du fichier :");
+                        let shown = if t.charset == Charset::Auto { format!("Automatique ({})", auto_cs.label()) } else { t.charset.label().to_string() };
+                        egui::ComboBox::from_id_salt("encodage_sous_titres").selected_text(shown).show_ui(ui, |ui| {
+                            for c in Charset::ALL {
+                                let l = if c == Charset::Auto { format!("Automatique (UTF-8, sinon {})", auto_cs.label()) } else { c.label().to_string() };
+                                if ui.selectable_label(t.charset == c, l).clicked() { t.charset = c; changed = true; }
+                            }
+                        });
+                    }).response.on_hover_text("Les fichiers récents sont en UTF-8. Les anciens utilisent une page de code propre à la langue (Windows-1251 pour le russe, Shift-JIS pour le japonais…) : « Automatique » la devine d'après la langue de la piste. Si les accents ou les lettres s'affichent mal, choisissez l'encodage à la main.");
+                }
                 // cadence : seulement pour les fichiers dont les temps sont en images (MicroDVD : .sub, .txt)
                 if let SubSource::File(f) = &t.source {
                     let ext = Path::new(f).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
@@ -95,6 +109,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 });
                 changed |= ui.checkbox(&mut t.strip_notes, "Retirer les indications [entre crochets] et (entre parenthèses)")
                     .on_hover_text("Pour les sous-titres destinés aux sourds et malentendants : [Musique], (rires), (soupir)… sont supprimés ; une réplique qui ne contient que cela disparaît.").changed();
+                changed |= ui.checkbox(&mut t.keep_format, "Garder l'italique, le gras et les couleurs du fichier")
+                    .on_hover_text("Les balises <i>, <b>, <u>, <font color> (SRT, WebVTT, SAMI) et {\\i1}, {\\b1}, {\\c&H…&} (ASS) sont dessinées. Décoché : tout le texte prend le style de la piste. La couleur du texte réglée ci-dessous sert pour le texte sans couleur propre.").changed();
                 changed |= ui.checkbox(&mut t.file_positions, "Respecter les positions du fichier (ASS : \\an1 à \\an9)")
                     .on_hover_text("Certains fichiers placent des répliques en haut, à gauche, etc. (par exemple pour ne pas masquer du texte incrusté dans l'image). Décoché : toutes les répliques prennent la position réglée ci-dessous. Les répliques simultanées sont affichées ensemble, à la position de la première qui en demande une.").changed();
                 style_ui(ui, &mut t.style, &mut changed);
@@ -301,6 +317,10 @@ pub struct SubPreview {
     rx: Option<std::sync::mpsc::Receiver<Result<Vec<Cue>, String>>>,
     shown: Vec<Cue>,
     shown_offset: Option<i64>,
+    /// encodage et langue avec lesquels le fichier a ete lu (relu s'ils changent), et cadence automatique
+    charset: Charset,
+    lang: String,
+    auto_fps: Option<f64>,
     /// controle de qualite : seuils et problemes trouves (recalcules quand les repliques ou les seuils changent)
     lim: QualityLimits,
     issues: Option<Vec<QualityIssue>>,
@@ -325,9 +345,9 @@ pub struct SubPreview {
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path, auto_fps: Option<f64>) -> SubPreview {
-        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0), zoom: 1.0, img_rect: egui::Rect::NOTHING };
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0), zoom: 1.0, img_rect: egui::Rect::NOTHING };
         match &t.source {
-            SubSource::File(f) => p.raw = Some(bdauthor_core::subtitle::load_cues_fps(&abs(base, f), t.fps.or(auto_fps))),
+            SubSource::File(f) => p.raw = Some(load_cues_enc(&abs(base, f), t.fps.or(auto_fps), t.charset, &t.lang)),
             SubSource::Embedded(idx) => {
                 let (tx, rx) = std::sync::mpsc::channel();
                 let (src, idx) = (video_file.to_path_buf(), *idx);
@@ -401,11 +421,21 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         }
     }
     let Some(t) = v.subs.get_mut(pv.track) else { return (false, false) };
+    // encodage ou langue changes : le fichier est relu
+    if let SubSource::File(f) = &t.source {
+        if pv.charset != t.charset || pv.lang != t.lang {
+            pv.charset = t.charset;
+            pv.lang = t.lang.clone();
+            pv.raw = Some(load_cues_enc(&abs(base, f), t.fps.or(pv.auto_fps), t.charset, &t.lang));
+            pv.shown_offset = None;
+        }
+    }
     if let Some(Ok(raw)) = &pv.raw {
-        let skey = t.offset_ms * 4 + t.strip_notes as i64 * 2 + t.file_positions as i64;
+        let skey = t.offset_ms * 8 + t.strip_notes as i64 * 4 + t.file_positions as i64 * 2 + t.keep_format as i64;
         if pv.shown_offset != Some(skey) {
             let src = if t.strip_notes { strip_notes(raw) } else { raw.clone() };
             let src = if t.file_positions { src } else { clear_positions(&src) };
+            let src = if t.keep_format { src } else { strip_format(&src) };
             pv.shown = merge(&shift(&src, t.offset_ms));
             pv.shown_offset = Some(skey);
             pv.issues = None;
@@ -441,7 +471,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             ui.add(egui::Slider::new(&mut pv.cue, 0..=n - 1).custom_formatter(|v, _| format!("{} / {}", v as usize + 1, n)).custom_parser(|s| s.split('/').next().and_then(|a| a.trim().parse::<f64>().ok()).map(|v| v - 1.0)));
             if ui.button(">").on_hover_text("Réplique suivante").clicked() { pv.cue = (pv.cue + 1).min(n - 1); }
             if ui.button("Plus longue").on_hover_text("Va à la réplique la plus longue, la plus exigeante pour la mise en page").clicked() {
-                pv.cue = (0..n).max_by_key(|&i| pv.shown[i].text.lines().map(|l| l.chars().count()).max().unwrap_or(0) + pv.shown[i].text.lines().count() * 8).unwrap_or(0);
+                pv.cue = (0..n).max_by_key(|&i| plain_text(&pv.shown[i].text).lines().map(|l| l.chars().count()).max().unwrap_or(0) + pv.shown[i].text.lines().count() * 8).unwrap_or(0);
             }
         });
         pv.cue = pv.cue.min(n - 1);

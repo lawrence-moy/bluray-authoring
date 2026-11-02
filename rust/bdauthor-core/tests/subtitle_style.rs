@@ -112,7 +112,7 @@ fn quality_checks() {
 }
 
 // ------------------------------------------------------------------ positions donnees par le fichier
-fn pos(h: HAlign, v: VPos) -> Option<CuePos> { Some(CuePos { h, v }) }
+fn pos(h: HAlign, v: VPos) -> Option<CuePos> { Some(CuePos { h: Some(h), v: Some(v) }) }
 
 #[test]
 fn an_tags_all_nine() {
@@ -242,4 +242,173 @@ Dialogue: Marked=0,0:00:09.00,0:00:10.00,MG,,0,0,0,,e\n\
 Dialogue: Marked=0,0:00:11.00,0:00:12.00,MD,,0,0,0,,f\n";
     let p: Vec<Option<CuePos>> = parse_ass(ssa).iter().map(|x| x.pos).collect();
     assert_eq!(p, vec![None, pos(HAlign::Left, VPos::Top), pos(HAlign::Center, VPos::Top), pos(HAlign::Right, VPos::Top), pos(HAlign::Left, VPos::Middle), pos(HAlign::Right, VPos::Middle)]);
+}
+
+// ------------------------------------------------------------------ encodages
+use bdauthor_core::charset::{decode, Charset};
+
+#[test]
+fn legacy_charsets() {
+    let d = |b: &[u8], cs| decode(b, cs, Charset::Auto);
+    assert_eq!(d(&[0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2], Charset::Cp1251), "Привет");
+    assert_eq!(d(&[0x5A, 0x61, 0xBF, 0xF3, 0xB3, 0xE6], Charset::Cp1250), "Zażółć");
+    assert_eq!(d(&[0xC3, 0xE5, 0xE9, 0xDC], Charset::Cp1253), "Γειά");
+    assert_eq!(d(&[0xF9, 0xEC, 0xE5, 0xED], Charset::Cp1255), "שלום");
+    assert_eq!(d(&[0xE3, 0xD1, 0xCD, 0xC8, 0xC7], Charset::Cp1256), "مرحبا");
+    assert_eq!(d(&[0xCA, 0xC7, 0xD1, 0xCA, 0xB4, 0xD5], Charset::Cp874), "สวัสดี");
+    assert_eq!(d(&[0xC7, 0x61, 0xF0, 0x72, 0xFD], Charset::Cp1254), "Çaðrý".replace('ð', "ğ").replace('ý', "ı"));
+    // doubles octets, melanges a de l'ASCII et a des demi-chasses
+    assert_eq!(d(&[0x93, 0xFA, 0x96, 0x7B, 0x8C, 0xEA, b'!'], Charset::ShiftJis), "日本語!");
+    assert_eq!(d(&[0xB1, 0xB2], Charset::ShiftJis), "ｱｲ");
+    assert_eq!(d(&[0xD6, 0xD0, 0xCE, 0xC4], Charset::Gbk), "中文");
+    assert_eq!(d(&[0xA4, 0xA4, 0xA4, 0xE5], Charset::Big5), "中文");
+    assert_eq!(d(&[0xC7, 0xD1, 0xB1, 0xB9, 0xBE, 0xEE], Charset::Uhc), "한국어");
+    // octet de tete sans suite : caractere de remplacement, pas de plantage
+    assert_eq!(d(&[b'a', 0x93], Charset::ShiftJis), "a\u{FFFD}");
+}
+
+#[test]
+fn auto_charset_uses_utf8_then_language() {
+    let ru = [0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2];
+    assert_eq!(decode("é".as_bytes(), Charset::Auto, Charset::Cp1251), "é", "UTF-8 reste prioritaire");
+    assert_eq!(decode(&ru, Charset::Auto, Charset::for_language("rus")), "Привет");
+    assert_ne!(decode(&ru, Charset::Auto, Charset::Auto), "Привет");
+    assert_eq!(Charset::for_language("pol"), Charset::Cp1250);
+    assert_eq!(Charset::for_language("jpn"), Charset::ShiftJis);
+    assert_eq!(Charset::for_language("fra"), Charset::Cp1252);
+    for c in Charset::ALL { assert_eq!(Charset::from_name(c.name()), Some(c)); }
+    // BOM : UTF-16 reconnu quel que soit le choix
+    assert_eq!(decode(&[0xFF, 0xFE, b'a', 0], Charset::Cp1251, Charset::Auto), "a");
+}
+
+#[test]
+fn charset_via_file_and_json() {
+    let dir = std::env::temp_dir().join(format!("bdauthor_cs_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = dir.join("ru.srt");
+    let mut b = b"1\n00:00:01,000 --> 00:00:02,000\n".to_vec();
+    b.extend([0xCF, 0xF0, 0xE8, 0xE2, 0xE5, 0xF2, b'\n']);
+    std::fs::write(&f, &b).unwrap();
+    let by_lang = load_cues_enc(&f, None, Charset::Auto, "rus").unwrap();
+    assert_eq!(by_lang[0].text, "Привет");
+    let forced = load_cues_enc(&f, None, Charset::Cp1251, "fra").unwrap();
+    assert_eq!(forced[0].text, "Привет");
+    let wrong = load_cues_enc(&f, None, Charset::Auto, "fra").unwrap();
+    assert_ne!(wrong[0].text, "Привет");
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut t = SubTrackCfg::from_file("a.srt", "rus");
+    assert!(!t.to_value().to_pretty().contains("encodage"));
+    t.charset = Charset::Cp1251;
+    t.keep_format = false;
+    let back = SubTrackCfg::from_value(&t.to_value()).unwrap();
+    assert_eq!((back.charset, back.keep_format), (Charset::Cp1251, false));
+    let bad = bdauthor_core::json::parse(r#"{"fichier":"a.srt","encodage":"klingon"}"#).unwrap();
+    assert!(SubTrackCfg::from_value(&bad).is_err());
+}
+
+// ------------------------------------------------------------------ entites HTML
+#[test]
+fn html_entities() {
+    assert_eq!(decode_entities("caf&eacute; &amp; cr&egrave;me"), "café & crème");
+    assert_eq!(decode_entities("&#233;t&#xE9; &#8364; &#x20AC;"), "été € €");
+    assert_eq!(decode_entities("&amp;lt; reste &lt;"), "&lt; reste <");
+    assert_eq!(decode_entities("a&nbsp;b&lrm;c&rlm;d"), "a bcd");
+    assert_eq!(decode_entities("&hellip; &mdash; &laquo;x&raquo; &oelig;"), "… — «x» œ");
+    assert_eq!(decode_entities("AT&T, R&D; &inconnu; &#0; &#xZZ; &"), "AT&T, R&D; &inconnu; &#0; &#xZZ; &");
+    // a travers un fichier SRT
+    let c = parse_srt("1\n00:00:01,000 --> 00:00:02,000\nCaf&eacute; &#169; 2020 &lt;b&gt;\n");
+    assert_eq!(c[0].text, "Café © 2020 <b>", "un < issu d'une entite n'est pas une balise");
+}
+
+// ------------------------------------------------------------------ mise en forme
+fn runs(t: &str) -> Vec<Vec<(String, bool, bool, bool, Option<[u8; 3]>)>> {
+    parse_runs(t).into_iter().map(|l| l.into_iter().map(|r| (r.text, r.italic, r.bold, r.underline, r.color)).collect()).collect()
+}
+
+#[test]
+fn markup_html_tags() {
+    let c = parse_srt("1\n00:00:01,000 --> 00:00:02,000\n<i>Italique</i> <b>gras</b> <u>sous</u> <font color=\"#ff0000\">rouge</font> fin\n");
+    let r = runs(&c[0].text);
+    assert_eq!(plain_text(&c[0].text), "Italique gras sous rouge fin");
+    let find = |w: &str| r[0].iter().find(|x| x.0 == w).cloned().unwrap_or_else(|| panic!("{w} absent : {r:?}"));
+    assert_eq!(find("Italique"), ("Italique".into(), true, false, false, None));
+    assert_eq!(find("gras"), ("gras".into(), false, true, false, None));
+    assert_eq!(find("sous"), ("sous".into(), false, false, true, None));
+    assert_eq!(find("rouge"), ("rouge".into(), false, false, false, Some([255, 0, 0])));
+    assert!(r[0].iter().any(|x| x.0.contains("fin") && !x.1 && x.4.is_none()));
+    // balise ouverte sur une ligne, fermee sur la suivante ; texte sans balise ; couleurs nommees et courtes
+    let c = parse_srt("1\n00:00:01,000 --> 00:00:02,000\n<i>Premiere\nseconde</i>\nhors\n\n2\n00:00:03,000 --> 00:00:04,000\n<font color=lime>a</font><font color=\"#0f0\">b</font><c.yellow>c</c><i>non fermee\n");
+    let r = runs(&c[0].text);
+    assert!(r[0][0].1 && r[1][0].1 && !r[2][0].1, "{r:?}");
+    let r = runs(&c[1].text);
+    assert_eq!(r[0][0].4, Some([0, 255, 0]));
+    assert_eq!(r[0][1].4, Some([0, 255, 0]));
+    assert_eq!(r[0][2].4, Some([255, 255, 0]));
+    assert!(r[0][3].1);
+    assert!(c[1].text.ends_with("\u{1}I"), "mise en forme refermee en fin de replique");
+    // les repliques fusionnees ne se contaminent pas
+    let m = merge(&[Cue { start_ms: 0, end_ms: 2000, text: c[1].text.clone(), pos: None }, Cue { start_ms: 0, end_ms: 2000, text: "normal".into(), pos: None }]);
+    assert!(!runs(&m[0].text)[1][0].1);
+}
+
+#[test]
+fn markup_ass_overrides() {
+    let a = parse_ass("[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,{\\i1\\b1}Gras italique{\\b0} italique{\\r} normal {\\c&H00FFFF&}jaune{\\1c&HFF0000&}bleu{\\c}fin\n\
+Dialogue: 0,0:00:03.00,0:00:04.00,Default,,0,0,0,,{\\t(0,100,\\i1)\\fs40\\bord2\\blur1\\an8}Texte{\\iclip(0,0,1,1)}\n");
+    let r = runs(&a[0].text);
+    let w = |t: &str| r[0].iter().find(|x| x.0.trim() == t || x.0.starts_with(t)).cloned().unwrap_or_else(|| panic!("{t} absent : {r:?}"));
+    assert_eq!((w("Gras").1, w("Gras").2), (true, true));
+    assert_eq!((w("italique").1, w("italique").2), (true, false), "{r:?}");
+    assert_eq!((w("normal").1, w("normal").2, w("normal").4), (false, false, None));
+    assert_eq!(w("jaune").4, Some([255, 255, 0]));
+    assert_eq!(w("bleu").4, Some([0, 0, 255]), "ASS ecrit BBGGRR");
+    assert_eq!(w("fin").4, None);
+    // transformation animee, taille, contour : aucun effet de mise en forme
+    let r = runs(&a[1].text);
+    assert_eq!(r[0].len(), 1);
+    assert_eq!((r[0][0].1, r[0][0].2, r[0][0].4), (false, false, None));
+    assert_eq!(a[1].pos, Some(CuePos { h: Some(HAlign::Center), v: Some(VPos::Top) }));
+}
+
+#[test]
+fn strip_format_and_notes_keep_markup() {
+    let c = parse_srt("1\n00:00:01,000 --> 00:00:02,000\n<i>[Musique]\nSalut (rires) toi</i>\n");
+    assert_eq!(plain_text(&c[0].text), "[Musique]\nSalut (rires) toi");
+    let n = strip_notes(&c);
+    assert_eq!(plain_text(&n[0].text), "Salut toi");
+    assert!(runs(&n[0].text)[0][0].1, "l'italique de la ligne supprimee passe a la suivante : {:?}", n[0].text);
+    let p = strip_format(&n);
+    assert_eq!(p[0].text, "Salut toi");
+    // qualite : les marqueurs ne comptent pas comme des caracteres
+    let long = Cue { start_ms: 0, end_ms: 4000, text: format!("\u{1}i{}\u{1}I", "x".repeat(40)), pos: None };
+    assert!(check_quality(&[long], &QualityLimits::default()).iter().all(|i| i.kind != IssueKind::LongLine));
+}
+
+// ------------------------------------------------------------------ WebVTT : positions
+#[test]
+fn webvtt_cue_settings() {
+    let vtt = std::fs::read_to_string("../exemples_soustitres/test_webvtt.vtt").ok();
+    let src = vtt.unwrap_or_else(|| "WEBVTT\n\n00:01.000 --> 00:02.000\nx\n".into());
+    let c = parse_file_text("vtt", &src);
+    assert!(!c.is_empty());
+    let one = |s: &str| parse_file_text("vtt", &format!("WEBVTT\n\n00:01.000 --> 00:02.000 {s}\nx\n")).remove(0).pos;
+    let p = |h: Option<HAlign>, v: Option<VPos>| Some(CuePos { h, v });
+    assert_eq!(one(""), None);
+    assert_eq!(one("line:0"), p(None, Some(VPos::Top)));
+    assert_eq!(one("line:10% align:start position:10%"), p(Some(HAlign::Left), Some(VPos::Top)));
+    assert_eq!(one("line:10% align:end position:90%"), p(Some(HAlign::Right), Some(VPos::Top)));
+    assert_eq!(one("line:50%"), p(None, Some(VPos::Middle)));
+    assert_eq!(one("line:-1"), p(None, Some(VPos::Bottom)));
+    assert_eq!(one("line:90% align:start position:5%"), p(Some(HAlign::Left), Some(VPos::Bottom)));
+    assert_eq!(one("align:start"), p(Some(HAlign::Left), None));
+    assert_eq!(one("align:center"), p(Some(HAlign::Center), None));
+    assert_eq!(one("size:40% position:50%"), p(Some(HAlign::Center), None));
+    assert_eq!(one("line:auto"), None);
+    // les coordonnees SubRip (X1:10) ne sont pas des reglages WebVTT
+    assert_eq!(parse_srt("1\n00:00:01,000 --> 00:00:02,000  X1:10 X2:20\nx\n")[0].pos, None);
+    // seul le sens demande est impose : la verticale de la piste reste
+    let st = SubStyle { pos: VPos::Top, ..SubStyle::default() };
+    let w = bdauthor_core::pgs::with_pos(&st, p(Some(HAlign::Right), None));
+    assert_eq!((w.pos, w.halign), (VPos::Top, HAlign::Right));
 }

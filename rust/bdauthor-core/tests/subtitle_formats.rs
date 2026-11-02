@@ -6,7 +6,7 @@ fn webvtt() {
     let c = parse_file_text("vtt", t);
     assert_eq!(c.len(), 2);
     assert_eq!((c[0].start_ms, c[0].end_ms), (1000, 3500));
-    assert_eq!(c[0].text, "Bonjour tout le monde\nsur deux lignes");
+    assert_eq!(plain_text(&c[0].text), "Bonjour tout le monde\nsur deux lignes");
     assert_eq!(c[1].start_ms, 3_602_000);
 }
 
@@ -17,7 +17,8 @@ fn microdvd_with_fps_line() {
     assert_eq!(c.len(), 2);
     assert_eq!((c[0].start_ms, c[0].end_ms), (1000, 3000));
     assert_eq!(c[0].text, "Bonjour\ndeux lignes");
-    assert_eq!(c[1].text, "Italique");
+    assert_eq!(plain_text(&c[1].text), "Italique");
+    assert_eq!(parse_runs(&c[1].text)[0][0].italic, true);
     // sans ligne de cadence : 23,976 i/s
     let d = parse_microdvd("{24}{48}x", 0.0);
     assert_eq!(d[0].start_ms, 1001);

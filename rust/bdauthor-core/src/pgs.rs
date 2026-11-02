@@ -220,8 +220,8 @@ pub fn render_cue(text: &str, style: &SubStyle, renderer: &dyn Renderer, video: 
 pub fn with_pos(style: &SubStyle, pos: Option<CuePos>) -> SubStyle {
     let mut st = style.clone();
     if let Some(p) = pos {
-        st.halign = p.h;
-        st.pos = p.v;
+        if let Some(h) = p.h { st.halign = h; }
+        if let Some(v) = p.v { st.pos = v; }
     }
     st
 }
@@ -236,6 +236,7 @@ pub fn render_cue_at(text: &str, style: &SubStyle, pos: Option<CuePos>, renderer
     // paliers d'opacite : les 4 habituels (bords lisses) plus ceux de la boite et de l'ombre, pour qu'ils soient rendus exactement
     let mut levels = vec![255u8, 190, 120, 60];
     let mut colors = 6;
+    if text.contains('\u{1}') { colors += 4; } // couleurs du fichier
     if st.bg_opacity > 0 {
         levels.push((st.bg_opacity.clamp(1, 100) as u32 * 255 / 100) as u8);
         colors += 2;

@@ -10,7 +10,8 @@ fn srt_basic() {
     let src = "\u{feff}1\r\n00:00:01,500 --> 00:00:03,000\r\n<i>Bonjour</i> &amp; salut\r\nDeuxi\u{e8}me ligne\r\n\r\n2\r\n00:01:02.5 --> 00:01:04,250 X1:10\r\n{\\an8}Haut\r\n\r\n3\r\n00:00:05,000 --> 00:00:04,000\r\nignore\r\n";
     let c = parse_srt(src);
     assert_eq!(c.len(), 2);
-    assert_eq!(c[0], Cue { start_ms: 1500, end_ms: 3000, text: "Bonjour & salut\nDeuxième ligne".into(), pos: None });
+    assert_eq!((c[0].start_ms, c[0].end_ms, plain_text(&c[0].text).as_str()), (1500, 3000, "Bonjour & salut\nDeuxième ligne"));
+    assert_eq!(c[0].text, "\u{1}iBonjour\u{1}I & salut\nDeuxième ligne");
     assert_eq!((c[1].start_ms, c[1].end_ms, c[1].text.as_str()), (62_500, 64_250, "Haut"));
 }
 
@@ -20,7 +21,8 @@ fn ass_basic() {
 Dialogue: 0,0:00:01.50,0:00:03.00,Default,,0,0,0,,{\\i1}Bonjour, monde\\Nligne 2{\\i0}\nComment: 0,0:00:01.50,0:00:03.00,Default,,0,0,0,,non\nDialogue: 0,1:02:03.04,1:02:04.00,Default,,0,0,0,,Fin\n";
     let c = parse_ass(src);
     assert_eq!(c.len(), 2);
-    assert_eq!(c[0], Cue { start_ms: 1500, end_ms: 3000, text: "Bonjour, monde\nligne 2".into(), pos: None });
+    assert_eq!((c[0].start_ms, c[0].end_ms, plain_text(&c[0].text).as_str()), (1500, 3000, "Bonjour, monde\nligne 2"));
+    assert_eq!(c[0].text, "\u{1}iBonjour, monde\nligne 2\u{1}I");
     assert_eq!(c[1].start_ms, 3_723_040);
 }
 

@@ -13,14 +13,19 @@ pub struct Cue {
 /// Position d'une replique : alignement horizontal et vertical.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CuePos {
-    pub h: HAlign,
-    pub v: VPos,
+    pub h: Option<HAlign>,
+    pub v: Option<VPos>,
 }
 
 impl CuePos {
     /// Nom lisible (« haut gauche », « bas centre »...).
     pub fn label(self) -> String {
-        format!("{} {}", self.v.name(), self.h.name())
+        match (self.v, self.h) {
+            (Some(v), Some(h)) => format!("{} {}", v.name(), h.name()),
+            (Some(v), None) => v.name().to_string(),
+            (None, Some(h)) => h.name().to_string(),
+            (None, None) => "piste".to_string(),
+        }
     }
 }
 
@@ -36,7 +41,7 @@ pub fn an_tag(raw: &str) -> Option<CuePos> {
             if let Some(d) = b[k + 3..].chars().next().and_then(|c| c.to_digit(10)).filter(|d| (1..=9).contains(d)) {
                 let v = match d { 7..=9 => VPos::Top, 4..=6 => VPos::Middle, _ => VPos::Bottom };
                 let h = match d % 3 { 1 => HAlign::Left, 2 => HAlign::Center, _ => HAlign::Right };
-                found = Some(CuePos { h, v });
+                found = Some(CuePos { h: Some(h), v: Some(v) });
             }
             b = &b[k + 3..];
         }
@@ -125,43 +130,307 @@ impl Default for SubStyle {
 }
 
 // ------------------------------------------------------------------ decodage du texte
-const CP1252: [char; 32] = [
-    '€', '\u{81}', '‚', 'ƒ', '„', '…', '†', '‡', 'ˆ', '‰', 'Š', '‹', 'Œ', '\u{8d}', 'Ž', '\u{8f}', '\u{90}', '‘', '’', '“', '”', '•', '–', '—', '˜', '™', 'š',
-    '›', 'œ', '\u{9d}', 'ž', 'Ÿ',
-];
-
 /// Octets d'un fichier texte -> chaine : UTF-8 (avec ou sans BOM), UTF-16 avec BOM, sinon Windows-1252.
+/// Pour une autre page de code, voir `charset::decode`.
 pub fn decode_text(b: &[u8]) -> String {
-    if b.starts_with(&[0xFF, 0xFE]) || b.starts_with(&[0xFE, 0xFF]) {
-        let le = b[0] == 0xFF;
-        let u: Vec<u16> = b[2..].chunks_exact(2).map(|c| if le { u16::from_le_bytes([c[0], c[1]]) } else { u16::from_be_bytes([c[0], c[1]]) }).collect();
-        return String::from_utf16_lossy(&u);
-    }
-    let b = b.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(b);
-    match std::str::from_utf8(b) {
-        Ok(s) => s.to_string(),
-        Err(_) => b.iter().map(|&c| if (0x80..0xA0).contains(&c) { CP1252[(c - 0x80) as usize] } else { c as char }).collect(),
-    }
+    crate::charset::decode(b, crate::charset::Charset::Auto, crate::charset::Charset::Auto)
 }
 
-fn clean_entities(s: &str) -> String {
-    s.replace("&lrm;", "").replace("&rlm;", "").replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
-}
-
-/// Retire les balises `<...>` (HTML) et les blocs `{...}` (ASS) d'une ligne.
-fn strip_tags(s: &str) -> String {
-    let (mut out, mut depth_a, mut depth_b) = (String::new(), 0usize, 0usize);
-    for c in s.chars() {
-        match c {
-            '<' => depth_a += 1,
-            '>' if depth_a > 0 => depth_a -= 1,
-            '{' => depth_b += 1,
-            '}' if depth_b > 0 => depth_b -= 1,
-            _ if depth_a == 0 && depth_b == 0 => out.push(c),
-            _ => {}
+// ------------------------------------------------------------------ entites HTML
+/// Remplace les entites HTML (`&amp;`, `&eacute;`, `&#233;`, `&#xE9;`...) ; `&lrm;`, `&rlm;`, `&zwj;` disparaissent, `&nbsp;` devient une espace.
+pub fn decode_entities(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        let tail = &rest[i + 1..];
+        let end = tail.char_indices().take(12).find(|(_, c)| *c == ';').map(|(k, _)| k);
+        let decoded = end.and_then(|k| {
+            let name = &tail[..k];
+            let cp = if let Some(num) = name.strip_prefix('#') {
+                match num.strip_prefix(['x', 'X']) { Some(h) => u32::from_str_radix(h, 16).ok(), None => num.parse::<u32>().ok() }
+            } else {
+                crate::entities::NAMED.binary_search_by(|(n, _)| n.cmp(&name)).ok().map(|x| crate::entities::NAMED[x].1)
+            };
+            cp.filter(|c| *c != 0).and_then(char::from_u32).map(|c| (c, k))
+        });
+        match decoded {
+            Some((c, k)) => {
+                match c {
+                    '\u{200E}' | '\u{200F}' | '\u{200D}' | '\u{200C}' => {}
+                    '\u{A0}' => out.push(' '),
+                    _ => out.push(c),
+                }
+                rest = &tail[k + 1..];
+            }
+            None => {
+                out.push('&');
+                rest = tail;
+            }
         }
     }
+    out.push_str(rest);
     out
+}
+
+// ------------------------------------------------------------------ mise en forme (italique, gras, souligne, couleur)
+// Dans `Cue::text`, la mise en forme est portee par des marqueurs : U+0001 suivi de i/I (italique debut/fin), b/B, u/U,
+// `c` + 6 chiffres hexadecimaux (couleur RRGGBB) ou `C` (couleur par defaut). Un caractere `<` du texte reste donc un `<`.
+const MARK: char = '\u{1}';
+
+/// Un morceau de texte de meme mise en forme.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Run {
+    pub text: String,
+    pub bold: bool,
+    pub italic: bool,
+    pub underline: bool,
+    pub color: Option<[u8; 3]>,
+}
+
+#[derive(Clone, Copy, PartialEq, Default)]
+struct Fmt {
+    i: bool,
+    b: bool,
+    u: bool,
+    color: Option<[u8; 3]>,
+}
+
+fn emit(out: &mut String, cur: &mut Fmt, new: Fmt) {
+    if cur.i != new.i { out.push(MARK); out.push(if new.i { 'i' } else { 'I' }); }
+    if cur.b != new.b { out.push(MARK); out.push(if new.b { 'b' } else { 'B' }); }
+    if cur.u != new.u { out.push(MARK); out.push(if new.u { 'u' } else { 'U' }); }
+    if cur.color != new.color {
+        out.push(MARK);
+        match new.color {
+            Some(c) => { out.push('c'); out.push_str(&format!("{:02x}{:02x}{:02x}", c[0], c[1], c[2])); }
+            None => out.push('C'),
+        }
+    }
+    *cur = new;
+}
+
+/// Lignes de morceaux d'un texte avec marqueurs ; la mise en forme se poursuit d'une ligne a l'autre.
+pub fn parse_runs(text: &str) -> Vec<Vec<Run>> {
+    let mut lines: Vec<Vec<Run>> = vec![Vec::new()];
+    let mut f = Fmt::default();
+    let mut buf = String::new();
+    let flush = |buf: &mut String, f: &Fmt, lines: &mut Vec<Vec<Run>>| {
+        if !buf.is_empty() {
+            lines.last_mut().unwrap().push(Run { text: std::mem::take(buf), bold: f.b, italic: f.i, underline: f.u, color: f.color });
+        }
+    };
+    let mut it = text.chars().peekable();
+    while let Some(c) = it.next() {
+        if c == MARK {
+            flush(&mut buf, &f, &mut lines);
+            match it.next() {
+                Some('i') => f.i = true,
+                Some('I') => f.i = false,
+                Some('b') => f.b = true,
+                Some('B') => f.b = false,
+                Some('u') => f.u = true,
+                Some('U') => f.u = false,
+                Some('C') => f.color = None,
+                Some('c') => {
+                    let hex: String = (0..6).filter_map(|_| it.next()).collect();
+                    f.color = u32::from_str_radix(&hex, 16).ok().map(|v| [(v >> 16) as u8, (v >> 8) as u8, v as u8]);
+                }
+                _ => {}
+            }
+        } else if c == '\n' {
+            flush(&mut buf, &f, &mut lines);
+            lines.push(Vec::new());
+        } else {
+            buf.push(c);
+        }
+    }
+    flush(&mut buf, &f, &mut lines);
+    lines
+}
+
+/// Texte sans mise en forme (lignes separees par « \n »).
+pub fn plain_text(text: &str) -> String {
+    parse_runs(text).iter().map(|l| l.iter().map(|r| r.text.as_str()).collect::<String>()).collect::<Vec<_>>().join("\n")
+}
+
+fn parse_color(v: &str) -> Option<[u8; 3]> {
+    let v = v.trim().trim_matches(|c| c == '"' || c == '\'').trim();
+    let hex = v.strip_prefix('#').unwrap_or(v);
+    if hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        if hex.len() == 6 {
+            let n = u32::from_str_radix(hex, 16).ok()?;
+            return Some([(n >> 16) as u8, (n >> 8) as u8, n as u8]);
+        }
+        if hex.len() == 3 {
+            let d = |k: usize| u8::from_str_radix(&hex[k..k + 1], 16).ok().map(|x| x * 17);
+            return Some([d(0)?, d(1)?, d(2)?]);
+        }
+    }
+    Some(match v.to_ascii_lowercase().as_str() {
+        "white" => [255, 255, 255], "black" => [0, 0, 0], "red" => [255, 0, 0], "lime" => [0, 255, 0], "green" => [0, 128, 0],
+        "blue" => [0, 0, 255], "yellow" => [255, 255, 0], "cyan" | "aqua" => [0, 255, 255], "magenta" | "fuchsia" => [255, 0, 255],
+        "gray" | "grey" => [128, 128, 128], "silver" => [192, 192, 192], "orange" => [255, 165, 0], "pink" => [255, 192, 203],
+        "maroon" => [128, 0, 0], "navy" => [0, 0, 128], "olive" => [128, 128, 0], "purple" => [128, 0, 128], "teal" => [0, 128, 128],
+        _ => return None,
+    })
+}
+
+fn html_tag(tag: &str, w: &mut Fmt) {
+    let t = tag.trim();
+    let (close, body) = match t.strip_prefix('/') { Some(r) => (true, r.trim()), None => (false, t) };
+    let name_end = body.find(|c: char| c.is_whitespace() || c == '.').unwrap_or(body.len());
+    let name = body[..name_end].to_ascii_lowercase();
+    let rest = &body[name_end..];
+    match name.as_str() {
+        "i" | "em" => w.i = !close,
+        "b" | "strong" => w.b = !close,
+        "u" => w.u = !close,
+        "font" => {
+            if close {
+                w.color = None;
+            } else if let Some(p) = rest.to_ascii_lowercase().find("color") {
+                let v = rest[p + 5..].trim_start().strip_prefix('=').unwrap_or("").trim_start();
+                let val: String = match v.chars().next() {
+                    Some(q @ ('"' | '\'')) => v[1..].chars().take_while(|c| *c != q).collect(),
+                    _ => v.chars().take_while(|c| !c.is_whitespace()).collect(),
+                };
+                if let Some(c) = parse_color(&val) { w.color = Some(c); }
+            }
+        }
+        // WebVTT : <c.yellow>
+        "c" => {
+            if close {
+                w.color = None;
+            } else if let Some(c) = rest.trim_start_matches('.').split(['.', ' ']).next().and_then(parse_color) {
+                w.color = Some(c);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Couleur ASS `&HBBGGRR&` (ou `$bbggrr` en MicroDVD) -> RGB.
+fn bgr_color(s: &str) -> Option<[u8; 3]> {
+    let h: String = s.chars().skip_while(|c| !c.is_ascii_hexdigit() || *c == 'H').take_while(|c| c.is_ascii_hexdigit()).collect();
+    let h = if h.len() > 6 { &h[h.len() - 6..] } else { &h[..] };
+    let n = u32::from_str_radix(h, 16).ok()?;
+    Some([n as u8, (n >> 8) as u8, (n >> 16) as u8])
+}
+
+fn ass_block(blk: &str, w: &mut Fmt) {
+    // MicroDVD : {y:i} {y:b} {c:$bbggrr}
+    if let Some(r) = blk.strip_prefix("y:").or_else(|| blk.strip_prefix("Y:")) {
+        for ch in r.chars() { match ch { 'i' => w.i = true, 'b' => w.b = true, 'u' => w.u = true, _ => {} } }
+        return;
+    }
+    if let Some(r) = blk.strip_prefix("c:").or_else(|| blk.strip_prefix("C:")) {
+        if let Some(c) = bgr_color(r.trim_start_matches('$')) { w.color = Some(c); }
+        return;
+    }
+    let mut depth = 0i32;
+    for tok in blk.split('\\').skip(1) {
+        let (opens, closes) = (tok.matches('(').count() as i32, tok.matches(')').count() as i32);
+        let inside = depth > 0;
+        depth += opens - closes;
+        if inside { continue; } // arguments d'une transformation animee : ignores
+        let digit = |k: usize| tok.as_bytes().get(k).map_or(false, |b| b.is_ascii_digit());
+        let on = |k: usize| tok[k..].chars().take_while(|c| c.is_ascii_digit()).collect::<String>().parse::<u32>().map_or(false, |n| n != 0);
+        if tok.starts_with('r') {
+            *w = Fmt::default();
+        } else if tok.starts_with('i') && digit(1) {
+            w.i = on(1);
+        } else if tok.starts_with('b') && digit(1) {
+            w.b = on(1);
+        } else if tok.starts_with('u') && digit(1) {
+            w.u = on(1);
+        } else if tok == "c" || tok == "1c" {
+            w.color = None;
+        } else if tok.starts_with("c&") || tok.starts_with("1c&") {
+            if let Some(c) = bgr_color(tok.trim_start_matches('1').trim_start_matches('c')) { w.color = Some(c); }
+        }
+    }
+}
+
+/// Texte brut d'un fichier de sous-titres -> texte avec marqueurs : balises HTML (`<i>`, `<b>`, `<u>`, `<font color>`, `<c.couleur>`) et
+/// blocs ASS (`{\i1}`, `{\b1}`, `{\u1}`, `{\c&H..&}`, `{\r}`) sont convertis, les autres balises et blocs supprimes. La mise en forme est
+/// refermee en fin de texte. Les entites HTML ne sont pas touchees (voir `decode_entities`).
+pub fn convert_markup(s: &str) -> String {
+    let chars: Vec<char> = s.chars().collect();
+    let (mut out, mut cur, mut want) = (String::new(), Fmt::default(), Fmt::default());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '<' || c == '{' {
+            let close = if c == '<' { '>' } else { '}' };
+            if let Some(j) = chars[i + 1..].iter().position(|&x| x == close) {
+                let inner: String = chars[i + 1..i + 1 + j].iter().collect();
+                if c == '<' { html_tag(&inner, &mut want); } else { ass_block(&inner, &mut want); }
+                // une mise en forme qui se termine est refermee tout de suite (avant les espaces qui suivent) ; une qui commence attend le texte
+                let mut now = cur;
+                if !want.i { now.i = false; }
+                if !want.b { now.b = false; }
+                if !want.u { now.u = false; }
+                if want.color.is_none() { now.color = None; }
+                emit(&mut out, &mut cur, now);
+                i += j + 2;
+                continue;
+            }
+        }
+        if !c.is_whitespace() { emit(&mut out, &mut cur, want); }
+        out.push(c);
+        i += 1;
+    }
+    emit(&mut out, &mut cur, Fmt::default());
+    out
+}
+
+/// Balises converties puis entites decodees.
+fn clean_markup(s: &str) -> String {
+    decode_entities(&convert_markup(s))
+}
+
+/// Lignes nettoyees (espaces de bord retires) sans les lignes qui n'ont pas de texte visible.
+fn tidy(t: &str) -> String {
+    t.lines().map(str::trim).filter(|l| !plain_text(l).trim().is_empty()).collect::<Vec<_>>().join("\n")
+}
+
+/// Repliques sans mise en forme (italique, gras, souligne, couleur) : seul le texte reste.
+pub fn strip_format(cues: &[Cue]) -> Vec<Cue> {
+    cues.iter().map(|c| Cue { text: plain_text(&c.text), ..c.clone() }).collect()
+}
+
+/// Reglages WebVTT d'une replique (`line:`, `position:`, `align:`) -> position ; `size:` n'est pas pris en compte.
+fn vtt_pos(tokens: &[&str]) -> Option<CuePos> {
+    let (mut line, mut position, mut align): (Option<f64>, Option<f64>, Option<HAlign>) = (None, None, None);
+    let mut seen = false;
+    for t in tokens {
+        if let Some(v) = t.strip_prefix("line:") {
+            seen = true;
+            let v = v.split(',').next().unwrap_or("");
+            if let Some(p) = v.strip_suffix('%') {
+                line = p.parse().ok();
+            } else if let Ok(n) = v.parse::<f64>() {
+                // numero de ligne : negatif = depuis le bas ; positif = rang parmi une quinzaine de lignes
+                line = Some(if n < 0.0 { 100.0 } else { (n / 15.0 * 100.0).min(100.0) });
+            }
+        } else if let Some(v) = t.strip_prefix("position:") {
+            seen = true;
+            position = v.split(',').next().and_then(|x| x.strip_suffix('%')).and_then(|x| x.parse().ok());
+        } else if let Some(v) = t.strip_prefix("align:") {
+            seen = true;
+            align = match v { "start" | "left" => Some(HAlign::Left), "end" | "right" => Some(HAlign::Right), "center" | "middle" => Some(HAlign::Center), _ => None };
+        }
+    }
+    if !seen { return None; }
+    let v = line.map(|p| if p < 33.4 { VPos::Top } else if p < 66.7 { VPos::Middle } else { VPos::Bottom });
+    let h = match position {
+        Some(p) if p < 33.4 => Some(HAlign::Left),
+        Some(p) if p > 66.6 => Some(HAlign::Right),
+        Some(_) => Some(HAlign::Center),
+        None => align,
+    };
+    (v.is_some() || h.is_some()).then_some(CuePos { h, v })
 }
 
 // ------------------------------------------------------------------ SRT
@@ -194,7 +463,7 @@ pub fn parse_srt(text: &str) -> Vec<Cue> {
     let mut cur: Option<(i64, i64, Vec<String>, Option<CuePos>)> = None;
     let flush = |cur: &mut Option<(i64, i64, Vec<String>, Option<CuePos>)>, cues: &mut Vec<Cue>| {
         if let Some((s, e, lines, pos)) = cur.take() {
-            let t = lines.join("\n").trim().to_string();
+            let t = tidy(&clean_markup(&lines.join("\n")));
             if !t.is_empty() && e > s {
                 cues.push(Cue { start_ms: s, end_ms: e, text: t, pos });
             }
@@ -205,7 +474,8 @@ pub fn parse_srt(text: &str) -> Vec<Cue> {
             let (a, b) = (parse_srt_time(&line[..i]), line[i + 3..].split_whitespace().next().and_then(parse_srt_time));
             if let (Some(a), Some(b)) = (a, b) {
                 flush(&mut cur, &mut cues);
-                cur = Some((a, b, Vec::new(), None));
+                let settings: Vec<&str> = line[i + 3..].split_whitespace().skip(1).collect();
+                cur = Some((a, b, Vec::new(), vtt_pos(&settings)));
                 continue;
             }
         }
@@ -213,9 +483,8 @@ pub fn parse_srt(text: &str) -> Vec<Cue> {
             flush(&mut cur, &mut cues);
         } else if let Some((_, _, lines, pos)) = cur.as_mut() {
             if let Some(p) = an_tag(line) { *pos = Some(p); }
-            let l = clean_entities(&strip_tags(line));
-            if !l.trim().is_empty() {
-                lines.push(l.trim().to_string());
+            if !line.trim().is_empty() {
+                lines.push(line.trim().to_string());
             }
         }
     }
@@ -240,7 +509,7 @@ fn style_pos(a: i64, legacy: bool) -> Option<CuePos> {
         (v, (a - 1) % 3)
     };
     let h = match h { 0 => HAlign::Left, 1 => HAlign::Center, _ => HAlign::Right };
-    (v != VPos::Bottom || h != HAlign::Center).then_some(CuePos { h, v })
+    (v != VPos::Bottom || h != HAlign::Center).then_some(CuePos { h: Some(h), v: Some(v) })
 }
 
 pub fn parse_ass(text: &str) -> Vec<Cue> {
@@ -293,8 +562,7 @@ pub fn parse_ass(text: &str) -> Vec<Cue> {
             };
             // la balise \an de la replique l'emporte sur l'alignement de son style
             let pos = an_tag(t).or_else(|| parts.get(iy).and_then(|y| styles.get(&norm(y)).copied()));
-            let t = strip_tags(&t.replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " "));
-            let t = t.lines().map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n");
+            let t = tidy(&convert_markup(&t.replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " ")));
             if !t.is_empty() && b > a {
                 cues.push(Cue { start_ms: a, end_ms: b, text: t, pos });
             }
@@ -320,8 +588,7 @@ pub fn parse_microdvd(text: &str, fps: f64) -> Vec<Cue> {
             if let Ok(f) = body.trim().parse::<f64>() { if f > 1.0 { fps = f; } }
             continue;
         }
-        let t = clean_entities(&strip_tags(&body.replace('|', "\n")));
-        let t = t.lines().map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n");
+        let t = tidy(&clean_markup(&body.replace('|', "\n")));
         let (ms, me) = ((s as f64 * 1000.0 / fps).round() as i64, (e as f64 * 1000.0 / fps).round() as i64);
         if !t.is_empty() && me > ms { cues.push(Cue { start_ms: ms, end_ms: me, text: t, pos: None }); }
     }
@@ -352,8 +619,8 @@ pub fn parse_subviewer(text: &str) -> Vec<Cue> {
             flush(&mut cur, &mut cues);
         } else if let Some((_, _, lines)) = cur.as_mut() {
             for part in l.replace("[br]", "\n").lines() {
-                let p = clean_entities(&strip_tags(part));
-                if !p.trim().is_empty() { lines.push(p.trim().to_string()); }
+                let p = clean_markup(part);
+                if !plain_text(&p).trim().is_empty() { lines.push(p.trim().to_string()); }
             }
         }
     }
@@ -390,8 +657,7 @@ pub fn parse_sami(text: &str) -> Vec<Cue> {
             }
         }
         let t_body = body.replace("<br>", "\n").replace("<BR>", "\n").replace("<Br>", "\n").replace("<br/>", "\n").replace("<br />", "\n");
-        let clean = clean_entities(&strip_tags(&t_body));
-        let clean = clean.lines().map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n");
+        let clean = tidy(&clean_markup(&t_body));
         items.push((t, clean));
     }
     let mut cues = Vec::new();
@@ -448,9 +714,14 @@ pub fn load_cues(path: &std::path::Path) -> Result<Vec<Cue>, String> {
 
 /// Comme `load_cues`, avec la cadence des formats a temps en images (voir `SubTrackCfg::fps`).
 pub fn load_cues_fps(path: &std::path::Path, fps: Option<f64>) -> Result<Vec<Cue>, String> {
+    load_cues_enc(path, fps, crate::charset::Charset::Auto, "")
+}
+
+/// Comme `load_cues_fps`, avec la page de code du fichier (`Auto` : UTF-8, sinon la page habituelle de la langue `lang`, code de 3 lettres).
+pub fn load_cues_enc(path: &std::path::Path, fps: Option<f64>, charset: crate::charset::Charset, lang: &str) -> Result<Vec<Cue>, String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut c = parse_file_text_fps(&ext, &decode_text(&b), fps);
+    let mut c = parse_file_text_fps(&ext, &crate::charset::decode(&b, charset, crate::charset::Charset::for_language(lang)), fps);
     if c.is_empty() && !ext.is_empty() && !NATIVE_EXT.contains(&ext.as_str()) {
         // TTML, LRC, STL, JACOsub... : ffmpeg les convertit en SRT
         let tools = crate::ffmpeg::Tools::locate().map_err(|e| format!("{}: format non reconnu et ffmpeg introuvable ({e})", path.display()))?;
@@ -520,11 +791,35 @@ pub fn strip_notes(cues: &[Cue]) -> Vec<Cue> {
         }
         // espaces doubles laisses par le retrait, et tiret de dialogue orphelin
         let t = out.split_whitespace().collect::<Vec<_>>().join(" ");
-        if t.chars().all(|c| matches!(c, '-' | '\u{2013}' | '\u{2014}' | '\u{266a}' | '\u{266b}')) { String::new() } else { t }
+        if plain_text(&t).trim().chars().all(|c| matches!(c, '-' | '\u{2013}' | '\u{2014}' | '\u{266a}' | '\u{266b}')) { String::new() } else { t }
+    }
+    // marqueurs de mise en forme d'une ligne supprimee : ils passent a la ligne suivante pour ne pas perdre l'italique, etc.
+    fn markers_of(s: &str) -> String {
+        let (mut out, mut it) = (String::new(), s.chars());
+        while let Some(c) = it.next() {
+            if c == MARK {
+                out.push(c);
+                if let Some(k) = it.next() {
+                    out.push(k);
+                    if k == 'c' { out.extend(it.by_ref().take(6)); }
+                }
+            }
+        }
+        out
     }
     cues.iter()
         .filter_map(|c| {
-            let t = c.text.lines().map(clean_line).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n");
+            let (mut lines, mut carry) = (Vec::new(), String::new());
+            for l in c.text.lines() {
+                let k = clean_line(l);
+                if k.is_empty() {
+                    carry.push_str(&markers_of(l));
+                } else {
+                    lines.push(format!("{carry}{k}"));
+                    carry.clear();
+                }
+            }
+            let t = lines.join("\n");
             (!t.is_empty()).then(|| Cue { start_ms: c.start_ms, end_ms: c.end_ms, text: t, pos: c.pos })
         })
         .collect()
@@ -584,16 +879,17 @@ pub fn check_quality(cues: &[Cue], lim: &QualityLimits) -> Vec<QualityIssue> {
     let mut out = Vec::new();
     for (i, c) in cues.iter().enumerate() {
         let dur = c.end_ms - c.start_ms;
-        let chars: usize = c.text.lines().map(|l| l.trim().chars().count()).sum();
+        let plain = plain_text(&c.text);
+        let chars: usize = plain.lines().map(|l| l.trim().chars().count()).sum();
         let mut push = |kind, detail: String| out.push(QualityIssue { index: i, kind, detail });
         if dur > 0 {
             let cps = chars as f64 * 1000.0 / dur as f64;
             if cps > lim.max_cps { push(IssueKind::TooFast, format!("{cps:.1} caractères/s (maximum {})", lim.max_cps)); }
         }
-        if let Some(l) = c.text.lines().map(|l| l.trim().chars().count()).max() {
+        if let Some(l) = plain.lines().map(|l| l.trim().chars().count()).max() {
             if l > lim.max_line_chars { push(IssueKind::LongLine, format!("{l} caractères (maximum {})", lim.max_line_chars)); }
         }
-        let n = c.text.lines().count();
+        let n = plain.lines().count();
         if n > lim.max_lines { push(IssueKind::TooManyLines, format!("{n} lignes (maximum {})", lim.max_lines)); }
         if dur < lim.min_ms { push(IssueKind::TooShort, format!("{dur} ms (minimum {})", lim.min_ms)); }
         if dur > lim.max_ms { push(IssueKind::TooLong, format!("{dur} ms (maximum {})", lim.max_ms)); }
@@ -691,15 +987,19 @@ pub struct SubTrackCfg {
     pub strip_notes: bool,
     /// Respecte les positions donnees par le fichier (`\an1`..`\an9`) ; sinon toutes les repliques prennent la position de la piste.
     pub file_positions: bool,
+    /// Garde l'italique, le gras, le souligne et les couleurs du fichier ; sinon tout le texte prend le style de la piste.
+    pub keep_format: bool,
+    /// Page de code du fichier texte (`Auto` : UTF-8, sinon celle de la langue de la piste).
+    pub charset: crate::charset::Charset,
     pub style: SubStyle,
 }
 
 impl SubTrackCfg {
     pub fn from_file(path: &str, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, file_positions: true, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, file_positions: true, keep_format: true, charset: crate::charset::Charset::Auto, style: SubStyle::default() }
     }
     pub fn embedded(index: u32, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, file_positions: true, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, file_positions: true, keep_format: true, charset: crate::charset::Charset::Auto, style: SubStyle::default() }
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
@@ -736,6 +1036,11 @@ impl SubTrackCfg {
             offset_ms: v.get("decalage_ms").and_then(Value::as_f64).map_or(0, |x| x.round() as i64),
             strip_notes: v.get("retirer_indications").and_then(Value::as_bool).unwrap_or(false),
             file_positions: v.get("positions_fichier").and_then(Value::as_bool).unwrap_or(true),
+            keep_format: v.get("mise_en_forme").and_then(Value::as_bool).unwrap_or(true),
+            charset: match v.get("encodage").and_then(Value::as_str) {
+                None => crate::charset::Charset::Auto,
+                Some(x) => crate::charset::Charset::from_name(x).ok_or_else(|| format!("encodage de sous-titres inconnu : {x}"))?,
+            },
             fps: v.get("cadence_ips").and_then(Value::as_f64).filter(|f| f.is_finite() && *f >= 1.0 && *f <= 240.0),
             style: st,
         })
@@ -757,6 +1062,8 @@ impl SubTrackCfg {
         if let Some(f) = self.fps { o.push(("cadence_ips".into(), Value::Num(f))); }
         if self.strip_notes { o.push(("retirer_indications".into(), Value::Bool(true))); }
         if !self.file_positions { o.push(("positions_fichier".into(), Value::Bool(false))); }
+        if !self.keep_format { o.push(("mise_en_forme".into(), Value::Bool(false))); }
+        if self.charset != crate::charset::Charset::Auto { o.push(("encodage".into(), Value::Str(self.charset.name().into()))); }
         let s = &self.style;
         let mut st = Vec::new();
         if !s.font.is_empty() { st.push(("police".to_string(), Value::Str(s.font.clone()))); }

@@ -670,7 +670,7 @@ fn add_subtitles(
         };
         if let Some(m) = t.problems().into_iter().next() { return bad(format!("video {num}, sous-titres {} : {m}", k + 1)); }
         let cues = match &t.source {
-            SubSource::File(f) => crate::subtitle::load_cues_fps(&abs(f), t.fps.or(crate::subtitle::plausible_fps(video_fps))).map_err(Error::Format)?,
+            SubSource::File(f) => crate::subtitle::load_cues_enc(&abs(f), t.fps.or(crate::subtitle::plausible_fps(video_fps)), t.charset, &t.lang).map_err(Error::Format)?,
             SubSource::Embedded(idx) => {
                 let dst = tmp.join(format!("sous_titres_{num}_{idx}.srt"));
                 ffmpeg::extract_subtitle_srt(env.tools, src, *idx, &dst)?;
@@ -679,6 +679,7 @@ fn add_subtitles(
         };
         let cues = if t.strip_notes { crate::subtitle::strip_notes(&cues) } else { cues };
         let cues = if t.file_positions { cues } else { crate::subtitle::clear_positions(&cues) };
+        let cues = if t.keep_format { cues } else { crate::subtitle::strip_format(&cues) };
         let mut style = t.style.clone();
         if !style.font.is_empty() {
             let c = abs(&style.font);

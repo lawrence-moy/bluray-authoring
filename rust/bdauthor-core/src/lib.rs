@@ -1,5 +1,8 @@
 //! Coeur de bdauthor : pilotage de ffmpeg, puis (en cours de portage depuis Python) fichiers de navigation, muxage et menus.
 pub mod audio;
+pub mod charset;
+mod charset_tables;
+mod entities;
 pub mod check;
 pub mod convert;
 pub mod cover;

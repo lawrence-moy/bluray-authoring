@@ -188,37 +188,186 @@ fn draw_line_f(img: &mut RgbaImage, font: &FontVec, text: &str, size: f32, rgb: 
     }
 }
 
-/// Coupe aux espaces les lignes plus larges que `avail` ; les lignes coupees sont equilibrees (meme nombre de lignes, largeur minimale).
-fn wrap_lines(font: &FontVec, lines: &[String], size: f32, avail: f32) -> Vec<String> {
-    let greedy = |line: &str, w: f32| -> Vec<String> {
-        let mut out: Vec<String> = Vec::new();
-        let mut cur = String::new();
-        for word in line.split_whitespace() {
-            let cand = if cur.is_empty() { word.to_string() } else { format!("{cur} {word}") };
-            if !cur.is_empty() && text_extent(font, &cand, size).0 > w {
-                out.push(std::mem::take(&mut cur));
-                cur = word.to_string();
-            } else {
-                cur = cand;
+// ------------------------------------------------------------------ texte avec mise en forme (sous-titres)
+/// Inclinaison de l'italique synthetique (decalage horizontal par pixel de hauteur au-dessus de la ligne de base).
+const SLANT: f32 = 0.25;
+
+/// Epaisseur ajoutee au gras synthetique (le texte est dessine deux fois, decale).
+fn bold_off(size: f32) -> f32 {
+    (size * 0.035).max(0.8)
+}
+
+fn run_width(font: &FontVec, r: &bdauthor_core::subtitle::Run, size: f32) -> f32 {
+    text_extent(font, &r.text, size).0 + if r.bold { bold_off(size) } else { 0.0 }
+}
+
+fn line_width(font: &FontVec, runs: &[bdauthor_core::subtitle::Run], size: f32) -> f32 {
+    runs.iter().map(|r| run_width(font, r, size)).sum()
+}
+
+/// Pose un pixel de couverture `cv` de couleur `rgb` (composition « par-dessus » sur une image qui peut etre transparente).
+fn plot(img: &mut RgbaImage, px: i64, py: i64, rgb: [u8; 3], cv: f32) {
+    if px < 0 || py < 0 || px >= img.width as i64 || py >= img.height as i64 {
+        return;
+    }
+    let cv = cv.clamp(0.0, 1.0);
+    if cv <= 0.0 {
+        return;
+    }
+    let [r, g2, b2, a] = img.pixel(px as u32, py as u32);
+    let mix = |d: u8, s: u8| (d as f32 * (1.0 - cv) + s as f32 * cv).round() as u8;
+    let na = (a as f32 + (255.0 - a as f32) * cv).round() as u8;
+    if a == 0 {
+        img.set(px as u32, py as u32, [rgb[0], rgb[1], rgb[2], na]);
+    } else {
+        img.set(px as u32, py as u32, [mix(r, rgb[0]), mix(g2, rgb[1]), mix(b2, rgb[2]), na]);
+    }
+}
+
+/// Dessine un morceau de texte a partir de `*x` (ligne de base `base`), puis avance `*x`.
+fn draw_run(img: &mut RgbaImage, font: &FontVec, r: &bdauthor_core::subtitle::Run, size: f32, x: &mut f32, base: f32, rgb: [u8; 3]) {
+    if r.text.is_empty() || size < 1.0 {
+        return;
+    }
+    let sf = font.as_scaled(PxScale::from(size));
+    let x0 = *x;
+    let bo = bold_off(size);
+    let passes = if r.bold { 2 } else { 1 };
+    let mut end = x0;
+    for k in 0..passes {
+        let mut xx = x0 + if k == 1 { bo } else { 0.0 };
+        let mut prev = None;
+        for c in r.text.chars() {
+            let id = font.glyph_id(c);
+            if let Some(p) = prev {
+                xx += sf.kern(p, id);
+            }
+            let g = id.with_scale_and_position(PxScale::from(size), point(xx, base));
+            xx += sf.h_advance(id);
+            prev = Some(id);
+            if let Some(og) = font.outline_glyph(g) {
+                let b = og.px_bounds();
+                og.draw(|gx, gy, cov| {
+                    let (px, py) = (b.min.x as i64 + gx as i64, b.min.y as i64 + gy as i64);
+                    if r.italic {
+                        // cisaillement : le haut du glyphe est decale vers la droite, la couverture est repartie sur deux colonnes
+                        let xf = px as f32 + (base - (py as f32 + 0.5)) * SLANT;
+                        let col = xf.floor();
+                        let fr = xf - col;
+                        plot(img, col as i64, py, rgb, cov * (1.0 - fr));
+                        plot(img, col as i64 + 1, py, rgb, cov * fr);
+                    } else {
+                        plot(img, px, py, rgb, cov);
+                    }
+                });
             }
         }
-        if !cur.is_empty() { out.push(cur); }
+        if k == 0 {
+            end = xx;
+        }
+    }
+    *x = end + if r.bold { bo } else { 0.0 };
+    if r.underline {
+        let y = (base + size * 0.12).round() as i64;
+        let t = (size / 18.0).round().max(1.0) as i64;
+        for yy in y..y + t {
+            for xx in (x0.floor() as i64)..(x.ceil() as i64) {
+                plot(img, xx, yy, rgb, 1.0);
+            }
+        }
+    }
+}
+
+/// Lignes de morceaux de texte centrees verticalement dans `rect` (comme `draw_text_block`). `force` : tout prend la couleur `rgb`
+/// (passes du contour) ; sinon chaque morceau garde sa couleur propre quand il en a une.
+fn draw_runs_block(img: &mut RgbaImage, font: &FontVec, lines: &[Vec<bdauthor_core::subtitle::Run>], size: f32, rgb: [u8; 3], force: bool, rect: (i32, i32, i32, i32), align: Align) {
+    let (_, th) = text_extent(font, "Ag", size);
+    let lh = th * 1.1;
+    let ascent = font.as_scaled(PxScale::from(size)).ascent();
+    let top = rect.1 as f32 + (rect.3 as f32 - lh * lines.len() as f32) / 2.0;
+    for (k, l) in lines.iter().enumerate() {
+        let tw = line_width(font, l, size);
+        let mut x = rect.0 as f32 + match align { Align::Left => 0.0, Align::Center => (rect.2 as f32 - tw) / 2.0, Align::Right => rect.2 as f32 - tw };
+        let base = top + lh * k as f32 + (lh - th) / 2.0 + ascent;
+        for r in l {
+            draw_run(img, font, r, size, &mut x, base, if force { rgb } else { r.color.unwrap_or(rgb) });
+        }
+    }
+}
+
+/// Mots d'une ligne de morceaux : (morceaux du mot, espace avant). Un mot peut changer de mise en forme en son milieu.
+fn words_of(line: &[bdauthor_core::subtitle::Run]) -> Vec<(Vec<bdauthor_core::subtitle::Run>, bool)> {
+    let mut out: Vec<(Vec<bdauthor_core::subtitle::Run>, bool)> = Vec::new();
+    let (mut parts, mut sp) = (Vec::new(), false);
+    for r in line {
+        let mut buf = String::new();
+        for ch in r.text.chars() {
+            if ch.is_whitespace() {
+                if !buf.is_empty() {
+                    let mut p = r.clone();
+                    p.text = std::mem::take(&mut buf);
+                    parts.push(p);
+                }
+                if !parts.is_empty() {
+                    out.push((std::mem::take(&mut parts), sp));
+                }
+                sp = true;
+            } else {
+                buf.push(ch);
+            }
+        }
+        if !buf.is_empty() {
+            let mut p = r.clone();
+            p.text = buf;
+            parts.push(p);
+        }
+    }
+    if !parts.is_empty() {
+        out.push((parts, sp));
+    }
+    out
+}
+
+/// Coupe aux espaces les lignes plus larges que `avail` ; les lignes coupees sont equilibrees (meme nombre de lignes, largeur minimale).
+fn wrap_runs(font: &FontVec, lines: &[Vec<bdauthor_core::subtitle::Run>], size: f32, avail: f32) -> Vec<Vec<bdauthor_core::subtitle::Run>> {
+    use bdauthor_core::subtitle::Run;
+    let space_w = text_extent(font, " ", size).0;
+    let greedy = |words: &[(Vec<Run>, bool)], limit: f32| -> Vec<Vec<Run>> {
+        let mut out: Vec<Vec<Run>> = Vec::new();
+        let (mut cur, mut cw): (Vec<Run>, f32) = (Vec::new(), 0.0);
+        for (parts, _) in words {
+            let w = line_width(font, parts, size);
+            if !cur.is_empty() && cw + space_w + w > limit {
+                out.push(std::mem::take(&mut cur));
+                cw = 0.0;
+            }
+            if let Some(last) = cur.last_mut() {
+                last.text.push(' ');
+                cw += space_w;
+            }
+            cur.extend(parts.iter().cloned());
+            cw += w;
+        }
+        if !cur.is_empty() {
+            out.push(cur);
+        }
         out
     };
     let mut res = Vec::new();
     for l in lines {
-        if text_extent(font, l, size).0 <= avail {
+        if line_width(font, l, size) <= avail {
             res.push(l.clone());
             continue;
         }
-        let n = greedy(l, avail).len();
+        let words = words_of(l);
+        let n = greedy(&words, avail).len();
         // plus petite largeur qui tient encore en `n` lignes
         let (mut lo, mut hi) = (avail * 0.3, avail);
         for _ in 0..14 {
             let mid = (lo + hi) / 2.0;
-            if greedy(l, mid).len() <= n { hi = mid; } else { lo = mid; }
+            if greedy(&words, mid).len() <= n { hi = mid; } else { lo = mid; }
         }
-        res.extend(greedy(l, hi));
+        res.extend(greedy(&words, hi));
     }
     res
 }
@@ -826,8 +975,9 @@ impl bdauthor_core::project::Renderer for FontRenderer {
     }
 
     fn subtitle(&self, text: &str, style: &bdauthor_core::subtitle::SubStyle, max_w: u32) -> Option<RgbaImage> {
-        use bdauthor_core::subtitle::HAlign;
-        if text.trim().is_empty() {
+        use bdauthor_core::subtitle::{parse_runs, HAlign};
+        let src_lines = parse_runs(text);
+        if src_lines.iter().all(|l| l.iter().all(|r| r.text.trim().is_empty())) {
             return None;
         }
         let custom = self.custom_font(&style.font, Path::new(""));
@@ -840,18 +990,18 @@ impl bdauthor_core::project::Renderer for FontRenderer {
         let pad = outline + 4 + shadow + bpad;
         let avail = (max_w as f32 * style.max_width.clamp(30, 100) as f32 / 100.0 - 2.0 * pad as f32).max(40.0);
         let mut size = style.size.max(8) as f32;
-        let src_lines: Vec<String> = text.split('\n').map(String::from).collect();
-        let lines: Vec<String> = if style.wrap { wrap_lines(font, &src_lines, size, avail) } else { src_lines };
+        let lines = if style.wrap { wrap_runs(font, &src_lines, size, avail) } else { src_lines };
         // une ligne qui depasse encore (mot trop long, ou coupure desactivee) : la taille est reduite
-        let widest = |sz: f32| lines.iter().map(|l| text_extent(font, l, sz).0).fold(0.0f32, f32::max);
+        let widest = |sz: f32| lines.iter().map(|l| line_width(font, l, sz)).fold(0.0f32, f32::max);
         let wide = widest(size);
         if wide > avail {
             size = (size * avail / wide).max(8.0);
         }
-        let text = lines.join("\n");
         let align = match style.halign { HAlign::Left => Align::Left, HAlign::Center => Align::Center, HAlign::Right => Align::Right };
         let lh = text_extent(font, "Ag", size).1 * 1.1;
-        let (tw, th) = (widest(size).ceil() as i32 + 2, (lh * lines.len() as f32).ceil() as i32);
+        // l'italique deborde a droite du dernier caractere
+        let slant = if lines.iter().flatten().any(|r| r.italic) { (size * SLANT * 0.8).ceil() as i32 } else { 0 };
+        let (tw, th) = (widest(size).ceil() as i32 + 2 + slant, (lh * lines.len() as f32).ceil() as i32);
         let (w, h) = (tw + 2 * pad, th + 2 * pad);
         let mut im = RgbaImage::new(w as u32, h as u32);
         if boxed {
@@ -872,12 +1022,12 @@ impl bdauthor_core::project::Renderer for FontRenderer {
             for dy in -outline..=outline {
                 for dx in -outline..=outline {
                     if dx * dx + dy * dy <= outline * outline + outline / 2 {
-                        draw_text_block(&mut fg, font, &text, size, style.outline_color, rect(dx, dy), align);
+                        draw_runs_block(&mut fg, font, &lines, size, style.outline_color, true, rect(dx, dy), align);
                     }
                 }
             }
         }
-        draw_text_block(&mut fg, font, &text, size, style.color, rect(0, 0), align);
+        draw_runs_block(&mut fg, font, &lines, size, style.color, false, rect(0, 0), align);
         if shadow > 0 {
             let mut sh = RgbaImage::new(w as u32, h as u32);
             let k = style.shadow_opacity.clamp(0, 100) as u32;

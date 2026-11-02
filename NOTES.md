@@ -719,3 +719,11 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Noms de styles : casse et astérisque initial ignorés. Marges de style non lues.
 - Essais : exemples_soustitres/test_styles.ass, test_styles_ssa.ssa (test_webvtt.vtt : réglages WebVTT non gérés).
 - Core : 143 tests verts. Aucun changement GUI/render.
+
+## Export 139 — encodages, entités HTML, mise en forme, positions WebVTT
+- `charset.rs` (+ `charset_tables.rs`, `charset_data/*.bin`, générés avec les codecs Python) : Windows-1250/1251/1252/1253/1254/1255/1256/1257/1258/874, Shift-JIS, GBK, Big5, CP949, sans dépendance. `Charset::Auto` = UTF-8 si valide, sinon page de code de la langue de la piste (`for_language`). Réglage de piste « encodage » (JSON `encodage`), `load_cues_enc`. L'aperçu relit le fichier quand l'encodage ou la langue changent.
+- `entities.rs` (HTML 4.01 + apos) et `decode_entities` : nommées, `&#233;`, `&#xE9;`. Un `<` issu d'une entité n'est plus pris pour une balise.
+- Mise en forme : marqueurs U+0001 dans `Cue::text` (`parse_runs`, `plain_text`, `convert_markup`, `strip_format`). Balises HTML (i, b, u, em, strong, font color, c.couleur), blocs ASS (`\i \b \u \c \1c \r`, transformations ignorées), MicroDVD (`{y:i}`, `{c:$..}`). Réglage de piste `mise_en_forme` (vrai par défaut).
+- Rendu : italique (cisaillement), gras (double passe), souligné et couleur par morceau ; coupure des lignes sur les morceaux.
+- WebVTT : `line:`, `position:`, `align:` -> `CuePos` (champs optionnels : le sens non demandé garde celui de la piste). `size:` non géré.
+- Core : 151 tests verts. Render/GUI à compiler avec recompiler.bat.
