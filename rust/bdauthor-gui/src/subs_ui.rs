@@ -256,12 +256,16 @@ pub struct SubPreview {
     frame_pending: Option<(i64, u32)>,
     frame_rx: Option<std::sync::mpsc::Receiver<((i64, u32), Result<RgbaImage, String>)>>,
     key_frame: (i64, u32),
+    /// zoom de l'image (1 = largeur de la fenetre)
+    zoom: f32,
+    /// zone de l'image a l'image precedente (pour savoir si la molette vise l'image)
+    img_rect: egui::Rect,
 }
 
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path) -> SubPreview {
-        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0) };
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0), zoom: 1.0, img_rect: egui::Rect::NOTHING };
         match &t.source {
             SubSource::File(f) => p.raw = Some(load_cues(&abs(base, f))),
             SubSource::Embedded(idx) => {
@@ -430,15 +434,41 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             pv.key = key;
         }
         if let Some(n) = &frame_note { ui.label(egui::RichText::new(n).weak()); }
-        if let Some(tex) = &pv.tex {
-            let w = ui.available_width().min(900.0);
-            let size = egui::vec2(w, w * 9.0 / 16.0);
-            let r = ui.image((tex.id(), size)).rect;
-            if pv.safe {
-                // zone de securite titre : 90 % de la largeur et de la hauteur
-                let inner = r.shrink2(egui::vec2(r.width() * 0.05, r.height() * 0.05));
-                ui.painter().rect_stroke(inner, 0.0, egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(255, 170, 60)));
+        // zoom : boutons, molette (ou Ctrl + molette) sur l'image ; glisser l'image pour la deplacer
+        // largeur de la fenetre (le contenu est dans une zone defilante, donc sa largeur disponible ne veut rien dire)
+        let fit_w = (ctx.screen_rect().width() - 40.0).clamp(200.0, 2400.0);
+        let ppp = ctx.pixels_per_point();
+        ui.horizontal(|ui| {
+            if ui.small_button("−").on_hover_text("Dézoomer").clicked() { pv.zoom = (pv.zoom / 1.25).max(0.25); }
+            if ui.small_button("+").on_hover_text("Zoomer").clicked() { pv.zoom = (pv.zoom * 1.25).min(8.0); }
+            if ui.small_button("Ajuster").on_hover_text("Image entière dans la largeur de la fenêtre").clicked() { pv.zoom = 1.0; }
+            if ui.small_button("1:1").on_hover_text("Un pixel de la vidéo = un pixel de l'écran").clicked() { pv.zoom = ((pv.vh * 16 / 9) as f32 / ppp / fit_w).clamp(0.25, 8.0); }
+            ui.label(format!("{:.0} %", pv.zoom * fit_w * ppp / (pv.vh * 16 / 9) as f32 * 100.0)).on_hover_text("100 % = taille réelle de la vidéo");
+            ui.label(egui::RichText::new("Molette : zoom · glisser : déplacer").weak());
+        });
+        // la molette sur l'image zoome (lue avant les zones de defilement, qui l'utiliseraient sinon pour defiler)
+        if ctx.pointer_hover_pos().map_or(false, |p| pv.img_rect.contains(p)) {
+            let (scroll, zd) = ctx.input(|i| (i.smooth_scroll_delta.y, i.zoom_delta()));
+            let f = (scroll * 0.0015).exp() * zd;
+            if (f - 1.0).abs() > 1e-4 {
+                pv.zoom = (pv.zoom * f).clamp(0.25, 8.0);
+                ctx.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO);
             }
+        }
+        if let Some(tex) = &pv.tex {
+            let size = egui::vec2(fit_w * pv.zoom, fit_w * pv.zoom * 9.0 / 16.0);
+            let max_h = (ctx.screen_rect().height() - 330.0).max(220.0);
+            let out = egui::ScrollArea::both().id_salt("apercu_zoom").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+                let resp = ui.image((tex.id(), size));
+                if pv.safe {
+                    // zone de securite titre : 90 % de la largeur et de la hauteur
+                    let r = resp.rect;
+                    let inner = r.shrink2(egui::vec2(r.width() * 0.05, r.height() * 0.05));
+                    ui.painter().rect_stroke(inner, 0.0, egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(255, 170, 60)));
+                }
+                resp
+            });
+            pv.img_rect = out.inner_rect;
         }
         ui.label(egui::RichText::new("Aperçu avec la police et le style de la piste (décalage appliqué, répliques simultanées fusionnées) ; le lecteur affichera le même dessin.").weak());
         egui::CollapsingHeader::new("Modifier le style de la piste").default_open(false).show(ui, |ui| style_ui(ui, &mut t.style, &mut changed));

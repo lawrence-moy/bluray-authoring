@@ -671,3 +671,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Fenetres systeme (export 124)
 - `os_window` (viewport immediat eframe) pour Configuration, Projet et Apercu des sous-titres : fenetres deplacables hors du cadre principal. Repli sur une fenetre flottante si le backend ne gere pas les viewports.
+
+## Apercu des sous-titres : zoom (export 126)
+- Boutons - + Ajuster 1:1, molette (ou Ctrl+molette) sur l image, glisser pour deplacer ; pourcentage = taille reelle de la video.
