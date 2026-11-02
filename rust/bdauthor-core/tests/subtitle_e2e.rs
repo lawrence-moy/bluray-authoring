@@ -61,8 +61,8 @@ fn sous_titres_decodes_par_ffmpeg() {
     assert!(again == base, "remuxage non identique");
 
     let cues = vec![
-        Cue { start_ms: 1000, end_ms: 2500, text: "Bonjour".into() },
-        Cue { start_ms: 3000, end_ms: 3600, text: "Deux".into() },
+        Cue { start_ms: 1000, end_ms: 2500, text: "Bonjour".into(), pos: None },
+        Cue { start_ms: 3000, end_ms: 3600, text: "Deux".into(), pos: None },
     ];
     let mut style = SubStyle::default();
     style.size = 90;

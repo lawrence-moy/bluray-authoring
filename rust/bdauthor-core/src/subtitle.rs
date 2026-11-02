@@ -6,6 +6,48 @@ pub struct Cue {
     pub start_ms: i64,
     pub end_ms: i64,
     pub text: String,
+    /// Position demandee par le fichier (balise ASS `\an1`..`\an9`) ; `None` : celle de la piste.
+    pub pos: Option<CuePos>,
+}
+
+/// Position d'une replique : alignement horizontal et vertical.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CuePos {
+    pub h: HAlign,
+    pub v: VPos,
+}
+
+impl CuePos {
+    /// Nom lisible (« haut gauche », « bas centre »...).
+    pub fn label(self) -> String {
+        format!("{} {}", self.v.name(), self.h.name())
+    }
+}
+
+/// Position donnee par une balise `{\anN}` (N de 1 a 9, disposition du pave numerique) dans un texte brut ; la derniere l'emporte.
+pub fn an_tag(raw: &str) -> Option<CuePos> {
+    let mut found = None;
+    let mut rest = raw;
+    while let Some(i) = rest.find('{') {
+        let Some(j) = rest[i..].find('}') else { break };
+        let block = &rest[i + 1..i + j];
+        let mut b = block;
+        while let Some(k) = b.find("\\an") {
+            if let Some(d) = b[k + 3..].chars().next().and_then(|c| c.to_digit(10)).filter(|d| (1..=9).contains(d)) {
+                let v = match d { 7..=9 => VPos::Top, 4..=6 => VPos::Middle, _ => VPos::Bottom };
+                let h = match d % 3 { 1 => HAlign::Left, 2 => HAlign::Center, _ => HAlign::Right };
+                found = Some(CuePos { h, v });
+            }
+            b = &b[k + 3..];
+        }
+        rest = &rest[i + j + 1..];
+    }
+    found
+}
+
+/// Retire les positions des repliques (la piste impose alors la sienne).
+pub fn clear_positions(cues: &[Cue]) -> Vec<Cue> {
+    cues.iter().map(|c| Cue { pos: None, ..c.clone() }).collect()
 }
 
 /// Position verticale du texte.
@@ -149,12 +191,12 @@ fn parse_srt_time(s: &str) -> Option<i64> {
 pub fn parse_srt(text: &str) -> Vec<Cue> {
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
     let mut cues = Vec::new();
-    let mut cur: Option<(i64, i64, Vec<String>)> = None;
-    let flush = |cur: &mut Option<(i64, i64, Vec<String>)>, cues: &mut Vec<Cue>| {
-        if let Some((s, e, lines)) = cur.take() {
+    let mut cur: Option<(i64, i64, Vec<String>, Option<CuePos>)> = None;
+    let flush = |cur: &mut Option<(i64, i64, Vec<String>, Option<CuePos>)>, cues: &mut Vec<Cue>| {
+        if let Some((s, e, lines, pos)) = cur.take() {
             let t = lines.join("\n").trim().to_string();
             if !t.is_empty() && e > s {
-                cues.push(Cue { start_ms: s, end_ms: e, text: t });
+                cues.push(Cue { start_ms: s, end_ms: e, text: t, pos });
             }
         }
     };
@@ -163,13 +205,14 @@ pub fn parse_srt(text: &str) -> Vec<Cue> {
             let (a, b) = (parse_srt_time(&line[..i]), line[i + 3..].split_whitespace().next().and_then(parse_srt_time));
             if let (Some(a), Some(b)) = (a, b) {
                 flush(&mut cur, &mut cues);
-                cur = Some((a, b, Vec::new()));
+                cur = Some((a, b, Vec::new(), None));
                 continue;
             }
         }
         if line.trim().is_empty() {
             flush(&mut cur, &mut cues);
-        } else if let Some((_, _, lines)) = cur.as_mut() {
+        } else if let Some((_, _, lines, pos)) = cur.as_mut() {
+            if let Some(p) = an_tag(line) { *pos = Some(p); }
             let l = clean_entities(&strip_tags(line));
             if !l.trim().is_empty() {
                 lines.push(l.trim().to_string());
@@ -209,10 +252,11 @@ pub fn parse_ass(text: &str) -> Vec<Cue> {
             let (Some(a), Some(b), Some(t)) = (parts.get(is).and_then(|x| parse_ass_time(x)), parts.get(ie).and_then(|x| parse_ass_time(x)), parts.get(it)) else {
                 continue;
             };
+            let pos = an_tag(t);
             let t = strip_tags(&t.replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " "));
             let t = t.lines().map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n");
             if !t.is_empty() && b > a {
-                cues.push(Cue { start_ms: a, end_ms: b, text: t });
+                cues.push(Cue { start_ms: a, end_ms: b, text: t, pos });
             }
         }
     }
@@ -239,7 +283,7 @@ pub fn parse_microdvd(text: &str, fps: f64) -> Vec<Cue> {
         let t = clean_entities(&strip_tags(&body.replace('|', "\n")));
         let t = t.lines().map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n");
         let (ms, me) = ((s as f64 * 1000.0 / fps).round() as i64, (e as f64 * 1000.0 / fps).round() as i64);
-        if !t.is_empty() && me > ms { cues.push(Cue { start_ms: ms, end_ms: me, text: t }); }
+        if !t.is_empty() && me > ms { cues.push(Cue { start_ms: ms, end_ms: me, text: t, pos: None }); }
     }
     cues
 }
@@ -252,7 +296,7 @@ pub fn parse_subviewer(text: &str) -> Vec<Cue> {
     let flush = |cur: &mut Option<(i64, i64, Vec<String>)>, cues: &mut Vec<Cue>| {
         if let Some((s, e, lines)) = cur.take() {
             let t = lines.join("\n").trim().to_string();
-            if !t.is_empty() && e > s { cues.push(Cue { start_ms: s, end_ms: e, text: t }); }
+            if !t.is_empty() && e > s { cues.push(Cue { start_ms: s, end_ms: e, text: t, pos: None }); }
         }
     };
     for line in text.lines() {
@@ -314,7 +358,7 @@ pub fn parse_sami(text: &str) -> Vec<Cue> {
     for (k, (t, txt)) in items.iter().enumerate() {
         if txt.is_empty() { continue; }
         let end = items.get(k + 1).map(|n| n.0).unwrap_or(*t + 3000);
-        if end > *t { cues.push(Cue { start_ms: *t, end_ms: end, text: txt.clone() }); }
+        if end > *t { cues.push(Cue { start_ms: *t, end_ms: end, text: txt.clone(), pos: None }); }
     }
     cues
 }
@@ -390,7 +434,7 @@ pub fn shift(cues: &[Cue], offset_ms: i64) -> Vec<Cue> {
     cues.iter()
         .filter_map(|c| {
             let (s, e) = ((c.start_ms + offset_ms).max(0), c.end_ms + offset_ms);
-            (e > s).then(|| Cue { start_ms: s, end_ms: e, text: c.text.clone() })
+            (e > s).then(|| Cue { start_ms: s, end_ms: e, text: c.text.clone(), pos: c.pos })
         })
         .collect()
 }
@@ -406,13 +450,16 @@ pub fn merge(cues: &[Cue]) -> Vec<Cue> {
     let mut out: Vec<Cue> = Vec::new();
     for w in pts.windows(2) {
         let (a, b) = (w[0], w[1]);
-        let t = cs.iter().filter(|c| c.start_ms <= a && c.end_ms >= b).map(|c| c.text.as_str()).collect::<Vec<_>>().join("\n");
+        let active: Vec<&&Cue> = cs.iter().filter(|c| c.start_ms <= a && c.end_ms >= b).collect();
+        let t = active.iter().map(|c| c.text.as_str()).collect::<Vec<_>>().join("\n");
         if t.is_empty() {
             continue;
         }
+        // repliques simultanees : un seul bloc de texte, a la position de la premiere qui en demande une
+        let pos = active.iter().find_map(|c| c.pos);
         match out.last_mut() {
-            Some(l) if l.end_ms == a && l.text == t => l.end_ms = b,
-            _ => out.push(Cue { start_ms: a, end_ms: b, text: t }),
+            Some(l) if l.end_ms == a && l.text == t && l.pos == pos => l.end_ms = b,
+            _ => out.push(Cue { start_ms: a, end_ms: b, text: t, pos }),
         }
     }
     out
@@ -438,7 +485,7 @@ pub fn strip_notes(cues: &[Cue]) -> Vec<Cue> {
     cues.iter()
         .filter_map(|c| {
             let t = c.text.lines().map(clean_line).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n");
-            (!t.is_empty()).then(|| Cue { start_ms: c.start_ms, end_ms: c.end_ms, text: t })
+            (!t.is_empty()).then(|| Cue { start_ms: c.start_ms, end_ms: c.end_ms, text: t, pos: c.pos })
         })
         .collect()
 }
@@ -602,15 +649,17 @@ pub struct SubTrackCfg {
     pub fps: Option<f64>,
     /// Retire les indications entre crochets ou parentheses ([musique], (rires)...) des repliques.
     pub strip_notes: bool,
+    /// Respecte les positions donnees par le fichier (`\an1`..`\an9`) ; sinon toutes les repliques prennent la position de la piste.
+    pub file_positions: bool,
     pub style: SubStyle,
 }
 
 impl SubTrackCfg {
     pub fn from_file(path: &str, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, file_positions: true, style: SubStyle::default() }
     }
     pub fn embedded(index: u32, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, file_positions: true, style: SubStyle::default() }
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
@@ -646,6 +695,7 @@ impl SubTrackCfg {
             lang: v.get("langue").and_then(Value::as_str).unwrap_or("und").into(),
             offset_ms: v.get("decalage_ms").and_then(Value::as_f64).map_or(0, |x| x.round() as i64),
             strip_notes: v.get("retirer_indications").and_then(Value::as_bool).unwrap_or(false),
+            file_positions: v.get("positions_fichier").and_then(Value::as_bool).unwrap_or(true),
             fps: v.get("cadence_ips").and_then(Value::as_f64).filter(|f| f.is_finite() && *f >= 1.0 && *f <= 240.0),
             style: st,
         })
@@ -666,6 +716,7 @@ impl SubTrackCfg {
         }
         if let Some(f) = self.fps { o.push(("cadence_ips".into(), Value::Num(f))); }
         if self.strip_notes { o.push(("retirer_indications".into(), Value::Bool(true))); }
+        if !self.file_positions { o.push(("positions_fichier".into(), Value::Bool(false))); }
         let s = &self.style;
         let mut st = Vec::new();
         if !s.font.is_empty() { st.push(("police".to_string(), Value::Str(s.font.clone()))); }

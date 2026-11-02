@@ -5,7 +5,7 @@ use crate::m2ts::Segment;
 use crate::mux::{plane_ticks, ts5, PesSpec};
 use crate::palette::{quantize_images, RgbaImage};
 use crate::project::Renderer;
-use crate::subtitle::{Cue, HAlign, SubStyle, VPos};
+use crate::subtitle::{Cue, CuePos, HAlign, SubStyle, VPos};
 use std::collections::BTreeMap;
 
 pub const PG_PID0: u16 = 0x1200;
@@ -213,7 +213,22 @@ pub fn place(st: &SubStyle, video: (u32, u32), w: u32, h: u32) -> (u32, u32) {
 
 /// Image quantifiee et placee d'un texte ; `None` si le texte ne produit aucun pixel visible.
 pub fn render_cue(text: &str, style: &SubStyle, renderer: &dyn Renderer, video: (u32, u32)) -> Result<Option<SubImage>, String> {
-    let st = scaled_style(style, video.1);
+    render_cue_at(text, style, None, renderer, video)
+}
+
+/// Style d'une replique : celui de la piste, avec la position demandee par la replique (alignement du bloc et du texte).
+pub fn with_pos(style: &SubStyle, pos: Option<CuePos>) -> SubStyle {
+    let mut st = style.clone();
+    if let Some(p) = pos {
+        st.halign = p.h;
+        st.pos = p.v;
+    }
+    st
+}
+
+/// Comme `render_cue`, avec la position propre a la replique (`None` : celle de la piste).
+pub fn render_cue_at(text: &str, style: &SubStyle, pos: Option<CuePos>, renderer: &dyn Renderer, video: (u32, u32)) -> Result<Option<SubImage>, String> {
+    let st = scaled_style(&with_pos(style, pos), video.1);
     let Some(img) = renderer.subtitle(text, &st, video.0) else { return Ok(None) };
     let Some((img, _, _)) = crop_visible(&img, 12) else { return Ok(None) };
     let (w, h) = (img.width.min(video.0), img.height.min(video.1));
@@ -254,7 +269,7 @@ pub fn encode_track(
 ) -> Result<Vec<PesSpec>, String> {
     let mut items = Vec::new();
     for c in cues {
-        if let Some(img) = render_cue(&c.text, style, renderer, video)? {
+        if let Some(img) = render_cue_at(&c.text, style, c.pos, renderer, video)? {
             items.push(Timed { start: base90 + c.start_ms as u64 * 90, end: base90 + c.end_ms as u64 * 90, img });
         }
     }

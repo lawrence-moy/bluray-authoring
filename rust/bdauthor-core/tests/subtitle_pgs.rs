@@ -10,7 +10,7 @@ fn srt_basic() {
     let src = "\u{feff}1\r\n00:00:01,500 --> 00:00:03,000\r\n<i>Bonjour</i> &amp; salut\r\nDeuxi\u{e8}me ligne\r\n\r\n2\r\n00:01:02.5 --> 00:01:04,250 X1:10\r\n{\\an8}Haut\r\n\r\n3\r\n00:00:05,000 --> 00:00:04,000\r\nignore\r\n";
     let c = parse_srt(src);
     assert_eq!(c.len(), 2);
-    assert_eq!(c[0], Cue { start_ms: 1500, end_ms: 3000, text: "Bonjour & salut\nDeuxième ligne".into() });
+    assert_eq!(c[0], Cue { start_ms: 1500, end_ms: 3000, text: "Bonjour & salut\nDeuxième ligne".into(), pos: None });
     assert_eq!((c[1].start_ms, c[1].end_ms, c[1].text.as_str()), (62_500, 64_250, "Haut"));
 }
 
@@ -20,7 +20,7 @@ fn ass_basic() {
 Dialogue: 0,0:00:01.50,0:00:03.00,Default,,0,0,0,,{\\i1}Bonjour, monde\\Nligne 2{\\i0}\nComment: 0,0:00:01.50,0:00:03.00,Default,,0,0,0,,non\nDialogue: 0,1:02:03.04,1:02:04.00,Default,,0,0,0,,Fin\n";
     let c = parse_ass(src);
     assert_eq!(c.len(), 2);
-    assert_eq!(c[0], Cue { start_ms: 1500, end_ms: 3000, text: "Bonjour, monde\nligne 2".into() });
+    assert_eq!(c[0], Cue { start_ms: 1500, end_ms: 3000, text: "Bonjour, monde\nligne 2".into(), pos: None });
     assert_eq!(c[1].start_ms, 3_723_040);
 }
 
@@ -33,7 +33,7 @@ fn decode_encodings() {
 
 #[test]
 fn merge_overlaps() {
-    let c = |s, e, t: &str| Cue { start_ms: s, end_ms: e, text: t.into() };
+    let c = |s, e, t: &str| Cue { start_ms: s, end_ms: e, text: t.into(), pos: None };
     let m = merge(&[c(0, 3000, "A"), c(1000, 2000, "B"), c(5000, 6000, "C"), c(6000, 7000, "C"), c(8000, 8000, "vide")]);
     assert_eq!(m, vec![c(0, 1000, "A"), c(1000, 2000, "A\nB"), c(2000, 3000, "A"), c(5000, 7000, "C")]);
     let s = shift(&[c(0, 1000, "x"), c(-500, -100, "y"), c(-200, 800, "z")], 100);
@@ -64,9 +64,9 @@ impl Renderer for Flat {
 
 fn cues() -> Vec<Cue> {
     vec![
-        Cue { start_ms: 1000, end_ms: 3000, text: "Bonjour".into() },
-        Cue { start_ms: 3100, end_ms: 4000, text: "Collee".into() }, // trop pres pour un effacement : remplace directement
-        Cue { start_ms: 8000, end_ms: 8100, text: "Courte".into() },
+        Cue { start_ms: 1000, end_ms: 3000, text: "Bonjour".into(), pos: None },
+        Cue { start_ms: 3100, end_ms: 4000, text: "Collee".into(), pos: None }, // trop pres pour un effacement : remplace directement
+        Cue { start_ms: 8000, end_ms: 8100, text: "Courte".into(), pos: None },
     ]
 }
 
@@ -140,7 +140,7 @@ fn pgs_fragmented_ods() {
 
 #[test]
 fn start_is_delayed_when_too_early() {
-    let c = vec![Cue { start_ms: 0, end_ms: 2000, text: "Tot".into() }];
+    let c = vec![Cue { start_ms: 0, end_ms: 2000, text: "Tot".into(), pos: None }];
     let base = 54_000_000u64;
     let specs = encode_track(&c, &SubStyle::default(), &Flat, (1920, 1080), 1, base, base).unwrap();
     let min_dts = specs.iter().map(|s| s.dts.unwrap_or(s.pts)).min().unwrap();

@@ -23,7 +23,7 @@ impl Renderer for Flat {
     }
 }
 
-fn c(s: i64, e: i64, t: &str) -> Cue { Cue { start_ms: s, end_ms: e, text: t.into() } }
+fn c(s: i64, e: i64, t: &str) -> Cue { Cue { start_ms: s, end_ms: e, text: t.into(), pos: None } }
 
 #[test]
 fn horizontal_placement() {
@@ -109,4 +109,91 @@ fn quality_checks() {
     assert!(k.contains(&(1, IssueKind::TightGap)));
     assert!(k.contains(&(2, IssueKind::TooManyLines)));
     assert!(k.contains(&(3, IssueKind::TooLong)));
+}
+
+// ------------------------------------------------------------------ positions donnees par le fichier
+fn pos(h: HAlign, v: VPos) -> Option<CuePos> { Some(CuePos { h, v }) }
+
+#[test]
+fn an_tags_all_nine() {
+    let want = [
+        (7, HAlign::Left, VPos::Top), (8, HAlign::Center, VPos::Top), (9, HAlign::Right, VPos::Top),
+        (4, HAlign::Left, VPos::Middle), (5, HAlign::Center, VPos::Middle), (6, HAlign::Right, VPos::Middle),
+        (1, HAlign::Left, VPos::Bottom), (2, HAlign::Center, VPos::Bottom), (3, HAlign::Right, VPos::Bottom),
+    ];
+    for (n, h, v) in want {
+        assert_eq!(an_tag(&format!("{{\\an{n}}}Texte")), pos(h, v), "an{n}");
+    }
+    // balise melangee a d'autres, derniere gagnante, absence, valeurs invalides
+    assert_eq!(an_tag("{\\i1\\an9\\b1}x"), pos(HAlign::Right, VPos::Top));
+    assert_eq!(an_tag("{\\an7}a{\\an3}b"), pos(HAlign::Right, VPos::Bottom));
+    assert_eq!(an_tag("rien"), None);
+    assert_eq!(an_tag("{\\an0}x"), None);
+    assert_eq!(an_tag("{\\anX}x"), None);
+}
+
+#[test]
+fn positions_read_from_ass_and_srt() {
+    let ass = "[Script Info]\nPlayResX: 1920\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\nDialogue: 0,0:00:01.00,0:00:03.00,Default,,0,0,0,,{\\an8}Haut\\NDeux lignes\nDialogue: 0,0:00:04.00,0:00:05.00,Default,,0,0,0,,Sans balise\n";
+    let c = parse_ass(ass);
+    assert_eq!(c.len(), 2);
+    assert_eq!((c[0].text.as_str(), c[0].pos), ("Haut\nDeux lignes", pos(HAlign::Center, VPos::Top)));
+    assert_eq!(c[1].pos, None);
+    let srt = "1\n00:00:01,000 --> 00:00:02,000\n{\\an7}Haut gauche\n\n2\n00:00:03,000 --> 00:00:04,000\nNormal\n";
+    let c = parse_srt(srt);
+    assert_eq!((c[0].text.as_str(), c[0].pos), ("Haut gauche", pos(HAlign::Left, VPos::Top)));
+    assert_eq!(c[1].pos, None);
+    // le decalage et le retrait des indications gardent la position
+    assert_eq!(shift(&c, 500)[0].pos, c[0].pos);
+    assert_eq!(strip_notes(&[Cue { start_ms: 0, end_ms: 1000, text: "[x] Salut".into(), pos: pos(HAlign::Right, VPos::Top) }])[0].pos, pos(HAlign::Right, VPos::Top));
+    assert!(clear_positions(&c).iter().all(|x| x.pos.is_none()));
+}
+
+#[test]
+fn merge_keeps_first_requested_position() {
+    let a = Cue { start_ms: 0, end_ms: 3000, text: "Radio".into(), pos: pos(HAlign::Center, VPos::Top) };
+    let b = Cue { start_ms: 1000, end_ms: 4000, text: "Dialogue".into(), pos: None };
+    let m = merge(&[a, b]);
+    assert_eq!(m.len(), 3);
+    assert_eq!(m[0].pos, pos(HAlign::Center, VPos::Top));
+    assert_eq!(m[1].text, "Radio\nDialogue");
+    assert_eq!(m[1].pos, pos(HAlign::Center, VPos::Top));
+    assert_eq!(m[2].pos, None);
+    // deux intervalles contigus de meme texte mais de positions differentes ne sont pas soudes
+    let x = Cue { start_ms: 0, end_ms: 1000, text: "Pareil".into(), pos: None };
+    let y = Cue { start_ms: 1000, end_ms: 2000, text: "Pareil".into(), pos: pos(HAlign::Left, VPos::Top) };
+    assert_eq!(merge(&[x, y]).len(), 2);
+}
+
+#[test]
+fn cue_position_overrides_track_in_pgs() {
+    let st = SubStyle::default();
+    let at = |p| render_cue_at("Texte", &st, p, &Flat, (1920, 1080)).unwrap().unwrap();
+    let base = at(None);
+    assert_eq!(base.y as u32 + base.h as u32, 1080 - 70);
+    let tl = at(pos(HAlign::Left, VPos::Top));
+    assert_eq!((tl.x, tl.y), (100, 70));
+    let mr = at(pos(HAlign::Right, VPos::Middle));
+    assert_eq!(mr.x as u32 + mr.w as u32, 1920 - 100);
+    assert_eq!(mr.y as u32, (1080 - mr.h as u32) / 2);
+    let bc = at(pos(HAlign::Center, VPos::Bottom));
+    assert_eq!((bc.x, bc.y), (base.x, base.y));
+    // piste complete : une position par replique
+    let cues = vec![
+        Cue { start_ms: 1000, end_ms: 2000, text: "A".into(), pos: pos(HAlign::Center, VPos::Top) },
+        Cue { start_ms: 3000, end_ms: 4000, text: "B".into(), pos: None },
+    ];
+    let specs = encode_track(&cues, &st, &Flat, (1920, 1080), 1, 0, 0).unwrap();
+    assert!(specs.len() >= 4);
+}
+
+#[test]
+fn file_positions_flag_json() {
+    let mut t = SubTrackCfg::from_file("a.ass", "fra");
+    assert!(t.file_positions);
+    assert!(!t.to_value().to_pretty().contains("positions_fichier"));
+    t.file_positions = false;
+    let j = t.to_value().to_pretty();
+    assert!(j.contains("\"positions_fichier\": false"), "{j}");
+    assert!(!SubTrackCfg::from_value(&t.to_value()).unwrap().file_positions);
 }

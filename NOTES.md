@@ -703,3 +703,12 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Aperçu : panneau « Contrôle de qualité » (vitesse, longueur/nombre de lignes, durées, intervalle) avec saut à la réplique.
 - Non fait : positions par réplique ({\an8}), car cela demande un champ de plus dans `Cue`.
 - Core : 136 tests verts. Render/GUI à compiler avec recompiler.bat.
+
+## Export 137 — positions des répliques données par le fichier
+- `Cue.pos: Option<CuePos>` (alignement + position verticale) lu depuis les balises ASS `\an1`..`\an9` (fichiers ASS et SRT).
+- `pgs::render_cue_at` / `with_pos` : la position de la réplique remplace celle de la piste (bloc et alignement du texte).
+- `merge` : répliques simultanées dans un seul bloc, à la position de la première qui en demande une ; pas de soudure si les positions diffèrent.
+- Piste : case « Respecter les positions du fichier » (`positions_fichier`, vrai par défaut, écrit seulement si faux).
+- Aperçu : la position demandée par la réplique est affichée et appliquée.
+- Fichiers d'essai : code/exemples_soustitres/test_placements.ass et .srt (13 répliques, 9 positions).
+- Core : 141 tests verts. GUI à compiler avec recompiler.bat.

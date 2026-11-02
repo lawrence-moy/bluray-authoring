@@ -678,6 +678,7 @@ fn add_subtitles(
             }
         };
         let cues = if t.strip_notes { crate::subtitle::strip_notes(&cues) } else { cues };
+        let cues = if t.file_positions { cues } else { crate::subtitle::clear_positions(&cues) };
         let mut style = t.style.clone();
         if !style.font.is_empty() {
             let c = abs(&style.font);

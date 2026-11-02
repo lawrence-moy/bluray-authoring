@@ -1,0 +1,52 @@
+1
+00:00:01,000 --> 00:00:03,000
+{\an7}Position 7 : haut gauche
+
+2
+00:00:03,200 --> 00:00:05,200
+{\an8}Position 8 : haut centre
+
+3
+00:00:05,400 --> 00:00:07,400
+{\an9}Position 9 : haut droite
+
+4
+00:00:07,600 --> 00:00:09,600
+{\an6}Position 6 : milieu droite
+
+5
+00:00:09,800 --> 00:00:11,800
+{\an3}Position 3 : bas droite
+
+6
+00:00:12,000 --> 00:00:14,000
+{\an2}Position 2 : bas centre
+
+7
+00:00:14,200 --> 00:00:16,200
+{\an1}Position 1 : bas gauche
+
+8
+00:00:16,400 --> 00:00:18,400
+{\an4}Position 4 : milieu gauche
+
+9
+00:00:18,600 --> 00:00:20,600
+{\an5}Position 5 : centre
+
+10
+00:00:20,800 --> 00:00:23,800
+{\an8}En haut : voix de la radio
+
+11
+00:00:20,800 --> 00:00:23,800
+{\an2}En bas : dialogue normal
+
+12
+00:00:24,000 --> 00:00:27,500
+{\an8}Une réplique longue placée en haut de l'image,
+sur deux lignes, pour vérifier la largeur et la marge
+
+13
+00:00:27,700 --> 00:00:29,700
+Sans balise : position de la piste

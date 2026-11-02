@@ -4,7 +4,7 @@ use bdauthor_core::film::MAX_SUB_TRACKS;
 use bdauthor_core::model::{ProjectModel, VideoEntry};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::Renderer;
-use bdauthor_core::subtitle::{check_quality, default_language_name, load_cues, merge, next_language_id, shift, strip_notes, Cue, HAlign, Language, QualityIssue, QualityLimits, SubSource, SubStyle, SubTrackCfg, VPos};
+use bdauthor_core::subtitle::{check_quality, clear_positions, default_language_name, load_cues, merge, next_language_id, shift, strip_notes, Cue, CuePos, HAlign, Language, QualityIssue, QualityLimits, SubSource, SubStyle, SubTrackCfg, VPos};
 use bdauthor_render::FontRenderer;
 use eframe::egui;
 use std::collections::HashMap;
@@ -95,6 +95,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 });
                 changed |= ui.checkbox(&mut t.strip_notes, "Retirer les indications [entre crochets] et (entre parenthèses)")
                     .on_hover_text("Pour les sous-titres destinés aux sourds et malentendants : [Musique], (rires), (soupir)… sont supprimés ; une réplique qui ne contient que cela disparaît.").changed();
+                changed |= ui.checkbox(&mut t.file_positions, "Respecter les positions du fichier (ASS : \\an1 à \\an9)")
+                    .on_hover_text("Certains fichiers placent des répliques en haut, à gauche, etc. (par exemple pour ne pas masquer du texte incrusté dans l'image). Décoché : toutes les répliques prennent la position réglée ci-dessous. Les répliques simultanées sont affichées ensemble, à la position de la première qui en demande une.").changed();
                 style_ui(ui, &mut t.style, &mut changed);
                 ui.horizontal(|ui| {
                     if ui.button("Aperçu du rendu…").on_hover_text("Voir les répliques de cette piste dessinées avec son style").clicked() { *preview = Some(k); }
@@ -353,9 +355,9 @@ fn clock(ms: i64) -> String {
 }
 
 /// Une replique sur un fond uni de `vh` lignes (16/9), placee comme dans la piste PGS finale.
-fn render_preview(r: &FontRenderer, text: &str, style: &SubStyle, base: &Path, vh: u32, bg: u8, frame: Option<&RgbaImage>) -> egui::ColorImage {
+fn render_preview(r: &FontRenderer, text: &str, style: &SubStyle, pos: Option<CuePos>, base: &Path, vh: u32, bg: u8, frame: Option<&RgbaImage>) -> egui::ColorImage {
     let vw = vh * 16 / 9;
-    let mut st = bdauthor_core::pgs::scaled_style(style, vh);
+    let mut st = bdauthor_core::pgs::scaled_style(&bdauthor_core::pgs::with_pos(style, pos), vh);
     if !st.font.is_empty() {
         let c = abs(base, &st.font);
         if c.is_file() { st.font = c.to_string_lossy().into_owned(); }
@@ -400,9 +402,10 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
     }
     let Some(t) = v.subs.get_mut(pv.track) else { return (false, false) };
     if let Some(Ok(raw)) = &pv.raw {
-        let skey = t.offset_ms * 2 + t.strip_notes as i64;
+        let skey = t.offset_ms * 4 + t.strip_notes as i64 * 2 + t.file_positions as i64;
         if pv.shown_offset != Some(skey) {
             let src = if t.strip_notes { strip_notes(raw) } else { raw.clone() };
+            let src = if t.file_positions { src } else { clear_positions(&src) };
             pv.shown = merge(&shift(&src, t.offset_ms));
             pv.shown_offset = Some(skey);
             pv.issues = None;
@@ -475,7 +478,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
                 crate::help(ui, "Vérifie les répliques affichées (décalage appliqué, simultanées fusionnées) : vitesse de lecture, longueur et nombre de lignes, durée d'affichage et intervalle avec la suivante. Cliquez sur un problème pour voir la réplique. Les seuils sont ceux d'usage courant ; ils ne modifient pas les sous-titres.");
             });
         let c = pv.shown[pv.cue].clone();
-        ui.label(egui::RichText::new(format!("{} → {}", clock(c.start_ms), clock(c.end_ms))).weak());
+        ui.label(egui::RichText::new(format!("{} → {}{}", clock(c.start_ms), clock(c.end_ms), c.pos.map_or(String::new(), |p| format!(" · position du fichier : {}", p.label())))).weak());
         ui.horizontal(|ui| {
             ui.label("Fond :");
             for (i, l) in ["Noir", "Gris", "Clair", "Image de la vidéo"].iter().enumerate() { if ui.selectable_label(pv.bg == i as u8, *l).clicked() { pv.bg = i as u8; } }
@@ -520,10 +523,10 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             }
             pv.key_frame = fk;
         }
-        let key = format!("{}|{}|{}|{:?}|{}|{}", pv.cue, pv.bg, pv.vh, t.style, c.text, pv.frames.contains_key(&pv.key_frame));
+        let key = format!("{}|{}|{}|{:?}|{}|{:?}|{}", pv.cue, pv.bg, pv.vh, t.style, c.text, c.pos, pv.frames.contains_key(&pv.key_frame));
         if key != pv.key || pv.tex.is_none() {
             let frame = if pv.bg == 3 { pv.frames.get(&pv.key_frame).and_then(|r| r.as_ref().ok()) } else { None };
-            let img = render_preview(renderer, &c.text, &t.style, base, pv.vh, pv.bg, frame);
+            let img = render_preview(renderer, &c.text, &t.style, c.pos, base, pv.vh, pv.bg, frame);
             pv.tex = Some(ctx.load_texture("apercu_sous_titres", img, egui::TextureOptions::LINEAR));
             pv.key = key;
         }
