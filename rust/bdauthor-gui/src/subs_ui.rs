@@ -49,7 +49,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                         ui.label("Fichier :");
                         changed |= ui.text_edit_singleline(f).changed();
                         if ui.button("Choisir…").clicked() {
-                            if let Some(p) = rfd::FileDialog::new().add_filter("Sous-titres", &["srt", "ass", "ssa"]).pick_file() {
+                            if let Some(p) = rfd::FileDialog::new().add_filter("Sous-titres", &["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv", "ttml", "dfxp", "xml", "lrc", "stl"]).pick_file() {
                                 *f = clean(&p);
                                 changed = true;
                             }
@@ -86,8 +86,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
     let full = v.subs.len() >= MAX_SUB_TRACKS;
     ui.add_enabled_ui(!full, |ui| {
         ui.horizontal(|ui| {
-            if ui.button("Ajouter un fichier .srt / .ass…").clicked() {
-                if let Some(p) = rfd::FileDialog::new().add_filter("Sous-titres", &["srt", "ass", "ssa"]).pick_file() {
+            if ui.button("Ajouter un fichier de sous-titres…").clicked() {
+                if let Some(p) = rfd::FileDialog::new().add_filter("Sous-titres", &["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv", "ttml", "dfxp", "xml", "lrc", "stl"]).pick_file() {
                     let mut t = SubTrackCfg::from_file(&clean(&p), "fra");
                     // premiere langue du projet : le francais par defaut ; ensuite, a choisir
                     if langs.is_empty() { t.lang_id = language_for_code(langs, "fra"); }
@@ -134,6 +134,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         None => {}
     }
     ui.label(egui::RichText::new("La liste des langues du projet se règle dans le menu « Édition > Projet… », onglet « Langues des sous-titres » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
+    ui.label(egui::RichText::new("Formats lus : SRT, ASS/SSA, WebVTT, MicroDVD (23,976 i/s sauf indication {1}{1}cadence), SubViewer, SBV, SAMI ; TTML, LRC, STL et autres via ffmpeg.").weak());
     ui.label(egui::RichText::new("Le décalage corrige un retard ou une avance. Les sous-titres sont dessinés en images (format Blu-ray PGS) ; la télécommande les active et choisit la piste.").weak());
     changed
 }

@@ -741,6 +741,18 @@ pub fn extract_subtitle_srt(tools: &Tools, src: &Path, index: u32, dst: &Path) -
     Ok(())
 }
 
+/// Convertit un fichier de sous-titres texte que ffmpeg sait lire (TTML, LRC, STL, JACOsub...) en SRT.
+pub fn convert_subtitle_file_to_srt(tools: &Tools, src: &Path, dst: &Path) -> Result<()> {
+    let mut c = Command::new(&tools.ffmpeg);
+    c.args(["-y", "-v", "error", "-i"]).arg(src).args(["-f", "srt"]).arg(dst);
+    no_window(&mut c);
+    let out = c.output()?;
+    if !out.status.success() {
+        return Err(Error::Format(format!("conversion des sous-titres impossible ({}) : {}", src.display(), String::from_utf8_lossy(&out.stderr).trim())));
+    }
+    Ok(())
+}
+
 // ---------------------------------------------------------------- pistes audio integrees
 
 /// Piste audio d'un fichier video.

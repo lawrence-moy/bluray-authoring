@@ -674,3 +674,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Apercu des sous-titres : zoom (export 126)
 - Boutons - + Ajuster 1:1, molette (ou Ctrl+molette) sur l image, glisser pour deplacer ; pourcentage = taille reelle de la video.
+
+## Formats de sous-titres (export 127)
+- Lecture directe : SRT, WebVTT (horaires mm:ss.mmm acceptes), MicroDVD (cadence par {1}{1}fps, sinon 23,976), SubViewer 2 et SBV, SAMI (premiere classe de langue). Format reconnu d apres le contenu (sauf .ass/.ssa).
+- Autres extensions (TTML, LRC, STL...) : conversion par ffmpeg (`convert_subtitle_file_to_srt`) si le lecteur direct ne trouve rien.
+- Tests : tests/subtitle_formats.rs.

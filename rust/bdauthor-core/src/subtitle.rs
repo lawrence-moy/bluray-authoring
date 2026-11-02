@@ -64,7 +64,7 @@ pub fn decode_text(b: &[u8]) -> String {
 }
 
 fn clean_entities(s: &str) -> String {
-    s.replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
+    s.replace("&lrm;", "").replace("&rlm;", "").replace("&nbsp;", " ").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"").replace("&amp;", "&")
 }
 
 /// Retire les balises `<...>` (HTML) et les blocs `{...}` (ASS) d'une ligne.
@@ -92,7 +92,10 @@ fn parse_srt_time(s: &str) -> Option<i64> {
         None => (s, ""),
     };
     let mut it = hms.split(':').map(|p| p.trim().parse::<i64>().ok());
-    let (h, m, sec) = (it.next()??, it.next()??, it.next()??);
+    // « mm:ss.mmm » (WebVTT) ou « hh:mm:ss,mmm »
+    let first = it.next()??;
+    let second = it.next()??;
+    let (h, m, sec) = match it.next() { Some(t) => (first, second, t?), None => (0, first, second) };
     if it.next().is_some() || frac.chars().any(|c| !c.is_ascii_digit()) {
         return None;
     }
@@ -177,17 +180,149 @@ pub fn parse_ass(text: &str) -> Vec<Cue> {
     cues
 }
 
-/// Choisit le format d'apres l'extension (`.ass`, `.ssa`, sinon SRT), puis ordonne par debut.
+// ------------------------------------------------------------------ autres formats texte
+/// MicroDVD (`{debut}{fin}texte`, `|` = saut de ligne) : temps en images ; la cadence vient d'une premiere ligne `{1}{1}23.976`, sinon `fps`.
+pub fn parse_microdvd(text: &str, fps: f64) -> Vec<Cue> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut fps = if fps > 1.0 { fps } else { 23.976 };
+    let mut cues = Vec::new();
+    for (n, line) in text.lines().enumerate() {
+        let l = line.trim();
+        let Some(r) = l.strip_prefix('{') else { continue };
+        let Some((start, r)) = r.split_once('}') else { continue };
+        let Some(r) = r.strip_prefix('{') else { continue };
+        let Some((end, body)) = r.split_once('}') else { continue };
+        let (Ok(s), Ok(e)) = (start.trim().parse::<i64>(), end.trim().parse::<i64>()) else { continue };
+        if n < 3 && s == 1 && e == 1 {
+            if let Ok(f) = body.trim().parse::<f64>() { if f > 1.0 { fps = f; } }
+            continue;
+        }
+        let t = clean_entities(&strip_tags(&body.replace('|', "\n")));
+        let t = t.lines().map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n");
+        let (ms, me) = ((s as f64 * 1000.0 / fps).round() as i64, (e as f64 * 1000.0 / fps).round() as i64);
+        if !t.is_empty() && me > ms { cues.push(Cue { start_ms: ms, end_ms: me, text: t }); }
+    }
+    cues
+}
+
+/// SubViewer 2 et SBV : une ligne `debut,fin` suivie du texte (`[br]` = saut de ligne), separees par des lignes vides.
+pub fn parse_subviewer(text: &str) -> Vec<Cue> {
+    let text = text.replace("\r\n", "\n").replace('\r', "\n");
+    let mut cues = Vec::new();
+    let mut cur: Option<(i64, i64, Vec<String>)> = None;
+    let flush = |cur: &mut Option<(i64, i64, Vec<String>)>, cues: &mut Vec<Cue>| {
+        if let Some((s, e, lines)) = cur.take() {
+            let t = lines.join("\n").trim().to_string();
+            if !t.is_empty() && e > s { cues.push(Cue { start_ms: s, end_ms: e, text: t }); }
+        }
+    };
+    for line in text.lines() {
+        let l = line.trim();
+        if let Some((a, b)) = l.split_once(',') {
+            if let (Some(s), Some(e)) = (parse_srt_time(a), parse_srt_time(b)) {
+                flush(&mut cur, &mut cues);
+                cur = Some((s, e, Vec::new()));
+                continue;
+            }
+        }
+        if l.is_empty() {
+            flush(&mut cur, &mut cues);
+        } else if let Some((_, _, lines)) = cur.as_mut() {
+            for part in l.replace("[br]", "\n").lines() {
+                let p = clean_entities(&strip_tags(part));
+                if !p.trim().is_empty() { lines.push(p.trim().to_string()); }
+            }
+        }
+    }
+    flush(&mut cur, &mut cues);
+    cues
+}
+
+/// SAMI (`.smi`) : blocs `<SYNC Start=ms>` ; une replique dure jusqu'au bloc suivant, un bloc vide (`&nbsp;`) l'efface.
+/// Si le fichier porte plusieurs langues (classes de `<P>`), seule la premiere classe rencontree est lue.
+pub fn parse_sami(text: &str) -> Vec<Cue> {
+    let low = text.to_ascii_lowercase();
+    let mut starts: Vec<usize> = Vec::new();
+    let mut from = 0;
+    while let Some(i) = low[from..].find("<sync") { starts.push(from + i); from += i + 5; }
+    let mut items: Vec<(i64, String)> = Vec::new();
+    let mut class: Option<String> = None;
+    for (k, &st) in starts.iter().enumerate() {
+        let end = starts.get(k + 1).copied().unwrap_or(text.len());
+        let block = &text[st..end];
+        let bl = &low[st..end];
+        let Some(gt) = block.find('>') else { continue };
+        let head = &bl[..gt];
+        let Some(p) = head.find("start") else { continue };
+        let digits: String = head[p + 5..].chars().skip_while(|c| !c.is_ascii_digit()).take_while(|c| c.is_ascii_digit()).collect();
+        let Ok(t) = digits.parse::<i64>() else { continue };
+        let body = &block[gt + 1..];
+        let bodyl = &bl[gt + 1..];
+        if let Some(pp) = bodyl.find("<p") {
+            let tag_end = bodyl[pp..].find('>').map(|x| pp + x).unwrap_or(pp);
+            let tag = &bodyl[pp..tag_end];
+            let cl = tag.find("class").map(|c| tag[c + 5..].trim_start_matches(|ch: char| ch == '=' || ch == ' ' || ch == '"' || ch == '\'').chars().take_while(|ch| ch.is_alphanumeric() || *ch == '_').collect::<String>());
+            if let Some(cl) = cl {
+                match &class { None => class = Some(cl), Some(c0) if *c0 != cl => continue, _ => {} }
+            }
+        }
+        let t_body = body.replace("<br>", "\n").replace("<BR>", "\n").replace("<Br>", "\n").replace("<br/>", "\n").replace("<br />", "\n");
+        let clean = clean_entities(&strip_tags(&t_body));
+        let clean = clean.lines().map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n");
+        items.push((t, clean));
+    }
+    let mut cues = Vec::new();
+    for (k, (t, txt)) in items.iter().enumerate() {
+        if txt.is_empty() { continue; }
+        let end = items.get(k + 1).map(|n| n.0).unwrap_or(*t + 3000);
+        if end > *t { cues.push(Cue { start_ms: *t, end_ms: end, text: txt.clone() }); }
+    }
+    cues
+}
+
+/// Format reconnu d'apres le contenu (l'extension est trop souvent trompeuse : `.sub`, `.txt`, `.xml`).
+fn sniff(text: &str) -> &'static str {
+    let low: String = text.chars().take(4000).collect::<String>().to_ascii_lowercase();
+    if low.contains("<sami") { return "sami"; }
+    if low.contains("[events]") { return "ass"; }
+    if low.lines().map(str::trim).filter(|l| !l.is_empty()).take(3).any(|l| l.starts_with('{') && l.matches('{').count() >= 2 && l.matches('}').count() >= 2 && l[1..].chars().next().map_or(false, |c| c.is_ascii_digit())) { return "microdvd"; }
+    if low.contains("-->") { return "srt"; }
+    if text.lines().take(60).any(|l| l.split_once(',').map_or(false, |(a, b)| parse_srt_time(a).is_some() && parse_srt_time(b).is_some() && a.contains(':'))) { return "subviewer"; }
+    "srt"
+}
+
+/// Choisit le format (`.ass` / `.ssa` d'apres l'extension, les autres d'apres le contenu : SRT, WebVTT, MicroDVD, SubViewer, SBV, SAMI), puis ordonne par debut.
 pub fn parse_file_text(ext: &str, text: &str) -> Vec<Cue> {
-    let mut c = if matches!(ext.to_ascii_lowercase().as_str(), "ass" | "ssa") { parse_ass(text) } else { parse_srt(text) };
+    let kind = if matches!(ext.to_ascii_lowercase().as_str(), "ass" | "ssa") { "ass" } else { sniff(text) };
+    let mut c = match kind {
+        "ass" => parse_ass(text),
+        "sami" => parse_sami(text),
+        "microdvd" => parse_microdvd(text, 23.976),
+        "subviewer" => parse_subviewer(text),
+        _ => parse_srt(text),
+    };
     c.sort_by_key(|x| (x.start_ms, x.end_ms));
     c
 }
 
+/// Extensions lues directement (les autres formats texte passent par ffmpeg s'il est installe).
+const NATIVE_EXT: [&str; 9] = ["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv"];
+
 pub fn load_cues(path: &std::path::Path) -> Result<Vec<Cue>, String> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let c = parse_file_text(ext, &decode_text(&b));
+    let mut c = parse_file_text(&ext, &decode_text(&b));
+    if c.is_empty() && !ext.is_empty() && !NATIVE_EXT.contains(&ext.as_str()) {
+        // TTML, LRC, STL, JACOsub... : ffmpeg les convertit en SRT
+        let tools = crate::ffmpeg::Tools::locate().map_err(|e| format!("{}: format non reconnu et ffmpeg introuvable ({e})", path.display()))?;
+        let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+        let dst = std::env::temp_dir().join(format!("bdauthor_sub_{}_{nanos}.srt", std::process::id()));
+        let r = crate::ffmpeg::convert_subtitle_file_to_srt(&tools, path, &dst).map_err(|e| e.to_string());
+        let t = std::fs::read(&dst);
+        let _ = std::fs::remove_file(&dst);
+        r?;
+        c = parse_file_text("srt", &decode_text(&t.map_err(|e| e.to_string())?));
+    }
     if c.is_empty() {
         return Err(format!("{}: aucune replique lisible", path.display()));
     }
