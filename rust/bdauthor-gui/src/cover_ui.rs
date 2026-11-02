@@ -551,12 +551,14 @@ impl App {
         let Some(i) = self.cover_sel.filter(|&i| i < doc.items().len()) else { return changed };
         ui.separator();
         let zones = doc.zones();
+        let base_dir = self.base_dir();
         let it = &mut doc.items_mut()[i];
         ui.horizontal(|ui| {
             ui.label("Nom");
             changed |= ui.add(egui::TextEdit::singleline(&mut it.name).hint_text("(facultatif)").desired_width(220.0)).changed();
         });
         let mut pick_image = false;
+        let mut pick_font = false;
         match &mut it.kind {
             CoverKind::Text { text, size_pt, color, align, font } => {
                 changed |= ui.add(egui::TextEdit::multiline(text).desired_rows(3).desired_width(f32::INFINITY)).changed();
@@ -580,8 +582,24 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.label("Police");
-                    changed |= ui.add(egui::TextEdit::singleline(font).hint_text("(par défaut)").desired_width(220.0)).changed();
+                    let shown = if font.is_empty() { "Police par défaut".to_string() } else {
+                        bdauthor_render::common_fonts().into_iter().find(|(_, f)| f == font).map(|(l, _)| l.to_string()).unwrap_or_else(|| font.clone())
+                    };
+                    egui::ComboBox::from_id_salt("jaquette_police").selected_text(shown).width(200.0).show_ui(ui, |ui| {
+                        if ui.selectable_label(font.is_empty(), "Police par défaut").clicked() { font.clear(); changed = true; }
+                        for (label, file) in bdauthor_render::common_fonts() {
+                            if ui.selectable_label(font == file, label).clicked() { *font = file.to_string(); changed = true; }
+                        }
+                        if ui.button("Autre fichier…").clicked() { pick_font = true; ui.close_menu(); }
+                    });
                 });
+                if !font.is_empty() {
+                    if let Ok(r) = &self.renderer {
+                        if r.custom_font(font, &base_dir).is_none() {
+                            ui.colored_label(Color32::from_rgb(230, 100, 90), "Police introuvable : la police par défaut sera utilisée.");
+                        }
+                    }
+                }
             }
             CoverKind::Image { path } => {
                 ui.horizontal(|ui| {
@@ -594,6 +612,12 @@ impl App {
             if let Some(f) = rfd::FileDialog::new().add_filter("Images", &IMG_EXT).pick_file() {
                 let rel = self.relative(&f);
                 if let CoverKind::Image { path } = &mut doc.items_mut()[i].kind { *path = rel; changed = true; }
+            }
+        }
+        if pick_font {
+            if let Some(f) = rfd::FileDialog::new().add_filter("Polices", &["ttf", "otf"]).pick_file() {
+                let rel = self.relative(&f);
+                if let CoverKind::Text { font, .. } = &mut doc.items_mut()[i].kind { *font = rel; changed = true; }
             }
         }
         let it = &mut doc.items_mut()[i];

@@ -630,3 +630,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - `SheetDoc::to_pdf_a4` : page A4 portrait ou paysage (portrait si possible, avec 8 mm de marge pour les reperes), jaquette ou etiquette a sa taille reelle, centree.
   Jaquette : traits de coupe aux coins et de pliage de la tranche ; etiquette : disque decoupe en couronne, contour et trou traces, 4 reperes en croix. Erreur claire si le format fini ne tient pas sur A4.
   A imprimer a 100 % (sans « ajuster a la page »). Boutons « Exporter en PDF », « Exporter en PNG », « Imprimer sur A4 » : tous en arriere-plan.
+
+### Jaquette : choix de la police par menu deroulant
+- Meme menu que le widget texte de la mise en page (`bdauthor_render::common_fonts()` : polices usuelles installees, « Police par defaut », « Autre fichier… » .ttf/.otf stocke relatif au projet) ; message rouge si la police est introuvable.
