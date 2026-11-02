@@ -153,9 +153,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    ui.label(egui::RichText::new("La liste des langues du projet se règle dans le menu « Édition > Projet… », onglet « Langues des sous-titres » : chaque langue y garde le même numéro de piste dans toutes les vidéos.").weak());
-    ui.label(egui::RichText::new("Formats lus : SRT, ASS/SSA, WebVTT, MicroDVD (23,976 i/s sauf indication {1}{1}cadence), SubViewer, SBV, SAMI ; TTML, LRC, STL et autres via ffmpeg.").weak());
-    ui.label(egui::RichText::new("Le décalage corrige un retard ou une avance. Les sous-titres sont dessinés en images (format Blu-ray PGS) ; la télécommande les active et choisit la piste.").weak());
+    crate::help(ui, concat!("La liste des langues du projet se règle dans le menu « Édition > Projet… », onglet « Langues des sous-titres » : chaque langue y garde le même numéro de piste dans toutes les vidéos.", "\n\n", "Formats lus : SRT, ASS/SSA, WebVTT, MicroDVD (23,976 i/s sauf indication {1}{1}cadence), SubViewer, SBV, SAMI ; TTML, LRC, STL et autres via ffmpeg.", "\n\n", "Le décalage corrige un retard ou une avance. Les sous-titres sont dessinés en images (format Blu-ray PGS) ; la télécommande les active et choisit la piste."));
     changed
 }
 
@@ -197,7 +195,7 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
             *changed = true;
         }
     }
-    ui.label(egui::RichText::new("Tailles données pour une vidéo de 1080 lignes ; elles s'adaptent automatiquement à 720.").weak());
+    crate::help(ui, "Tailles données pour une vidéo de 1080 lignes ; elles s'adaptent automatiquement à 720.");
 }
 
 /// Onglet « Langues » de la fenetre Projet (audio et sous-titres) : liste des langues du projet (le rang d'une langue est son numero de
@@ -249,8 +247,7 @@ pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
         if m.languages.is_empty() {
             ui.label(egui::RichText::new("Aucune langue : ajoutez-en pour choisir la langue des pistes audio et des sous-titres, et pour les boutons « Régler… ».").weak());
         } else {
-            ui.label(egui::RichText::new("Chaque piste audio ou de sous-titres d'une vidéo choisit sa langue dans cette liste. Sous-titres : une vidéo qui n'a pas une langue garde une piste vide à cet endroit. Audio : seules comptent les langues qui ont de l'audio quelque part, et chaque vidéo doit avoir les premières de l'ordre de la liste, sans trou.").weak());
-            ui.label(egui::RichText::new("Changer l'ordre change les numéros de piste : les boutons suivent leur langue.").weak());
+            crate::help(ui, concat!("Chaque piste audio ou de sous-titres d'une vidéo choisit sa langue dans cette liste. Sous-titres : une vidéo qui n'a pas une langue garde une piste vide à cet endroit. Audio : seules comptent les langues qui ont de l'audio quelque part, et chaque vidéo doit avoir les premières de l'ordre de la liste, sans trou.", "\n\n", "Changer l'ordre change les numéros de piste : les boutons suivent leur langue."));
         }
     }
     changed
@@ -498,7 +495,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             });
             pv.img_rect = out.inner_rect;
         }
-        ui.label(egui::RichText::new("Aperçu avec la police et le style de la piste (décalage appliqué, répliques simultanées fusionnées) ; le lecteur affichera le même dessin.").weak());
+        crate::help(ui, "Aperçu avec la police et le style de la piste (décalage appliqué, répliques simultanées fusionnées) ; le lecteur affichera le même dessin.");
     });
     (changed, open)
 }

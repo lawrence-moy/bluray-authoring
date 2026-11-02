@@ -275,7 +275,7 @@ fn link_ui(ui: &mut egui::Ui, link: &mut Option<Target>, targets: &[(Target, Str
     }
     if link.is_some() {
         destination_combo(ui, link, targets, changed);
-        ui.label(egui::RichText::new("Sélectionné à la télécommande, l'élément est entouré d'un cadre bleu.").weak());
+        crate::help(ui, "Sélectionné à la télécommande, l'élément est entouré d'un cadre bleu.");
     }
 }
 
@@ -580,7 +580,7 @@ impl App {
             if ui.button("Créer les pages de départ").on_hover_text("Une grille de vignettes des vidéos, puis une page de chapitres par vidéo qui en a ; tout reste modifiable").clicked() && !self.create_starter_pages() {
                 self.notice = "Pages de départ : durée des vidéos à chapitres automatiques en cours de lecture, réessayez dans un instant.".into();
             }
-            ui.label(egui::RichText::new("Ou « + Page » (à gauche) pour partir d'une page vierge. Sans page, la construction du disque crée ces pages de départ.").weak());
+            crate::help(ui, "Ou « + Page » (à gauche) pour partir d'une page vierge. Sans page, la construction du disque crée ces pages de départ.");
             return;
         };
         if let Err(e) = &self.renderer {
@@ -709,7 +709,7 @@ impl App {
             if ui.small_button("+").on_hover_text("Zoomer").clicked() { let nz = (z * 1.25).min(8.0); self.view_pan *= nz / z; self.view_zoom = nz; }
             if ui.small_button("Ajuster").on_hover_text("Page entière dans la fenêtre").clicked() { self.view_zoom = 1.0; self.view_pan = egui::Vec2::ZERO; }
             ui.label(format!("{:.0} %", self.view_zoom * 100.0));
-            ui.label(egui::RichText::new("Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue · Maj en redimensionnant : proportionnel").weak());
+            crate::help(ui, "Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue · Maj en redimensionnant : proportionnel");
         });
         let avail = ui.available_size();
         let w = avail.x.min((avail.y - reserve).max(200.0) * 16.0 / 9.0).max(320.0);
@@ -1061,7 +1061,7 @@ impl App {
                     if ui.selectable_label(cur == f, f.to_string()).clicked() && cur != f { d.anim_fps = if f == def { 0 } else { f }; changed = true; }
                 }
             });
-            ui.label(egui::RichText::new("Une seule cadence par page (norme Blu-ray), pour le halo animé et les animations d'images. Arrondie à une fraction de la cadence de la vidéo du menu.").weak());
+            crate::help(ui, "Une seule cadence par page (norme Blu-ray), pour le halo animé et les animations d'images. Arrondie à une fraction de la cadence de la vidéo du menu.");
         });
         if let Some(k) = pick {
             let (name, exts): (&str, &[&str]) = match k {
@@ -1093,7 +1093,7 @@ impl App {
             ui.label("• Entrée (ou clic sur un bouton) : valider ; l'état « activé » s'affiche un instant");
             ui.label("• M (ou Origine) : touche TOP MENU, retour à la page d'accueil");
             ui.label("• Échap : arrêter la simulation");
-            ui.label(egui::RichText::new("Les lectures de vidéo sont simulées par un écran noir ; à la fin, le menu revient là où le disque reviendrait.").weak());
+            crate::help(ui, "Les lectures de vidéo sont simulées par un écran noir ; à la fin, le menu revient là où le disque reviendrait.");
             return;
         }
         let Some(info) = self.current_info() else { return };
@@ -1117,7 +1117,7 @@ impl App {
             return;
         }
         ui.heading("Élément");
-        ui.label(egui::RichText::new("Réglages de la page (fond, musique, animations, page d'accueil) : cliquez dans une zone vide de l'aperçu.").weak());
+        crate::help(ui, "Réglages de la page (fond, musique, animations, page d'accueil) : cliquez dans une zone vide de l'aperçu.");
         let Some(i) = self.sel_item else { return };
         // selection multiple (Maj+clic) et alignement : seul l'ensemble ou, pour un element seul, la page sert de reference
         self.extra_sel.retain(|&e| e != i);
@@ -1125,7 +1125,7 @@ impl App {
         group.push(i);
         let mut align: Option<ItemAlign> = None;
         ui.collapsing(if group.len() > 1 { format!("Alignement ({} éléments)", group.len()) } else { "Alignement et centrage".to_string() }, |ui| {
-            ui.label(egui::RichText::new("Maj+clic sur l'aperçu ajoute ou retire un élément de la sélection ; glisser l'un d'eux déplace tout le groupe. Avec plusieurs éléments, l'alignement se fait sur leur cadre commun ; avec un seul, sur la page.").weak());
+            crate::help(ui, "Maj+clic sur l'aperçu ajoute ou retire un élément de la sélection ; glisser l'un d'eux déplace tout le groupe. Avec plusieurs éléments, l'alignement se fait sur leur cadre commun ; avec un seul, sur la page.");
             ui.horizontal_wrapped(|ui| {
                 for (tip, a) in [("Aligner à gauche", ItemAlign::Left), ("Centrer horizontalement", ItemAlign::CenterH), ("Aligner à droite", ItemAlign::Right),
                                  ("Aligner en haut", ItemAlign::Top), ("Centrer verticalement", ItemAlign::CenterV), ("Aligner en bas", ItemAlign::Bottom)] {
@@ -1178,10 +1178,10 @@ impl App {
                 let mut pick: Option<(usize, Result<usize, Option<()>>)> = None;
                 ui.collapsing("Navigation (flèches de la télécommande)", |ui| {
                     if !is_button {
-                        ui.label(egui::RichText::new("Cet élément n'est pas un bouton du disque : la navigation ne s'applique pas.").weak());
+                        crate::help(ui, "Cet élément n'est pas un bouton du disque : la navigation ne s'applique pas.");
                         return;
                     }
-                    ui.label(egui::RichText::new("Par défaut, chaque flèche va au bouton le plus proche dans sa direction. Choisissez ici un autre bouton, ou « Aucun » pour que la flèche ne déplace rien.").weak());
+                    crate::help(ui, "Par défaut, chaque flèche va au bouton le plus proche dans sa direction. Choisissez ici un autre bouton, ou « Aucun » pour que la flèche ne déplace rien.");
                     for (d, name) in ["↑ Haut", "↓ Bas", "← Gauche", "→ Droite"].into_iter().enumerate() {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(name).strong().color(NAV_COLORS[d]));
@@ -1322,7 +1322,7 @@ impl App {
                                 if let Some(d) = dur { ui.label(egui::RichText::new(format!("sur {}", mmss(d))).weak()); }
                                 if ui.small_button("Détacher").on_hover_text("La vignette garde cet instant mais ne suit plus le chapitre.").clicked() { *chapter = None; changed = true; }
                             });
-                            ui.label(egui::RichText::new("L'instant se règle dans « Vidéo sélectionnée » : toutes les vignettes liées à ce chapitre le suivent.").weak());
+                            crate::help(ui, "L'instant se règle dans « Vidéo sélectionnée » : toutes les vignettes liées à ce chapitre le suivent.");
                         } else {
                             ui.horizontal(|ui| {
                                 let max = dur.unwrap_or(f64::MAX);
@@ -1334,11 +1334,11 @@ impl App {
                                 }
                             });
                             if let Some(v) = *video { if video_auto.get(v).copied().unwrap_or(false) {
-                                ui.label(egui::RichText::new("Cette vidéo a des chapitres automatiques : en créer un à la main les remplace.").weak());
+                                crate::help(ui, "Cette vidéo a des chapitres automatiques : en créer un à la main les remplace.");
                             } }
                         }
                         if dur.map_or(false, |d| *t >= d) { ui.colored_label(Color32::from_rgb(230, 100, 90), "Après la fin de la vidéo."); }
-                        ui.label(egui::RichText::new("Le lecteur démarre à l'image clé la plus proche avant cet instant (au plus 1 s plus tôt).").weak());
+                        crate::help(ui, "Le lecteur démarre à l'image clé la plus proche avant cet instant (au plus 1 s plus tôt).");
                     }
                     // libelle et image
                     ui.horizontal(|ui| {
@@ -1443,7 +1443,7 @@ impl App {
                     link_ui(ui, link, &page_targets, &mut changed);
                     ui.horizontal(|ui| { ui.label("Fichier :"); changed |= ui.text_edit_singleline(path).changed(); });
                     if ui.button("Choisir…").clicked() { pick_image = true; }
-                    ui.label(egui::RichText::new("L'image est ajustée dans le cadre sans déformation.").weak());
+                    crate::help(ui, "L'image est ajustée dans le cadre sans déformation.");
                 }
             }
             // actions « Regler les sous-titres » / « Regler la langue audio » : destination de reglage + langue, puis page de
@@ -2103,7 +2103,7 @@ fn page_bg_ui(ui: &mut egui::Ui, bg: &mut bdauthor_core::design::PageBg, pick: &
         PageVisual::Video(f, son) => {
             ui.horizontal(|ui| { ui.label("Vidéo :"); ui.text_edit_singleline(f); if ui.button("Choisir…").clicked() { *pick = Some(1); } });
             ui.checkbox(son, "Garder le son de la vidéo (s'il n'y a pas de musique)");
-            ui.label(egui::RichText::new("Jouée en entier, en boucle ; les textes et images de la page sont posés dessus.").weak());
+            crate::help(ui, "Jouée en entier, en boucle ; les textes et images de la page sont posés dessus.");
         }
         PageVisual::Project => {}
     }
@@ -2118,6 +2118,6 @@ fn page_bg_ui(ui: &mut egui::Ui, bg: &mut bdauthor_core::design::PageBg, pick: &
     if let PageMusic::File(f) = &mut bg.music {
         ui.horizontal(|ui| { ui.label("Fichier :"); ui.text_edit_singleline(f); if ui.button("Choisir…").clicked() { *pick = Some(2); } });
     }
-    ui.label(egui::RichText::new("Chaque page au fond différent a son propre clip sur le disque (encodé une fois, puis gardé en cache).").weak());
+    crate::help(ui, "Chaque page au fond différent a son propre clip sur le disque (encodé une fois, puis gardé en cache).");
     *bg != before
 }

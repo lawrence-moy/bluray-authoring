@@ -51,7 +51,7 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &
         ui.label("Fond coloré (opacité)"); pct(ui, &mut st.backdrop, 100); ui.end_row();
     });
     ui.checkbox(&mut st.underline, "Souligner au lieu d'encadrer");
-    ui.label(egui::RichText::new("Tailles données pour un menu 1920 × 1080. Le halo et l'agrandissement élargissent l'image des boutons : laissez de l'espace entre eux.").weak());
+    crate::help(ui, "Tailles données pour un menu 1920 × 1080. Le halo et l'agrandissement élargissent l'image des boutons : laissez de l'espace entre eux.");
     // sons : seulement dans le style du projet (un element a sa propre case « Sons propres a cet element », hors apparence)
     if id == "projet" {
         ui.strong("Sons");
@@ -77,7 +77,7 @@ pub fn sounds_ui(ui: &mut egui::Ui, select: &mut String, activate: &mut String, 
             if !path.is_empty() && ui.small_button("✕").clicked() { path.clear(); changed = true; }
         });
     }
-    ui.label(egui::RichText::new("Sons courts (moins d'une seconde), joués par le lecteur quand la sélection arrive sur le bouton ou à l'appui sur OK. Convertis en stéréo 48 kHz sur le disque (10 s au plus).").weak());
+    crate::help(ui, "Sons courts (moins d'une seconde), joués par le lecteur quand la sélection arrive sur le bouton ou à l'appui sur OK. Convertis en stéréo 48 kHz sur le disque (10 s au plus).");
     changed
 }
 
@@ -119,7 +119,7 @@ pub fn skin_ui(ui: &mut egui::Ui, skin: &mut Skin, pick: &mut Option<usize>, pre
         if !skin.activated.is_empty() && ui.small_button("✕").clicked() { skin.activated.clear(); changed = true; }
     });
     if skin.normal_frames.is_empty() && skin.sel_frames.is_empty() { *preview = false; }
-    ui.label(egui::RichText::new("PNG, JPEG ou SVG, ajustés au cadre. L'image normale remplace le dessin du bouton ; sans image « sélectionné », elle est mise en valeur avec le style. Plusieurs images « normal » ou « sélectionné » forment une animation.").weak());
+    crate::help(ui, "PNG, JPEG ou SVG, ajustés au cadre. L'image normale remplace le dessin du bouton ; sans image « sélectionné », elle est mise en valeur avec le style. Plusieurs images « normal » ou « sélectionné » forment une animation.");
     changed
 }
 
@@ -178,7 +178,7 @@ fn anim_ui(ui: &mut egui::Ui, skin: &mut Skin, state: usize, preview: &mut bool,
             ui.colored_label(Color32::from_rgb(230, 100, 90), "Choisissez aussi une image « normale » : sans elle, l'animation est ignorée.");
         }
         if state == 0 {
-            ui.label(egui::RichText::new("L'animation de l'état normal tourne en permanence et compte dans le poids de la page.").weak());
+            crate::help(ui, "L'animation de l'état normal tourne en permanence et compte dans le poids de la page.");
         }
     });
     if let Some((k, d)) = op {

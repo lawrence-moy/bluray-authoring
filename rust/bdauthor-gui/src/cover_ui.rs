@@ -163,7 +163,7 @@ fn cover_format(ui: &mut egui::Ui, c: &mut Cover) -> bool {
             }
         });
         changed |= crate::file_row(ui, "Image de fond :", &mut c.bg_image, "(aucune : couleurs ci-dessus)", "Images", &IMG_EXT);
-        ui.label(egui::RichText::new("L'image de fond couvre toute la feuille, fond perdu compris.").weak());
+        crate::help(ui, "L'image de fond couvre toute la feuille, fond perdu compris.");
     });
     changed
 }
@@ -316,11 +316,11 @@ impl App {
         }
         if self.cover_page == 0 {
             ui.heading("Jaquette");
-            ui.label(egui::RichText::new("Feuille à déplier du boîtier : dos à gauche, tranche au milieu, face à droite. Toutes les mesures sont en millimètres, depuis le coin haut gauche de la jaquette rognée (le fond perdu a donc des valeurs négatives).").weak());
+            crate::help(ui, "Feuille à déplier du boîtier : dos à gauche, tranche au milieu, face à droite. Toutes les mesures sont en millimètres, depuis le coin haut gauche de la jaquette rognée (le fond perdu a donc des valeurs négatives).");
             changed |= cover_format(ui, &mut self.model.cover);
         } else {
             ui.heading("Étiquette de disque");
-            ui.label(egui::RichText::new("Disque imprimé : mesures en millimètres depuis le coin haut gauche de la feuille carrée rognée (le fond perdu a donc des valeurs négatives). Le trou central n'est pas imprimé.").weak());
+            crate::help(ui, "Disque imprimé : mesures en millimètres depuis le coin haut gauche de la feuille carrée rognée (le fond perdu a donc des valeurs négatives). Le trou central n'est pas imprimé.");
             changed |= label_format(ui, &mut self.model.label);
         }
         ui.separator();
@@ -367,7 +367,7 @@ impl App {
         let mut rename_done = false;
         let mut rows: Vec<(CoverRow, Rect)> = Vec::new();
         let pm = |open: bool| if open { "−" } else { "+" };
-        ui.label(egui::RichText::new("Calques et éléments (du premier plan, en haut, à l'arrière-plan). Glissez la poignée ☰ pour réordonner, changer un élément de calque, ou déplacer un calque. + / − : déplier ou replier.").weak());
+        crate::help(ui, "Calques et éléments (du premier plan, en haut, à l'arrière-plan). Glissez la poignée ☰ pour réordonner, changer un élément de calque, ou déplacer un calque. + / − : déplier ou replier.");
         ui.horizontal_wrapped(|ui| {
             if ui.button("+ Calque").on_hover_text("Nouveau calque au premier plan ; les nouveaux éléments vont dans le calque actif").clicked() { op = Some(CoverOp::Add); }
             if ui.small_button("+ tout").on_hover_text("Déplier tous les calques").clicked() { self.cover_closed.clear(); }
@@ -757,7 +757,7 @@ impl App {
                     });
                 });
             }
-            ui.label(egui::RichText::new("Déplacez les deux extrémités sur la feuille (Maj : angle par pas de 45°). « Début » = extrémité de gauche (ou du haut).").weak());
+            crate::help(ui, "Déplacez les deux extrémités sur la feuille (Maj : angle par pas de 45°). « Début » = extrémité de gauche (ou du haut).");
             return changed;
         }
         egui::Grid::new("jaquette_geom").num_columns(4).show(ui, |ui| {
@@ -789,7 +789,7 @@ impl App {
             if ui.button("Centrer horizontalement").clicked() { it.x = (tw - it.w) / 2.0; changed = true; }
             if ui.button("Centrer verticalement").clicked() { it.y = (th - it.h) / 2.0; changed = true; }
         });
-        ui.label(egui::RichText::new("Champs automatiques : {titre}, {liste_videos}, {nb_videos}, {duree_totale}, {nb_chapitres}, {annee}, remplis depuis le projet.").weak());
+        crate::help(ui, "Champs automatiques : {titre}, {liste_videos}, {nb_videos}, {duree_totale}, {nb_chapitres}, {annee}, remplis depuis le projet.");
         changed
     }
 
@@ -849,7 +849,7 @@ impl App {
             ui.separator();
             ui.selectable_value(&mut self.cover_inch, false, "mm");
             ui.selectable_value(&mut self.cover_inch, true, "pouces");
-            ui.label(egui::RichText::new("Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue").weak());
+            crate::help(ui, "Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue");
         });
         let (resp, full_painter) = ui.allocate_painter(area, Sense::click_and_drag());
         let full = resp.rect;

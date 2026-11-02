@@ -689,3 +689,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Apercu des sous-titres : zone du bas ajustable (export 130)
 - `os_window_panels` : TopBottomPanel redimensionnable en bas (style de la piste), contenu principal sans defilement propre ; l image occupe la hauteur restante.
+
+## Textes d explication -> boutons « ? » (export 132)
+- `help(ui, texte)` (main.rs) : petit bouton « ? » dont le texte s affiche au survol ; 40 paragraphes explicatifs (.weak()) convertis automatiquement (textes litteraux de 40 caracteres ou plus ; les libelles d etat et textes formates restent).

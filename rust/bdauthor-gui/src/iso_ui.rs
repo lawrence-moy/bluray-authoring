@@ -64,7 +64,7 @@ pub fn iso_ui(ui: &mut egui::Ui, s: &mut IsoSettings, title: &str, browse: &mut 
                 }
             });
         });
-        ui.label(egui::RichText::new("Sert à prévenir si l'image ne rentre pas sur le disque ; l'image elle-même ne change pas.").weak());
+        crate::help(ui, "Sert à prévenir si l'image ne rentre pas sur le disque ; l'image elle-même ne change pas.");
         ui.horizontal_wrapped(|ui| {
             let mut on = s.margin > 0;
             if ui.checkbox(&mut on, "Marge de sécurité : prévenir au-delà de").on_hover_text("La gravure est moins fiable tout au bord d'un BD-R : un avertissement apparaît quand l'image dépasse ce pourcentage du disque visé.").changed() {

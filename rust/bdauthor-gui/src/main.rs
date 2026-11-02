@@ -102,6 +102,18 @@ pub(crate) fn os_window_panels(ctx: &egui::Context, id: &str, title: &str, size:
     });
 }
 
+/// Bouton « ? » : le texte d'explication s'affiche au survol (il prend ainsi moins de place qu'un paragraphe dans les panneaux).
+pub(crate) fn help(ui: &mut egui::Ui, text: &str) {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(18.0, 18.0), egui::Sense::click());
+    let vis = *ui.style().interact(&resp);
+    ui.painter().circle(rect.center(), 8.0, vis.bg_fill, egui::Stroke::new(1.0_f32, vis.fg_stroke.color));
+    ui.painter().text(rect.center(), egui::Align2::CENTER_CENTER, "?", egui::FontId::proportional(12.0), vis.fg_stroke.color);
+    let _ = resp.on_hover_cursor(egui::CursorIcon::Help).on_hover_ui(|ui| {
+        ui.set_max_width(380.0);
+        ui.label(text);
+    });
+}
+
 /// Petit bouton « supprimer » dessine (une croix) : le glyphe ✕ n'est pas dans la police par defaut.
 fn delete_button(ui: &mut egui::Ui, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
@@ -581,13 +593,13 @@ impl eframe::App for App {
             let before = self.cfg.clone();
             ui.checkbox(&mut self.cfg.adaptive_preview, "Ajuster le rafraîchissement de l'aperçu pendant le déplacement");
             ui.label(format!("Dernier rendu de l'aperçu : {:.1} ms", self.render_ms));
-            ui.label(egui::RichText::new("Activé : l'aperçu est redessiné au rythme que votre machine peut tenir (le cadre suit toujours la souris sans retard). Désactivé : l'aperçu est redessiné à chaque image, ce qui est plus fluide sur une machine rapide mais peut ralentir sur une page chargée.").weak());
+            crate::help(ui, "Activé : l'aperçu est redessiné au rythme que votre machine peut tenir (le cadre suit toujours la souris sans retard). Désactivé : l'aperçu est redessiné à chaque image, ce qui est plus fluide sur une machine rapide mais peut ralentir sur une page chargée.");
             ui.separator();
             ui.horizontal(|ui| {
                 ui.checkbox(&mut self.cfg.autosave, "Sauvegarde automatique du projet toutes les");
                 ui.add_enabled(self.cfg.autosave, egui::DragValue::new(&mut self.cfg.autosave_min).range(1..=60).suffix(" min"));
             });
-            ui.label(egui::RichText::new("Écrite dans un fichier à côté du projet (nom.autosave.json), seulement si le projet a changé ; le projet lui-même n'est modifié que par « Enregistrer ». Proposée à la restauration après un arrêt imprévu.").weak());
+            crate::help(ui, "Écrite dans un fichier à côté du projet (nom.autosave.json), seulement si le projet a changé ; le projet lui-même n'est modifié que par « Enregistrer ». Proposée à la restauration après un arrêt imprévu.");
             ui.separator();
             ui.label("Chemin de ffmpeg (dossier contenant ffmpeg et ffprobe, ou ffmpeg lui-même) :");
             ui.horizontal(|ui| {
@@ -645,7 +657,7 @@ impl eframe::App for App {
                         egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
                             style_changed = style_ui::style_ui(ui, &mut m.designs.style, "projet", &mut pick_sound);
                         });
-                        ui.label(egui::RichText::new("S'applique à tous les boutons du projet, sauf ceux qui ont leur propre apparence (inspecteur).").weak());
+                        crate::help(ui, "S'applique à tous les boutons du projet, sauf ceux qui ont leur propre apparence (inspecteur).");
                     }
                     2 => {
                         egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
@@ -908,7 +920,7 @@ impl eframe::App for App {
                                 if ui.small_button("Les retirer").clicked() { v.auto_s = None; changed = true; }
                             });
                         }
-                        ui.label(egui::RichText::new("Une vignette de chapitre (page) peut se lier à l'un d'eux, ou en créer un.").weak());
+                        crate::help(ui, "Une vignette de chapitre (page) peut se lier à l'un d'eux, ou en créer un.");
                         let mut del = None;
                         for (k, c) in v.chapters.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
@@ -972,7 +984,7 @@ impl eframe::App for App {
                     }
                     changed |= file_row(ui, "Musique des menus :", &mut m.music, "(aucune)", "Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]);
                     if !m.bg_video.is_empty() || !m.music.is_empty() {
-                        ui.label(egui::RichText::new("Le fond tourne en boucle : il dure autant que la vidéo de fond ou, sans vidéo, que la musique. Les textes et images des pages personnalisées sont posés sur la vidéo.").weak());
+                        crate::help(ui, "Le fond tourne en boucle : il dure autant que la vidéo de fond ou, sans vidéo, que la musique. Les textes et images des pages personnalisées sont posés sur la vidéo.");
                         if let Some(n) = &bg_note { ui.label(egui::RichText::new(n).weak()); }
                     }
                     changed |= file_row(ui, "Séquence d'ouverture :", &mut m.intro, "(aucune : le menu s'ouvre directement)", "Vidéos", VIDEO_EXTS);
