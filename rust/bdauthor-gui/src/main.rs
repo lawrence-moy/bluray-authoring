@@ -888,12 +888,15 @@ impl eframe::App for App {
                         });
                         ui.horizontal(|ui| {
                             let mut on = v.thumb_s.is_some();
-                            if ui.checkbox(&mut on, "Vignette prise à").changed() {
-                                v.thumb_s = if on { Some(1.0) } else { None };
+                            if ui.checkbox(&mut on, "Vignette alternative au timing :").on_hover_text("Décochée : image prise automatiquement. Cochée (ou en modifiant la valeur) : image prise à cet instant de la vidéo.").changed() {
+                                v.thumb_s = if on { Some(v.thumb_s.unwrap_or(1.0)) } else { None };
                                 changed = true;
                             }
-                            if let Some(t) = &mut v.thumb_s {
-                                changed |= ui.add(egui::DragValue::new(t).speed(0.5).range(0.0..=max_t).suffix(" s")).changed();
+                            // la zone de saisie est toujours visible ; la modifier active l'option
+                            let mut t = v.thumb_s.unwrap_or(1.0);
+                            if ui.add(egui::DragValue::new(&mut t).speed(0.5).range(0.0..=max_t).suffix(" s")).changed() {
+                                v.thumb_s = Some(t);
+                                changed = true;
                             }
                         });
                         ui.separator();
