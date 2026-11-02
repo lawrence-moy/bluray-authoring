@@ -1,7 +1,7 @@
 //! Editeur visuel de mise en page (onglet « Mise en page ») : apercu fidele, glisser/redimensionner, inspecteur.
 use crate::App;
 use bdauthor_core::design::{Align, Item, Kind, NavAction, NavLink, PageDesign, SlotReturn, Target};
-use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
+use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -709,7 +709,7 @@ impl App {
             if ui.small_button("+").on_hover_text("Zoomer").clicked() { let nz = (z * 1.25).min(8.0); self.view_pan *= nz / z; self.view_zoom = nz; }
             if ui.small_button("Ajuster").on_hover_text("Page entière dans la fenêtre").clicked() { self.view_zoom = 1.0; self.view_pan = egui::Vec2::ZERO; }
             ui.label(format!("{:.0} %", self.view_zoom * 100.0));
-            ui.label(egui::RichText::new("Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue").weak());
+            ui.label(egui::RichText::new("Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue · Maj en redimensionnant : proportionnel").weak());
         });
         let avail = ui.available_size();
         let w = avail.x.min((avail.y - reserve).max(200.0) * 16.0 / 9.0).max(320.0);
@@ -828,7 +828,10 @@ impl App {
             if r_dragged {
                 if let (Some(d), Some(pos)) = (&self.drag, resp.interact_pointer_pos()) {
                     let (px, py) = to_plane(pos);
-                    let r = dragged_rect((d.orig.x, d.orig.y, d.orig.w, d.orig.h), d.handle, px - d.start.0, py - d.start.1, grid, 16);
+                    // Maj : redimensionnement proportionnel (le coin oppose reste fixe)
+                    let ratio = ctx.input(|i| i.modifiers.shift);
+                    let o = (d.orig.x, d.orig.y, d.orig.w, d.orig.h);
+                    let r = if ratio { dragged_rect_ratio(o, d.handle, px - d.start.0, py - d.start.1, grid, 16) } else { dragged_rect(o, d.handle, px - d.start.0, py - d.start.1, grid, 16) };
                     let orig = d.orig.clone();
                     let idx = d.idx;
                     let group = d.group.clone();

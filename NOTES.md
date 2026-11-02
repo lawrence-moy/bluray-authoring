@@ -633,3 +633,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ### Jaquette : choix de la police par menu deroulant
 - Meme menu que le widget texte de la mise en page (`bdauthor_render::common_fonts()` : polices usuelles installees, « Police par defaut », « Autre fichier… » .ttf/.otf stocke relatif au projet) ; message rouge si la police est introuvable.
+
+### Redimensionnement proportionnel (Maj)
+- `editor::dragged_rect_ratio` : en tirant un coin avec Maj, le coin oppose reste fixe et les proportions d'origine sont conservees (echelle = la plus grande des deux dimensions, bornee par la taille minimale et par le plan 1920x1080).
+  Valable pour tous les widgets de la mise en page (hors selection multiple, qui n'a pas de poignees) et pour les elements de la jaquette / etiquette (meme principe, en mm, sans borne de plan).

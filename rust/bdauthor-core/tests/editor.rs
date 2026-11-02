@@ -117,3 +117,24 @@ fn remote_simulation() {
     assert_eq!(page_of_target(&pages, Target::Main(5)), None);
     assert_eq!(page_of_target(&pages, Target::Video(0)), None);
 }
+
+#[test]
+fn proportional_resize_keeps_ratio_and_anchor() {
+    use bdauthor_core::editor::dragged_rect_ratio;
+    // 300x200 (3:2) : coin bas droit tire de +60 en x seulement -> 360x240, coin haut gauche fixe
+    assert_eq!(dragged_rect_ratio((100, 100, 300, 200), Handle::BottomRight, 60.0, 0.0, 0, 16), (100, 100, 360, 240));
+    // en y seulement : +40 -> 240 de haut, donc 360 de large
+    assert_eq!(dragged_rect_ratio((100, 100, 300, 200), Handle::BottomRight, 0.0, 40.0, 0, 16), (100, 100, 360, 240));
+    // coin haut gauche : le coin bas droit (400, 300) reste fixe
+    let r = dragged_rect_ratio((100, 100, 300, 200), Handle::TopLeft, -30.0, -5.0, 0, 16);
+    assert_eq!((r.0 + r.2, r.1 + r.3), (400, 300));
+    assert!((r.2 as f32 / r.3 as f32 - 1.5).abs() < 0.02);
+    // reduction : plancher a la taille minimale en gardant le ratio
+    let r = dragged_rect_ratio((100, 100, 300, 200), Handle::BottomRight, -1000.0, -1000.0, 0, 16);
+    assert!(r.2 >= 16 && r.3 >= 16 && (r.2 as f32 / r.3 as f32 - 1.5).abs() < 0.1, "{r:?}");
+    // le plan borne : jamais hors de 1920x1080
+    let r = dragged_rect_ratio((1500, 800, 300, 200), Handle::BottomRight, 5000.0, 5000.0, 0, 16);
+    assert!(r.0 + r.2 <= 1920 && r.1 + r.3 <= 1080, "{r:?}");
+    // le deplacement n'est pas touche
+    assert_eq!(dragged_rect_ratio((100, 100, 300, 200), Handle::Body, 33.0, -17.0, 10, 16), dragged_rect((100, 100, 300, 200), Handle::Body, 33.0, -17.0, 10, 16));
+}

@@ -90,6 +90,26 @@ pub fn dragged_rect(orig: (i32, i32, i32, i32), handle: Handle, dx: f32, dy: f32
     }
 }
 
+/// Comme `dragged_rect`, mais un coin garde les proportions d'origine (Maj) : le coin oppose reste fixe, l'echelle suit la
+/// poignee (la plus grande des deux dimensions), bornee par la taille minimale et par le plan. Le deplacement est inchange.
+pub fn dragged_rect_ratio(orig: (i32, i32, i32, i32), handle: Handle, dx: f32, dy: f32, grid: i32, min: i32) -> (i32, i32, i32, i32) {
+    let (ox, oy, ow, oh) = orig;
+    if handle == Handle::Body || ow <= 0 || oh <= 0 { return dragged_rect(orig, handle, dx, dy, grid, min); }
+    let free = dragged_rect(orig, handle, dx, dy, grid, min);
+    let left = matches!(handle, Handle::TopLeft | Handle::BottomLeft);
+    let top = matches!(handle, Handle::TopLeft | Handle::TopRight);
+    // place disponible depuis le coin fixe jusqu'au bord du plan
+    let max_w = if left { ox + ow } else { PLANE.0 - ox } as f32;
+    let max_h = if top { oy + oh } else { PLANE.1 - oy } as f32;
+    let s_min = (min as f32 / ow as f32).max(min as f32 / oh as f32);
+    let s_max = (max_w / ow as f32).min(max_h / oh as f32);
+    let s = (free.2 as f32 / ow as f32).max(free.3 as f32 / oh as f32).max(s_min).min(s_max);
+    let (w, h) = ((ow as f32 * s).round() as i32, (oh as f32 * s).round() as i32);
+    let x = if left { ox + ow - w } else { ox };
+    let y = if top { oy + oh - h } else { oy };
+    (x, y, w, h)
+}
+
 /// Applique un rectangle a un element ; pour une vignette, la hauteur du libelle est conservee.
 pub fn set_rect(it: &mut Item, orig: &Item, rect: (i32, i32, i32, i32)) {
     it.x = rect.0; it.y = rect.1; it.w = rect.2; it.h = rect.3;

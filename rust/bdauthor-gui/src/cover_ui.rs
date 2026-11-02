@@ -858,6 +858,12 @@ impl App {
                         3 => { let nw = (w - dx).max(MIN_MM); let nh = (h + dy).max(MIN_MM); (x + w - nw, y, nw, nh) }
                         _ => (x, y, (w + dx).max(MIN_MM), (h + dy).max(MIN_MM)),
                     };
+                    // Maj : coin tire en gardant les proportions d'origine (le coin oppose reste fixe)
+                    let (nx, ny, nw, nh) = if d.handle != 0 && ctx.input(|i| i.modifiers.shift) && w > 0.0 && h > 0.0 {
+                        let s = (nw / w).max(nh / h).max(MIN_MM / w).max(MIN_MM / h);
+                        let (rw, rh) = (w * s, h * s);
+                        (if d.handle == 1 || d.handle == 3 { x + w - rw } else { x }, if d.handle == 1 || d.handle == 2 { y + h - rh } else { y }, rw, rh)
+                    } else { (nx, ny, nw, nh) };
                     let r = |v: f64| (v * 10.0).round() / 10.0;
                     let it = &mut doc.items_mut()[d.item];
                     if (it.x, it.y, it.w, it.h) != (r(nx), r(ny), r(nw), r(nh)) {
@@ -876,6 +882,6 @@ impl App {
             }
         }
         let pos_txt = hover_vp.map(|p| { let (x, y) = to_mm(p); if self.cover_inch { format!("X {:.2} in   Y {:.2} in   ·   ", x / 25.4, y / 25.4) } else { format!("X {x:.1} mm   Y {y:.1} mm   ·   ") } }).unwrap_or_default();
-        ui.label(egui::RichText::new(format!("{pos_txt}Glissez un élément pour le déplacer, ses coins pour le redimensionner · Suppr : le retirer · Ctrl+Z / Ctrl+Y : annuler / refaire · les traits blancs montrent les limites de coupe et de pliage")).weak());
+        ui.label(egui::RichText::new(format!("{pos_txt}Glissez un élément pour le déplacer, ses coins pour le redimensionner (Maj : proportionnel) · Suppr : le retirer · Ctrl+Z / Ctrl+Y : annuler / refaire · les traits blancs montrent les limites de coupe et de pliage")).weak());
     }
 }
