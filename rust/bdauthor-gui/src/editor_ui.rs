@@ -1,4 +1,5 @@
 //! Editeur visuel de mise en page (onglet « Mise en page ») : apercu fidele, glisser/redimensionner, inspecteur.
+use crate::i18n::{tr, trf};
 use crate::App;
 use bdauthor_core::design::{Align, Item, Kind, NavAction, NavLink, PageDesign, SlotReturn, Target};
 use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
@@ -55,19 +56,19 @@ impl Worker {
             let tools: Result<Tools, String> = Tools::locate().map_err(|e| e.to_string());
             for job in jobs {
                 let ev = match (&tools, job) {
-                    (Err(e), _) => Event::Error(format!("ffmpeg introuvable : {e}")),
+                    (Err(e), _) => Event::Error(trf!("ffmpeg not found: {}", e)),
                     (Ok(t), Job::Probe { key, path }) => match probe(t, &path) {
                         Ok(i) => Event::Duration(key, i.duration_s, i.height, i.fps()),
-                        Err(e) => { let m = format!("Lecture de {key} impossible : {e}"); Event::ProbeFailed(key, m) }
+                        Err(e) => { let m = trf!("Cannot read {}: {}", key, e); Event::ProbeFailed(key, m) }
                     },
                     (Ok(t), Job::ProbeAudio { key, path }) => match bdauthor_core::ffmpeg::probe_duration(t, &path) {
                         Ok(d) => Event::Duration(key, d, 0, 0.0),
-                        Err(e) => Event::Error(format!("Lecture de {key} impossible : {e}")),
+                        Err(e) => Event::Error(trf!("Cannot read {}: {}", key, e)),
                     },
                     (Ok(t), Job::Thumb { key, path, at, duration }) => {
                         match extract_thumbnail_rgba(t, &path, (480, 270), Some(at), duration) {
                             Ok(im) => Event::Thumb(key, (at * 1000.0).round() as i64, im),
-                            Err(e) => Event::Error(format!("Miniature de {key} impossible : {e}")),
+                            Err(e) => Event::Error(trf!("Cannot create the thumbnail of {}: {}", key, e)),
                         }
                     }
                 };
@@ -111,18 +112,18 @@ fn item_edit(d: &mut PageDesign, i: usize, dup: bool) -> Option<usize> {
 /// Nom d'une copie : « Nom (copie) », « Nom (copie 2) »… (premier libre dans la page) ; sans nom, le type du widget sert de base.
 fn copy_name(d: &PageDesign, it: &Item) -> String {
     let base = if it.name.is_empty() { kind_name(&it.kind).to_string() } else { it.name.clone() };
-    let base = match base.rfind(" (copie") { Some(p) if base.ends_with(')') => base[..p].to_string(), _ => base };
+    let base = match base.rfind(" (copie").or_else(|| base.rfind(" (copy")) { Some(p) if base.ends_with(')') => base[..p].to_string(), _ => base };
     let used = |n: &str| d.items.iter().any(|x| x.name == n);
-    let first = format!("{base} (copie)");
+    let first = trf!("{} (copy)", base);
     if !used(&first) { return first; }
-    (2..).map(|k| format!("{base} (copie {k})")).find(|n| !used(n)).unwrap_or(first)
+    (2..).map(|k| trf!("{} (copy {})", base, k)).find(|n| !used(n)).unwrap_or(first)
 }
 
 /// Menu contextuel d'un element (clic droit) : `Some(true)` dupliquer, `Some(false)` supprimer.
 fn item_menu(ui: &mut egui::Ui) -> Option<bool> {
     let mut out = None;
-    if ui.button("Dupliquer").clicked() { out = Some(true); ui.close_menu(); }
-    if ui.button("Supprimer").clicked() { out = Some(false); ui.close_menu(); }
+    if ui.button(tr("Duplicate")).clicked() { out = Some(true); ui.close_menu(); }
+    if ui.button(tr("Delete")).clicked() { out = Some(false); ui.close_menu(); }
     out
 }
 
@@ -133,20 +134,20 @@ enum NewWidget { Text, Image, VideoSlot, ChapterSlot, Nav(NavAction) }
 /// Icones de la palette : (element, icone, nom).
 fn palette() -> Vec<(NewWidget, &'static str, String)> {
     let mut v = vec![
-        (NewWidget::Text, "🔤", "Texte".to_string()),
-        (NewWidget::Image, "🖼", "Image (PNG, JPEG, SVG…)".to_string()),
-        (NewWidget::VideoSlot, "🎬", "Vignette vidéo (lecture depuis le début)".to_string()),
-        (NewWidget::ChapterSlot, "🎞", "Vignette de chapitre (lecture depuis un instant)".to_string()),
+        (NewWidget::Text, "🔤", tr("Text").to_string()),
+        (NewWidget::Image, "🖼", tr("Image (PNG, JPEG, SVG…)").to_string()),
+        (NewWidget::VideoSlot, "🎬", tr("Video thumbnail (plays from the start)").to_string()),
+        (NewWidget::ChapterSlot, "🎞", tr("Chapter thumbnail (plays from a time)").to_string()),
     ];
     // un seul bouton de navigation : son action (Aller a, Precedent, Suivant, Tout lire) se choisit dans l'inspecteur
-    v.push((NewWidget::Nav(NavAction::Goto), "🔘", "Bouton de navigation (destination choisie dans l'inspecteur : page, vidéo, Précédent, Suivant, Tout lire, sous-titres…)".to_string()));
+    v.push((NewWidget::Nav(NavAction::Goto), "🔘", tr("Navigation button (destination chosen in the inspector: page, video, Previous, Next, Play all, subtitles…)").to_string()));
     v
 }
 
 /// Nouvel element a sa place par defaut (une image n'a pas encore de fichier).
 fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
     match w {
-        NewWidget::Text => Item::text("Texte", 660, 470, 600, 120, 60),
+        NewWidget::Text => Item::text(tr("Text"), 660, 470, 600, 120, 60),
         NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() },
         NewWidget::VideoSlot | NewWidget::ChapterSlot => {
             let mut it = Item::video_slot(100, 300, 400, 250, 200, 0, None, "");
@@ -256,33 +257,33 @@ fn kind_color(k: &Kind) -> Color32 {
 
 fn kind_name(k: &Kind) -> &'static str {
     match k {
-        Kind::Slot { .. } => "Vignette",
-        Kind::Nav { .. } => "Bouton de navigation",
-        Kind::Text { link: None, .. } => "Texte",
-        Kind::Text { .. } => "Texte cliquable",
-        Kind::Image { link: None, .. } => "Image",
-        Kind::Image { .. } => "Image cliquable",
+        Kind::Slot { .. } => tr("Thumbnail"),
+        Kind::Nav { .. } => tr("Navigation button"),
+        Kind::Text { link: None, .. } => tr("Text"),
+        Kind::Text { .. } => tr("Clickable text"),
+        Kind::Image { link: None, .. } => tr("Image"),
+        Kind::Image { .. } => tr("Clickable image"),
     }
 }
 
 /// Case « cliquable » et choix de la destination d'un texte ou d'une image.
 fn link_ui(ui: &mut egui::Ui, link: &mut Option<Target>, targets: &[(Target, String)], changed: &mut bool) {
     let mut on = link.is_some();
-    if ui.checkbox(&mut on, "Cliquable (devient un bouton du menu)").changed() {
+    if ui.checkbox(&mut on, tr("Clickable (becomes a menu button)")).changed() {
         // par defaut : la premiere page (pas un reglage de sous-titres ou d'audio)
         *link = if on { targets.iter().find(|t| !t.0.is_setting()).or(targets.first()).map(|t| t.0) } else { None };
         *changed = true;
     }
     if link.is_some() {
         destination_combo(ui, link, targets, changed);
-        crate::help(ui, "Sélectionné à la télécommande, l'élément est entouré d'un cadre bleu.");
+        crate::help(ui, tr("Selected with the remote control, the element is surrounded by a blue frame."));
     }
 }
 
 /// Liste des destinations possibles : pages du menu puis videos a lire.
 fn destination_combo(ui: &mut egui::Ui, target: &mut Option<Target>, targets: &[(Target, String)], changed: &mut bool) {
-    let shown = target.and_then(|t| targets.iter().find(|(x, _)| *x == t.without_exit()).map(|(_, l)| l.clone())).unwrap_or_else(|| "(destination introuvable : à choisir)".to_string());
-    egui::ComboBox::from_label("Destination").selected_text(shown).show_ui(ui, |ui| {
+    let shown = target.and_then(|t| targets.iter().find(|(x, _)| *x == t.without_exit()).map(|(_, l)| l.clone())).unwrap_or_else(|| tr("(destination not found: to choose)").to_string());
+    egui::ComboBox::from_label(tr("Destination")).selected_text(shown).show_ui(ui, |ui| {
         for (t, label) in targets {
             // meme reglage deja choisi : sa page de sortie est gardee
             if ui.selectable_label(target.map(Target::without_exit) == Some(*t), label).clicked() && target.map(Target::without_exit) != Some(*t) { *target = Some(*t); *changed = true; }
@@ -297,14 +298,14 @@ impl App {
 
     /// Destinations d'un bouton « Aller a » ou d'un element cliquable : (cible, libelle) ; les pages, puis les videos a lire.
     fn page_targets(&self) -> Vec<(Target, String)> {
-        let mut out: Vec<(Target, String)> = self.pages().into_iter().map(|p| (Target::Main(p.page), format!("Page : {}", p.label(&self.model)))).collect();
+        let mut out: Vec<(Target, String)> = self.pages().into_iter().map(|p| (Target::Main(p.page), trf!("Page: {}", p.label(&self.model)))).collect();
         for v in 0..self.model.videos.len() {
-            out.push((Target::Video(v), format!("Lire la vidéo {}. {}", v + 1, video_title(&self.model, v))));
+            out.push((Target::Video(v), trf!("Play video {}. {}", v + 1, video_title(&self.model, v))));
         }
         // reglages sans navigation : les sous-titres, puis une entree par langue audio (jamais les deux a la fois)
-        let mut stay = vec![(Target::Stay(None), "Régler les sous-titres".to_string())];
+        let mut stay = vec![(Target::Stay(None), tr("Set subtitles").to_string())];
         for l in &self.model.languages {
-            stay.push((Target::Audio(l.id, None), format!("Régler la langue audio : {}", l.name)));
+            stay.push((Target::Audio(l.id, None), trf!("Set audio language: {}", l.name)));
         }
         out.splice(0..0, stay);
         out
@@ -411,15 +412,15 @@ impl App {
 
     /// Duree et place estimee d'un fond anime (`video`) ou sonore (`music` sur image fixe).
     pub(crate) fn bg_note(&mut self, video: &str, music: &str) -> Option<String> {
-        let fmt = |d: f64| { let s = d.round() as i64; if s >= 60 { format!("{} min {:02} s", s / 60, s % 60) } else { format!("{s} s") } };
+        let fmt = |d: f64| { let s = d.round() as i64; if s >= 60 { trf!("{} min {} s", s / 60, format!("{:02}", s % 60)) } else { trf!("{} s", s) } };
         if !video.is_empty() {
             let d = self.media_duration(video, false)?;
             let per_min = if self.menu_plane().1 >= 1080 { 60.0 } else { 30.0 };
-            return Some(format!("Durée {} (jouée en entier, en boucle) · environ {:.0} Mo sur le disque pour chaque page qui utilise ce fond (estimation)", fmt(d), d / 60.0 * per_min));
+            return Some(trf!("Duration {} (played in full, looped) · about {} MB on the disc for each page that uses this background (estimate)", fmt(d), format!("{:.0}", d / 60.0 * per_min)));
         }
         if !music.is_empty() {
             let d = self.media_duration(music, true)?;
-            return Some(format!("Le fond durera {} (la musique, en entier) · environ {:.0} Mo par page qui l'utilise (estimation)", fmt(d), (d / 60.0 * 2.5).max(1.0)));
+            return Some(trf!("The background will last {} (the whole music) · about {} MB per page that uses it (estimate)", fmt(d), format!("{:.0}", (d / 60.0 * 2.5).max(1.0))));
         }
         None
     }
@@ -458,7 +459,7 @@ impl App {
                     let (f, a) = self.video_thumb(v);
                     (if label.is_empty() { video_title(&self.model, v) } else { label }, Some((f, at.unwrap_or(a))))
                 }
-                SlotShow::Missing => ("(choisir une vidéo)".to_string(), None),
+                SlotShow::Missing => (tr("(choose a video)").to_string(), None),
             };
             let (file, at) = src.unwrap_or((String::new(), 0.0));
             let ms = (at * 1000.0).round() as i64;
@@ -562,7 +563,7 @@ impl App {
                 self.sel_item = None;
                 self.dirty = true;
                 self.edit_gen += 1;
-                self.notice = format!("Pages de départ créées : {} page(s), toutes modifiables.", self.model.designs.free.len());
+                self.notice = trf!("Starter pages created: {} page(s), all editable.", self.model.designs.free.len());
                 true
             }
             _ => false,
@@ -573,18 +574,18 @@ impl App {
     pub(crate) fn layout_central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let Some(info) = self.current_info() else {
             if self.model.videos.is_empty() {
-                ui.label("Ajoutez des vidéos dans l'onglet « Vidéos » pour composer les pages de menu.");
+                ui.label(tr("Add videos in the “Videos” tab to compose the menu pages."));
                 return;
             }
-            ui.label("Aucune page de menu.");
-            if ui.button("Créer les pages de départ").on_hover_text("Une grille de vignettes des vidéos, puis une page de chapitres par vidéo qui en a ; tout reste modifiable").clicked() && !self.create_starter_pages() {
-                self.notice = "Pages de départ : durée des vidéos à chapitres automatiques en cours de lecture, réessayez dans un instant.".into();
+            ui.label(tr("No menu page."));
+            if ui.button(tr("Create starter pages")).on_hover_text(tr("A grid of video thumbnails, then a chapter page per video that has chapters; everything stays editable")).clicked() && !self.create_starter_pages() {
+                self.notice = tr("Starter pages: the duration of videos with automatic chapters is being read, try again in a moment.").into();
             }
-            crate::help(ui, "Ou « + Page » (à gauche) pour partir d'une page vierge. Sans page, la construction du disque crée ces pages de départ.");
+            crate::help(ui, tr("Or “+ Page” (on the left) to start from a blank page. With no page, building the disc creates these starter pages."));
             return;
         };
         if let Err(e) = &self.renderer {
-            ui.colored_label(Color32::from_rgb(230, 100, 90), format!("Aperçu indisponible : {e}"));
+            ui.colored_label(Color32::from_rgb(230, 100, 90), trf!("Preview unavailable: {}", e));
             return;
         }
         self.request_media(&info);
@@ -592,13 +593,13 @@ impl App {
 
         ui.horizontal_wrapped(|ui| {
             if self.sim.is_none() {
-                if ui.button("▶ Simuler la télécommande").on_hover_text("Parcourir le menu comme sur un lecteur : flèches, Entrée, Échap").clicked() {
+                if ui.button(tr("▶ Simulate the remote control")).on_hover_text(tr("Browse the menu as on a player: arrows, Enter, Esc")).clicked() {
                     self.sim = Some(crate::sim_ui::Sim::default());
                     self.sel_item = None;
                     self.drag = None;
                     self.edit_gen += 1;
                 }
-            } else if ui.button("■ Arrêter la simulation").clicked() {
+            } else if ui.button(tr("■ Stop the simulation")).clicked() {
                 self.sim = None;
                 self.sel_item = None;
                 self.edit_gen += 1;
@@ -615,7 +616,7 @@ impl App {
             ui.horizontal_wrapped(|ui| {
                 for (w, icon, name) in &palette {
                     let b = ui.add(egui::Button::new(egui::RichText::new(*icon).size(27.0)).min_size(vec2(48.0, 48.0)).sense(Sense::click_and_drag()))
-                        .on_hover_text(format!("{name}\nGlisser sur la page pour le placer, ou cliquer pour l'ajouter"));
+                        .on_hover_text(trf!("{}\nDrag onto the page to place it, or click to add it", name));
                     if b.drag_started() { egui::DragAndDrop::set_payload(ui.ctx(), *w); }
                     if b.dragged() { ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing); }
                     if b.clicked() {
@@ -623,10 +624,10 @@ impl App {
                     }
                 }
                 ui.separator();
-                ui.checkbox(&mut self.snap, "Aimantation 10 px");
+                ui.checkbox(&mut self.snap, tr("Snap to 10 px"));
             });
             if pick_image {
-                if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
+                if let Some(f) = rfd::FileDialog::new().add_filter(tr("Images"), &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                     let rel = self.relative(&f);
                     add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
                 }
@@ -705,11 +706,11 @@ impl App {
         if self.view_page != Some(info.r) { self.view_page = Some(info.r); self.view_zoom = 1.0; self.view_pan = egui::Vec2::ZERO; }
         ui.horizontal(|ui| {
             let z = self.view_zoom;
-            if ui.small_button("−").on_hover_text("Dézoomer").clicked() { let nz = (z / 1.25).max(0.25); self.view_pan *= nz / z; self.view_zoom = nz; }
-            if ui.small_button("+").on_hover_text("Zoomer").clicked() { let nz = (z * 1.25).min(8.0); self.view_pan *= nz / z; self.view_zoom = nz; }
-            if ui.small_button("Ajuster").on_hover_text("Page entière dans la fenêtre").clicked() { self.view_zoom = 1.0; self.view_pan = egui::Vec2::ZERO; }
+            if ui.small_button("−").on_hover_text(tr("Zoom out")).clicked() { let nz = (z / 1.25).max(0.25); self.view_pan *= nz / z; self.view_zoom = nz; }
+            if ui.small_button("+").on_hover_text(tr("Zoom in")).clicked() { let nz = (z * 1.25).min(8.0); self.view_pan *= nz / z; self.view_zoom = nz; }
+            if ui.small_button(tr("Fit")).on_hover_text(tr("Whole page in the window")).clicked() { self.view_zoom = 1.0; self.view_pan = egui::Vec2::ZERO; }
             ui.label(format!("{:.0} %", self.view_zoom * 100.0));
-            crate::help(ui, "Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue · Maj en redimensionnant : proportionnel");
+            crate::help(ui, tr("Wheel: zoom · wheel click (or Space + drag): pan the view · Shift while resizing: proportional"));
         });
         let avail = ui.available_size();
         let w = avail.x.min((avail.y - reserve).max(200.0) * 16.0 / 9.0).max(320.0);
@@ -767,7 +768,7 @@ impl App {
                         egui::DragAndDrop::clear_payload(ctx);
                         // une image demande son fichier au moment du depot
                         let dropped = if *w == NewWidget::Image {
-                            rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file().map(|f| {
+                            rfd::FileDialog::new().add_filter(tr("Images"), &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file().map(|f| {
                                 let mut it = it;
                                 it.kind = Kind::Image { path: self.relative(&f), link: None };
                                 it
@@ -1019,7 +1020,7 @@ impl App {
             if !probs.is_empty() {
                 egui::ScrollArea::vertical().id_salt("defil_verifs").max_height(reserve).show(ui, |ui| {
                     for p in &probs {
-                        let (c, t) = if p.error { (Color32::from_rgb(230, 100, 90), "Erreur") } else { (Color32::from_rgb(230, 190, 80), "Attention") };
+                        let (c, t) = if p.error { (Color32::from_rgb(230, 100, 90), tr("Error")) } else { (Color32::from_rgb(230, 190, 80), tr("Warning")) };
                         ui.colored_label(c, format!("{t} : {}", p.msg));
                     }
                 });
@@ -1049,25 +1050,25 @@ impl App {
             if bg.is_default() { None } else { self.bg_note(&video, &music) }
         };
         let Some(d) = info.design_mut(&mut self.model.designs) else { return };
-        egui::CollapsingHeader::new("Fond et animations de cette page").id_salt("reglages_page").default_open(true).show(ui, |ui| {
+        egui::CollapsingHeader::new(tr("Background and animations of this page")).id_salt("reglages_page").default_open(true).show(ui, |ui| {
             changed |= page_bg_ui(ui, &mut d.bg, &mut pick);
             if let Some(n) = &note { ui.label(egui::RichText::new(n).weak()); }
             ui.separator();
-            ui.strong("Animations des boutons");
+            ui.strong(tr("Button animations"));
             let def = bdauthor_core::design::DEFAULT_ANIM_FPS;
             let cur = if d.anim_fps == 0 { def } else { d.anim_fps };
-            egui::ComboBox::from_label("images par seconde").selected_text(cur.to_string()).show_ui(ui, |ui| {
+            egui::ComboBox::from_label(tr("frames per second")).selected_text(cur.to_string()).show_ui(ui, |ui| {
                 for f in [4, 6, 8, 12, 25] {
                     if ui.selectable_label(cur == f, f.to_string()).clicked() && cur != f { d.anim_fps = if f == def { 0 } else { f }; changed = true; }
                 }
             });
-            crate::help(ui, "Une seule cadence par page (norme Blu-ray), pour le halo animé et les animations d'images. Arrondie à une fraction de la cadence de la vidéo du menu.");
+            crate::help(ui, tr("A single frame rate per page (Blu-ray standard), for the animated glow and image animations. Rounded to a fraction of the menu video's frame rate."));
         });
         if let Some(k) = pick {
             let (name, exts): (&str, &[&str]) = match k {
-                0 => ("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]),
-                1 => ("Vidéos", &["mp4", "mkv", "mov", "avi", "m2ts", "mts", "ts", "webm", "wmv", "m4v", "mpg", "mpeg"]),
-                _ => ("Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]),
+                0 => (tr("Images"), &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]),
+                1 => (tr("Videos"), &["mp4", "mkv", "mov", "avi", "m2ts", "mts", "ts", "webm", "wmv", "m4v", "mpg", "mpeg"]),
+                _ => (tr("Audio"), &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]),
             };
             if let Some(f) = rfd::FileDialog::new().add_filter(name, exts).pick_file() {
                 let rel = self.relative(&f);
@@ -1087,13 +1088,13 @@ impl App {
 
     pub(crate) fn inspector_ui(&mut self, ui: &mut egui::Ui) {
         if self.sim.is_some() {
-            ui.heading("Simulation");
-            ui.label("Le menu se comporte comme sur un lecteur Blu-ray :");
-            ui.label("• Flèches : passer au bouton voisin (même règle que sur le disque)");
-            ui.label("• Entrée (ou clic sur un bouton) : valider ; l'état « activé » s'affiche un instant");
-            ui.label("• M (ou Origine) : touche TOP MENU, retour à la page d'accueil");
-            ui.label("• Échap : arrêter la simulation");
-            crate::help(ui, "Les lectures de vidéo sont simulées par un écran noir ; à la fin, le menu revient là où le disque reviendrait.");
+            ui.heading(tr("Simulation"));
+            ui.label(tr("The menu behaves as on a Blu-ray player:"));
+            ui.label(tr("• Arrows: move to the neighboring button (same rule as on the disc)"));
+            ui.label(tr("• Enter (or click on a button): confirm; the “activated” state shows for a moment"));
+            ui.label(tr("• M (or Home): TOP MENU key, back to the home page"));
+            ui.label(tr("• Esc: stop the simulation"));
+            crate::help(ui, tr("Video playback is simulated by a black screen; at the end, the menu returns where the disc would return."));
             return;
         }
         let Some(info) = self.current_info() else { return };
@@ -1101,13 +1102,13 @@ impl App {
         // un element selectionne : seuls ses reglages sont affiches (ceux de la page reviennent quand rien n'est selectionne)
         let widget = info.design(&self.model.designs).is_some() && self.sel_item.is_some();
         if !widget {
-            ui.heading("Page");
+            ui.heading(tr("Page"));
             ui.horizontal_wrapped(|ui| {
                 let this = Target::Main(info.page);
                 let is_home = self.model.designs.home.unwrap_or(Target::Main(0)) == this;
                 if is_home {
-                    ui.label(egui::RichText::new("🏠 Page d'accueil").strong());
-                } else if ui.button("🏠 Définir comme page d'accueil").on_hover_text("Page affichée à l'ouverture du disque et par la touche TOP MENU").clicked() {
+                    ui.label(egui::RichText::new(tr("🏠 Home page")).strong());
+                } else if ui.button(tr("🏠 Set as home page")).on_hover_text(tr("Page displayed when the disc opens and by the TOP MENU key")).clicked() {
                     self.model.designs.home = if this == Target::Main(0) { None } else { Some(this) };
                     self.bump();
                 }
@@ -1116,33 +1117,33 @@ impl App {
             // page affichee sans element selectionne : pas de rubrique « Element »
             return;
         }
-        ui.heading("Élément");
-        crate::help(ui, "Réglages de la page (fond, musique, animations, page d'accueil) : cliquez dans une zone vide de l'aperçu.");
+        ui.heading(tr("Item"));
+        crate::help(ui, tr("Page settings (background, music, animations, home page): click in an empty area of the preview."));
         let Some(i) = self.sel_item else { return };
         // selection multiple (Maj+clic) et alignement : seul l'ensemble ou, pour un element seul, la page sert de reference
         self.extra_sel.retain(|&e| e != i);
         let mut group: Vec<usize> = self.extra_sel.clone();
         group.push(i);
         let mut align: Option<ItemAlign> = None;
-        ui.collapsing(if group.len() > 1 { format!("Alignement ({} éléments)", group.len()) } else { "Alignement et centrage".to_string() }, |ui| {
-            crate::help(ui, "Maj+clic sur l'aperçu ajoute ou retire un élément de la sélection ; glisser l'un d'eux déplace tout le groupe. Avec plusieurs éléments, l'alignement se fait sur leur cadre commun ; avec un seul, sur la page.");
+        ui.collapsing(if group.len() > 1 { trf!("Alignment ({} items)", group.len()) } else { tr("Alignment and centering").to_string() }, |ui| {
+            crate::help(ui, tr("Shift+click on the preview adds or removes an item from the selection; dragging one of them moves the whole group. With several items, alignment is done on their common frame; with one, on the page."));
             ui.horizontal_wrapped(|ui| {
-                for (tip, a) in [("Aligner à gauche", ItemAlign::Left), ("Centrer horizontalement", ItemAlign::CenterH), ("Aligner à droite", ItemAlign::Right),
-                                 ("Aligner en haut", ItemAlign::Top), ("Centrer verticalement", ItemAlign::CenterV), ("Aligner en bas", ItemAlign::Bottom)] {
+                for (tip, a) in [(tr("Align left"), ItemAlign::Left), (tr("Center horizontally"), ItemAlign::CenterH), (tr("Align right"), ItemAlign::Right),
+                                 (tr("Align top"), ItemAlign::Top), (tr("Center vertically"), ItemAlign::CenterV), (tr("Align bottom"), ItemAlign::Bottom)] {
                     if align_button(ui, a, tip) { align = Some(a); }
                 }
             });
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Centrer sur la page (↔)").clicked() { align = Some(ItemAlign::PageH); }
-                if ui.button("Centrer sur la page (↕)").clicked() { align = Some(ItemAlign::PageV); }
+                if ui.button(tr("Center on the page (↔)")).clicked() { align = Some(ItemAlign::PageH); }
+                if ui.button(tr("Center on the page (↕)")).clicked() { align = Some(ItemAlign::PageV); }
             });
             if group.len() >= 3 {
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Répartir horizontalement").clicked() { align = Some(ItemAlign::DistributeH); }
-                    if ui.button("Répartir verticalement").clicked() { align = Some(ItemAlign::DistributeV); }
+                    if ui.button(tr("Distribute horizontally")).clicked() { align = Some(ItemAlign::DistributeH); }
+                    if ui.button(tr("Distribute vertically")).clicked() { align = Some(ItemAlign::DistributeV); }
                 });
             }
-            if group.len() > 1 && ui.button("Ne garder que cet élément").clicked() { self.extra_sel.clear(); }
+            if group.len() > 1 && ui.button(tr("Keep only this item")).clicked() { self.extra_sel.clear(); }
         });
         if let Some(a) = align {
             if let Some(d) = info.design_mut(&mut self.model.designs) {
@@ -1156,10 +1157,10 @@ impl App {
                     // widget nomme : son nom seul (suivi de son rang si un autre widget porte le meme nom)
                     Some(it) if !it.name.is_empty() => if d.items.iter().filter(|x| x.name == it.name).count() > 1 { format!("{} ({})", it.name, k + 1) } else { it.name.clone() },
                     Some(it) => match it.fixed_video() {
-                        Some(v) if matches!(it.kind, Kind::Slot { .. }) => format!("{}. {} (vidéo {})", k + 1, kind_name(&it.kind), v + 1),
+                        Some(v) if matches!(it.kind, Kind::Slot { .. }) => trf!("{}. {} (video {})", k + 1, kind_name(&it.kind), v + 1),
                         _ => format!("{}. {}", k + 1, kind_name(&it.kind)),
                     },
-                    None => "(supprimé)".to_string(),
+                    None => tr("(deleted)").to_string(),
                 }
             };
             // boutons du disque (hors l'element lui-meme) et reglage actuel
@@ -1167,8 +1168,8 @@ impl App {
                 let cands: Vec<(usize, String)> = sim_buttons(&info, d, &self.model.designs.style, self.model.videos.len()).iter().filter(|b| b.item != i).map(|b| (b.item, label(d, b.item))).collect();
                 let cur = d.items.get(i).map(|it| it.nav).unwrap_or_default();
                 let shown: Vec<String> = (0..4).map(|k| match cur.get(k) {
-                    NavLink::Auto => "Automatique".to_string(),
-                    NavLink::Stay => "Aucun (reste sur place)".to_string(),
+                    NavLink::Auto => tr("Automatic").to_string(),
+                    NavLink::Stay => tr("None (stays in place)").to_string(),
                     NavLink::Item(id) => label(d, d.item_by_id(id).unwrap_or(usize::MAX)),
                 }).collect();
                 (cands, shown, sim_buttons(&info, d, &self.model.designs.style, self.model.videos.len()).iter().any(|b| b.item == i))
@@ -1176,18 +1177,18 @@ impl App {
             if let Some((cands, shown, is_button)) = state {
                 // (direction, choix) : Err(None) automatique, Err(Some(None)) aucun, Ok(rang de l'element)
                 let mut pick: Option<(usize, Result<usize, Option<()>>)> = None;
-                ui.collapsing("Navigation (flèches de la télécommande)", |ui| {
+                ui.collapsing(tr("Navigation (remote control arrows)"), |ui| {
                     if !is_button {
-                        crate::help(ui, "Cet élément n'est pas un bouton du disque : la navigation ne s'applique pas.");
+                        crate::help(ui, tr("This item is not a disc button: navigation does not apply."));
                         return;
                     }
-                    crate::help(ui, "Par défaut, chaque flèche va au bouton le plus proche dans sa direction. Choisissez ici un autre bouton, ou « Aucun » pour que la flèche ne déplace rien.");
-                    for (d, name) in ["↑ Haut", "↓ Bas", "← Gauche", "→ Droite"].into_iter().enumerate() {
+                    crate::help(ui, tr("By default, each arrow goes to the nearest button in its direction. Choose another button here, or “None” so the arrow moves nothing."));
+                    for (d, name) in [tr("↑ Up"), tr("↓ Down"), tr("← Left"), tr("→ Right")].into_iter().enumerate() {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(name).strong().color(NAV_COLORS[d]));
                             egui::ComboBox::from_id_salt(("nav_fleche", d)).selected_text(shown[d].clone()).width(230.0).show_ui(ui, |ui| {
-                                if ui.selectable_label(shown[d] == "Automatique", "Automatique").clicked() { pick = Some((d, Err(None))); }
-                                if ui.selectable_label(shown[d].starts_with("Aucun"), "Aucun (reste sur place)").clicked() { pick = Some((d, Err(Some(())))); }
+                                if ui.selectable_label(shown[d] == tr("Automatic"), tr("Automatic")).clicked() { pick = Some((d, Err(None))); }
+                                if ui.selectable_label(shown[d] == tr("None (stays in place)"), tr("None (stays in place)")).clicked() { pick = Some((d, Err(Some(())))); }
                                 for (k, l) in &cands {
                                     if ui.selectable_label(shown[d] == *l, l).clicked() { pick = Some((d, Ok(*k))); }
                                 }
@@ -1243,23 +1244,23 @@ impl App {
             let Some(it) = d.items.get_mut(i) else { self.sel_item = None; return };
             ui.colored_label(kind_color(&it.kind), kind_name(&it.kind));
             ui.horizontal(|ui| {
-                ui.label("Nom");
-                changed |= ui.add(egui::TextEdit::singleline(&mut it.name).hint_text("(facultatif : pour s'y retrouver)").desired_width(220.0)).changed();
+                ui.label(tr("Name"));
+                changed |= ui.add(egui::TextEdit::singleline(&mut it.name).hint_text(tr("(optional: to find your way around)")).desired_width(220.0)).changed();
             });
             if !layers.is_empty() {
                 let shown = layers.iter().find(|(id, _)| *id == cur_layer).map(|(_, n)| n.clone()).unwrap_or_default();
-                egui::ComboBox::from_label("Calque").selected_text(shown).show_ui(ui, |ui| {
+                egui::ComboBox::from_label(tr("Layer")).selected_text(shown).show_ui(ui, |ui| {
                     for (id, name) in &layers {
                         if ui.selectable_label(*id == cur_layer, name).clicked() && *id != cur_layer { op = Some(Op::ToLayer(*id)); }
                     }
                 });
             }
             egui::Grid::new("geometrie").num_columns(4).show(ui, |ui| {
-                ui.label("X"); changed |= ui.add(egui::DragValue::new(&mut it.x).range(0..=1920)).changed();
-                ui.label("Y"); changed |= ui.add(egui::DragValue::new(&mut it.y).range(0..=1080)).changed();
+                ui.label(tr("X")); changed |= ui.add(egui::DragValue::new(&mut it.x).range(0..=1920)).changed();
+                ui.label(tr("Y")); changed |= ui.add(egui::DragValue::new(&mut it.y).range(0..=1080)).changed();
                 ui.end_row();
-                ui.label("Largeur"); changed |= ui.add(egui::DragValue::new(&mut it.w).range(16..=1920)).changed();
-                ui.label("Hauteur"); changed |= ui.add(egui::DragValue::new(&mut it.h).range(16..=1080)).changed();
+                ui.label(tr("Width")); changed |= ui.add(egui::DragValue::new(&mut it.w).range(16..=1920)).changed();
+                ui.label(tr("Height")); changed |= ui.add(egui::DragValue::new(&mut it.h).range(16..=1080)).changed();
                 ui.end_row();
             });
             let h = it.h;
@@ -1267,17 +1268,17 @@ impl App {
                 Kind::Slot { thumb_h, video, link, start, chapter, label, thumb_at, ret } => {
                     let mut lab = (h - *thumb_h).max(0);
                     ui.horizontal(|ui| {
-                        ui.label("Hauteur du libellé :");
+                        ui.label(tr("Label height:"));
                         if ui.add(egui::DragValue::new(&mut lab).range(0..=(h - 8).max(0))).changed() {
                             *thumb_h = (h - lab).max(8);
                             changed = true;
                         }
                     });
                     // video montree
-                    let vname = |v: usize| format!("Vidéo {}. {}", v + 1, video_labels.get(v).cloned().unwrap_or_default());
+                    let vname = |v: usize| trf!("Video {}. {}", v + 1, video_labels.get(v).cloned().unwrap_or_default());
                     let old_video = *video;
-                    let shown = match *video { Some(v) => vname(v), None => "(aucune vidéo : à choisir)".to_string() };
-                    egui::ComboBox::from_label("Vidéo").selected_text(shown).show_ui(ui, |ui| {
+                    let shown = match *video { Some(v) => vname(v), None => tr("(no video: to choose)").to_string() };
+                    egui::ComboBox::from_label(tr("Video")).selected_text(shown).show_ui(ui, |ui| {
                         for v in 0..video_labels.len() {
                             if ui.selectable_label(*video == Some(v), vname(v)).clicked() {
                                 // les identifiants de chapitre sont propres a chaque video : le lien ne suit pas
@@ -1296,15 +1297,15 @@ impl App {
                     let chap_text = |t: f64, title: &str| if title.is_empty() { mmss(t) } else { format!("{title} ({})", mmss(t)) };
                     let mut is_chapter = start.is_some();
                     ui.horizontal(|ui| {
-                        if ui.radio_value(&mut is_chapter, false, "Depuis le début").changed() { *start = None; *chapter = None; changed = true; }
-                        if ui.radio_value(&mut is_chapter, true, "Chapitre").changed() { *start = Some(0.0); *chapter = None; changed = true; }
+                        if ui.radio_value(&mut is_chapter, false, tr("From the start")).changed() { *start = None; *chapter = None; changed = true; }
+                        if ui.radio_value(&mut is_chapter, true, tr("Chapter")).changed() { *start = Some(0.0); *chapter = None; changed = true; }
                     });
                     if let Some(t) = start {
                         let cur = chapter.and_then(|id| vch.iter().find(|c| c.0 == id));
-                        let shown = cur.map_or_else(|| "Instant libre (saisi à la main)".to_string(), |c| chap_text(c.1, &c.2));
+                        let shown = cur.map_or_else(|| tr("Free time (typed by hand)").to_string(), |c| chap_text(c.1, &c.2));
                         let prev_title = cur.map(|c| c.2.clone());
-                        egui::ComboBox::from_label("Chapitre de la vidéo").selected_text(shown).show_ui(ui, |ui| {
-                            if ui.selectable_label(chapter.is_none(), "Instant libre (saisi à la main)").clicked() && chapter.is_some() { *chapter = None; changed = true; }
+                        egui::ComboBox::from_label(tr("Video chapter")).selected_text(shown).show_ui(ui, |ui| {
+                            if ui.selectable_label(chapter.is_none(), tr("Free time (typed by hand)")).clicked() && chapter.is_some() { *chapter = None; changed = true; }
                             for (id, ct, title) in vch {
                                 if ui.selectable_label(*chapter == Some(*id), chap_text(*ct, title)).clicked() && *chapter != Some(*id) {
                                     *chapter = Some(*id);
@@ -1315,39 +1316,39 @@ impl App {
                                 }
                             }
                         });
-                        if vch.is_empty() && video.is_some() { ui.label(egui::RichText::new("Cette vidéo n'a pas encore de chapitre : « Créer le chapitre » en ajoute un à l'instant ci-dessous.").weak()); }
+                        if vch.is_empty() && video.is_some() { ui.label(egui::RichText::new(tr("This video has no chapter yet: “Create the chapter” adds one at the time below.")).weak()); }
                         if chapter.is_some() {
                             ui.horizontal(|ui| {
-                                ui.label(format!("à {}", mmss(*t)));
-                                if let Some(d) = dur { ui.label(egui::RichText::new(format!("sur {}", mmss(d))).weak()); }
-                                if ui.small_button("Détacher").on_hover_text("La vignette garde cet instant mais ne suit plus le chapitre.").clicked() { *chapter = None; changed = true; }
+                                ui.label(trf!("at {}", mmss(*t)));
+                                if let Some(d) = dur { ui.label(egui::RichText::new(trf!("on {}", mmss(d))).weak()); }
+                                if ui.small_button(tr("Detach")).on_hover_text(tr("The thumbnail keeps this time but no longer follows the chapter.")).clicked() { *chapter = None; changed = true; }
                             });
-                            crate::help(ui, "L'instant se règle dans « Vidéo sélectionnée » : toutes les vignettes liées à ce chapitre le suivent.");
+                            crate::help(ui, tr("The time is set in “Selected video”: all thumbnails linked to this chapter follow it."));
                         } else {
                             ui.horizontal(|ui| {
                                 let max = dur.unwrap_or(f64::MAX);
                                 changed |= ui.add(egui::DragValue::new(t).range(0.0..=max).speed(0.5)
-                                    .custom_formatter(|v, _| mmss(v)).custom_parser(parse_mmss)).on_hover_text("Glissez, ou tapez « m:ss » (ex. 12:30) ou des secondes").changed();
-                                if let Some(d) = dur { ui.label(egui::RichText::new(format!("sur {}", mmss(d))).weak()); }
-                                if ui.add_enabled(video.is_some(), egui::Button::new("Créer le chapitre")).on_hover_text("Ajoute un chapitre à cet instant dans la liste des chapitres de la vidéo (ou reprend celui qui s'y trouve déjà) et y lie la vignette.").clicked() {
+                                    .custom_formatter(|v, _| mmss(v)).custom_parser(parse_mmss)).on_hover_text(tr("Drag, or type “m:ss” (e.g. 12:30) or seconds")).changed();
+                                if let Some(d) = dur { ui.label(egui::RichText::new(trf!("on {}", mmss(d))).weak()); }
+                                if ui.add_enabled(video.is_some(), egui::Button::new(tr("Create the chapter"))).on_hover_text(tr("Adds a chapter at this time to the video's chapter list (or reuses the one already there) and links the thumbnail to it.")).clicked() {
                                     if let Some(v) = *video { new_chapter = Some((v, *t, label.trim().to_string())); }
                                 }
                             });
                             if let Some(v) = *video { if video_auto.get(v).copied().unwrap_or(false) {
-                                crate::help(ui, "Cette vidéo a des chapitres automatiques : en créer un à la main les remplace.");
+                                crate::help(ui, tr("This video has automatic chapters: creating one by hand replaces them."));
                             } }
                         }
-                        if dur.map_or(false, |d| *t >= d) { ui.colored_label(Color32::from_rgb(230, 100, 90), "Après la fin de la vidéo."); }
-                        crate::help(ui, "Le lecteur démarre à l'image clé la plus proche avant cet instant (au plus 1 s plus tôt).");
+                        if dur.map_or(false, |d| *t >= d) { ui.colored_label(Color32::from_rgb(230, 100, 90), tr("After the end of the video.")); }
+                        crate::help(ui, tr("The player starts at the nearest key frame before this time (at most 1 s earlier)."));
                     }
                     // libelle et image
                     ui.horizontal(|ui| {
-                        ui.label("Libellé :");
+                        ui.label(tr("Label:"));
                         let hint = match start { Some(t) => mmss(*t), None => (*video).and_then(|v| video_labels.get(v).cloned()).unwrap_or_default() };
                         changed |= ui.add(egui::TextEdit::singleline(label).hint_text(hint)).changed();
                     });
                     let mut own_img = thumb_at.is_some();
-                    if ui.checkbox(&mut own_img, "Image de la vignette prise à un autre instant").changed() {
+                    if ui.checkbox(&mut own_img, tr("Thumbnail image taken at another time")).changed() {
                         *thumb_at = if own_img { Some(start.unwrap_or(0.0)) } else { None };
                         changed = true;
                     }
@@ -1355,9 +1356,9 @@ impl App {
                         changed |= ui.add(egui::DragValue::new(a).range(0.0..=dur.unwrap_or(f64::MAX)).speed(0.5).custom_formatter(|v, _| mmss(v)).custom_parser(parse_mmss)).changed();
                     }
                     // au clic : lecture (habituel) ou autre destination
-                    let habit = if start.is_some() { "Lire la vidéo depuis ce chapitre" } else { "Lire la vidéo" };
-                    let shown = link.and_then(|t| page_targets.iter().find(|(x, _)| *x == t.without_exit()).map(|(_, l)| l.clone())).unwrap_or_else(|| if link.is_some() { "(destination introuvable)".into() } else { habit.to_string() });
-                    egui::ComboBox::from_label("Au clic").selected_text(shown).show_ui(ui, |ui| {
+                    let habit = if start.is_some() { tr("Play the video from this chapter") } else { tr("Play the video") };
+                    let shown = link.and_then(|t| page_targets.iter().find(|(x, _)| *x == t.without_exit()).map(|(_, l)| l.clone())).unwrap_or_else(|| if link.is_some() { tr("(destination not found)").into() } else { habit.to_string() });
+                    egui::ComboBox::from_label(tr("On click")).selected_text(shown).show_ui(ui, |ui| {
                         if ui.selectable_label(link.is_none(), habit).clicked() { *link = None; changed = true; }
                         for (t, l) in &page_targets {
                             if ui.selectable_label(link.map(Target::without_exit) == Some(*t), l).clicked() && link.map(Target::without_exit) != Some(*t) { *link = Some(*t); changed = true; }
@@ -1366,11 +1367,11 @@ impl App {
                     // apres la lecture
                     if matches!(link, None | Some(Target::Video(_))) {
                         let rname = |r: SlotReturn| match r {
-                            SlotReturn::Origin => "Revenir à cette page".to_string(),
-                            SlotReturn::Home => "Aller à la page d'accueil".to_string(),
-                            SlotReturn::Page(p) => format!("Aller à la page {}", page_names.get(p).cloned().unwrap_or_else(|| format!("{} (introuvable)", p + 1))),
+                            SlotReturn::Origin => tr("Return to this page").to_string(),
+                            SlotReturn::Home => tr("Go to the home page").to_string(),
+                            SlotReturn::Page(p) => trf!("Go to page {}", page_names.get(p).cloned().unwrap_or_else(|| trf!("{} (not found)", p + 1))),
                         };
-                        egui::ComboBox::from_label("Après la lecture").selected_text(rname(*ret)).show_ui(ui, |ui| {
+                        egui::ComboBox::from_label(tr("After playback")).selected_text(rname(*ret)).show_ui(ui, |ui| {
                             for r in [SlotReturn::Origin, SlotReturn::Home].into_iter().chain((0..page_names.len()).map(SlotReturn::Page)) {
                                 if ui.selectable_label(*ret == r, rname(r)).clicked() { *ret = r; changed = true; }
                             }
@@ -1382,9 +1383,9 @@ impl App {
                     // puis les pages, les videos et le reglage des sous-titres
                     let old = *action;
                     let shown = if *action != NavAction::Goto { action.label().to_string() } else {
-                        target.and_then(|t| page_targets.iter().find(|(x, _)| *x == t.without_exit()).map(|(_, l)| l.clone())).unwrap_or_else(|| "(destination introuvable : à choisir)".to_string())
+                        target.and_then(|t| page_targets.iter().find(|(x, _)| *x == t.without_exit()).map(|(_, l)| l.clone())).unwrap_or_else(|| tr("(destination not found: to choose)").to_string())
                     };
-                    egui::ComboBox::from_label("Destination").selected_text(shown).show_ui(ui, |ui| {
+                    egui::ComboBox::from_label(tr("Destination")).selected_text(shown).show_ui(ui, |ui| {
                         for a in NavAction::ALL {
                             if a == NavAction::Goto { continue; }
                             if ui.selectable_label(*action == a, a.label()).clicked() {
@@ -1405,35 +1406,35 @@ impl App {
                             }
                         }
                     });
-                    ui.horizontal(|ui| { ui.label("Texte :"); changed |= ui.text_edit_singleline(text).changed(); });
+                    ui.horizontal(|ui| { ui.label(tr("Text:")); changed |= ui.text_edit_singleline(text).changed(); });
                 }
                 Kind::Text { text, size, color, align, font, link } => {
                     link_ui(ui, link, &page_targets, &mut changed);
                     changed |= ui.add(egui::TextEdit::multiline(text).desired_rows(3).desired_width(f32::INFINITY)).changed();
                     ui.horizontal(|ui| {
-                        ui.label("Taille :");
+                        ui.label(tr("Size:"));
                         changed |= ui.add(egui::DragValue::new(size).range(8..=400).suffix(" px")).changed();
-                        ui.label("Couleur :");
+                        ui.label(tr("Color:"));
                         changed |= ui.color_edit_button_srgb(color).changed();
                     });
-                    let shown = if font.is_empty() { "Police par défaut".to_string() } else {
+                    let shown = if font.is_empty() { tr("Default font").to_string() } else {
                         bdauthor_render::common_fonts().into_iter().find(|(_, f)| f == font).map(|(l, _)| l.to_string()).unwrap_or_else(|| font.clone())
                     };
-                    egui::ComboBox::from_label("Police").selected_text(shown).show_ui(ui, |ui| {
-                        if ui.selectable_label(font.is_empty(), "Police par défaut").clicked() { font.clear(); changed = true; }
+                    egui::ComboBox::from_label(tr("Font")).selected_text(shown).show_ui(ui, |ui| {
+                        if ui.selectable_label(font.is_empty(), tr("Default font")).clicked() { font.clear(); changed = true; }
                         for (label, file) in bdauthor_render::common_fonts() {
                             if ui.selectable_label(font == file, label).clicked() { *font = file.to_string(); changed = true; }
                         }
-                        if ui.button("Autre fichier…").clicked() { pick_font = true; ui.close_menu(); }
+                        if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
                     });
                     if !font.is_empty() {
                         if let Ok(r) = font_check {
                             if r.custom_font(font, &base_dir).is_none() {
-                                ui.colored_label(Color32::from_rgb(230, 100, 90), "Police introuvable : la police par défaut sera utilisée.");
+                                ui.colored_label(Color32::from_rgb(230, 100, 90), tr("Font not found: the default font will be used."));
                             }
                         }
                     }
-                    egui::ComboBox::from_label("Alignement").selected_text(align.name()).show_ui(ui, |ui| {
+                    egui::ComboBox::from_label(tr("Alignment")).selected_text(align.name()).show_ui(ui, |ui| {
                         for a in [Align::Left, Align::Center, Align::Right] {
                             if ui.selectable_value(align, a, a.name()).changed() { changed = true; }
                         }
@@ -1441,9 +1442,9 @@ impl App {
                 }
                 Kind::Image { path, link } => {
                     link_ui(ui, link, &page_targets, &mut changed);
-                    ui.horizontal(|ui| { ui.label("Fichier :"); changed |= ui.text_edit_singleline(path).changed(); });
-                    if ui.button("Choisir…").clicked() { pick_image = true; }
-                    crate::help(ui, "L'image est ajustée dans le cadre sans déformation.");
+                    ui.horizontal(|ui| { ui.label(tr("File:")); changed |= ui.text_edit_singleline(path).changed(); });
+                    if ui.button(tr("Choose…")).clicked() { pick_image = true; }
+                    crate::help(ui, tr("The image is fitted into the frame without distortion."));
                 }
             }
             // actions « Regler les sous-titres » / « Regler la langue audio » : destination de reglage + langue, puis page de
@@ -1460,11 +1461,11 @@ impl App {
                         changed = true;
                     }
                     let name = |c: SubChoice| match c {
-                        SubChoice::Keep | SubChoice::Off => "Masquer les sous-titres".to_string(),
-                        SubChoice::Lang(id) => sub_langs.iter().find(|(i, _)| *i == id).map_or_else(|| "(langue supprimée : à choisir)".to_string(), |(_, n)| n.clone()),
+                        SubChoice::Keep | SubChoice::Off => tr("Hide subtitles").to_string(),
+                        SubChoice::Lang(id) => sub_langs.iter().find(|(i, _)| *i == id).map_or_else(|| tr("(language removed: to choose)").to_string(), |(_, n)| n.clone()),
                     };
                     let cur_sub = it.sub;
-                    egui::ComboBox::from_label("Sous-titres").selected_text(name(cur_sub)).show_ui(ui, |ui| {
+                    egui::ComboBox::from_label(tr("Subtitles")).selected_text(name(cur_sub)).show_ui(ui, |ui| {
                         for c in std::iter::once(SubChoice::Off).chain(sub_langs.iter().map(|(id, _)| SubChoice::Lang(*id))) {
                             if ui.selectable_label(cur_sub == c, name(c)).clicked() { it.sub = c; changed = true; }
                         }
@@ -1473,11 +1474,11 @@ impl App {
                 if let Some(t) = cur.filter(|t| t.is_setting()) {
                     // page de sortie : les pages du menu seulement
                     let pages: Vec<(usize, &String)> = page_targets.iter().filter_map(|(x, l)| if let Target::Main(q) = x { Some((*q, l)) } else { None }).collect();
-                    let here = "Rester sur la page courante";
+                    let here = tr("Stay on the current page");
                     let exit = t.exit();
-                    let shown = exit.map_or_else(|| here.to_string(), |q| pages.iter().find(|(p, _)| *p == q).map_or_else(|| "(page introuvable : à choisir)".to_string(), |(_, l)| (*l).clone()));
+                    let shown = exit.map_or_else(|| here.to_string(), |q| pages.iter().find(|(p, _)| *p == q).map_or_else(|| tr("(page not found: to choose)").to_string(), |(_, l)| (*l).clone()));
                     let mut pick: Option<Option<usize>> = None;
-                    egui::ComboBox::from_label("Ensuite").selected_text(shown).show_ui(ui, |ui| {
+                    egui::ComboBox::from_label(tr("Then")).selected_text(shown).show_ui(ui, |ui| {
                         if ui.selectable_label(exit.is_none(), here).clicked() { pick = Some(None); }
                         for (q, l) in &pages {
                             if ui.selectable_label(exit == Some(*q), l.as_str()).clicked() { pick = Some(Some(*q)); }
@@ -1486,11 +1487,11 @@ impl App {
                     if let Some(e) = pick {
                         if let Some(slot) = it.targets_mut() { *slot = Some(t.with_exit(e)); changed = true; }
                     }
-                    let after = if exit.is_some() { "puis le menu passe à la page choisie" } else { "et le menu reste affiché" };
+                    let after = if exit.is_some() { tr("then the menu moves to the chosen page") } else { tr("and the menu stays displayed") };
                     let txt = match t {
-                        Target::Audio(..) => format!("Le clic règle la langue audio {after}. Elle vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue garde son audio actuel. Le spectateur peut toujours changer avec la touche AUDIO. Les sous-titres ne sont pas modifiés."),
-                        _ if sub_langs.is_empty() => "Aucune langue de sous-titres dans le projet (à ajouter dans le menu « Édition > Projet… », onglet « Langues des sous-titres »).".to_string(),
-                        _ => format!("Le clic règle les sous-titres {after}. La langue vaut pour toutes les vidéos lues ensuite ; une vidéo qui n'a pas cette langue s'affiche sans sous-titres. Le spectateur peut toujours changer avec la touche SUBTITLE."),
+                        Target::Audio(..) => trf!("The click sets the audio language {}. It applies to all videos played afterwards; a video that lacks this language keeps its current audio. The viewer can still change it with the AUDIO key. Subtitles are not changed.", after),
+                        _ if sub_langs.is_empty() => tr("No subtitle language in the project (add some in the menu “Edit > Project…”, tab “Subtitle languages”).").to_string(),
+                        _ => trf!("The click sets the subtitles {}. The language applies to all videos played afterwards; a video that lacks this language is displayed without subtitles. The viewer can still change it with the SUBTITLE key.", after),
                     };
                     ui.label(egui::RichText::new(txt).weak());
                 }
@@ -1499,12 +1500,12 @@ impl App {
             if it.is_button() {
                 ui.separator();
                 let mut own = it.look.style.is_some();
-                if ui.checkbox(&mut own, "Apparence propre à cet élément").on_hover_text("Sinon : le style des boutons du projet").changed() {
+                if ui.checkbox(&mut own, tr("Appearance specific to this item")).on_hover_text(tr("Otherwise: the project's button style")).changed() {
                     it.look.style = if own { Some(proj_style.clone()) } else { None };
                     changed = true;
                 }
                 if let Some(st) = &mut it.look.style {
-                    egui::CollapsingHeader::new("Réglages de cet élément").default_open(true).show(ui, |ui| {
+                    egui::CollapsingHeader::new(tr("Settings of this item")).default_open(true).show(ui, |ui| {
                         changed |= crate::style_ui::style_ui(ui, st, "element", &mut pick_sound_el);
                     });
                 }
@@ -1514,7 +1515,7 @@ impl App {
                 // sons : independants de l'apparence
                 ui.separator();
                 let mut own_snd = it.look.sounds.is_some();
-                if ui.checkbox(&mut own_snd, "Sons propres à cet élément").on_hover_text("Sinon : les sons du style des boutons du projet").changed() {
+                if ui.checkbox(&mut own_snd, tr("Sounds specific to this item")).on_hover_text(tr("Otherwise: the sounds of the project's button style")).changed() {
                     it.look.sounds = if own_snd {
                         Some(bdauthor_core::style::ItemSounds { select: proj_style.sound_select.clone(), activate: proj_style.sound_activate.clone() })
                     } else { None };
@@ -1526,7 +1527,7 @@ impl App {
             }
         }
         if pick_font {
-            if let Some(f) = rfd::FileDialog::new().add_filter("Polices", &["ttf", "otf"]).pick_file() {
+            if let Some(f) = rfd::FileDialog::new().add_filter(tr("Fonts"), &["ttf", "otf"]).pick_file() {
                 let rel = self.relative(&f);
                 if let Some(Kind::Text { font, .. }) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).map(|it| &mut it.kind) {
                     *font = rel;
@@ -1536,7 +1537,7 @@ impl App {
         }
         self.anim_preview = anim_preview;
         if let Some(k) = pick_sound_el {
-            if let Some(f) = rfd::FileDialog::new().add_filter("Sons", &crate::style_ui::SOUND_EXTS).pick_file() {
+            if let Some(f) = rfd::FileDialog::new().add_filter(tr("Sounds"), &crate::style_ui::SOUND_EXTS).pick_file() {
                 let rel = self.relative(&f);
                 if let Some(snd) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).and_then(|it| it.look.sounds.as_mut()) {
                     if k == 1 { snd.select = rel; } else { snd.activate = rel; }
@@ -1546,7 +1547,7 @@ impl App {
         }
         if let Some(state @ (0 | 1)) = pick_skin {
             // image(s) « normal » ou « selectionne » : une = etat fixe, plusieurs = animation (rangees par ordre de nom)
-            if let Some(mut fs) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_files() {
+            if let Some(mut fs) = rfd::FileDialog::new().add_filter(tr("Images"), &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_files() {
                 fs.sort();
                 let rel: Vec<String> = fs.iter().map(|f| self.relative(f)).collect();
                 if let Some(it) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)) {
@@ -1556,7 +1557,7 @@ impl App {
                 }
             }
         } else if let Some(state) = pick_skin {
-            if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
+            if let Some(f) = rfd::FileDialog::new().add_filter(tr("Images"), &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                 let rel = self.relative(&f);
                 if let Some(it) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)) {
                     let sk = &mut it.look.skin;
@@ -1566,7 +1567,7 @@ impl App {
             }
         }
         if pick_image {
-            if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
+            if let Some(f) = rfd::FileDialog::new().add_filter(tr("Images"), &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                 let rel = self.relative(&f);
                 if let Some(Kind::Image { path, .. }) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).map(|it| &mut it.kind) {
                     *path = rel;
@@ -1616,39 +1617,39 @@ impl App {
     /// La poignee ☰ de chaque ligne se glisse : pages reordonnees ; elements et calques reordonnes, changes de calque, ou
     /// envoyes sur une autre page en les deposant sur elle (Ctrl : copie). + / − deplie ou replie une page ou un calque.
     pub(crate) fn page_list_ui(&mut self, ui: &mut egui::Ui) {
-        ui.heading("Pages et calques");
+        ui.heading(tr("Pages and layers"));
         if self.model.videos.is_empty() {
-            ui.label("Ajoutez des vidéos dans l'onglet « Vidéos ».");
+            ui.label(tr("Add videos in the “Videos” tab."));
             return;
         }
         let mut op: Option<LayerOp> = None;
         let info = self.current_info();
         let cur_k = match info.as_ref().map(|i| i.r) { Some(PageRef(k)) => Some(k), None => None };
         ui.horizontal_wrapped(|ui| {
-            if ui.button("+ Page").on_hover_text("Ajoute une page vierge à la fin").clicked() {
+            if ui.button(tr("+ Page")).on_hover_text(tr("Adds a blank page at the end")).clicked() {
                 let f = bdauthor_core::editor::add_free_page(&mut self.model);
                 self.cur = Some(PageRef(f));
                 self.sel_item = None;
                 self.bump();
             }
-            if cur_k.is_some() && ui.button("+ Calque").on_hover_text("Nouveau calque au premier plan de la page affichée ; les nouveaux éléments vont dans le calque actif").clicked() {
+            if cur_k.is_some() && ui.button(tr("+ Layer")).on_hover_text(tr("New layer in the foreground of the displayed page; new items go into the active layer")).clicked() {
                 op = Some(LayerOp::Add);
             }
-            if ui.small_button("+ tout").on_hover_text("Déplier toutes les pages et tous les calques").clicked() {
+            if ui.small_button(tr("+ all")).on_hover_text(tr("Expand all pages and layers")).clicked() {
                 for k in 0..self.model.designs.free.len() { self.tree_pages.insert(k, true); }
                 self.tree_layers_closed.clear();
             }
-            if ui.small_button("− tout").on_hover_text("Replier toutes les pages").clicked() {
+            if ui.small_button(tr("− all")).on_hover_text(tr("Collapse all pages")).clicked() {
                 for k in 0..self.model.designs.free.len() { self.tree_pages.insert(k, false); }
             }
         });
         let np = self.model.designs.free.len();
         if np == 0 {
-            ui.label("Aucune page : ajoutez-en une.");
+            ui.label(tr("No page: add one."));
             return;
         }
         let home_k = match self.model.designs.home { Some(Target::Main(p)) if p < np => p, _ => 0 };
-        let names: Vec<String> = self.model.designs.free.iter().enumerate().map(|(k, d)| if d.name.is_empty() { format!("Page {}", k + 1) } else { d.name.clone() }).collect();
+        let names: Vec<String> = self.model.designs.free.iter().enumerate().map(|(k, d)| if d.name.is_empty() { trf!("Page {}", k + 1) } else { d.name.clone() }).collect();
         let all: Vec<PageDesign> = self.model.designs.free.clone();
         let active = info.as_ref().map_or(0, |i| self.target_layer(i));
         let opened: Vec<bool> = (0..np).map(|k| self.page_open(k)).collect();
@@ -1671,8 +1672,8 @@ impl App {
                     let shown = cur_k == Some(k);
                     let r = ui.horizontal(|ui| {
                         let _ = ui.dnd_drag_source(egui::Id::new(("page", k)), DragRow::Page(k), |ui| ui.label(egui::RichText::new("☰").strong()))
-                            .response.on_hover_text("Glisser pour changer l'ordre des pages");
-                        if ui.small_button(pm(opened[k])).on_hover_text(if opened[k] { "Replier la page" } else { "Déplier la page" }).clicked() { toggle_page = Some(k); }
+                            .response.on_hover_text(tr("Drag to change the order of the pages"));
+                        if ui.small_button(pm(opened[k])).on_hover_text(if opened[k] { tr("Collapse the page") } else { tr("Expand the page") }).clicked() { toggle_page = Some(k); }
                         let editing = matches!(&self.page_edit, Some((e, _)) if *e == k);
                         if editing {
                             if let Some((_, text)) = &mut self.page_edit {
@@ -1683,14 +1684,14 @@ impl App {
                         } else {
                             let home = if k == home_k { "  🏠" } else { "" };
                             let label = egui::RichText::new(format!("{}. {}{home}", k + 1, names[k])).strong();
-                            let resp = ui.selectable_label(shown, label).on_hover_text("Afficher la page (+ pour déplier son contenu). Double-clic : renommer. 🏠 : page d'accueil");
+                            let resp = ui.selectable_label(shown, label).on_hover_text(tr("Show the page (+ to expand its content). Double-click: rename. 🏠: home page"));
                             if resp.clicked() { pick_page = Some(k); }
                             if resp.double_clicked() { self.page_edit = Some((k, all[k].name.clone())); }
-                            if ui.small_button("✏").on_hover_text("Renommer la page").clicked() { self.page_edit = Some((k, all[k].name.clone())); }
+                            if ui.small_button("✏").on_hover_text(tr("Rename the page")).clicked() { self.page_edit = Some((k, all[k].name.clone())); }
                             let _ = ui.menu_button("🗑", |ui| {
-                                ui.label("Les liens qui menaient à cette page seront à rechoisir.");
-                                if ui.button("Supprimer la page").clicked() { op = Some(LayerOp::PageDelete(k)); ui.close_menu(); }
-                            }).response.on_hover_text("Supprimer la page");
+                                ui.label(tr("Links that led to this page will have to be chosen again."));
+                                if ui.button(tr("Delete the page")).clicked() { op = Some(LayerOp::PageDelete(k)); ui.close_menu(); }
+                            }).response.on_hover_text(tr("Delete the page"));
                         }
                     }).response;
                     rows.push((DragRow::Page(k), r.rect));
@@ -1700,7 +1701,7 @@ impl App {
                     let layered = !d.layers.is_empty();
                     let positions: Vec<usize> = if layered { (0..d.layers.len()).rev().collect() } else { vec![0] };
                     if d.items.is_empty() && !layered {
-                        ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new("(page vide)").weak().italics()); });
+                        ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new(tr("(empty page)")).weak().italics()); });
                     }
                     for pos in positions {
                         let mut layer_open = true;
@@ -1710,10 +1711,10 @@ impl App {
                             let r = ui.horizontal(|ui| {
                                 ui.add_space(18.0);
                                 let _ = ui.dnd_drag_source(egui::Id::new(("calque", k, l.id)), DragRow::Layer(k, pos), |ui| ui.label(egui::RichText::new("☰").strong()))
-                                    .response.on_hover_text("Glisser pour déplacer le calque (avec ses éléments), ou le déposer sur une autre page");
-                                if ui.small_button(pm(layer_open)).on_hover_text(if layer_open { "Replier le calque" } else { "Déplier le calque" }).clicked() { toggle_layer = Some((k, l.id)); }
-                                if ui.small_button(if l.hidden { "◌" } else { "👁" }).on_hover_text(if l.hidden { "Calque masqué dans l'aperçu (il reste sur le disque) : afficher" } else { "Masquer dans l'aperçu (le calque reste sur le disque)" }).clicked() { op = Some(LayerOp::Hidden(k, l.id)); }
-                                if ui.small_button(if l.locked { "🔒" } else { "🔓" }).on_hover_text(if l.locked { "Verrouillé : ses éléments ne se sélectionnent plus dans l'aperçu ; déverrouiller" } else { "Verrouiller (plus de sélection ni de déplacement dans l'aperçu)" }).clicked() { op = Some(LayerOp::Locked(k, l.id)); }
+                                    .response.on_hover_text(tr("Drag to move the layer (with its items), or drop it on another page"));
+                                if ui.small_button(pm(layer_open)).on_hover_text(if layer_open { tr("Collapse the layer") } else { tr("Expand the layer") }).clicked() { toggle_layer = Some((k, l.id)); }
+                                if ui.small_button(if l.hidden { "◌" } else { "👁" }).on_hover_text(if l.hidden { tr("Layer hidden in the preview (it stays on the disc): show") } else { tr("Hide in the preview (the layer stays on the disc)") }).clicked() { op = Some(LayerOp::Hidden(k, l.id)); }
+                                if ui.small_button(if l.locked { "🔒" } else { "🔓" }).on_hover_text(if l.locked { tr("Locked: its items can no longer be selected in the preview; unlock") } else { tr("Lock (no more selection or moving in the preview)") }).clicked() { op = Some(LayerOp::Locked(k, l.id)); }
                                 let editing = matches!(&self.layer_edit, Some((ep, eid, _)) if *ep == k && *eid == l.id);
                                 if editing {
                                     if let Some((_, _, text)) = &mut self.layer_edit {
@@ -1723,14 +1724,14 @@ impl App {
                                     }
                                 } else {
                                     let n = d.layer_range(pos).len();
-                                    let resp = ui.selectable_label(shown && active == l.id, egui::RichText::new(format!("{}  ({n})", l.name))).on_hover_text("Calque actif : reçoit les nouveaux éléments. Double-clic : renommer");
+                                    let resp = ui.selectable_label(shown && active == l.id, egui::RichText::new(format!("{}  ({n})", l.name))).on_hover_text(tr("Active layer: receives new items. Double-click: rename"));
                                     if resp.clicked() { activate = Some((k, l.id)); }
                                     if resp.double_clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
-                                    if ui.small_button("✏").on_hover_text("Renommer le calque").clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
+                                    if ui.small_button("✏").on_hover_text(tr("Rename the layer")).clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
                                     let _ = ui.menu_button("🗑", |ui| {
-                                        if ui.button("Supprimer le calque (ses éléments vont au calque voisin)").clicked() { op = Some(LayerOp::Remove(k, l.id, true)); ui.close_menu(); }
-                                        if ui.button("Supprimer le calque et ses éléments").clicked() { op = Some(LayerOp::Remove(k, l.id, false)); ui.close_menu(); }
-                                    }).response.on_hover_text("Supprimer le calque");
+                                        if ui.button(tr("Delete the layer (its items go to the neighboring layer)")).clicked() { op = Some(LayerOp::Remove(k, l.id, true)); ui.close_menu(); }
+                                        if ui.button(tr("Delete the layer and its items")).clicked() { op = Some(LayerOp::Remove(k, l.id, false)); ui.close_menu(); }
+                                    }).response.on_hover_text(tr("Delete the layer"));
                                 }
                             }).response;
                             rows.push((DragRow::Layer(k, pos), r.rect));
@@ -1740,11 +1741,10 @@ impl App {
                         for i in d.layer_range(pos).rev() {
                             let it = &d.items[i];
                             let what = match &it.kind {
-                                Kind::Text { text, link, .. } => format!("Texte « {} »{}", text.lines().next().unwrap_or("").chars().take(24).collect::<String>(), if link.is_some() { " (cliquable)" } else { "" }),
-                                Kind::Image { path, link } => format!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { " (cliquable)" } else { "" }),
-                                Kind::Nav { action, text, .. } => if *action == NavAction::Goto { format!("Bouton « {text} »") } else { format!("Bouton {}", action.label()) },
-                                Kind::Slot { video, link, start, .. } => format!("Vignette{}{}{}", match video { Some(v) => format!(" (vidéo {})", v + 1), None => " (sans vidéo)".to_string() },
-                                    start.map(|t| format!(" à {}", mmss(t))).unwrap_or_default(), if link.is_some() { " →" } else { "" }),
+                                Kind::Text { text, link, .. } => trf!("Text “{}”{}", text.lines().next().unwrap_or("").chars().take(24).collect::<String>(), if link.is_some() { tr(" (clickable)") } else { "" }),
+                                Kind::Image { path, link } => trf!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { tr(" (clickable)") } else { "" }),
+                                Kind::Nav { action, text, .. } => if *action == NavAction::Goto { trf!("Button “{}”", text) } else { trf!("Button {}", action.label()) },
+                                Kind::Slot { video, link, start, .. } => trf!("Thumbnail{}{}{}", match video { Some(v) => trf!(" (video {})", v + 1), None => tr(" (no video)").to_string() }, start.map(|t| trf!(" at {}", mmss(t))).unwrap_or_default(), if link.is_some() { " →" } else { "" }),
                             };
                             let what = if it.name.is_empty() { what } else { format!("{} ({what})", it.name) };
                             let mut col = kind_color(&it.kind);
@@ -1752,7 +1752,7 @@ impl App {
                             let r = ui.horizontal(|ui| {
                                 ui.add_space(indent);
                                 let _ = ui.dnd_drag_source(egui::Id::new(("element", k, i)), DragRow::Item(k, i), |ui| ui.label(egui::RichText::new("☰").weak()))
-                                    .response.on_hover_text("Glisser pour changer l'ordre ou le calque, ou déposer sur une autre page");
+                                    .response.on_hover_text(tr("Drag to change the order or the layer, or drop on another page"));
                                 let lr = ui.selectable_label(shown && self.sel_item == Some(i), egui::RichText::new(what).color(col));
                                 if lr.clicked() || lr.secondary_clicked() { pick = Some((k, i)); }
                                 lr.context_menu(|ui| if let Some(dup) = item_menu(ui) { item_act = Some((k, i, dup)); });
@@ -1760,7 +1760,7 @@ impl App {
                             rows.push((DragRow::Item(k, i), r.rect));
                         }
                         if layered && d.layer_range(pos).is_empty() {
-                            ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new("(vide : glissez-y des éléments)").weak().italics()); });
+                            ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new(tr("(empty: drag items here)")).weak().italics()); });
                         }
                     }
                 }
@@ -1929,7 +1929,7 @@ impl App {
                 if !done { return; }
                 if !copy && cur_now == Some(p) { self.sel_item = None; }
                 self.tree_pages.insert(to, true);
-                self.notice = format!("{} vers la page « {} ».", if copy { "Copié" } else { "Déplacé" }, names.get(to).cloned().unwrap_or_default());
+                self.notice = trf!("{} to page “{}”.", if copy { tr("Copied") } else { tr("Moved") }, names.get(to).cloned().unwrap_or_default());
             }
             LayerOp::Remove(k, id, keep) => {
                 if let Some(dm) = self.model.designs.free.get_mut(k) {
@@ -2015,8 +2015,8 @@ impl App {
             self.extra_sel.clear();
             self.bump();
         }
-        let (verb, pl) = (if cut { "coupé" } else { "copié" }, if n > 1 { "s" } else { "" });
-        self.notice = format!("{n} widget{pl} {verb}{pl}.");
+        let (verb, pl) = (if cut { tr("cut") } else { tr("copied") }, if n > 1 { "s" } else { "" });
+        self.notice = trf!("{0} widget{1} {2}.", n, pl, verb, pl);
     }
 
     /// Colle les widgets du presse-papiers dans la page affichee (decales si c'est la page d'origine).
@@ -2042,7 +2042,7 @@ impl App {
         self.sel_item = added.pop();
         self.extra_sel = added;
         self.bump();
-        self.notice = "Widgets collés.".to_string();
+        self.notice = tr("Widgets pasted.").to_string();
     }
 
     pub(crate) fn undo_action(&mut self) {
@@ -2089,35 +2089,35 @@ impl App {
 fn page_bg_ui(ui: &mut egui::Ui, bg: &mut bdauthor_core::design::PageBg, pick: &mut Option<u8>) -> bool {
     use bdauthor_core::design::{PageMusic, PageVisual};
     let before = bg.clone();
-    ui.strong("Image ou vidéo");
+    ui.strong(tr("Image or video"));
     let kind = match bg.visual { PageVisual::Project => 0, PageVisual::Image(_) => 1, PageVisual::Video(..) => 2 };
     ui.horizontal(|ui| {
-        if ui.selectable_label(kind == 0, "Comme le projet").clicked() { bg.visual = PageVisual::Project; }
-        if ui.selectable_label(kind == 1, "Image").clicked() && kind != 1 { *pick = Some(0); }
-        if ui.selectable_label(kind == 2, "Vidéo").clicked() && kind != 2 { *pick = Some(1); }
+        if ui.selectable_label(kind == 0, tr("Same as the project")).clicked() { bg.visual = PageVisual::Project; }
+        if ui.selectable_label(kind == 1, tr("Image")).clicked() && kind != 1 { *pick = Some(0); }
+        if ui.selectable_label(kind == 2, tr("Video")).clicked() && kind != 2 { *pick = Some(1); }
     });
     match &mut bg.visual {
         PageVisual::Image(f) => {
-            ui.horizontal(|ui| { ui.label("Image :"); ui.text_edit_singleline(f); if ui.button("Choisir…").clicked() { *pick = Some(0); } });
+            ui.horizontal(|ui| { ui.label(tr("Image:")); ui.text_edit_singleline(f); if ui.button(tr("Choose…")).clicked() { *pick = Some(0); } });
         }
         PageVisual::Video(f, son) => {
-            ui.horizontal(|ui| { ui.label("Vidéo :"); ui.text_edit_singleline(f); if ui.button("Choisir…").clicked() { *pick = Some(1); } });
-            ui.checkbox(son, "Garder le son de la vidéo (s'il n'y a pas de musique)");
-            crate::help(ui, "Jouée en entier, en boucle ; les textes et images de la page sont posés dessus.");
+            ui.horizontal(|ui| { ui.label(tr("Video:")); ui.text_edit_singleline(f); if ui.button(tr("Choose…")).clicked() { *pick = Some(1); } });
+            ui.checkbox(son, tr("Keep the video's sound (if there is no music)"));
+            crate::help(ui, tr("Played in full, looped; the page's texts and images are placed over it."));
         }
         PageVisual::Project => {}
     }
     ui.separator();
-    ui.strong("Musique");
+    ui.strong(tr("Music"));
     let mk = match bg.music { PageMusic::Project => 0, PageMusic::Silent => 1, PageMusic::File(_) => 2 };
     ui.horizontal(|ui| {
-        if ui.selectable_label(mk == 0, "Comme le projet").clicked() { bg.music = PageMusic::Project; }
-        if ui.selectable_label(mk == 1, "Aucune").clicked() { bg.music = PageMusic::Silent; }
-        if ui.selectable_label(mk == 2, "Autre musique").clicked() && mk != 2 { *pick = Some(2); }
+        if ui.selectable_label(mk == 0, tr("Same as the project")).clicked() { bg.music = PageMusic::Project; }
+        if ui.selectable_label(mk == 1, tr("No music")).clicked() { bg.music = PageMusic::Silent; }
+        if ui.selectable_label(mk == 2, tr("Other music")).clicked() && mk != 2 { *pick = Some(2); }
     });
     if let PageMusic::File(f) = &mut bg.music {
-        ui.horizontal(|ui| { ui.label("Fichier :"); ui.text_edit_singleline(f); if ui.button("Choisir…").clicked() { *pick = Some(2); } });
+        ui.horizontal(|ui| { ui.label(tr("File:")); ui.text_edit_singleline(f); if ui.button(tr("Choose…")).clicked() { *pick = Some(2); } });
     }
-    crate::help(ui, "Chaque page au fond différent a son propre clip sur le disque (encodé une fois, puis gardé en cache).");
+    crate::help(ui, tr("Each page with a different background has its own clip on the disc (encoded once, then cached)."));
     *bg != before
 }

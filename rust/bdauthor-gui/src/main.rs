@@ -1,6 +1,7 @@
 //! bdauthor : creation de disques Blu-ray (menus HDMV) a partir de vos videos. Interface egui/eframe.
 #![cfg_attr(all(not(debug_assertions), windows), windows_subsystem = "windows")]
 
+mod i18n;
 mod editor_ui;
 mod audio_ui;
 mod subs_ui;
@@ -9,6 +10,7 @@ mod sim_ui;
 mod iso_ui;
 mod cover_ui;
 
+use crate::i18n::{tr, trf};
 use bdauthor_core::check::Kind;
 use bdauthor_core::editor::{History, PageRef};
 use bdauthor_core::palette::RgbaImage;
@@ -41,6 +43,8 @@ struct Config {
     /// sauvegarde automatique du projet (fichier a cote, jamais le projet lui-meme) toutes les `autosave_min` minutes
     autosave: bool,
     autosave_min: u32,
+    /// langue de l'interface (code : en, fr, ou un fichier du dossier `langues`)
+    lang: String,
 }
 
 /// Ecrit `text` dans un fichier temporaire voisin puis le renomme : un plantage ou un disque plein en cours d'ecriture ne laisse jamais un fichier tronque.
@@ -66,7 +70,7 @@ fn autosave_path(project: Option<&Path>) -> Option<PathBuf> {
 /// « il y a 3 min », « il y a 2 h », « il y a 4 j » pour un fichier modifie a `t`.
 fn age_text(t: std::time::SystemTime) -> String {
     let s = std::time::SystemTime::now().duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
-    if s < 90 { "il y a moins de 2 minutes".into() } else if s < 5400 { format!("il y a {} min", s / 60) } else if s < 172800 { format!("il y a {} h", s / 3600) } else { format!("il y a {} jours", s / 86400) }
+    if s < 90 { tr("less than 2 minutes ago").into() } else if s < 5400 { trf!("{} min ago", s / 60) } else if s < 172800 { trf!("{} h ago", s / 3600) } else { trf!("{} days ago", s / 86400) }
 }
 
 /// Fenetre reelle du systeme (viewport secondaire) : elle peut sortir du cadre de la fenetre principale, passer sur un autre ecran et se
@@ -137,7 +141,7 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2 };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string() };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
@@ -145,11 +149,13 @@ impl Config {
                     Some(("ffmpeg_path", v)) => c.ffmpeg_path = v.trim().to_string(),
                     Some(("autosave", v)) => c.autosave = v.trim() != "false",
                     Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
+                    Some(("lang", v)) => c.lang = v.trim().to_string(),
                     _ => {}
                 }
             }
         }
         Tools::set_custom_path(&c.ffmpeg_path);
+        crate::i18n::set_language(&c.lang);
         c
     }
     fn save(&self) {
@@ -157,7 +163,7 @@ impl Config {
             if let Some(d) = p.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
-            let _ = std::fs::write(p, format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min));
+            let _ = std::fs::write(p, format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang));
         }
     }
 }
@@ -356,7 +362,7 @@ impl App {
         if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
         match write_atomic(&p, &self.model.to_json()) {
             Ok(()) => self.autosave_ok = Some(std::time::Instant::now()),
-            Err(e) => self.notice = format!("Sauvegarde automatique impossible : {e}"),
+            Err(e) => self.notice = trf!("Auto-save failed: {}", e),
         }
     }
 
@@ -378,14 +384,14 @@ impl App {
                 self.dirty = true;
                 self.sel = if self.model.videos.is_empty() { None } else { Some(0) };
                 self.reset_editor();
-                self.notice = "Sauvegarde automatique restaurée : enregistrez le projet pour la conserver.".into();
+                self.notice = tr("Auto-save restored: save the project to keep it.").into();
             }
-            Err(e) => self.notice = format!("Sauvegarde automatique illisible : {e}"),
+            Err(e) => self.notice = trf!("Auto-save unreadable: {}", e),
         }
     }
 
     fn open(&mut self) {
-        let Some(p) = rfd::FileDialog::new().add_filter("Projet bdauthor", &["json"]).pick_file() else { return };
+        let Some(p) = rfd::FileDialog::new().add_filter(tr("bdauthor project"), &["json"]).pick_file() else { return };
         match std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| ProjectModel::from_json(&t)) {
             Ok(m) => {
                 self.model = m;
@@ -393,17 +399,17 @@ impl App {
                 self.dirty = false;
                 self.sel = if self.model.videos.is_empty() { None } else { Some(0) };
                 self.reset_editor();
-                self.notice = "Projet ouvert.".into();
+                self.notice = tr("Project opened.").into();
                 self.restore_offer = None;
                 self.check_recovery();
             }
-            Err(e) => self.notice = format!("Impossible d'ouvrir le projet : {e}"),
+            Err(e) => self.notice = trf!("Cannot open the project: {}", e),
         }
     }
 
     fn save(&mut self, as_new: bool) -> bool {
         let target = if as_new || self.path.is_none() {
-            match rfd::FileDialog::new().add_filter("Projet bdauthor", &["json"]).set_file_name("projet.json").save_file() {
+            match rfd::FileDialog::new().add_filter(tr("bdauthor project"), &["json"]).set_file_name("projet.json").save_file() {
                 Some(p) => p,
                 None => return false,
             }
@@ -418,11 +424,11 @@ impl App {
                 self.restore_offer = None;
                 self.path = Some(target);
                 self.dirty = false;
-                self.notice = "Projet enregistré.".into();
+                self.notice = tr("Project saved.").into();
                 true
             }
             Err(e) => {
-                self.notice = format!("Enregistrement impossible : {e}");
+                self.notice = trf!("Cannot save: {}", e);
                 false
             }
         }
@@ -440,7 +446,7 @@ impl App {
         let base = project.parent().map(Path::to_path_buf).unwrap_or_default();
         let problems = self.model.validate(&base);
         if !problems.is_empty() {
-            self.result = Some((false, format!("Corrigez d'abord :\n- {}", problems.join("\n- "))));
+            self.result = Some((false, trf!("Fix this first:\n- {}", problems.join("\n- "))));
             return;
         }
         // destination : dossier, image, ou les deux (reglages de l'onglet « Génération ISO »)
@@ -448,21 +454,21 @@ impl App {
         let title = self.model.title.clone();
         let (out, iso_path) = match iso_cfg.keep {
             IsoKeep::Folder | IsoKeep::Both => {
-                let Some(out) = rfd::FileDialog::new().set_title("Dossier de sortie du disque").pick_folder() else { return };
+                let Some(out) = rfd::FileDialog::new().set_title(tr("Disc output folder")).pick_folder() else { return };
                 let iso = (iso_cfg.keep == IsoKeep::Both).then(|| iso_cfg.iso_path(&base, &out));
                 (out, iso)
             }
             IsoKeep::Iso => {
                 let iso = if iso_cfg.file.trim().is_empty() {
                     let name = format!("{}.iso", title.chars().map(|c| if r#"\/:*?"<>|"#.contains(c) { '_' } else { c }).collect::<String>().trim());
-                    let Some(f) = rfd::FileDialog::new().set_title("Image ISO du disque").add_filter("Image ISO", &["iso"]).set_file_name(name).save_file() else { return };
+                    let Some(f) = rfd::FileDialog::new().set_title(tr("Disc ISO image")).add_filter(tr("ISO image"), &["iso"]).set_file_name(name).save_file() else { return };
                     f
                 } else {
                     iso_cfg.iso_path(&base, &base)
                 };
                 match temp_build_dir(&iso) {
                     Ok(d) => (d, Some(iso)),
-                    Err(e) => { self.result = Some((false, format!("Échec : {e}"))); return; }
+                    Err(e) => { self.result = Some((false, trf!("Failed: {}", e))); return; }
                 }
             }
         };
@@ -487,25 +493,22 @@ impl App {
                 // image seule : le dossier de construction temporaire ne doit pas rester apres un echec
                 if built.is_err() && iso_cfg.keep == IsoKeep::Iso { let _ = std::fs::remove_dir_all(&out); }
                 let info = built?;
-                let mut s = format!(
-                    "{} vidéo(s), {} page(s) de menu, format {}x{} à {} i/s, {:.1} Mo de flux.\n",
-                    info.videos, info.main_pages, info.format.0, info.format.1, info.format.2, info.total_stream_bytes as f64 / 1e6
-                );
-                if iso_cfg.keep != IsoKeep::Iso { s += &format!("Disque écrit dans {}\n", out.display()); }
+                let mut s = trf!("{} video(s), {} menu page(s), format {}x{} at {} fps, {} MB of stream.\n", info.videos, info.main_pages, info.format.0, info.format.1, info.format.2, format!("{:.1}", info.total_stream_bytes as f64 / 1e6));
+                if iso_cfg.keep != IsoKeep::Iso { s += &trf!("Disc written to {}\n", out.display()); }
                 if let Some(iso) = &iso_path {
                     let r = finish_build(&out, iso, &iso_cfg, &title, &cancel, env.log, env.progress).map_err(|e| e.to_string());
                     if r.is_err() && iso_cfg.keep == IsoKeep::Iso { let _ = std::fs::remove_dir_all(&out); }
-                    s += &r.map_err(|e| format!("image ISO : {e}"))?;
+                    s += &r.map_err(|e| trf!("ISO image: {}", e))?;
                     s.push('\n');
                 }
                 for (k, m) in &info.report.items {
                     match k {
-                        Kind::Error => s += &format!("ERREUR : {m}\n"),
-                        Kind::Warn => s += &format!("Avertissement : {m}\n"),
+                        Kind::Error => s += &trf!("ERROR: {}\n", m),
+                        Kind::Warn => s += &trf!("Warning: {}\n", m),
                         Kind::Info => {}
                     }
                 }
-                s += if info.report.ok() { "Vérification : aucune erreur." } else { "Vérification : ERREURS détectées." };
+                s += if info.report.ok() { tr("Verification: no errors.") } else { tr("Verification: ERRORS detected.") };
                 Ok((info.report.ok(), s))
             };
             send(Msg::Done(run()));
@@ -522,7 +525,7 @@ impl App {
                     Msg::Done(r) => {
                         self.result = Some(match r {
                             Ok(x) => x,
-                            Err(e) => (false, if e.contains("annulee") { "Construction annulée.".to_string() } else { format!("Échec : {e}") }),
+                            Err(e) => (false, if e.contains("annulee") { tr("Build cancelled.").to_string() } else { trf!("Failed: {}", e) }),
                         });
                         done = true;
                     }
@@ -536,7 +539,7 @@ impl App {
 
     fn add_videos(&mut self) {
         let Some(files) = rfd::FileDialog::new()
-            .add_filter("Vidéos", &["mp4", "mkv", "mov", "avi", "m2ts", "mts", "ts", "webm", "wmv", "flv", "m4v", "mpg", "mpeg"])
+            .add_filter(tr("Videos"), &["mp4", "mkv", "mov", "avi", "m2ts", "mts", "ts", "webm", "wmv", "flv", "m4v", "mpg", "mpeg"])
             .pick_files() else { return };
         for f in files {
             self.model.videos.push(VideoEntry::new(&clean(&f)));
@@ -569,13 +572,13 @@ impl eframe::App for App {
         if let Some(a) = self.restore_offer.clone() {
             let when = std::fs::metadata(&a).and_then(|m| m.modified()).map(age_text).unwrap_or_default();
             let mut done = false;
-            egui::Window::new("Récupération du projet").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
-                ui.label(format!("Une sauvegarde automatique plus récente que le projet a été trouvée ({when}). Le programme s'est peut-être arrêté avant l'enregistrement."));
+            egui::Window::new(tr("Project recovery")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                ui.label(trf!("An auto-save more recent than the project was found ({}). The program may have stopped before saving.", when));
                 ui.label(egui::RichText::new(clean(&a)).weak());
                 ui.horizontal(|ui| {
-                    if ui.button("Restaurer").clicked() { self.restore_autosave(&a); done = true; }
-                    if ui.button("Ignorer").on_hover_text("Garde le fichier de sauvegarde ; il sera proposé à la prochaine ouverture").clicked() { done = true; }
-                    if ui.button("Supprimer la sauvegarde").clicked() { let _ = std::fs::remove_file(&a); done = true; }
+                    if ui.button(tr("Restore")).clicked() { self.restore_autosave(&a); done = true; }
+                    if ui.button(tr("Ignore")).on_hover_text(tr("Keeps the backup file; it will be offered again at next opening")).clicked() { done = true; }
+                    if ui.button(tr("Delete the backup")).clicked() { let _ = std::fs::remove_file(&a); done = true; }
                 });
             });
             if done { self.restore_offer = None; }
@@ -591,28 +594,47 @@ impl eframe::App for App {
         }
         let mut open = self.show_config;
         // une fenetre systeme existe tant qu'on l'appelle : seulement quand elle est ouverte
-        if open { os_window(ctx, "configuration", "Configuration", [640.0, 480.0], &mut open, &mut |ui| {
+        if open { os_window(ctx, "configuration", tr("Settings"), [640.0, 480.0], &mut open, &mut |ui| {
             let before = self.cfg.clone();
-            ui.checkbox(&mut self.cfg.adaptive_preview, "Ajuster le rafraîchissement de l'aperçu pendant le déplacement");
-            ui.label(format!("Dernier rendu de l'aperçu : {:.1} ms", self.render_ms));
-            crate::help(ui, "Activé : l'aperçu est redessiné au rythme que votre machine peut tenir (le cadre suit toujours la souris sans retard). Désactivé : l'aperçu est redessiné à chaque image, ce qui est plus fluide sur une machine rapide mais peut ralentir sur une page chargée.");
+            ui.horizontal(|ui| {
+                ui.label("Langue / Language :");
+                let langs = crate::i18n::available();
+                let cur = langs.iter().find(|(c, _)| *c == self.cfg.lang).map_or_else(|| self.cfg.lang.clone(), |(_, n)| n.clone());
+                egui::ComboBox::from_id_salt("interface_language").selected_text(cur).show_ui(ui, |ui| {
+                    for (c, n) in &langs {
+                        if ui.selectable_label(self.cfg.lang == *c, n).clicked() { self.cfg.lang = c.clone(); }
+                    }
+                });
+                if ui.button(tr("Create a translation…")).on_hover_text(tr("Saves a file with all the texts of the interface, to translate into another language. Put the translated file in the “langues” folder next to the program: the language then appears in this list.")).clicked() {
+                    let mut dlg = rfd::FileDialog::new().add_filter("JSON", &["json"]).set_file_name("langue.json");
+                    if let Some(d) = crate::i18n::user_dir() { let _ = std::fs::create_dir_all(&d); dlg = dlg.set_directory(d); }
+                    if let Some(f) = dlg.save_file() {
+                        let name = f.file_stem().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                        let _ = std::fs::write(f, crate::i18n::template(&name));
+                    }
+                }
+            });
+            ui.separator();
+            ui.checkbox(&mut self.cfg.adaptive_preview, tr("Adjust preview refresh while dragging"));
+            ui.label(trf!("Last preview render: {} ms", format!("{:.1}", self.render_ms)));
+            crate::help(ui, tr("On: the preview is redrawn at the pace your machine can sustain (the frame always follows the mouse without delay). Off: the preview is redrawn on every frame, which is smoother on a fast machine but may slow down on a busy page."));
             ui.separator();
             ui.horizontal(|ui| {
-                ui.checkbox(&mut self.cfg.autosave, "Sauvegarde automatique du projet toutes les");
+                ui.checkbox(&mut self.cfg.autosave, tr("Automatic project backup every"));
                 ui.add_enabled(self.cfg.autosave, egui::DragValue::new(&mut self.cfg.autosave_min).range(1..=60).suffix(" min"));
             });
-            crate::help(ui, "Écrite dans un fichier à côté du projet (nom.autosave.json), seulement si le projet a changé ; le projet lui-même n'est modifié que par « Enregistrer ». Proposée à la restauration après un arrêt imprévu.");
+            crate::help(ui, tr("Written to a file next to the project (name.autosave.json), only if the project has changed; the project itself is only modified by “Save”. Offered for restoration after an unexpected stop."));
             ui.separator();
-            ui.label("Chemin de ffmpeg (dossier contenant ffmpeg et ffprobe, ou ffmpeg lui-même) :");
+            ui.label(tr("ffmpeg path (folder containing ffmpeg and ffprobe, or ffmpeg itself):"));
             ui.horizontal(|ui| {
-                ui.add(egui::TextEdit::singleline(&mut self.cfg.ffmpeg_path).hint_text("(automatique : à côté du programme, puis PATH)").desired_width(320.0));
-                if ui.button("Dossier…").clicked() {
-                    if let Some(d) = rfd::FileDialog::new().set_title("Dossier de ffmpeg").pick_folder() { self.cfg.ffmpeg_path = clean(&d); }
+                ui.add(egui::TextEdit::singleline(&mut self.cfg.ffmpeg_path).hint_text(tr("(automatic: next to the program, then PATH)")).desired_width(320.0));
+                if ui.button(tr("Folder…")).clicked() {
+                    if let Some(d) = rfd::FileDialog::new().set_title(tr("ffmpeg folder")).pick_folder() { self.cfg.ffmpeg_path = clean(&d); }
                 }
-                if ui.button("Fichier…").clicked() {
+                if ui.button(tr("File…")).clicked() {
                     if let Some(f) = rfd::FileDialog::new().set_title("ffmpeg").pick_file() { self.cfg.ffmpeg_path = clean(&f); }
                 }
-                if !self.cfg.ffmpeg_path.is_empty() && ui.button("Auto").clicked() { self.cfg.ffmpeg_path.clear(); }
+                if !self.cfg.ffmpeg_path.is_empty() && ui.button(tr("Auto")).clicked() { self.cfg.ffmpeg_path.clear(); }
             });
             // la detection lance ffmpeg : refaite seulement quand le chemin change (resultat gardé en memoire d'interface)
             let key = egui::Id::new("ffmpeg_status");
@@ -627,12 +649,13 @@ impl eframe::App for App {
                 }
             };
             match found {
-                Some(p) => { ui.label(egui::RichText::new(format!("Utilisé : {p}")).weak()); }
-                None => { ui.colored_label(egui::Color32::from_rgb(220, 90, 90), "ffmpeg/ffprobe introuvables avec ce réglage."); }
+                Some(p) => { ui.label(egui::RichText::new(trf!("Used: {}", p)).weak()); }
+                None => { ui.colored_label(egui::Color32::from_rgb(220, 90, 90), tr("ffmpeg/ffprobe not found with this setting.")); }
             }
             ui.separator();
-            if ui.checkbox(&mut self.model.cache, "Réutiliser les vidéos déjà encodées (cache)").changed() { self.dirty = true; }
-            ui.label(egui::RichText::new("Réglage enregistré avec le projet.").weak());
+            if ui.checkbox(&mut self.model.cache, tr("Reuse already-encoded videos (cache)")).changed() { self.dirty = true; }
+            ui.label(egui::RichText::new(tr("Setting saved with the project.")).weak());
+            if self.cfg.lang != before.lang { crate::i18n::set_language(&self.cfg.lang); }
             if self.cfg != before { Tools::set_custom_path(&self.cfg.ffmpeg_path); self.cfg.save(); }
         }); }
         self.show_config = open;
@@ -648,13 +671,13 @@ impl eframe::App for App {
             let bg_note = self.bg_note(&bgv, &mus);
             let tab = &mut self.project_tab;
             let m = &mut self.model;
-            os_window(ctx, "projet", "Projet", [720.0, 600.0], &mut open, &mut |ui| {
+            os_window(ctx, "projet", tr("Project"), [720.0, 600.0], &mut open, &mut |ui| {
                 ui.horizontal(|ui| {
-                    ui.selectable_value(tab, 0, "Général");
-                    ui.selectable_value(tab, 1, "Style des boutons");
-                    ui.selectable_value(tab, 4, "Style des pages");
-                    ui.selectable_value(tab, 2, "Langues des sous-titres");
-                    ui.selectable_value(tab, 3, "Génération ISO");
+                    ui.selectable_value(tab, 0, tr("General"));
+                    ui.selectable_value(tab, 1, tr("Button style"));
+                    ui.selectable_value(tab, 4, tr("Page style"));
+                    ui.selectable_value(tab, 2, tr("Subtitle languages"));
+                    ui.selectable_value(tab, 3, tr("ISO generation"));
                 });
                 ui.separator();
                 ui.add_enabled_ui(!busy, |ui| match *tab {
@@ -662,37 +685,37 @@ impl eframe::App for App {
                         egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
                             style_changed = style_ui::style_ui(ui, &mut m.designs.style, "projet", &mut pick_sound);
                         });
-                        crate::help(ui, "S'applique à tous les boutons du projet, sauf ceux qui ont leur propre apparence (inspecteur).");
+                        crate::help(ui, tr("Applies to all buttons of the project, except those with their own appearance (inspector)."));
                     }
                     4 => {
                         egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
-                            ui.heading("Fond et musique des menus");
+                            ui.heading(tr("Menu background and music"));
                             ui.horizontal(|ui| {
-                                ui.label("Image de fond :");
-                                changed |= ui.add(egui::TextEdit::singleline(&mut m.bg).hint_text("(fond généré automatiquement)")).changed();
-                                if ui.button("Choisir…").clicked() {
-                                    if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
+                                ui.label(tr("Background image:"));
+                                changed |= ui.add(egui::TextEdit::singleline(&mut m.bg).hint_text(tr("(automatically generated background)"))).changed();
+                                if ui.button(tr("Choose…")).clicked() {
+                                    if let Some(f) = rfd::FileDialog::new().add_filter(tr("Images"), &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                                         m.bg = clean(&f);
                                         changed = true;
                                     }
                                 }
-                                if ui.button("Aucune").clicked() { m.bg.clear(); changed = true; }
+                                if ui.button(tr("No image")).clicked() { m.bg.clear(); changed = true; }
                             });
                             ui.horizontal(|ui| {
-                                ui.label("Durée du fond :");
+                                ui.label(tr("Background duration:"));
                                 changed |= ui.add(egui::DragValue::new(&mut m.bg_seconds).speed(0.5).range(1.0..=600.0).suffix(" s")).changed();
                             });
-                            changed |= file_row(ui, "Vidéo de fond (animée) :", &mut m.bg_video, "(aucune)", "Vidéos", VIDEO_EXTS);
+                            changed |= file_row(ui, tr("Background video (animated):"), &mut m.bg_video, tr("(none)"), tr("Videos"), VIDEO_EXTS);
                             if !m.bg_video.is_empty() {
-                                changed |= ui.checkbox(&mut m.bg_video_audio, "Garder le son de la vidéo de fond (s'il n'y a pas de musique)").changed();
+                                changed |= ui.checkbox(&mut m.bg_video_audio, tr("Keep the background video's sound (if there is no music)")).changed();
                             }
-                            changed |= file_row(ui, "Musique des menus :", &mut m.music, "(aucune)", "Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]);
+                            changed |= file_row(ui, tr("Menu music:"), &mut m.music, tr("(none)"), tr("Audio"), &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]);
                             if !m.bg_video.is_empty() || !m.music.is_empty() {
-                                crate::help(ui, "Le fond tourne en boucle : il dure autant que la vidéo de fond ou, sans vidéo, que la musique. Les textes et images des pages personnalisées sont posés sur la vidéo.");
+                                crate::help(ui, tr("The background loops: it lasts as long as the background video or, with no video, the music. Texts and images of custom pages are placed over the video."));
                                 if let Some(n) = &bg_note { ui.label(egui::RichText::new(n.as_str()).weak()); }
                             }
-                            changed |= ui.checkbox(&mut m.loop_menu, "Rejouer le fond en boucle (sinon : arrêt sur la dernière image)").changed();
-                            crate::help(ui, "Valeurs par défaut du projet : chaque page de la Mise en page peut avoir son propre fond, sa musique et ses animations.");
+                            changed |= ui.checkbox(&mut m.loop_menu, tr("Loop the background (otherwise: stop on the last frame)")).changed();
+                            crate::help(ui, tr("Project defaults: each Layout page can have its own background, music and animations."));
                         });
                     }
                     2 => {
@@ -707,24 +730,24 @@ impl eframe::App for App {
                         });
                     }
                     _ => {
-                        ui.heading("Disque");
+                        ui.heading(tr("Disc"));
                         ui.horizontal(|ui| {
-                            ui.label("Titre du disque :");
+                            ui.label(tr("Disc title:"));
                             changed |= ui.text_edit_singleline(&mut m.title).changed();
                         });
                         ui.horizontal(|ui| {
-                            ui.label("Langue audio par défaut (3 lettres) :").on_hover_text("Langue de la piste audio des vidéos dont les pistes audio ne sont pas choisies");
+                            ui.label(tr("Default audio language (3 letters):")).on_hover_text(tr("Language of the audio track of videos whose audio tracks are not chosen"));
                             changed |= ui.add(egui::TextEdit::singleline(&mut m.lang).desired_width(50.0)).changed();
                         });
-                        changed |= file_row(ui, "Séquence d'ouverture :", &mut m.intro, "(aucune : le menu s'ouvre directement)", "Vidéos", VIDEO_EXTS);
-                        changed |= ui.checkbox(&mut m.menu_1080, "Menu en 1920x1080 (sinon : taille de la vidéo)").changed();
+                        changed |= file_row(ui, tr("Opening sequence:"), &mut m.intro, tr("(none: the menu opens directly)"), tr("Videos"), VIDEO_EXTS);
+                        changed |= ui.checkbox(&mut m.menu_1080, tr("Menu in 1920x1080 (otherwise: video size)")).changed();
                         ui.separator();
-                        ui.heading("Encodage");
+                        ui.heading(tr("Encoding"));
                         ui.horizontal(|ui| {
-                            ui.label("Qualité x264 (CRF, plus petit = meilleur) :");
+                            ui.label(tr("x264 quality (CRF, lower = better):"));
                             changed |= ui.add(egui::Slider::new(&mut m.crf, 0..=51)).changed();
                         });
-                        egui::ComboBox::from_label("Préréglage d'encodage (plus lent = plus compact)")
+                        egui::ComboBox::from_label(tr("Encoding preset (slower = more compact)"))
                             .selected_text(m.preset.clone())
                             .show_ui(ui, |ui| {
                                 for p in PRESETS {
@@ -735,7 +758,7 @@ impl eframe::App for App {
                 });
             });
             if let Some(k) = pick_sound {
-                if let Some(f) = rfd::FileDialog::new().add_filter("Sons", &style_ui::SOUND_EXTS).pick_file() {
+                if let Some(f) = rfd::FileDialog::new().add_filter(tr("Sounds"), &style_ui::SOUND_EXTS).pick_file() {
                     let rel = self.relative(&f);
                     let st = &mut self.model.designs.style;
                     if k == 1 { st.sound_select = rel; } else { st.sound_activate = rel; }
@@ -744,7 +767,7 @@ impl eframe::App for App {
             }
             if pick_iso {
                 let name = format!("{}.iso", self.model.title.chars().map(|c| if r#"\/:*?"<>|"#.contains(c) { '_' } else { c }).collect::<String>().trim());
-                if let Some(f) = rfd::FileDialog::new().set_title("Image ISO du disque").add_filter("Image ISO", &["iso"]).set_file_name(name).save_file() {
+                if let Some(f) = rfd::FileDialog::new().set_title(tr("Disc ISO image")).add_filter(tr("ISO image"), &["iso"]).set_file_name(name).save_file() {
                     self.model.iso.file = self.relative(&f);
                     changed = true;
                 }
@@ -757,39 +780,39 @@ impl eframe::App for App {
 
         egui::TopBottomPanel::top("barre").show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.menu_button("Fichier", |ui| {
+                ui.menu_button(tr("File"), |ui| {
                     ui.add_enabled_ui(!busy, |ui| {
-                        if ui.button("Nouveau").clicked() { self.new_project(); ui.close_menu(); }
-                        if ui.button("Ouvrir…").clicked() { ui.close_menu(); self.open(); }
-                        if ui.button("Enregistrer").clicked() { ui.close_menu(); self.save(false); }
-                        if ui.button("Enregistrer sous…").clicked() { ui.close_menu(); self.save(true); }
+                        if ui.button(tr("New")).clicked() { self.new_project(); ui.close_menu(); }
+                        if ui.button(tr("Open…")).clicked() { ui.close_menu(); self.open(); }
+                        if ui.button(tr("Save")).clicked() { ui.close_menu(); self.save(false); }
+                        if ui.button(tr("Save as…")).clicked() { ui.close_menu(); self.save(true); }
                     });
                     ui.separator();
-                    if ui.button("Configuration…").clicked() { self.show_config = true; ui.close_menu(); }
+                    if ui.button(tr("Settings…")).clicked() { self.show_config = true; ui.close_menu(); }
                 });
                 // annuler / retablir : modifications de la mise en page
-                ui.menu_button("Édition", |ui| {
+                ui.menu_button(tr("Edit"), |ui| {
                     let edit = !busy && self.mode == Mode::MiseEnPage;
-                    if ui.add_enabled(edit && self.history.can_undo(), egui::Button::new("↶ Annuler").shortcut_text("Ctrl+Z")).clicked() { self.undo_action(); ui.close_menu(); }
-                    if ui.add_enabled(edit && self.history.can_redo(), egui::Button::new("↷ Rétablir").shortcut_text("Ctrl+Y")).clicked() { self.redo_action(); ui.close_menu(); }
+                    if ui.add_enabled(edit && self.history.can_undo(), egui::Button::new(tr("↶ Undo")).shortcut_text("Ctrl+Z")).clicked() { self.undo_action(); ui.close_menu(); }
+                    if ui.add_enabled(edit && self.history.can_redo(), egui::Button::new(tr("↷ Redo")).shortcut_text("Ctrl+Y")).clicked() { self.redo_action(); ui.close_menu(); }
                     if self.mode != Mode::MiseEnPage {
-                        ui.label(egui::RichText::new("Concerne l'onglet « Mise en page »").weak());
+                        ui.label(egui::RichText::new(tr("Applies to the “Layout” tab")).weak());
                     }
                     ui.separator();
-                    if ui.button("Projet…").on_hover_text("Disque et encodage, style des boutons, langues, génération ISO").clicked() {
+                    if ui.button(tr("Project…")).on_hover_text(tr("Disc and encoding, button style, languages, ISO generation")).clicked() {
                         self.show_project = true;
                         ui.close_menu();
                     }
                 });
                 ui.separator();
-                ui.selectable_value(&mut self.mode, Mode::Projet, "Vidéos");
-                ui.selectable_value(&mut self.mode, Mode::MiseEnPage, "Mise en page");
-                ui.selectable_value(&mut self.mode, Mode::Jaquette, "Jaquette");
+                ui.selectable_value(&mut self.mode, Mode::Projet, tr("Videos"));
+                ui.selectable_value(&mut self.mode, Mode::MiseEnPage, tr("Layout"));
+                ui.selectable_value(&mut self.mode, Mode::Jaquette, tr("Cover"));
                 ui.separator();
-                let name = self.path.as_ref().map(|p| clean(p)).unwrap_or_else(|| "(projet non enregistré)".into());
+                let name = self.path.as_ref().map(|p| clean(p)).unwrap_or_else(|| tr("(project not saved)").into());
                 ui.label(format!("{}{}", name, if self.dirty { " *" } else { "" }));
                 if let (true, Some(t)) = (self.dirty, self.autosave_ok) {
-                    ui.label(egui::RichText::new(format!("(sauvegarde auto il y a {} min)", t.elapsed().as_secs() / 60)).weak());
+                    ui.label(egui::RichText::new(trf!("(auto-save {} min ago)", t.elapsed().as_secs() / 60)).weak());
                 }
             });
             if !self.notice.is_empty() {
@@ -801,9 +824,9 @@ impl eframe::App for App {
         if self.mode != Mode::Jaquette || busy { egui::TopBottomPanel::bottom("construction").default_height(160.0).min_height(60.0).resizable(true).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if busy {
-                    if ui.button("Annuler").clicked() { self.cancel.store(true, Ordering::Relaxed); }
+                    if ui.button(tr("Cancel")).clicked() { self.cancel.store(true, Ordering::Relaxed); }
                     ui.add(egui::ProgressBar::new(self.progress).show_percentage().desired_width(300.0));
-                } else if ui.add_enabled(!self.model.videos.is_empty(), egui::Button::new("Construire le disque…")).clicked() {
+                } else if ui.add_enabled(!self.model.videos.is_empty(), egui::Button::new(tr("Build the disc…"))).clicked() {
                     self.start_build(ctx);
                 }
             });
@@ -840,9 +863,9 @@ impl eframe::App for App {
             return;
         }
         egui::SidePanel::left("videos").resizable(true).default_width(320.0).show(ctx, |ui| {
-            ui.heading("Vidéos");
+            ui.heading(tr("Videos"));
             ui.add_enabled_ui(!busy, |ui| {
-                if ui.button("Ajouter des vidéos…").clicked() { self.add_videos(); }
+                if ui.button(tr("Add videos…")).clicked() { self.add_videos(); }
             });
             ui.separator();
             // (rang, Some(destination)) : deplacement par glisser-deposer ; (rang, None) : retrait
@@ -858,20 +881,20 @@ impl eframe::App for App {
                             ui.label(egui::RichText::new("☰").weak());
                         } else {
                             let _ = ui.dnd_drag_source(egui::Id::new(("video", i)), VideoDrag(i), |ui| ui.label(egui::RichText::new("☰").strong()))
-                                .response.on_hover_text("Glisser pour changer l'ordre des vidéos");
+                                .response.on_hover_text(tr("Drag to change the order of the videos"));
                         }
                         // les boutons gardent leur place : le nom est raccourci pour tenir dans la largeur du panneau
                         let max_chars = ((ui.available_width() - 62.0).max(60.0) / 7.0) as usize;
                         let full = match self.durations.get(&v.file) {
                             Some(d) => format!("{:>2}. {} ({})", i + 1, label, duration_text(*d)),
-                            None if self.probe_failed.contains(&v.file) => format!("{:>2}. {} (inconnue)", i + 1, label),
+                            None if self.probe_failed.contains(&v.file) => trf!("{}. {} (unknown)", format!("{:>2}", i + 1), label),
                             None => format!("{:>2}. {}", i + 1, label),
                         };
                         let shown = if full.chars().count() > max_chars { format!("{}…", full.chars().take(max_chars.saturating_sub(1)).collect::<String>()) } else { full.clone() };
                         if ui.selectable_label(self.sel == Some(i), shown).on_hover_text(format!("{full}\n{}", v.file)).clicked() { self.sel = Some(i); }
                         ui.add_enabled_ui(!busy, |ui| {
-                            if delete_button(ui, "Retirer cette vidéo") { ask = Some(i); }
-                            if ui.small_button("↻").on_hover_text("Recharger cette vidéo (relire la durée, les pistes et les vignettes)").clicked() { reload = Some(v.file.clone()); }
+                            if delete_button(ui, tr("Remove this video")) { ask = Some(i); }
+                            if ui.small_button("↻").on_hover_text(tr("Reload this video (re-read the duration, tracks and thumbnails)")).clicked() { reload = Some(v.file.clone()); }
                         });
                     }).response;
                     rows.push(r.rect);
@@ -913,16 +936,16 @@ impl eframe::App for App {
                         let name = if v.title.is_empty() { Path::new(&v.file).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default() } else { v.title.clone() };
                         let (n_ch, n_sub, n_aud) = (v.chapters.len(), v.subs.len(), v.audio.len());
                         let mut answer: Option<bool> = None;
-                        egui::Window::new("Retirer la vidéo ?").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
-                            ui.label(format!("« {name} » va être retirée du projet."));
+                        egui::Window::new(tr("Remove the video?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                            ui.label(trf!("“{}” will be removed from the project.", name));
                             if n_ch + n_sub + n_aud > 0 {
-                                ui.label(format!("Ses réglages seront perdus : {n_ch} chapitre(s), {n_sub} piste(s) de sous-titres, {n_aud} piste(s) audio."));
+                                ui.label(trf!("Its settings will be lost: {} chapter(s), {} subtitle track(s), {} audio track(s).", n_ch, n_sub, n_aud));
                             }
-                            ui.label(egui::RichText::new("Le fichier vidéo n'est pas supprimé du disque.").weak());
+                            ui.label(egui::RichText::new(tr("The video file is not deleted from disk.")).weak());
                             ui.add_space(6.0);
                             ui.horizontal(|ui| {
-                                if ui.button("Retirer").clicked() { answer = Some(true); }
-                                if ui.button("Annuler").clicked() { answer = Some(false); }
+                                if ui.button(tr("Remove")).clicked() { answer = Some(true); }
+                                if ui.button(tr("Cancel")).clicked() { answer = Some(false); }
                             });
                         });
                         if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { answer = Some(false); }
@@ -962,15 +985,15 @@ impl eframe::App for App {
                     // duree de la video selectionnee (si connue) : borne des instants de chapitre et de vignette
                     let max_t: f64 = self.sel.and_then(|i| self.model.videos.get(i)).and_then(|v| self.durations.get(&v.file).copied()).filter(|d| *d > 0.0).unwrap_or(1.0e6);
                     if let Some(v) = self.sel.and_then(|i| self.model.videos.get_mut(i)) {
-                        ui.heading("Vidéo sélectionnée");
+                        ui.heading(tr("Selected video"));
                         ui.label(egui::RichText::new(&v.file).weak());
                         ui.horizontal(|ui| {
-                            ui.label("Titre dans le menu :");
+                            ui.label(tr("Title in the menu:"));
                             changed |= ui.text_edit_singleline(&mut v.title).changed();
                         });
                         ui.horizontal(|ui| {
                             let mut on = v.thumb_s.is_some();
-                            if ui.checkbox(&mut on, "Vignette alternative au timing :").on_hover_text("Décochée : image prise automatiquement. Cochée (ou en modifiant la valeur) : image prise à cet instant de la vidéo.").changed() {
+                            if ui.checkbox(&mut on, tr("Alternative thumbnail at time:")).on_hover_text(tr("Unchecked: image taken automatically. Checked (or by changing the value): image taken at this moment of the video.")).changed() {
                                 v.thumb_s = if on { Some(v.thumb_s.unwrap_or(1.0)) } else { None };
                                 changed = true;
                             }
@@ -982,29 +1005,29 @@ impl eframe::App for App {
                             }
                         });
                         ui.separator();
-                        ui.label("Repères de chapitre (touches suivant / précédent de la télécommande, vignettes de chapitre, pages de départ) :");
+                        ui.label(tr("Chapter marks (next / previous keys of the remote control, chapter thumbnails, start pages):"));
                         if v.auto_s.is_some() {
                             // ancienne option (repères automatiques) : plus proposée, mais un projet existant peut encore l'utiliser
                             ui.horizontal(|ui| {
-                                ui.colored_label(egui::Color32::from_rgb(230, 170, 60), "Ce projet utilise d'anciens repères automatiques.");
-                                if ui.small_button("Les retirer").clicked() { v.auto_s = None; changed = true; }
+                                ui.colored_label(egui::Color32::from_rgb(230, 170, 60), tr("This project uses old automatic marks."));
+                                if ui.small_button(tr("Remove them")).clicked() { v.auto_s = None; changed = true; }
                             });
                         }
-                        crate::help(ui, "Une vignette de chapitre (page) peut se lier à l'un d'eux, ou en créer un.");
+                        crate::help(ui, tr("A chapter thumbnail (page) can be linked to one of them, or create one."));
                         let mut del = None;
                         for (k, c) in v.chapters.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
                                 changed |= ui.add(egui::DragValue::new(&mut c.t).speed(1.0).range(0.0..=max_t).suffix(" s")).changed();
-                                if max_t < 1.0e6 { ui.label(egui::RichText::new(format!("/ {}", duration_text(max_t))).weak()).on_hover_text("Durée totale de la vidéo"); }
-                                changed |= ui.add(egui::TextEdit::singleline(&mut c.title).hint_text("nom (facultatif)")).changed();
+                                if max_t < 1.0e6 { ui.label(egui::RichText::new(format!("/ {}", duration_text(max_t))).weak()).on_hover_text(tr("Total duration of the video")); }
+                                changed |= ui.add(egui::TextEdit::singleline(&mut c.title).hint_text(tr("name (optional)"))).changed();
                                 if let Some(n) = chapter_uses.iter().find(|u| u.0 == c.id).map(|u| u.1).filter(|n| *n > 0) {
-                                    ui.label(egui::RichText::new(format!("{n} vignette{}", if n > 1 { "s" } else { "" })).weak()).on_hover_text("Vignettes de pages liées à ce chapitre : elles suivent son instant. Si vous retirez le chapitre, elles gardent leur instant.");
+                                    ui.label(egui::RichText::new(trf!("{} thumbnail{}", n, if n > 1 { "s" } else { "" })).weak()).on_hover_text(tr("Page thumbnails linked to this chapter: they follow its time. If you remove the chapter, they keep their time."));
                                 }
-                                if ui.small_button("Retirer").clicked() { del = Some(k); }
+                                if ui.small_button(tr("Remove")).clicked() { del = Some(k); }
                             });
                         }
                         if let Some(k) = del { v.chapters.remove(k); changed = true; }
-                        if ui.button("Ajouter un chapitre").clicked() {
+                        if ui.button(tr("Add a chapter")).clicked() {
                             let t = v.chapters.iter().map(|c| c.t).fold(f64::NEG_INFINITY, f64::max);
                             let t = if t.is_finite() { (t + 60.0).min(max_t) } else { 0.0 };
                             let id = v.next_chapter_id();
@@ -1024,7 +1047,7 @@ impl eframe::App for App {
                         }
                         ui.separator();
                     } else {
-                        ui.label("Ajoutez des vidéos puis sélectionnez-en une pour régler son titre, sa vignette et ses chapitres.");
+                        ui.label(tr("Add videos then select one to set its title, thumbnail and chapters."));
                         ui.separator();
                     }
 
@@ -1048,13 +1071,13 @@ fn file_row(ui: &mut egui::Ui, label: &str, path: &mut String, hint: &str, filte
     ui.horizontal(|ui| {
         ui.label(label);
         changed |= ui.add(egui::TextEdit::singleline(path).hint_text(hint)).changed();
-        if ui.button("Choisir…").clicked() {
+        if ui.button(tr("Choose…")).clicked() {
             if let Some(f) = rfd::FileDialog::new().add_filter(filter, exts).pick_file() {
                 *path = clean(&f);
                 changed = true;
             }
         }
-        if !path.is_empty() && ui.button("Aucun").clicked() {
+        if !path.is_empty() && ui.button(tr("None")).clicked() {
             path.clear();
             changed = true;
         }
@@ -1064,7 +1087,7 @@ fn file_row(ui: &mut egui::Ui, label: &str, path: &mut String, hint: &str, filte
 
 fn main() -> eframe::Result<()> {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([1150.0, 760.0]).with_title("bdauthor — disques Blu-ray"),
+        viewport: egui::ViewportBuilder::default().with_inner_size([1150.0, 760.0]).with_title(tr("bdauthor — Blu-ray discs")),
         ..Default::default()
     };
     eframe::run_native("bdauthor", options, Box::new(|_cc| Ok(Box::new(App::default()))))

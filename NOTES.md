@@ -731,3 +731,14 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 ## Export 140 — confirmation avant de retirer une vidéo
 - La croix de la liste des vidéos ouvre une fenêtre « Retirer la vidéo ? » (nom, nombre de chapitres, pistes de sous-titres et audio perdus, rappel que le fichier n'est pas supprimé du disque) avec Retirer / Annuler ; Échap annule.
 - GUI uniquement (`main.rs`, champ `confirm_remove`), à compiler avec recompiler.bat.
+
+## Export 141 — traduction de l'interface (i18n), phase 1 à 2
+- Les textes du code sont en **anglais** et servent de clés : `tr("Text")` (type `&'static str`, utilisable partout où un littéral l'est) et `trf!("{} min ago", n)` pour les textes avec valeurs (`{}` dans l'ordre, `{0}`, `{1}`… pour changer l'ordre dans une langue).
+- `bdauthor-gui/src/i18n.rs` : table anglais -> langue, `set_language`, `available`, `template`, `num` (virgule décimale en français). Texte sans traduction = texte anglais affiché tel quel.
+- `bdauthor-gui/lang/fr.json` (intégré au programme par `include_str!`) : traduction française, générée à partir des anciens textes français (661 clés).
+- Autres langues sans recompiler : un fichier `<code>.json` dans le dossier `langues` à côté du programme (clé `"_name"` = nom affiché). Configuration > « Créer une traduction… » écrit le modèle (toutes les clés, valeurs vides).
+- Langue enregistrée dans `config.txt` (`lang=fr` par défaut) ; liste « Langue / Language » dans Configuration, effet immédiat.
+- Convertis : main, editor_ui, cover_ui, subs_ui, style_ui, iso_ui, audio_ui, sim_ui. Noms de copies : « (copie) » ou « (copy) » reconnus. Noms de zones de la jaquette (fournis par le cœur en français) traduits par `zone_label`.
+- **Reste en français** (cœur) : messages de `check`, journal de construction, noms de langues (`default_language_name`), formats de jaquette, étiquettes d'actions de navigation, libellés d'encodage. Phase 3 éventuelle.
+- Limites : écritures de droite à gauche non gérées par egui ; polices à ajouter pour les écritures non latines.
+- GUI uniquement, à compiler avec recompiler.bat (non compilé dans le conteneur ; `i18n.rs` seul compilé et testé).

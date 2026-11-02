@@ -1,5 +1,6 @@
 //! Onglet « Jaquette » : feuille a deplier du boitier (dos, tranche, face) et etiquette de disque ; edition a la souris,
 //! annuler / refaire, champs automatiques et export PDF en arriere-plan.
+use crate::i18n::{tr, trf};
 use crate::App;
 use bdauthor_core::cover::{LineArrow, LineStyle, ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
 use bdauthor_core::design::Align;
@@ -111,8 +112,8 @@ enum CoverOp {
 fn item_label(it: &CoverItem, i: usize) -> String {
     if !it.name.is_empty() { return format!("{}. {}", i + 1, it.name); }
     match &it.kind {
-        CoverKind::Text { text, .. } => format!("{}. Texte « {} »", i + 1, text.lines().next().unwrap_or("").chars().take(24).collect::<String>()),
-        CoverKind::Image { path } => format!("{}. Image {}", i + 1, std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+        CoverKind::Text { text, .. } => trf!("{}. Text “{}”", i + 1, text.lines().next().unwrap_or("").chars().take(24).collect::<String>()),
+        CoverKind::Image { path } => trf!("{}. Image {}", i + 1, std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
         CoverKind::Shape { shape, .. } => format!("{}. {}", i + 1, shape.label()),
     }
 }
@@ -135,60 +136,60 @@ const IMG_EXT: [&str; 6] = ["png", "jpg", "jpeg", "bmp", "svg", "svgz"];
 
 fn cover_format(ui: &mut egui::Ui, c: &mut Cover) -> bool {
     let mut changed = false;
-    egui::CollapsingHeader::new("Format et impression").default_open(true).show(ui, |ui| {
-        egui::ComboBox::from_id_salt("jaquette_format").selected_text("Choisir un format usuel…").show_ui(ui, |ui| {
+    egui::CollapsingHeader::new(tr("Format and printing")).default_open(true).show(ui, |ui| {
+        egui::ComboBox::from_id_salt("jaquette_format").selected_text(tr("Choose a standard format…")).show_ui(ui, |ui| {
             for (k, f) in FORMATS.iter().enumerate() {
                 if ui.selectable_label(false, f.0).clicked() { c.set_format(k); changed = true; }
             }
         });
         egui::Grid::new("jaquette_dims").num_columns(4).show(ui, |ui| {
-            ui.label("Dos / face"); changed |= ui.add(egui::DragValue::new(&mut c.face_mm).range(20.0..=400.0).speed(0.5).suffix(" mm")).changed();
-            ui.label("Hauteur"); changed |= ui.add(egui::DragValue::new(&mut c.height_mm).range(20.0..=400.0).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("Back / front")); changed |= ui.add(egui::DragValue::new(&mut c.face_mm).range(20.0..=400.0).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("Height")); changed |= ui.add(egui::DragValue::new(&mut c.height_mm).range(20.0..=400.0).speed(0.5).suffix(" mm")).changed();
             ui.end_row();
-            ui.label("Tranche"); changed |= ui.add(egui::DragValue::new(&mut c.spine_mm).range(0.0..=100.0).speed(0.25).suffix(" mm")).changed();
-            ui.label("Fond perdu"); changed |= ui.add(egui::DragValue::new(&mut c.bleed_mm).range(0.0..=20.0).speed(0.25).suffix(" mm")).changed();
+            ui.label(tr("Spine")); changed |= ui.add(egui::DragValue::new(&mut c.spine_mm).range(0.0..=100.0).speed(0.25).suffix(" mm")).changed();
+            ui.label(tr("Bleed")); changed |= ui.add(egui::DragValue::new(&mut c.bleed_mm).range(0.0..=20.0).speed(0.25).suffix(" mm")).changed();
             ui.end_row();
-            ui.label("Résolution"); changed |= ui.add(egui::DragValue::new(&mut c.dpi).range(72..=600).speed(5.0).suffix(" dpi")).changed();
+            ui.label(tr("Resolution")); changed |= ui.add(egui::DragValue::new(&mut c.dpi).range(72..=600).speed(5.0).suffix(" dpi")).changed();
             ui.end_row();
         });
         let (sw, sh) = c.sheet_mm();
-        ui.label(egui::RichText::new(format!("Feuille avec fond perdu : {sw:.1} × {sh:.1} mm ({} × {} px à {} dpi)", (sw / 25.4 * c.dpi as f64).round(), (sh / 25.4 * c.dpi as f64).round(), c.dpi)).weak());
-        changed |= ui.checkbox(&mut c.marks, "Traits de coupe et de pliage (page agrandie de 10 mm de chaque côté)").changed();
+        ui.label(egui::RichText::new(trf!("Sheet with bleed: {} × {} mm ({} × {} px at {} dpi)", format!("{:.1}", sw), format!("{:.1}", sh), (sw / 25.4 * c.dpi as f64).round(), (sh / 25.4 * c.dpi as f64).round(), c.dpi)).weak());
+        changed |= ui.checkbox(&mut c.marks, tr("Crop and fold marks (page enlarged by 10 mm on each side)")).changed();
     });
-    egui::CollapsingHeader::new("Fond").default_open(true).show(ui, |ui| {
+    egui::CollapsingHeader::new(tr("Background")).default_open(true).show(ui, |ui| {
         ui.horizontal(|ui| {
-            for (i, name) in ["Dos", "Tranche", "Face"].into_iter().enumerate() {
+            for (i, name) in [tr("Back"), tr("Spine"), tr("Front")].into_iter().enumerate() {
                 ui.label(name);
                 changed |= ui.color_edit_button_srgb(&mut c.colors[i]).changed();
             }
         });
-        changed |= crate::file_row(ui, "Image de fond :", &mut c.bg_image, "(aucune : couleurs ci-dessus)", "Images", &IMG_EXT);
-        crate::help(ui, "L'image de fond couvre toute la feuille, fond perdu compris.");
+        changed |= crate::file_row(ui, tr("Background image:"), &mut c.bg_image, tr("(none: colors above)"), tr("Images"), &IMG_EXT);
+        crate::help(ui, tr("The background image covers the whole sheet, bleed included."));
     });
     changed
 }
 
 fn label_format(ui: &mut egui::Ui, l: &mut DiscLabel) -> bool {
     let mut changed = false;
-    egui::CollapsingHeader::new("Format et impression").default_open(true).show(ui, |ui| {
+    egui::CollapsingHeader::new(tr("Format and printing")).default_open(true).show(ui, |ui| {
         egui::Grid::new("etiquette_dims").num_columns(4).show(ui, |ui| {
-            ui.label("Diamètre"); changed |= ui.add(egui::DragValue::new(&mut l.diameter_mm).range(30.0..=200.0).speed(0.5).suffix(" mm")).changed();
-            ui.label("Trou central"); changed |= ui.add(egui::DragValue::new(&mut l.hole_mm).range(0.0..=(l.diameter_mm - 5.0).max(0.0)).speed(0.25).suffix(" mm")).changed();
+            ui.label(tr("Diameter")); changed |= ui.add(egui::DragValue::new(&mut l.diameter_mm).range(30.0..=200.0).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("Center hole")); changed |= ui.add(egui::DragValue::new(&mut l.hole_mm).range(0.0..=(l.diameter_mm - 5.0).max(0.0)).speed(0.25).suffix(" mm")).changed();
             ui.end_row();
-            ui.label("Fond perdu"); changed |= ui.add(egui::DragValue::new(&mut l.bleed_mm).range(0.0..=20.0).speed(0.25).suffix(" mm")).changed();
-            ui.label("Résolution"); changed |= ui.add(egui::DragValue::new(&mut l.dpi).range(72..=600).speed(5.0).suffix(" dpi")).changed();
+            ui.label(tr("Bleed")); changed |= ui.add(egui::DragValue::new(&mut l.bleed_mm).range(0.0..=20.0).speed(0.25).suffix(" mm")).changed();
+            ui.label(tr("Resolution")); changed |= ui.add(egui::DragValue::new(&mut l.dpi).range(72..=600).speed(5.0).suffix(" dpi")).changed();
             ui.end_row();
         });
         let (sw, _) = l.sheet_mm();
-        ui.label(egui::RichText::new(format!("Feuille carrée avec fond perdu : {sw:.1} × {sw:.1} mm ({} px de côté à {} dpi). Le PDF découpe le disque et son trou central.", (sw / 25.4 * l.dpi as f64).round(), l.dpi)).weak());
-        changed |= ui.checkbox(&mut l.marks, "Cercles de repère (contour et trou)").changed();
+        ui.label(egui::RichText::new(trf!("Square sheet with bleed: {} × {} mm ({} px per side at {} dpi). The PDF cuts out the disc and its center hole.", format!("{:.1}", sw), format!("{:.1}", sw), (sw / 25.4 * l.dpi as f64).round(), l.dpi)).weak());
+        changed |= ui.checkbox(&mut l.marks, tr("Registration circles (outline and hole)")).changed();
     });
-    egui::CollapsingHeader::new("Fond").default_open(true).show(ui, |ui| {
+    egui::CollapsingHeader::new(tr("Background")).default_open(true).show(ui, |ui| {
         ui.horizontal(|ui| {
-            ui.label("Couleur");
+            ui.label(tr("Color"));
             changed |= ui.color_edit_button_srgb(&mut l.color).changed();
         });
-        changed |= crate::file_row(ui, "Image de fond :", &mut l.bg_image, "(aucune : couleur ci-dessus)", "Images", &IMG_EXT);
+        changed |= crate::file_row(ui, tr("Background image:"), &mut l.bg_image, tr("(none: color above)"), tr("Images"), &IMG_EXT);
     });
     changed
 }
@@ -221,9 +222,9 @@ fn spawn_export<D: SheetDoc + Send + 'static>(doc: D, kind: ExportKind, what: &'
                 }
             };
             std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
-            Ok(format!("{what} exportée : {}", path.display()))
+            Ok(trf!("{} exported: {}", what, path.display()))
         };
-        let _ = tx.send(run().unwrap_or_else(|e| format!("Export impossible : {e}")));
+        let _ = tx.send(run().unwrap_or_else(|e| trf!("Export failed: {}", e)));
     });
 }
 
@@ -233,7 +234,7 @@ impl App {
         // fin de l'export en arriere-plan
         match self.cover_export_rx.as_ref().map(|rx| rx.try_recv()) {
             Some(Ok(m)) => { self.notice = m; self.cover_export_rx = None; }
-            Some(Err(TryRecvError::Disconnected)) => { self.notice = "Export interrompu.".into(); self.cover_export_rx = None; }
+            Some(Err(TryRecvError::Disconnected)) => { self.notice = tr("Export interrupted.").into(); self.cover_export_rx = None; }
             Some(Err(TryRecvError::Empty)) => ctx.request_repaint_after(std::time::Duration::from_millis(100)),
             None => {}
         }
@@ -293,11 +294,11 @@ impl App {
         let mut page = self.cover_page;
         let (mut undo, mut redo) = (false, false);
         ui.horizontal(|ui| {
-            undo = ui.add_enabled(can_undo, egui::Button::new("↶")).on_hover_text("Annuler (Ctrl+Z)").clicked();
-            redo = ui.add_enabled(can_redo, egui::Button::new("↷")).on_hover_text("Refaire (Ctrl+Y)").clicked();
+            undo = ui.add_enabled(can_undo, egui::Button::new("↶")).on_hover_text(tr("Undo (Ctrl+Z)")).clicked();
+            redo = ui.add_enabled(can_redo, egui::Button::new("↷")).on_hover_text(tr("Redo (Ctrl+Y)")).clicked();
             ui.separator();
-            ui.selectable_value(&mut page, 0, "Jaquette");
-            ui.selectable_value(&mut page, 1, "Étiquette de disque");
+            ui.selectable_value(&mut page, 0, tr("Cover"));
+            ui.selectable_value(&mut page, 1, tr("Disc label"));
         });
         if undo { self.cover_undo_redo(false); }
         if redo { self.cover_undo_redo(true); }
@@ -315,16 +316,16 @@ impl App {
             self.cover_gen += 1;
         }
         if self.cover_page == 0 {
-            ui.heading("Jaquette");
-            crate::help(ui, "Feuille à déplier du boîtier : dos à gauche, tranche au milieu, face à droite. Toutes les mesures sont en millimètres, depuis le coin haut gauche de la jaquette rognée (le fond perdu a donc des valeurs négatives).");
+            ui.heading(tr("Cover"));
+            crate::help(ui, tr("Unfolded sheet of the case: back on the left, spine in the middle, front on the right. All measurements are in millimeters, from the top-left corner of the trimmed cover (so the bleed has negative values)."));
             changed |= cover_format(ui, &mut self.model.cover);
         } else {
-            ui.heading("Étiquette de disque");
-            crate::help(ui, "Disque imprimé : mesures en millimètres depuis le coin haut gauche de la feuille carrée rognée (le fond perdu a donc des valeurs négatives). Le trou central n'est pas imprimé.");
+            ui.heading(tr("Disc label"));
+            crate::help(ui, tr("Printed disc: measurements in millimeters from the top-left corner of the trimmed square sheet (so the bleed has negative values). The center hole is not printed."));
             changed |= label_format(ui, &mut self.model.label);
         }
         ui.separator();
-        ui.heading("Éléments");
+        ui.heading(tr("Items"));
         if self.cover_page == 0 {
             let mut d = std::mem::take(&mut self.model.cover);
             changed |= self.items_ui(ui, &mut d);
@@ -338,15 +339,15 @@ impl App {
         if self.cover_export_rx.is_some() {
             ui.horizontal(|ui| {
                 ui.spinner();
-                ui.label("Export en cours… (vous pouvez continuer à travailler)");
+                ui.label(tr("Exporting… (you can keep working)"));
             });
         } else {
             ui.horizontal_wrapped(|ui| {
-                if ui.button("Exporter en PDF…").on_hover_text("Image à la résolution choisie, dans un PDF aux dimensions exactes").clicked() { self.cover_export(ExportKind::Pdf); }
-                if ui.button("Exporter en PNG…").on_hover_text("Image à la résolution choisie (la résolution est enregistrée dans le fichier)").clicked() { self.cover_export(ExportKind::Png { trim: self.cover_png_trim }); }
-                if ui.button("Imprimer sur A4…").on_hover_text("PDF A4 avec la jaquette à sa taille réelle, centrée, et des repères de coupe : à imprimer à 100 % (sans « ajuster à la page »), puis à découper").clicked() { self.cover_export(ExportKind::A4); }
+                if ui.button(tr("Export to PDF…")).on_hover_text(tr("Image at the chosen resolution, in a PDF with exact dimensions")).clicked() { self.cover_export(ExportKind::Pdf); }
+                if ui.button(tr("Export to PNG…")).on_hover_text(tr("Image at the chosen resolution (the resolution is saved in the file)")).clicked() { self.cover_export(ExportKind::Png { trim: self.cover_png_trim }); }
+                if ui.button(tr("Print on A4…")).on_hover_text(tr("A4 PDF with the cover at actual size, centered, with crop marks: print at 100% (without “fit to page”), then cut out")).clicked() { self.cover_export(ExportKind::A4); }
             });
-            ui.checkbox(&mut self.cover_png_trim, "PNG rogné au format fini (sans fond perdu)");
+            ui.checkbox(&mut self.cover_png_trim, tr("PNG trimmed to the finished format (without bleed)"));
         }
         if changed { self.cover_changed(); }
     }
@@ -367,11 +368,11 @@ impl App {
         let mut rename_done = false;
         let mut rows: Vec<(CoverRow, Rect)> = Vec::new();
         let pm = |open: bool| if open { "−" } else { "+" };
-        crate::help(ui, "Calques et éléments (du premier plan, en haut, à l'arrière-plan). Glissez la poignée ☰ pour réordonner, changer un élément de calque, ou déplacer un calque. + / − : déplier ou replier.");
+        crate::help(ui, tr("Layers and items (from foreground, at the top, to background). Drag the ☰ handle to reorder, move an item to another layer, or move a layer. + / −: expand or collapse."));
         ui.horizontal_wrapped(|ui| {
-            if ui.button("+ Calque").on_hover_text("Nouveau calque au premier plan ; les nouveaux éléments vont dans le calque actif").clicked() { op = Some(CoverOp::Add); }
-            if ui.small_button("+ tout").on_hover_text("Déplier tous les calques").clicked() { self.cover_closed.clear(); }
-            if ui.small_button("− tout").on_hover_text("Replier tous les calques").clicked() { for l in 0..nl { self.cover_closed.insert(l); } }
+            if ui.button(tr("+ Layer")).on_hover_text(tr("New layer in the foreground; new items go into the active layer")).clicked() { op = Some(CoverOp::Add); }
+            if ui.small_button(tr("+ all")).on_hover_text(tr("Expand all layers")).clicked() { self.cover_closed.clear(); }
+            if ui.small_button(tr("− all")).on_hover_text(tr("Collapse all layers")).clicked() { for l in 0..nl { self.cover_closed.insert(l); } }
         });
         egui::ScrollArea::vertical().id_salt("jaquette_liste").auto_shrink([false, true]).max_height(300.0).show(ui, |ui| {
             let list = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
@@ -381,12 +382,12 @@ impl App {
                     let count = (0..n).filter(|&i| doc.items()[i].layer == l).count();
                     let r = ui.horizontal(|ui| {
                         let _ = ui.dnd_drag_source(egui::Id::new(("cal", l)), CoverRow::Layer(l), |ui| ui.label(egui::RichText::new("☰").strong()))
-                            .response.on_hover_text("Glisser pour déplacer le calque (avec ses éléments)");
-                        if ui.small_button(pm(open)).on_hover_text(if open { "Replier le calque" } else { "Déplier le calque" }).clicked() { toggle = Some(l); }
+                            .response.on_hover_text(tr("Drag to move the layer (with its items)"));
+                        if ui.small_button(pm(open)).on_hover_text(if open { tr("Collapse the layer") } else { tr("Expand the layer") }).clicked() { toggle = Some(l); }
                         let vis = layers[l].visible;
-                        if ui.small_button(if vis { "👁" } else { "◌" }).on_hover_text(if vis { "Masquer (un calque masqué n'est ni affiché ni exporté)" } else { "Calque masqué : afficher" }).clicked() { layers[l].visible = !vis; }
+                        if ui.small_button(if vis { "👁" } else { "◌" }).on_hover_text(if vis { tr("Hide (a hidden layer is neither displayed nor exported)") } else { tr("Hidden layer: show") }).clicked() { layers[l].visible = !vis; }
                         let locked = layers[l].locked;
-                        if ui.small_button(if locked { "🔒" } else { "🔓" }).on_hover_text(if locked { "Verrouillé : ses éléments ne se sélectionnent plus à la souris ; déverrouiller" } else { "Verrouiller (plus de sélection ni de déplacement à la souris)" }).clicked() { layers[l].locked = !locked; }
+                        if ui.small_button(if locked { "🔒" } else { "🔓" }).on_hover_text(if locked { tr("Locked: its items can no longer be selected with the mouse; unlock") } else { tr("Lock (no more selection or moving with the mouse)") }).clicked() { layers[l].locked = !locked; }
                         let editing = matches!(&self.cover_layer_edit, Some((e, _)) if *e == l);
                         if editing {
                             if let Some((_, text)) = &mut self.cover_layer_edit {
@@ -395,15 +396,15 @@ impl App {
                                 if te.lost_focus() { rename_done = true; }
                             }
                         } else {
-                            let resp = ui.selectable_label(active == l, egui::RichText::new(format!("{}  ({count})", layers[l].name))).on_hover_text("Calque actif : reçoit les nouveaux éléments. Double-clic : renommer");
+                            let resp = ui.selectable_label(active == l, egui::RichText::new(format!("{}  ({count})", layers[l].name))).on_hover_text(tr("Active layer: receives new items. Double-click: rename"));
                             if resp.clicked() { activate = Some(l); }
                             if resp.double_clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
-                            if ui.small_button("✏").on_hover_text("Renommer le calque").clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
+                            if ui.small_button("✏").on_hover_text(tr("Rename the layer")).clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
                             if nl > 1 {
                                 let _ = ui.menu_button("🗑", |ui| {
-                                    if ui.button("Supprimer le calque (ses éléments vont au calque voisin)").clicked() { op = Some(CoverOp::Remove(l, true)); ui.close_menu(); }
-                                    if ui.button("Supprimer le calque et ses éléments").clicked() { op = Some(CoverOp::Remove(l, false)); ui.close_menu(); }
-                                }).response.on_hover_text("Supprimer le calque");
+                                    if ui.button(tr("Delete the layer (its items go to the neighboring layer)")).clicked() { op = Some(CoverOp::Remove(l, true)); ui.close_menu(); }
+                                    if ui.button(tr("Delete the layer and its items")).clicked() { op = Some(CoverOp::Remove(l, false)); ui.close_menu(); }
+                                }).response.on_hover_text(tr("Delete the layer"));
                             }
                         }
                     }).response;
@@ -415,13 +416,13 @@ impl App {
                         let r = ui.horizontal(|ui| {
                             ui.add_space(40.0);
                             let _ = ui.dnd_drag_source(egui::Id::new(("cel", i)), CoverRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak()))
-                                .response.on_hover_text("Glisser pour changer l'ordre ou le calque");
+                                .response.on_hover_text(tr("Drag to change the order or the layer"));
                             if ui.selectable_label(selected.contains(&i), text).clicked() { pick = Some(i); }
                         }).response;
                         rows.push((CoverRow::Item(i), r.rect));
                     }
                     if count == 0 {
-                        ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new("(vide : glissez-y des éléments)").weak().italics()); });
+                        ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new(tr("(empty: drag items here)")).weak().italics()); });
                     }
                 }
             });
@@ -483,7 +484,7 @@ impl App {
         }
         match op {
             Some(CoverOp::Add) => {
-                layers.push(CoverLayer::new(&format!("Calque {}", nl + 1)));
+                layers.push(CoverLayer::new(&trf!("Layer {}", nl + 1)));
                 active = nl;
             }
             Some(CoverOp::Remove(l, keep)) if nl > 1 && l < nl => {
@@ -529,16 +530,16 @@ impl App {
         let (tw, th) = (sw - 2.0 * bleed, sh - 2.0 * bleed);
         let sel = self.cover_selection(n);
         ui.horizontal_wrapped(|ui| {
-            if ui.button("+ Texte").clicked() {
+            if ui.button(tr("+ Text")).clicked() {
                 let w = (tw * 0.4).min(100.0);
-                let mut it = CoverItem::text("Titre", (tw - w) / 2.0, 10.0, w, 30.0, 28.0);
+                let mut it = CoverItem::text(tr("Title"), (tw - w) / 2.0, 10.0, w, 30.0, 28.0);
                 it.layer = active;
                 doc.items_mut().push(it);
                 self.cover_select_only(Some(doc.items().len() - 1));
                 changed = true;
             }
-            if ui.button("+ Image…").clicked() {
-                if let Some(f) = rfd::FileDialog::new().add_filter("Images", &IMG_EXT).pick_file() {
+            if ui.button(tr("+ Image…")).clicked() {
+                if let Some(f) = rfd::FileDialog::new().add_filter(tr("Images"), &IMG_EXT).pick_file() {
                     let rel = self.relative(&f);
                     let w = (tw * 0.4).min(100.0);
                     let mut it = CoverItem::image(&rel, (tw - w) / 2.0, 50.0, w, (th - 60.0).max(20.0).min(w));
@@ -562,43 +563,43 @@ impl App {
         });
         ui.horizontal_wrapped(|ui| {
             if !sel.is_empty() {
-                if ui.button("Dupliquer").clicked() { changed |= self.cover_duplicate(doc); }
-                if ui.button("Supprimer").clicked() { changed |= self.cover_delete(doc); }
-                if ui.button("Copier").on_hover_text("Ctrl+C").clicked() { self.cover_copy(&*doc); }
-                if ui.button("Couper").on_hover_text("Ctrl+X").clicked() { if self.cover_copy(&*doc) { changed |= self.cover_delete(doc); } }
+                if ui.button(tr("Duplicate")).clicked() { changed |= self.cover_duplicate(doc); }
+                if ui.button(tr("Delete")).clicked() { changed |= self.cover_delete(doc); }
+                if ui.button(tr("Copy")).on_hover_text("Ctrl+C").clicked() { self.cover_copy(&*doc); }
+                if ui.button(tr("Cut")).on_hover_text("Ctrl+X").clicked() { if self.cover_copy(&*doc) { changed |= self.cover_delete(doc); } }
             }
-            if ui.add_enabled(!self.cover_clip.is_empty(), egui::Button::new("Coller")).on_hover_text("Ctrl+V — fonctionne aussi d'une feuille à l'autre (jaquette ↔ étiquette)").clicked() {
+            if ui.add_enabled(!self.cover_clip.is_empty(), egui::Button::new(tr("Paste"))).on_hover_text(tr("Ctrl+V — also works from one sheet to the other (cover ↔ label)")).clicked() {
                 changed |= self.cover_paste(doc);
             }
             if sel.len() == 1 {
                 let i = sel[0];
                 let l = doc.items()[i].layer;
                 if let Some(j) = (0..i).rev().find(|&j| doc.items()[j].layer == l) {
-                    if ui.button("▼").on_hover_text("Reculer dans le calque").clicked() { doc.items_mut().swap(i, j); self.cover_select_only(Some(j)); changed = true; }
+                    if ui.button("▼").on_hover_text(tr("Move back in the layer")).clicked() { doc.items_mut().swap(i, j); self.cover_select_only(Some(j)); changed = true; }
                 }
                 if let Some(j) = (i + 1..n).find(|&j| doc.items()[j].layer == l) {
-                    if ui.button("▲").on_hover_text("Avancer dans le calque").clicked() { doc.items_mut().swap(i, j); self.cover_select_only(Some(j)); changed = true; }
+                    if ui.button("▲").on_hover_text(tr("Move forward in the layer")).clicked() { doc.items_mut().swap(i, j); self.cover_select_only(Some(j)); changed = true; }
                 }
             }
         });
         // alignement : sur le cadre commun de la selection, ou sur la feuille pour un element seul
         if !sel.is_empty() {
             let mut align = None;
-            ui.collapsing(if sel.len() > 1 { format!("Alignement ({} éléments)", sel.len()) } else { "Alignement et centrage".to_string() }, |ui| {
+            ui.collapsing(if sel.len() > 1 { trf!("Alignment ({} items)", sel.len()) } else { tr("Alignment and centering").to_string() }, |ui| {
                 ui.horizontal_wrapped(|ui| {
-                    for (tip, a) in [("Aligner à gauche", ItemAlign::Left), ("Centrer horizontalement", ItemAlign::CenterH), ("Aligner à droite", ItemAlign::Right),
-                                     ("Aligner en haut", ItemAlign::Top), ("Centrer verticalement", ItemAlign::CenterV), ("Aligner en bas", ItemAlign::Bottom)] {
+                    for (tip, a) in [(tr("Align left"), ItemAlign::Left), (tr("Center horizontally"), ItemAlign::CenterH), (tr("Align right"), ItemAlign::Right),
+                                     (tr("Align top"), ItemAlign::Top), (tr("Center vertically"), ItemAlign::CenterV), (tr("Align bottom"), ItemAlign::Bottom)] {
                         if crate::editor_ui::align_button(ui, a, tip) { align = Some(a); }
                     }
                 });
                 ui.horizontal_wrapped(|ui| {
-                    if ui.button("Centrer sur la feuille (↔)").clicked() { align = Some(ItemAlign::PageH); }
-                    if ui.button("Centrer sur la feuille (↕)").clicked() { align = Some(ItemAlign::PageV); }
+                    if ui.button(tr("Center on the sheet (↔)")).clicked() { align = Some(ItemAlign::PageH); }
+                    if ui.button(tr("Center on the sheet (↕)")).clicked() { align = Some(ItemAlign::PageV); }
                 });
                 if sel.len() >= 3 {
                     ui.horizontal_wrapped(|ui| {
-                        if ui.button("Répartir horizontalement").clicked() { align = Some(ItemAlign::DistributeH); }
-                        if ui.button("Répartir verticalement").clicked() { align = Some(ItemAlign::DistributeV); }
+                        if ui.button(tr("Distribute horizontally")).clicked() { align = Some(ItemAlign::DistributeH); }
+                        if ui.button(tr("Distribute vertically")).clicked() { align = Some(ItemAlign::DistributeV); }
                     });
                 }
             });
@@ -606,7 +607,7 @@ impl App {
         }
         if sel.len() > 1 {
             ui.separator();
-            ui.label(format!("{} éléments sélectionnés : glissez-les ensemble, alignez-les ou copiez-les. Sélectionnez-en un seul pour modifier ses réglages.", sel.len()));
+            ui.label(trf!("{} items selected: drag them together, align them or copy them. Select just one to change its settings.", sel.len()));
             return changed;
         }
         let Some(i) = sel.first().copied() else { return changed };
@@ -615,8 +616,8 @@ impl App {
         let base_dir = self.base_dir();
         let it = &mut doc.items_mut()[i];
         ui.horizontal(|ui| {
-            ui.label("Nom");
-            changed |= ui.add(egui::TextEdit::singleline(&mut it.name).hint_text("(facultatif)").desired_width(220.0)).changed();
+            ui.label(tr("Name"));
+            changed |= ui.add(egui::TextEdit::singleline(&mut it.name).hint_text(tr("(optional)")).desired_width(220.0)).changed();
         });
         let mut pick_image = false;
         let mut pick_font = false;
@@ -624,16 +625,16 @@ impl App {
             CoverKind::Text { text, size_pt, color, align, font, fx } => {
                 changed |= ui.add(egui::TextEdit::multiline(text).desired_rows(3).desired_width(f32::INFINITY)).changed();
                 ui.horizontal(|ui| {
-                    egui::ComboBox::from_id_salt("jaquette_champs").selected_text("Insérer un champ automatique…").show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("jaquette_champs").selected_text(tr("Insert an automatic field…")).show_ui(ui, |ui| {
                         for (k, desc) in FIELDS {
                             if ui.selectable_label(false, format!("{{{k}}} — {desc}")).clicked() { text.push_str(&format!("{{{k}}}")); changed = true; }
                         }
                     });
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Taille");
+                    ui.label(tr("Size"));
                     changed |= ui.add(egui::DragValue::new(size_pt).range(4.0..=400.0).speed(0.5).suffix(" pt")).changed();
-                    ui.label("Couleur");
+                    ui.label(tr("Color"));
                     changed |= ui.color_edit_button_srgb(color).changed();
                     egui::ComboBox::from_id_salt("jaquette_align").selected_text(align.name()).show_ui(ui, |ui| {
                         for a in [Align::Left, Align::Center, Align::Right] {
@@ -642,39 +643,39 @@ impl App {
                     });
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Police");
-                    let shown = if font.is_empty() { "Police par défaut".to_string() } else {
+                    ui.label(tr("Font"));
+                    let shown = if font.is_empty() { tr("Default font").to_string() } else {
                         bdauthor_render::common_fonts().into_iter().find(|(_, f)| f == font).map(|(l, _)| l.to_string()).unwrap_or_else(|| font.clone())
                     };
                     egui::ComboBox::from_id_salt("jaquette_police").selected_text(shown).width(200.0).show_ui(ui, |ui| {
-                        if ui.selectable_label(font.is_empty(), "Police par défaut").clicked() { font.clear(); changed = true; }
+                        if ui.selectable_label(font.is_empty(), tr("Default font")).clicked() { font.clear(); changed = true; }
                         for (label, file) in bdauthor_render::common_fonts() {
                             if ui.selectable_label(font == file, label).clicked() { *font = file.to_string(); changed = true; }
                         }
-                        if ui.button("Autre fichier…").clicked() { pick_font = true; ui.close_menu(); }
+                        if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
                     });
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Position verticale");
-                    for (v, t) in [(VAlign::Top, "Haut"), (VAlign::Middle, "Milieu"), (VAlign::Bottom, "Bas")] {
+                    ui.label(tr("Vertical position"));
+                    for (v, t) in [(VAlign::Top, tr("Top")), (VAlign::Middle, tr("Middle")), (VAlign::Bottom, tr("Bottom"))] {
                         if ui.selectable_label(fx.valign == v, t).clicked() { fx.valign = v; changed = true; }
                     }
-                    ui.label("Interligne");
+                    ui.label(tr("Line spacing"));
                     changed |= ui.add(egui::DragValue::new(&mut fx.spacing).range(0.5..=3.0).speed(0.02)).changed();
                 });
-                changed |= ui.checkbox(&mut fx.autofit, "Ajuster au cadre").on_hover_text("Réduit la taille du texte s'il déborde du cadre").changed();
+                changed |= ui.checkbox(&mut fx.autofit, tr("Fit to frame")).on_hover_text(tr("Reduces the text size if it overflows the frame")).changed();
                 ui.horizontal(|ui| {
-                    ui.label("Contour");
+                    ui.label(tr("Outline"));
                     changed |= ui.add(egui::DragValue::new(&mut fx.outline_mm).range(0.0..=5.0).speed(0.05).suffix(" mm")).changed();
                     changed |= ui.color_edit_button_srgb(&mut fx.outline_color).changed();
-                    ui.label("Ombre");
+                    ui.label(tr("Shadow"));
                     changed |= ui.add(egui::DragValue::new(&mut fx.shadow_mm).range(0.0..=5.0).speed(0.05).suffix(" mm")).changed();
                     changed |= ui.color_edit_button_srgb(&mut fx.shadow_color).changed();
                 });
                 if !font.is_empty() {
                     if let Ok(r) = &self.renderer {
                         if r.custom_font(font, &base_dir).is_none() {
-                            ui.colored_label(Color32::from_rgb(230, 100, 90), "Police introuvable : la police par défaut sera utilisée.");
+                            ui.colored_label(Color32::from_rgb(230, 100, 90), tr("Font not found: the default font will be used."));
                         }
                     }
                 }
@@ -682,27 +683,27 @@ impl App {
             CoverKind::Image { path } => {
                 ui.horizontal(|ui| {
                     changed |= ui.add(egui::TextEdit::singleline(path).desired_width(220.0)).changed();
-                    if ui.button("Choisir…").clicked() { pick_image = true; }
+                    if ui.button(tr("Choose…")).clicked() { pick_image = true; }
                 });
             }
             CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, .. } => {
                 if *shape == ShapeKind::Line {
                     ui.horizontal(|ui| {
-                        ui.label("Couleur");
+                        ui.label(tr("Color"));
                         let mut col = stroke.or(*fill).unwrap_or([255, 255, 255]);
                         if ui.color_edit_button_srgb(&mut col).changed() { *stroke = Some(col); *fill = None; changed = true; }
-                        ui.label("Épaisseur");
+                        ui.label(tr("Thickness"));
                         changed |= ui.add(egui::DragValue::new(stroke_mm).range(0.1..=50.0).speed(0.05).suffix(" mm")).changed();
                     });
                 } else {
                     ui.horizontal(|ui| {
                         let mut on = fill.is_some();
-                        if ui.checkbox(&mut on, "Remplissage").changed() { *fill = if on { Some([255, 255, 255]) } else { None }; changed = true; }
+                        if ui.checkbox(&mut on, tr("Fill")).changed() { *fill = if on { Some([255, 255, 255]) } else { None }; changed = true; }
                         if let Some(c) = fill { changed |= ui.color_edit_button_srgb(c).changed(); }
                     });
                     ui.horizontal(|ui| {
                         let mut on = stroke.is_some();
-                        if ui.checkbox(&mut on, "Bordure").changed() { *stroke = if on { Some([0, 0, 0]) } else { None }; changed = true; }
+                        if ui.checkbox(&mut on, tr("Border")).changed() { *stroke = if on { Some([0, 0, 0]) } else { None }; changed = true; }
                         if let Some(c) = stroke {
                             changed |= ui.color_edit_button_srgb(c).changed();
                             changed |= ui.add(egui::DragValue::new(stroke_mm).range(0.1..=50.0).speed(0.05).suffix(" mm")).changed();
@@ -710,7 +711,7 @@ impl App {
                     });
                     if *shape == ShapeKind::Rect {
                         ui.horizontal(|ui| {
-                            ui.label("Coins arrondis");
+                            ui.label(tr("Rounded corners"));
                             changed |= ui.add(egui::DragValue::new(radius_mm).range(0.0..=100.0).speed(0.1).suffix(" mm")).changed();
                         });
                     }
@@ -718,13 +719,13 @@ impl App {
             }
         }
         if pick_image {
-            if let Some(f) = rfd::FileDialog::new().add_filter("Images", &IMG_EXT).pick_file() {
+            if let Some(f) = rfd::FileDialog::new().add_filter(tr("Images"), &IMG_EXT).pick_file() {
                 let rel = self.relative(&f);
                 if let CoverKind::Image { path } = &mut doc.items_mut()[i].kind { *path = rel; changed = true; }
             }
         }
         if pick_font {
-            if let Some(f) = rfd::FileDialog::new().add_filter("Polices", &["ttf", "otf"]).pick_file() {
+            if let Some(f) = rfd::FileDialog::new().add_filter(tr("Fonts"), &["ttf", "otf"]).pick_file() {
                 let rel = self.relative(&f);
                 if let CoverKind::Text { font, .. } = &mut doc.items_mut()[i].kind { *font = rel; changed = true; }
             }
@@ -734,50 +735,50 @@ impl App {
         if let Some((mut p, mut q)) = it.line_ends() {
             let before = (p, q);
             egui::Grid::new("jaquette_line").num_columns(4).show(ui, |ui| {
-                ui.label("Début X"); ui.add(egui::DragValue::new(&mut p.0).range(-bleed..=sw).speed(0.5).suffix(" mm"));
-                ui.label("Y"); ui.add(egui::DragValue::new(&mut p.1).range(-bleed..=sh).speed(0.5).suffix(" mm"));
+                ui.label(tr("Start X")); ui.add(egui::DragValue::new(&mut p.0).range(-bleed..=sw).speed(0.5).suffix(" mm"));
+                ui.label(tr("Y")); ui.add(egui::DragValue::new(&mut p.1).range(-bleed..=sh).speed(0.5).suffix(" mm"));
                 ui.end_row();
-                ui.label("Fin X"); ui.add(egui::DragValue::new(&mut q.0).range(-bleed..=sw).speed(0.5).suffix(" mm"));
-                ui.label("Y"); ui.add(egui::DragValue::new(&mut q.1).range(-bleed..=sh).speed(0.5).suffix(" mm"));
+                ui.label(tr("End X")); ui.add(egui::DragValue::new(&mut q.0).range(-bleed..=sw).speed(0.5).suffix(" mm"));
+                ui.label(tr("Y")); ui.add(egui::DragValue::new(&mut q.1).range(-bleed..=sh).speed(0.5).suffix(" mm"));
                 ui.end_row();
             });
             if p != before.0 { it.move_line_end(true, q, p); changed = true; }
             else if q != before.1 { it.move_line_end(false, p, q); changed = true; }
             if let CoverKind::Shape { style, arrow, .. } = &mut it.kind {
                 ui.horizontal(|ui| {
-                    ui.label("Type de trait");
+                    ui.label(tr("Line type"));
                     egui::ComboBox::from_id_salt("jaquette_trait").selected_text(style.label()).show_ui(ui, |ui| {
                         for st in LineStyle::ALL { if ui.selectable_label(*style == st, st.label()).clicked() { *style = st; changed = true; } }
                     });
                 });
                 ui.horizontal(|ui| {
-                    ui.label("Flèches");
+                    ui.label(tr("Arrows"));
                     egui::ComboBox::from_id_salt("jaquette_fleche").selected_text(arrow.label()).show_ui(ui, |ui| {
                         for a in LineArrow::ALL { if ui.selectable_label(*arrow == a, a.label()).clicked() { *arrow = a; changed = true; } }
                     });
                 });
             }
-            crate::help(ui, "Déplacez les deux extrémités sur la feuille (Maj : angle par pas de 45°). « Début » = extrémité de gauche (ou du haut).");
+            crate::help(ui, tr("Move both ends on the sheet (Shift: angle in 45° steps). “Start” = left (or top) end."));
             return changed;
         }
         egui::Grid::new("jaquette_geom").num_columns(4).show(ui, |ui| {
-            ui.label("X"); changed |= ui.add(egui::DragValue::new(&mut it.x).range(-bleed..=sw).speed(0.5).suffix(" mm")).changed();
-            ui.label("Y"); changed |= ui.add(egui::DragValue::new(&mut it.y).range(-bleed..=sh).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("X")); changed |= ui.add(egui::DragValue::new(&mut it.x).range(-bleed..=sw).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("Y")); changed |= ui.add(egui::DragValue::new(&mut it.y).range(-bleed..=sh).speed(0.5).suffix(" mm")).changed();
             ui.end_row();
-            ui.label("Largeur"); changed |= ui.add(egui::DragValue::new(&mut it.w).range(1.0..=sw).speed(0.5).suffix(" mm")).changed();
-            ui.label("Hauteur"); changed |= ui.add(egui::DragValue::new(&mut it.h).range(1.0..=sh).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("Width")); changed |= ui.add(egui::DragValue::new(&mut it.w).range(1.0..=sw).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("Height")); changed |= ui.add(egui::DragValue::new(&mut it.h).range(1.0..=sh).speed(0.5).suffix(" mm")).changed();
             ui.end_row();
         });
         ui.horizontal(|ui| {
-            ui.label("Rotation");
+            ui.label(tr("Rotation"));
             for (r, t) in [(0u16, "0°"), (90, "90°"), (270, "270°")] {
-                if ui.selectable_label(it.rot == r, t).on_hover_text(if r == 0 { "Horizontal" } else if r == 90 { "Texte qui se lit de haut en bas (tranche)" } else { "Texte qui se lit de bas en haut" }).clicked() { it.rot = r; changed = true; }
+                if ui.selectable_label(it.rot == r, t).on_hover_text(if r == 0 { tr("Horizontal") } else if r == 90 { tr("Text reading from top to bottom (spine)") } else { tr("Text reading from bottom to top") }).clicked() { it.rot = r; changed = true; }
             }
         });
         ui.horizontal_wrapped(|ui| {
-            ui.label("Placer sur");
+            ui.label(tr("Place on"));
             for (name, z) in &zones {
-                if ui.button(*name).clicked() {
+                if ui.button(zone_label(*name)).clicked() {
                     let m = match *name { "la tranche" => 1.0, "le disque" => 0.0, "le haut" | "le bas" => 2.0, _ => 8.0 };
                     (it.x, it.y, it.w, it.h) = (z.0 + m, z.1 + m, (z.2 - 2.0 * m).max(1.0), (z.3 - 2.0 * m).max(1.0));
                     if *name == "la tranche" { it.rot = 90; }
@@ -786,30 +787,30 @@ impl App {
             }
         });
         ui.horizontal(|ui| {
-            if ui.button("Centrer horizontalement").clicked() { it.x = (tw - it.w) / 2.0; changed = true; }
-            if ui.button("Centrer verticalement").clicked() { it.y = (th - it.h) / 2.0; changed = true; }
+            if ui.button(tr("Center horizontally")).clicked() { it.x = (tw - it.w) / 2.0; changed = true; }
+            if ui.button(tr("Center vertically")).clicked() { it.y = (th - it.h) / 2.0; changed = true; }
         });
-        crate::help(ui, "Champs automatiques : {titre}, {liste_videos}, {nb_videos}, {duree_totale}, {nb_chapitres}, {annee}, remplis depuis le projet.");
+        crate::help(ui, tr("Automatic fields: {titre}, {liste_videos}, {nb_videos}, {duree_totale}, {nb_chapitres}, {annee}, filled from the project."));
         changed
     }
 
     /// Choisit le fichier puis lance le rendu et l'ecriture du PDF dans un fil separe.
     fn cover_export(&mut self, kind: ExportKind) {
         let name = if self.cover_page == 0 { "jaquette" } else { "etiquette" };
-        let what = if self.cover_page == 0 { "Jaquette" } else { "Étiquette" };
+        let what = if self.cover_page == 0 { tr("Cover") } else { tr("Label") };
         let (ext, label, file) = match kind {
             ExportKind::Pdf => ("pdf", "PDF", format!("{name}.pdf")),
             ExportKind::A4 => ("pdf", "PDF", format!("{name}_A4.pdf")),
             ExportKind::Png { .. } => ("png", "PNG", format!("{name}.png")),
         };
         let Some(path) = rfd::FileDialog::new().add_filter(label, &[ext]).set_file_name(file).save_file() else { return };
-        if let Err(e) = &self.renderer { self.notice = format!("Export impossible : {e}"); return; }
+        if let Err(e) = &self.renderer { self.notice = trf!("Export failed: {}", e); return; }
         let (base, vars) = (self.base_dir(), self.cover_vars());
         let (tx, rx) = channel();
         if self.cover_page == 0 { spawn_export(self.model.cover.clone(), kind, what, base, vars, path, tx); }
         else { spawn_export(self.model.label.clone(), kind, what, base, vars, path, tx); }
         self.cover_export_rx = Some(rx);
-        self.notice = "Export en cours…".into();
+        self.notice = tr("Exporting…").into();
     }
 
     fn cover_central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
@@ -841,15 +842,15 @@ impl App {
         let real = 96.0_f32 / 25.4; // points par mm a la taille reelle (ecran a 96 dpi)
         ui.horizontal(|ui| {
             let z = self.cover_zoom;
-            if ui.small_button("−").on_hover_text("Dézoomer").clicked() { let nz = (z / 1.25).max(0.25); self.cover_pan *= nz / z; self.cover_zoom = nz; }
-            if ui.small_button("+").on_hover_text("Zoomer").clicked() { let nz = (z * 1.25).min(16.0); self.cover_pan *= nz / z; self.cover_zoom = nz; }
-            if ui.small_button("Ajuster").on_hover_text("Feuille entière dans la fenêtre").clicked() { self.cover_zoom = 1.0; self.cover_pan = egui::Vec2::ZERO; }
-            if ui.small_button("1:1").on_hover_text("Taille réelle (approximative : écran supposé à 96 dpi)").clicked() { self.cover_zoom = (real / k0).clamp(0.25, 16.0); self.cover_pan = egui::Vec2::ZERO; }
-            ui.label(format!("{:.0} %", k0 * self.cover_zoom / real * 100.0)).on_hover_text("100 % = taille réelle");
+            if ui.small_button("−").on_hover_text(tr("Zoom out")).clicked() { let nz = (z / 1.25).max(0.25); self.cover_pan *= nz / z; self.cover_zoom = nz; }
+            if ui.small_button("+").on_hover_text(tr("Zoom in")).clicked() { let nz = (z * 1.25).min(16.0); self.cover_pan *= nz / z; self.cover_zoom = nz; }
+            if ui.small_button(tr("Fit")).on_hover_text(tr("Whole sheet in the window")).clicked() { self.cover_zoom = 1.0; self.cover_pan = egui::Vec2::ZERO; }
+            if ui.small_button("1:1").on_hover_text(tr("Actual size (approximate: screen assumed at 96 dpi)")).clicked() { self.cover_zoom = (real / k0).clamp(0.25, 16.0); self.cover_pan = egui::Vec2::ZERO; }
+            ui.label(format!("{:.0} %", k0 * self.cover_zoom / real * 100.0)).on_hover_text(tr("100% = actual size"));
             ui.separator();
             ui.selectable_value(&mut self.cover_inch, false, "mm");
             ui.selectable_value(&mut self.cover_inch, true, "pouces");
-            crate::help(ui, "Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue");
+            crate::help(ui, tr("Wheel: zoom · wheel click (or Space + drag): pan the view"));
         });
         let (resp, full_painter) = ui.allocate_painter(area, Sense::click_and_drag());
         let full = resp.rect;
@@ -1165,7 +1166,7 @@ impl App {
         if resp.drag_stopped() { self.cover_drag = None; self.cover_marquee = None; }
         if self.cover_keys(ctx, doc) { self.cover_changed(); }
         let pos_txt = hover_vp.map(|p| { let (x, y) = to_mm(p); if self.cover_inch { format!("X {:.2} in   Y {:.2} in   ·   ", x / 25.4, y / 25.4) } else { format!("X {x:.1} mm   Y {y:.1} mm   ·   ") } }).unwrap_or_default();
-        ui.label(egui::RichText::new(format!("{pos_txt}Glisser : déplacer · coins : redimensionner (Maj : proportionnel) · rectangle ou Maj+clic : sélection multiple · flèches : déplacer de 0,5 mm (Maj 5 mm, Ctrl 0,1 mm) · Alt : sans aimantation · Ctrl+C/X/V · Suppr · Ctrl+Z / Ctrl+Y")).weak());
+        ui.label(egui::RichText::new(trf!("{}Drag: move · corners: resize (Shift: proportional) · rectangle or Shift+click: multiple selection · arrows: move by 0.5 mm (Shift 5 mm, Ctrl 0.1 mm) · Alt: no snapping · Ctrl+C/X/V · Del · Ctrl+Z / Ctrl+Y", pos_txt)).weak());
     }
 
     /// Elements selectionnes (principal et supplementaires), tries et sans doublon.
@@ -1287,13 +1288,26 @@ impl App {
 }
 
 /// Texte depose dans le presse-papiers systeme a la copie d'elements de jaquette (le contenu reel reste dans l'application).
+/// Nom affiche d'une zone de la feuille (les noms viennent du coeur, en francais).
+fn zone_label(name: &'static str) -> &'static str {
+    match name {
+        "le dos" => tr("the back"),
+        "la tranche" => tr("the spine"),
+        "la face" => tr("the front"),
+        "le disque" => tr("the disc"),
+        "le haut" => tr("the top"),
+        "le bas" => tr("the bottom"),
+        _ => name,
+    }
+}
+
 const COVER_MARK: &str = "bdauthor:jaquette";
 
 /// « Nom (copie) », puis « Nom (copie 2) », « Nom (copie 3) »… : premier nom libre parmi les elements.
 fn unique_copy_name(name: &str, items: &[CoverItem]) -> String {
-    let base = match name.rfind(" (copie") { Some(k) if name.ends_with(')') => &name[..k], _ => name };
+    let base = match name.rfind(" (copie").or_else(|| name.rfind(" (copy")) { Some(k) if name.ends_with(')') => &name[..k], _ => name };
     let taken = |n: &str| items.iter().any(|it| it.name == n);
-    let first = format!("{base} (copie)");
+    let first = trf!("{} (copy)", base);
     if !taken(&first) { return first; }
-    (2..).map(|k| format!("{base} (copie {k})")).find(|n| !taken(n)).unwrap_or(first)
+    (2..).map(|k| trf!("{} (copy {})", base, k)).find(|n| !taken(n)).unwrap_or(first)
 }

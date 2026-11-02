@@ -1,4 +1,5 @@
 //! Reglages de l'apparence des boutons (style du projet ou propre a un element) et images d'etats.
+use crate::i18n::{tr, trf};
 use bdauthor_core::style::{ButtonStyle, Skin, Weight, DECODED_LIMIT};
 use eframe::egui::{self, Color32, Rect, Stroke};
 
@@ -15,49 +16,49 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &
     let before = st.clone();
     let px = |ui: &mut egui::Ui, v: &mut i32, max: i32| { ui.add(egui::DragValue::new(v).range(0..=max).suffix(" px")); };
     let pct = |ui: &mut egui::Ui, v: &mut i32, max: i32| { ui.add(egui::DragValue::new(v).range(0..=max).suffix(" %")); };
-    ui.strong("Bouton non sélectionné");
+    ui.strong(tr("Unselected button"));
     egui::Grid::new(format!("{id}_normal")).num_columns(2).show(ui, |ui| {
-        ui.label("Fond"); ui.color_edit_button_srgb(&mut st.normal_bg); ui.end_row();
-        ui.label("Texte"); ui.color_edit_button_srgb(&mut st.normal_text); ui.end_row();
-        ui.label("Cadre"); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.normal_border); px(ui, &mut st.normal_border_w, 40); }); ui.end_row();
-        ui.label("Assombrir"); pct(ui, &mut st.dim, 80); ui.end_row();
+        ui.label(tr("Background")); ui.color_edit_button_srgb(&mut st.normal_bg); ui.end_row();
+        ui.label(tr("Text")); ui.color_edit_button_srgb(&mut st.normal_text); ui.end_row();
+        ui.label(tr("Frame")); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.normal_border); px(ui, &mut st.normal_border_w, 40); }); ui.end_row();
+        ui.label(tr("Darken")); pct(ui, &mut st.dim, 80); ui.end_row();
     });
-    ui.strong("Bouton sélectionné");
+    ui.strong(tr("Selected button"));
     egui::Grid::new(format!("{id}_sel")).num_columns(2).show(ui, |ui| {
-        ui.label("Fond"); ui.color_edit_button_srgb(&mut st.sel_bg); ui.end_row();
-        ui.label("Texte"); ui.color_edit_button_srgb(&mut st.sel_text); ui.end_row();
-        ui.label("Cadre"); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.sel_border); px(ui, &mut st.sel_border_w, 40); }); ui.end_row();
-        ui.label("Halo"); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.glow_color); px(ui, &mut st.glow, 60); }); ui.end_row();
+        ui.label(tr("Background")); ui.color_edit_button_srgb(&mut st.sel_bg); ui.end_row();
+        ui.label(tr("Text")); ui.color_edit_button_srgb(&mut st.sel_text); ui.end_row();
+        ui.label(tr("Frame")); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.sel_border); px(ui, &mut st.sel_border_w, 40); }); ui.end_row();
+        ui.label(tr("Glow")); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.glow_color); px(ui, &mut st.glow, 60); }); ui.end_row();
         ui.label("");
-        ui.add_enabled(st.glow > 0, egui::Checkbox::new(&mut st.glow_pulse, "Halo animé (pulsation)"))
-            .on_hover_text(format!("Le halo grandit et diminue en boucle tant que le bouton est sélectionné ({} images, environ 8 par seconde). Augmente le poids de la page. Visible dans la simulation.", bdauthor_core::style::PULSE_FRAMES));
+        ui.add_enabled(st.glow > 0, egui::Checkbox::new(&mut st.glow_pulse, tr("Animated glow (pulse)")))
+            .on_hover_text(trf!("The glow grows and shrinks in a loop while the button is selected ({} frames, about 8 per second). Increases the page weight. Visible in the simulation.", bdauthor_core::style::PULSE_FRAMES));
         ui.end_row();
-        ui.label("Agrandir"); pct(ui, &mut st.zoom, 20); ui.end_row();
+        ui.label(tr("Enlarge")); pct(ui, &mut st.zoom, 20); ui.end_row();
     });
-    ui.strong("Commun");
+    ui.strong(tr("Common"));
     egui::Grid::new(format!("{id}_commun")).num_columns(2).show(ui, |ui| {
-        ui.label("Arrondi des coins"); px(ui, &mut st.radius, 200); ui.end_row();
+        ui.label(tr("Corner rounding")); px(ui, &mut st.radius, 200); ui.end_row();
     });
-    ui.checkbox(&mut st.activated, "État « activé » distinct (au moment de l'appui sur OK)");
+    ui.checkbox(&mut st.activated, tr("Distinct “activated” state (when OK is pressed)"));
     if st.activated {
         egui::Grid::new(format!("{id}_act")).num_columns(2).show(ui, |ui| {
-            ui.label("Fond"); ui.color_edit_button_srgb(&mut st.act_bg); ui.end_row();
-            ui.label("Texte"); ui.color_edit_button_srgb(&mut st.act_text); ui.end_row();
-            ui.label("Cadre"); ui.color_edit_button_srgb(&mut st.act_border); ui.end_row();
+            ui.label(tr("Background")); ui.color_edit_button_srgb(&mut st.act_bg); ui.end_row();
+            ui.label(tr("Text")); ui.color_edit_button_srgb(&mut st.act_text); ui.end_row();
+            ui.label(tr("Frame")); ui.color_edit_button_srgb(&mut st.act_border); ui.end_row();
         });
     }
-    ui.strong("Textes et images cliquables (sélectionnés)");
+    ui.strong(tr("Clickable texts and images (selected)"));
     egui::Grid::new(format!("{id}_deco")).num_columns(2).show(ui, |ui| {
-        ui.label("Fond coloré (opacité)"); pct(ui, &mut st.backdrop, 100); ui.end_row();
+        ui.label(tr("Colored background (opacity)")); pct(ui, &mut st.backdrop, 100); ui.end_row();
     });
-    ui.checkbox(&mut st.underline, "Souligner au lieu d'encadrer");
-    crate::help(ui, "Tailles données pour un menu 1920 × 1080. Le halo et l'agrandissement élargissent l'image des boutons : laissez de l'espace entre eux.");
+    ui.checkbox(&mut st.underline, tr("Underline instead of framing"));
+    crate::help(ui, tr("Sizes given for a 1920 × 1080 menu. The glow and the enlargement widen the button image: leave some space between buttons."));
     // sons : seulement dans le style du projet (un element a sa propre case « Sons propres a cet element », hors apparence)
     if id == "projet" {
-        ui.strong("Sons");
+        ui.strong(tr("Sounds"));
         sounds_ui(ui, &mut st.sound_select, &mut st.sound_activate, pick_sound);
     }
-    if ui.button("Valeurs par défaut").on_hover_text("Couleurs, cadre, halo… (les sons sont gardés)").clicked() {
+    if ui.button(tr("Default values")).on_hover_text(tr("Colors, border, glow… (sounds are kept)")).clicked() {
         let sounds = (std::mem::take(&mut st.sound_select), std::mem::take(&mut st.sound_activate));
         *st = ButtonStyle::default();
         (st.sound_select, st.sound_activate) = sounds;
@@ -69,15 +70,15 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &
 /// chemin a change.
 pub fn sounds_ui(ui: &mut egui::Ui, select: &mut String, activate: &mut String, pick: &mut Option<u8>) -> bool {
     let mut changed = false;
-    for (k, label, path) in [(1u8, "Sélection", select), (2, "Appui sur OK", activate)] {
+    for (k, label, path) in [(1u8, tr("Selection"), select), (2, tr("OK press"), activate)] {
         ui.horizontal_wrapped(|ui| {
             ui.label(label);
             changed |= ui.add(egui::TextEdit::singleline(path).desired_width(140.0).hint_text("aucun")).changed();
-            if ui.small_button("Choisir…").clicked() { *pick = Some(k); }
+            if ui.small_button(tr("Choose…")).clicked() { *pick = Some(k); }
             if !path.is_empty() && ui.small_button("✕").clicked() { path.clear(); changed = true; }
         });
     }
-    crate::help(ui, "Sons courts (moins d'une seconde), joués par le lecteur quand la sélection arrive sur le bouton ou à l'appui sur OK. Convertis en stéréo 48 kHz sur le disque (10 s au plus).");
+    crate::help(ui, tr("Short sounds (under one second), played by the player when the selection reaches the button or when OK is pressed. Converted to 48 kHz stereo on the disc (10 s at most)."));
     changed
 }
 
@@ -85,11 +86,11 @@ pub fn sounds_ui(ui: &mut egui::Ui, select: &mut String, activate: &mut String, 
 /// fichiers (plusieurs pour « selectionne » : animation). `preview` : jouer l'animation dans l'apercu de la page.
 pub fn skin_ui(ui: &mut egui::Ui, skin: &mut Skin, pick: &mut Option<usize>, preview: &mut bool, fps: u32) -> bool {
     let mut changed = false;
-    ui.strong("Images dessinées (facultatif)");
-    let hint = "Une image : état fixe. Plusieurs images (sélection multiple) : animation, dans l'ordre des noms.";
+    ui.strong(tr("Drawn images (optional)"));
+    let hint = tr("One image: fixed state. Several images (multiple selection): animation, in file-name order.");
     // « normal » et « selectionne » : une image (etat fixe) ou plusieurs (animation)
     for state in [0usize, 1] {
-        let label = if state == 0 { "Normal" } else { "Sélectionné" };
+        let label = if state == 0 { tr("Normal") } else { tr("Selected") };
         let (fixed, frames) = if state == 0 { (&mut skin.normal, &skin.normal_frames) } else { (&mut skin.selected, &skin.sel_frames) };
         let animated = !frames.is_empty();
         let count = frames.len();
@@ -97,11 +98,11 @@ pub fn skin_ui(ui: &mut egui::Ui, skin: &mut Skin, pick: &mut Option<usize>, pre
         ui.horizontal(|ui| {
             ui.label(label);
             if animated {
-                ui.add_enabled(false, egui::TextEdit::singleline(&mut format!("{count} images (animation)")).desired_width(160.0));
+                ui.add_enabled(false, egui::TextEdit::singleline(&mut trf!("{} images (animation)", count)).desired_width(160.0));
             } else {
                 changed |= ui.add(egui::TextEdit::singleline(fixed).desired_width(160.0).hint_text("aucune")).changed();
             }
-            if ui.small_button("Choisir…").on_hover_text(hint).clicked() { *pick = Some(state); }
+            if ui.small_button(tr("Choose…")).on_hover_text(hint).clicked() { *pick = Some(state); }
             if (animated || !fixed.is_empty()) && ui.small_button("✕").clicked() { clear = true; }
         });
         if clear {
@@ -113,13 +114,13 @@ pub fn skin_ui(ui: &mut egui::Ui, skin: &mut Skin, pick: &mut Option<usize>, pre
         }
     }
     ui.horizontal(|ui| {
-        ui.label("Activé");
+        ui.label(tr("Activated"));
         changed |= ui.add(egui::TextEdit::singleline(&mut skin.activated).desired_width(160.0).hint_text("aucune")).changed();
-        if ui.small_button("Choisir…").clicked() { *pick = Some(2); }
+        if ui.small_button(tr("Choose…")).clicked() { *pick = Some(2); }
         if !skin.activated.is_empty() && ui.small_button("✕").clicked() { skin.activated.clear(); changed = true; }
     });
     if skin.normal_frames.is_empty() && skin.sel_frames.is_empty() { *preview = false; }
-    crate::help(ui, "PNG, JPEG ou SVG, ajustés au cadre. L'image normale remplace le dessin du bouton ; sans image « sélectionné », elle est mise en valeur avec le style. Plusieurs images « normal » ou « sélectionné » forment une animation.");
+    crate::help(ui, tr("PNG, JPEG or SVG, fitted to the frame. The normal image replaces the button drawing; without a “selected” image, it is highlighted with the style. Several “normal” or “selected” images form an animation."));
     changed
 }
 
@@ -137,11 +138,11 @@ fn anim_ui(ui: &mut egui::Ui, skin: &mut Skin, state: usize, preview: &mut bool,
             for (k, f) in frames.iter().enumerate() {
                 let r = ui.horizontal(|ui| {
                     let _ = ui.dnd_drag_source(egui::Id::new(("image_animation", state, k)), FrameDrag(state, k), |ui| ui.label(egui::RichText::new("☰").weak()))
-                        .response.on_hover_text("Glisser pour changer l'ordre des images");
+                        .response.on_hover_text(tr("Drag to change the order of the images"));
                     ui.label(format!("{:02}", k + 1));
                     let name = std::path::Path::new(f).file_name().map(|x| x.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone());
                     ui.label(name).on_hover_text(f.as_str());
-                    if ui.small_button("✕").on_hover_text("Retirer").clicked() { op = Some((k, None)); }
+                    if ui.small_button("✕").on_hover_text(tr("Remove")).clicked() { op = Some((k, None)); }
                 }).response;
                 rows.push(r.rect);
             }
@@ -163,22 +164,22 @@ fn anim_ui(ui: &mut egui::Ui, skin: &mut Skin, state: usize, preview: &mut bool,
         }
         // rangees repliables : elles ne doivent pas imposer une largeur minimale au panneau
         ui.horizontal_wrapped(|ui| {
-            ui.label("Lecture :");
-            if ui.radio(!*once, "en boucle").clicked() && *once { *once = false; changed = true; }
-            if ui.radio(*once, "une fois").on_hover_text("Une seule fois, puis arrêt sur la dernière image").clicked() && !*once { *once = true; changed = true; }
+            ui.label(tr("Playback:"));
+            if ui.radio(!*once, tr("loop")).clicked() && *once { *once = false; changed = true; }
+            if ui.radio(*once, tr("once")).on_hover_text(tr("Only once, then stops on the last image")).clicked() && !*once { *once = true; changed = true; }
         });
         ui.horizontal_wrapped(|ui| {
-            let tip = if state == 0 { "Joue les animations de l'état normal des éléments de la page (et celle de l'élément sélectionné)." } else { "Joue l'animation sur l'aperçu de la page tant que l'élément est sélectionné." };
-            ui.toggle_value(preview, "▶ Aperçu").on_hover_text(format!("{tip} En lecture « une fois », désactiver puis réactiver pour la rejouer."));
+            let tip = if state == 0 { tr("Plays the animations of the normal state of the page elements (and that of the selected element).") } else { tr("Plays the animation on the page preview while the element is selected.") };
+            ui.toggle_value(preview, tr("▶ Preview")).on_hover_text(trf!("{} In “once” playback, turn off then on again to replay it.", tip));
             let n = frames.len();
-            ui.label(egui::RichText::new(format!("{:.1} s à {fps} im/s", n as f64 / fps.max(1) as f64)).weak())
-                .on_hover_text("Cadence réglable dans « Fond et animations de cette page » (sans élément sélectionné)");
+            ui.label(egui::RichText::new(trf!("{} s at {} fps", format!("{:.1}", n as f64 / fps.max(1) as f64), fps)).weak())
+                .on_hover_text(tr("Frame rate adjustable in “Background and animations of this page” (with no element selected)"));
         });
         if state == 1 && no_normal {
-            ui.colored_label(Color32::from_rgb(230, 100, 90), "Choisissez aussi une image « normale » : sans elle, l'animation est ignorée.");
+            ui.colored_label(Color32::from_rgb(230, 100, 90), tr("Also choose a “normal” image: without it, the animation is ignored."));
         }
         if state == 0 {
-            crate::help(ui, "L'animation de l'état normal tourne en permanence et compte dans le poids de la page.");
+            crate::help(ui, tr("The normal-state animation runs permanently and counts in the page weight."));
         }
     });
     if let Some((k, d)) = op {
@@ -201,9 +202,6 @@ fn anim_ui(ui: &mut egui::Ui, skin: &mut Skin, state: usize, preview: &mut bool,
 pub fn weight_ui(ui: &mut egui::Ui, w: &Weight, plane: (u32, u32)) {
     let r = w.ratio();
     let col = if r >= 1.0 { Color32::from_rgb(230, 90, 80) } else if r >= 0.6 { Color32::from_rgb(235, 170, 60) } else { Color32::from_rgb(110, 200, 120) };
-    let text = format!(
-        "Poids des boutons : {:.1} Mo sur {:.0} Mo ({} bouton(s), menu {}×{}) — affichage en ≈ {:.1} s",
-        w.bytes as f64 / 1048576.0, DECODED_LIMIT as f64 / 1048576.0, w.buttons, plane.0, plane.1, w.seconds
-    );
-    ui.colored_label(col, text).on_hover_text("Mémoire d'images que le lecteur doit décoder avant d'afficher la page. Au-delà de la limite, le menu risque de ne pas s'afficher sur certains lecteurs. Halo, agrandissement et état « activé » augmentent ce poids.");
+    let text = trf!("Button weight: {} MB out of {} MB ({} button(s), menu {}×{}) — displayed in ≈ {} s", format!("{:.1}", w.bytes as f64 / 1048576.0), format!("{:.0}", DECODED_LIMIT as f64 / 1048576.0), w.buttons, plane.0, plane.1, format!("{:.1}", w.seconds));
+    ui.colored_label(col, text).on_hover_text(tr("Image memory the player must decode before displaying the page. Beyond the limit, the menu may not display on some players. Glow, enlargement and “activated” state increase this weight."));
 }

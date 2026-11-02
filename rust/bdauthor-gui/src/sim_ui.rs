@@ -1,5 +1,6 @@
 //! Simulation de la telecommande dans l'editeur : fleches pour passer d'un bouton a l'autre (meme regle de voisinage que le disque),
 //! Entree pour valider (etat « active » visible un instant), puis ouverture de la page visee ou lecture simulee de la video.
+use crate::i18n::{tr, trf};
 use crate::App;
 use bdauthor_core::design::{SlotReturn, SubChoice, Target};
 use bdauthor_core::editor::{page_of_target, sim_buttons, video_title, PageInfo, PageRef, SimAction, SimButton};
@@ -53,11 +54,11 @@ impl App {
         let sub_txt = |v: usize| -> String {
             match sub {
                 SubChoice::Keep => String::new(),
-                SubChoice::Off => " — sans sous-titres".to_string(),
+                SubChoice::Off => tr(" — no subtitles").to_string(),
                 SubChoice::Lang(id) => {
                     let name = self.model.language_name(id);
                     let has = self.model.videos.get(v).map_or(false, |x| x.subs.iter().any(|t| t.lang_id == id));
-                    if has { format!(" — sous-titres : {name}") } else { format!(" — sous-titres : {name} (absents de cette vidéo : rien ne s'affiche)") }
+                    if has { trf!(" — subtitles: {}", name) } else { trf!(" — subtitles: {} (absent from this video: nothing is displayed)", name) }
                 }
             }
         };
@@ -72,22 +73,22 @@ impl App {
         let mut go: Option<PageRef> = None;
         match a {
             SimAction::Play(v) | SimAction::Go(Target::Video(v)) => {
-                play = Some((format!("Lecture de « {} »{}", video_title(&self.model, v), sub_txt(v)), back_of(v)));
+                play = Some((trf!("Playing “{}”{}", video_title(&self.model, v), sub_txt(v)), back_of(v)));
             }
             SimAction::PlayFrom(v, t) => {
                 let s = t.round().max(0.0) as i64;
-                play = Some((format!("Lecture de « {} » à partir de {}:{:02}{}", video_title(&self.model, v), s / 60, s % 60, sub_txt(v)), back_of(v)));
+                play = Some((trf!("Playing “{}” from {}:{}{}", video_title(&self.model, v), s / 60, format!("{:02}", s % 60), sub_txt(v)), back_of(v)));
             }
             SimAction::PlayAllVideos => {
                 // le disque revient a la page d'ou « Tout lire » a ete lance
-                play = Some(("Lecture de toutes les vidéos à la suite".to_string(), Some(info.r)));
+                play = Some((tr("Playing all videos in a row").to_string(), Some(info.r)));
             }
             SimAction::Go(Target::Stay(exit)) => {
                 // reglage des sous-titres, puis la page de sortie s'il y en a une
                 self.notice = match sub {
-                    SubChoice::Keep => "Simulation : ce bouton ne fait rien.".to_string(),
-                    SubChoice::Off => "Simulation : sous-titres masqués.".to_string(),
-                    SubChoice::Lang(id) => format!("Simulation : sous-titres réglés sur « {} ».", self.model.language_name(id)),
+                    SubChoice::Keep => tr("Simulation: this button does nothing.").to_string(),
+                    SubChoice::Off => tr("Simulation: subtitles hidden.").to_string(),
+                    SubChoice::Lang(id) => trf!("Simulation: subtitles set to “{}”.", self.model.language_name(id)),
                 };
                 self.edit_gen += 1;
                 match exit.and_then(|q| page_of_target(&pages, Target::Main(q))) { Some(r) => go = Some(r), None => return }
@@ -96,7 +97,7 @@ impl App {
                 // aucune navigation : seule la langue audio change (pour les videos lues ensuite)
                 let name = self.model.language_name(id);
                 let has = self.model.videos.iter().any(|v| v.audio.iter().any(|t| t.lang_id == id));
-                self.notice = if has { format!("Simulation : langue audio réglée sur « {name} ».") } else { format!("Simulation : aucune vidéo n'a d'audio en « {name} » : rien ne change.") };
+                self.notice = if has { trf!("Simulation: audio language set to “{}”.", name) } else { trf!("Simulation: no video has audio in “{}”: nothing changes.", name) };
                 self.edit_gen += 1;
                 match exit.and_then(|q| page_of_target(&pages, Target::Main(q))) { Some(r) => go = Some(r), None => return }
             }
@@ -112,7 +113,7 @@ impl App {
         } else if let Some(r) = go {
             self.sim_goto(r);
         } else {
-            self.notice = "Simulation : la destination de ce bouton n'existe pas.".into();
+            self.notice = tr("Simulation: this button's destination does not exist.").into();
         }
     }
 
@@ -144,7 +145,7 @@ impl App {
         if let Some((what, back)) = sim.playing.clone() {
             painter.rect_filled(rect, 0.0, Color32::from_black_alpha(220));
             painter.text(rect.center(), egui::Align2::CENTER_CENTER, format!("▶  {what}"), egui::FontId::proportional(22.0), Color32::WHITE);
-            help(painter, "Fin de la vidéo : Entrée, Échap ou clic");
+            help(painter, tr("End of the video: Enter, Esc or click"));
             if ok || esc || resp.clicked() {
                 sim.playing = None;
                 self.sim = Some(sim);
@@ -155,7 +156,7 @@ impl App {
 
         let buttons = self.sim_page_buttons(info);
         if buttons.is_empty() {
-            help(painter, "Aucun bouton sur cette page · Échap : quitter la simulation");
+            help(painter, tr("No button on this page · Esc: quit the simulation"));
             self.sel_item = None;
             if esc { self.sim = None; self.edit_gen += 1; } else { self.sim = Some(sim); }
             return;
@@ -193,7 +194,7 @@ impl App {
         }
         self.sel_item = Some(buttons[sim.btn].item);
         self.sim = Some(sim);
-        help(painter, &format!("Simulation · bouton {} sur {} · Flèches : se déplacer · Entrée : valider · M : TOP MENU · Échap : quitter", self.sim.as_ref().map_or(0, |s| s.btn) + 1, buttons.len()));
+        help(painter, &trf!("Simulation · button {} of {} · Arrows: move · Enter: confirm · M: TOP MENU · Esc: quit the simulation", self.sim.as_ref().map_or(0, |s| s.btn) + 1, buttons.len()));
         if let Some((a, ret, sub)) = action {
             self.sim_do(info, a, ret, sub);
         }

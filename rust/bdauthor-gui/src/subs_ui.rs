@@ -1,4 +1,5 @@
 //! Panneau « Sous-titres » d'une video : pistes PGS issues de fichiers .srt/.ass ou de pistes texte integrees a la video.
+use crate::i18n::{tr, trf};
 use bdauthor_core::ffmpeg::{extract_subtitle_srt, extract_thumbnail_rgba, list_subtitle_streams, SubStreamInfo, Tools};
 use bdauthor_core::film::MAX_SUB_TRACKS;
 use bdauthor_core::model::{ProjectModel, VideoEntry};
@@ -35,88 +36,88 @@ pub(crate) fn language_for_code(langs: &mut Vec<Language>, code: &str) -> u32 {
 /// Retourne vrai si quelque chose a change. `langs` : langues de sous-titres du projet (le rang d'une langue est son numero de piste).
 pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path, preview: &mut Option<usize>, auto_fps: Option<f64>) -> bool {
     let mut changed = false;
-    ui.label("Sous-titres (affichés par le lecteur, au choix avec la télécommande) :");
+    ui.label(tr("Subtitles (displayed by the player, selectable with the remote control):"));
     let mut del = None;
     for (k, t) in v.subs.iter_mut().enumerate() {
         ui.push_id(k, |ui| {
             let what = match &t.source {
                 SubSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
-                SubSource::Embedded(n) => format!("piste intégrée n° {}", n + 1),
+                SubSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
             };
-            let lang_label = langs.iter().find(|l| l.id == t.lang_id).map_or_else(|| if langs.is_empty() { t.lang.clone() } else { "langue à choisir".to_string() }, |l| l.name.clone());
+            let lang_label = langs.iter().find(|l| l.id == t.lang_id).map_or_else(|| if langs.is_empty() { t.lang.clone() } else { tr("language to choose").to_string() }, |l| l.name.clone());
             egui::CollapsingHeader::new(format!("{} — {} ({})", k + 1, what, lang_label)).default_open(false).show(ui, |ui| {
                 if let SubSource::File(f) = &mut t.source {
                     ui.horizontal(|ui| {
-                        ui.label("Fichier :");
+                        ui.label(tr("File:"));
                         changed |= ui.text_edit_singleline(f).changed();
-                        if ui.button("Choisir…").clicked() {
-                            if let Some(p) = rfd::FileDialog::new().add_filter("Sous-titres", &["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv", "ttml", "dfxp", "xml", "lrc", "stl"]).pick_file() {
+                        if ui.button(tr("Choose…")).clicked() {
+                            if let Some(p) = rfd::FileDialog::new().add_filter(tr("Subtitles"), &["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv", "ttml", "dfxp", "xml", "lrc", "stl"]).pick_file() {
                                 *f = clean(&p);
                                 changed = true;
                             }
                         }
                     });
                     if !f.trim().is_empty() && !abs(base, f).is_file() {
-                        ui.colored_label(egui::Color32::from_rgb(230, 100, 90), "Fichier introuvable.");
+                        ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("File not found."));
                     }
                 }
                 ui.horizontal(|ui| {
                     let cur = langs.iter().find(|l| l.id == t.lang_id).map(|l| l.name.clone());
-                    let shown = cur.clone().unwrap_or_else(|| "(à choisir)".to_string());
-                    egui::ComboBox::from_label("Langue").selected_text(shown).show_ui(ui, |ui| {
+                    let shown = cur.clone().unwrap_or_else(|| tr("(to choose)").to_string());
+                    egui::ComboBox::from_label(tr("Language")).selected_text(shown).show_ui(ui, |ui| {
                         for l in langs.iter() {
                             if ui.selectable_label(t.lang_id == l.id, &l.name).clicked() { t.lang_id = l.id; t.lang = l.code.clone(); changed = true; }
                         }
                     });
-                    if cur.is_none() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), "à choisir"); }
+                    if cur.is_none() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("to choose")); }
                 });
                 if let SubSource::File(_) = &t.source {
                     let auto_cs = Charset::for_language(&t.lang);
                     ui.horizontal(|ui| {
-                        ui.label("Encodage du fichier :");
-                        let shown = if t.charset == Charset::Auto { format!("Automatique ({})", auto_cs.label()) } else { t.charset.label().to_string() };
+                        ui.label(tr("File encoding:"));
+                        let shown = if t.charset == Charset::Auto { trf!("Automatic ({})", auto_cs.label()) } else { t.charset.label().to_string() };
                         egui::ComboBox::from_id_salt("encodage_sous_titres").selected_text(shown).show_ui(ui, |ui| {
                             for c in Charset::ALL {
-                                let l = if c == Charset::Auto { format!("Automatique (UTF-8, sinon {})", auto_cs.label()) } else { c.label().to_string() };
+                                let l = if c == Charset::Auto { trf!("Automatic (UTF-8, otherwise {})", auto_cs.label()) } else { c.label().to_string() };
                                 if ui.selectable_label(t.charset == c, l).clicked() { t.charset = c; changed = true; }
                             }
                         });
-                    }).response.on_hover_text("Les fichiers récents sont en UTF-8. Les anciens utilisent une page de code propre à la langue (Windows-1251 pour le russe, Shift-JIS pour le japonais…) : « Automatique » la devine d'après la langue de la piste. Si les accents ou les lettres s'affichent mal, choisissez l'encodage à la main.");
+                    }).response.on_hover_text(tr("Recent files are in UTF-8. Older ones use a code page specific to the language (Windows-1251 for Russian, Shift-JIS for Japanese…): “Automatic” guesses it from the track's language. If accents or letters display wrongly, choose the encoding by hand."));
                 }
                 // cadence : seulement pour les fichiers dont les temps sont en images (MicroDVD : .sub, .txt)
                 if let SubSource::File(f) = &t.source {
                     let ext = Path::new(f).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
                     if ext == "sub" || ext == "txt" {
                         ui.horizontal(|ui| {
-                            ui.label("Cadence (si le fichier est en images) :");
-                            let auto = auto_fps.map_or("Automatique (23,976 i/s)".to_string(), |v| format!("Automatique ({v:.3} i/s, d'après la vidéo)"));
-                            let shown = t.fps.map_or(auto.clone(), |v| format!("{v} i/s"));
+                            ui.label(tr("Frame rate (if the file is frame-based):"));
+                            let auto = auto_fps.map_or(tr("Automatic (23.976 fps)").to_string(), |v| trf!("Automatic ({} fps, from the video)", format!("{:.3}", v)));
+                            let shown = t.fps.map_or(auto.clone(), |v| trf!("{} fps", v));
                             egui::ComboBox::from_id_salt("cadence_sous_titres").selected_text(shown).show_ui(ui, |ui| {
                                 if ui.selectable_label(t.fps.is_none(), auto.as_str()).clicked() { t.fps = None; changed = true; }
                                 for v in [23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94] {
-                                    if ui.selectable_label(t.fps == Some(v), format!("{v} i/s")).clicked() { t.fps = Some(v); changed = true; }
+                                    if ui.selectable_label(t.fps == Some(v), trf!("{} fps", v)).clicked() { t.fps = Some(v); changed = true; }
                                 }
                             });
                             if let Some(v) = &mut t.fps {
-                                changed |= ui.add(egui::DragValue::new(v).speed(0.01).range(1.0..=240.0).suffix(" i/s")).changed();
+                                changed |= ui.add(egui::DragValue::new(v).speed(0.01).range(1.0..=240.0).suffix(tr(" fps"))).changed();
                             }
-                        }).response.on_hover_text("Les fichiers MicroDVD comptent en images, pas en secondes : choisissez la cadence de la vidéo d'origine (une première ligne {1}{1}25 dans le fichier la fixe déjà). Un mauvais choix étire ou comprime les temps.");
+                        }).response.on_hover_text(tr("MicroDVD files count in frames, not seconds: choose the frame rate of the original video (a first line {1}{1}25 in the file already sets it). A wrong choice stretches or compresses the timing."));
                     }
                 }
                 ui.horizontal(|ui| {
-                    ui.label("Décalage :");
+                    ui.label(tr("Offset:"));
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
                 });
-                changed |= ui.checkbox(&mut t.strip_notes, "Retirer les indications [entre crochets] et (entre parenthèses)")
-                    .on_hover_text("Pour les sous-titres destinés aux sourds et malentendants : [Musique], (rires), (soupir)… sont supprimés ; une réplique qui ne contient que cela disparaît.").changed();
-                changed |= ui.checkbox(&mut t.keep_format, "Garder l'italique, le gras et les couleurs du fichier")
-                    .on_hover_text("Les balises <i>, <b>, <u>, <font color> (SRT, WebVTT, SAMI) et {\\i1}, {\\b1}, {\\c&H…&} (ASS) sont dessinées. Décoché : tout le texte prend le style de la piste. La couleur du texte réglée ci-dessous sert pour le texte sans couleur propre.").changed();
-                changed |= ui.checkbox(&mut t.file_positions, "Respecter les positions du fichier (ASS : \\an1 à \\an9)")
-                    .on_hover_text("Certains fichiers placent des répliques en haut, à gauche, etc. (par exemple pour ne pas masquer du texte incrusté dans l'image). Décoché : toutes les répliques prennent la position réglée ci-dessous. Les répliques simultanées sont affichées ensemble, à la position de la première qui en demande une.").changed();
+                changed |= ui.checkbox(&mut t.strip_notes, tr("Remove [bracketed] and (parenthesized) annotations"))
+                    .on_hover_text(tr("For subtitles meant for the deaf and hard of hearing: [Music], (laughs), (sighs)… are removed; a cue that contains only that disappears.")).changed();
+                changed |= ui.checkbox(&mut t.keep_format, tr("Keep the file's italics, bold and colors"))
+                    .on_hover_text(tr("The tags <i>, <b>, <u>, <font color> (SRT, WebVTT, SAMI) and {\\i1}, {\\b1}, {\\c&H…&} (ASS) are drawn. Unchecked: all the text takes the track's style. The text color set below is used for text with no color of its own.")).changed();
+                changed |= ui.checkbox(&mut t.file_positions, tr("Respect the positions in the file (ASS: \\an1 to \\an9)"))
+                    .on_hover_text(tr("Some files place cues at the top, on the left, etc. (for example so as not to hide text burned into the picture). Unchecked: all cues take the position set below. Simultaneous cues are displayed together, at the position of the first one that asks for one.")).changed();
                 style_ui(ui, &mut t.style, &mut changed);
                 ui.horizontal(|ui| {
-                    if ui.button("Aperçu du rendu…").on_hover_text("Voir les répliques de cette piste dessinées avec son style").clicked() { *preview = Some(k); }
-                    if ui.button("Retirer cette piste").clicked() { del = Some(k); }
+                    if ui.button(tr("Rendering preview…")).on_hover_text(tr("See this track's cues drawn with its style")).clicked() { *preview = Some(k); }
+                    if ui.button(tr("Remove this track")).clicked() { del = Some(k); }
                 });
             });
         });
@@ -126,8 +127,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
     let full = v.subs.len() >= MAX_SUB_TRACKS;
     ui.add_enabled_ui(!full, |ui| {
         ui.horizontal(|ui| {
-            if ui.button("Ajouter un fichier de sous-titres…").clicked() {
-                if let Some(p) = rfd::FileDialog::new().add_filter("Sous-titres", &["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv", "ttml", "dfxp", "xml", "lrc", "stl"]).pick_file() {
+            if ui.button(tr("Add a subtitle file…")).clicked() {
+                if let Some(p) = rfd::FileDialog::new().add_filter(tr("Subtitles"), &["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv", "ttml", "dfxp", "xml", "lrc", "stl"]).pick_file() {
                     let mut t = SubTrackCfg::from_file(&clean(&p), "fra");
                     // premiere langue du projet : le francais par defaut ; ensuite, a choisir
                     if langs.is_empty() { t.lang_id = language_for_code(langs, "fra"); }
@@ -135,7 +136,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     changed = true;
                 }
             }
-            if ui.button("Pistes intégrées à la vidéo…").clicked() {
+            if ui.button(tr("Tracks embedded in the video…")).clicked() {
                 let r = match Tools::locate() {
                     Ok(t) => list_subtitle_streams(&t, &abs(base, &v.file)).map_err(|e| e.to_string()),
                     Err(e) => Err(e.to_string()),
@@ -145,19 +146,19 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         });
     });
     if full {
-        ui.label(egui::RichText::new(format!("{MAX_SUB_TRACKS} pistes au maximum par vidéo.")).weak());
+        ui.label(egui::RichText::new(trf!("{} tracks maximum per video.", MAX_SUB_TRACKS)).weak());
     }
     match probes.get(&v.file) {
         Some(Err(e)) => { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), e.as_str()); }
-        Some(Ok(list)) if list.is_empty() => { ui.label(egui::RichText::new("Aucune piste de sous-titres dans cette vidéo.").weak()); }
+        Some(Ok(list)) if list.is_empty() => { ui.label(egui::RichText::new(tr("No subtitle track in this video.")).weak()); }
         Some(Ok(list)) => {
             for s in list {
                 ui.horizontal(|ui| {
-                    let name = format!("Piste {} : {} {} {}", s.index + 1, s.codec, if s.lang.is_empty() { "?" } else { &s.lang }, s.title);
+                    let name = trf!("Track {} : {} {} {}", s.index + 1, s.codec, if s.lang.is_empty() { "?" } else { &s.lang }, s.title);
                     ui.label(name);
                     if s.is_text() {
                         let used = v.subs.iter().any(|t| t.source == SubSource::Embedded(s.index));
-                        if ui.add_enabled(!used && !full, egui::Button::new("Ajouter")).clicked() {
+                        if ui.add_enabled(!used && !full, egui::Button::new(tr("Add"))).clicked() {
                             let lang = if s.lang.len() == 3 { s.lang.as_str() } else { "und" };
                             let mut t = SubTrackCfg::embedded(s.index, lang);
                             // la langue annoncee par la piste est ajoutee a la liste du projet si elle n'y est pas
@@ -166,91 +167,91 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                             changed = true;
                         }
                     } else {
-                        ui.label(egui::RichText::new("(sous-titres en images : non gérés)").weak());
+                        ui.label(egui::RichText::new(tr("(image-based subtitles: not supported)")).weak());
                     }
                 });
             }
         }
         None => {}
     }
-    crate::help(ui, concat!("La liste des langues du projet se règle dans le menu « Édition > Projet… », onglet « Langues des sous-titres » : chaque langue y garde le même numéro de piste dans toutes les vidéos.", "\n\n", "Formats lus : SRT, ASS/SSA, WebVTT, MicroDVD (23,976 i/s sauf indication {1}{1}cadence), SubViewer, SBV, SAMI ; TTML, LRC, STL et autres via ffmpeg.", "\n\n", "Le décalage corrige un retard ou une avance. Les sous-titres sont dessinés en images (format Blu-ray PGS) ; la télécommande les active et choisit la piste."));
+    crate::help(ui, tr("The project's language list is set in the menu “Edit > Project…”, tab “Subtitle languages”: each language keeps the same track number in all videos.\n\nFormats read: SRT, ASS/SSA, WebVTT, MicroDVD (23.976 fps unless a {1}{1}rate line says otherwise), SubViewer, SBV, SAMI; TTML, LRC, STL and others via ffmpeg.\n\nThe offset corrects a delay or an advance. Subtitles are drawn as images (Blu-ray PGS format); the remote control turns them on and chooses the track."));
     changed
 }
 
 fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
     ui.horizontal(|ui| {
-        ui.label("Taille :");
+        ui.label(tr("Size:"));
         *changed |= ui.add(egui::DragValue::new(&mut s.size).range(8..=400).suffix(" px")).changed();
-        ui.label("Couleur :");
+        ui.label(tr("Color:"));
         *changed |= ui.color_edit_button_srgb(&mut s.color).changed();
     });
     ui.horizontal(|ui| {
-        ui.label("Contour :");
+        ui.label(tr("Outline:"));
         *changed |= ui.add(egui::DragValue::new(&mut s.outline).range(0..=30).suffix(" px")).changed();
-        ui.label("Couleur du contour :");
+        ui.label(tr("Outline color:"));
         *changed |= ui.color_edit_button_srgb(&mut s.outline_color).changed();
     });
     ui.horizontal(|ui| {
-        ui.label("Position :");
+        ui.label(tr("Position:"));
         for p in [VPos::Top, VPos::Middle, VPos::Bottom] {
             if ui.selectable_label(s.pos == p, p.name()).clicked() && s.pos != p { s.pos = p; *changed = true; }
         }
-        ui.label("Marge :");
+        ui.label(tr("Margin:"));
         *changed |= ui.add(egui::DragValue::new(&mut s.margin).range(0..=540).suffix(" px")).changed();
     });
     ui.horizontal(|ui| {
-        ui.label("Alignement :");
+        ui.label(tr("Alignment:"));
         for a in HAlign::ALL {
             if ui.selectable_label(s.halign == a, a.name()).clicked() && s.halign != a { s.halign = a; *changed = true; }
         }
         ui.add_enabled_ui(s.halign != HAlign::Center, |ui| {
-            ui.label("Marge latérale :");
+            ui.label(tr("Side margin:"));
             *changed |= ui.add(egui::DragValue::new(&mut s.margin_x).range(0..=960).suffix(" px")).changed();
         });
     });
     ui.horizontal(|ui| {
-        ui.label("Largeur maximale :");
-        *changed |= ui.add(egui::DragValue::new(&mut s.max_width).range(30..=100).suffix(" %")).on_hover_text("Part de la largeur de l'image que le texte peut occuper").changed();
-        *changed |= ui.checkbox(&mut s.wrap, "Couper les lignes longues").on_hover_text("Coupe aux espaces et équilibre les lignes ; sinon la taille du texte est réduite pour que tout tienne").changed();
+        ui.label(tr("Maximum width:"));
+        *changed |= ui.add(egui::DragValue::new(&mut s.max_width).range(30..=100).suffix(" %")).on_hover_text(tr("Share of the image width the text may occupy")).changed();
+        *changed |= ui.checkbox(&mut s.wrap, tr("Wrap long lines")).on_hover_text(tr("Wraps at spaces and balances the lines; otherwise the text size is reduced so everything fits")).changed();
     });
     ui.horizontal(|ui| {
-        ui.label("Ombre :");
-        *changed |= ui.add(egui::DragValue::new(&mut s.shadow).range(0..=30).suffix(" px")).on_hover_text("0 : pas d'ombre").changed();
+        ui.label(tr("Shadow:"));
+        *changed |= ui.add(egui::DragValue::new(&mut s.shadow).range(0..=30).suffix(" px")).on_hover_text(tr("0: no shadow")).changed();
         ui.add_enabled_ui(s.shadow > 0, |ui| {
             *changed |= ui.color_edit_button_srgb(&mut s.shadow_color).changed();
-            ui.label("Opacité :");
+            ui.label(tr("Opacity:"));
             *changed |= ui.add(egui::DragValue::new(&mut s.shadow_opacity).range(0..=100).suffix(" %")).changed();
         });
     });
     ui.horizontal(|ui| {
-        ui.label("Boîte :");
-        *changed |= ui.add(egui::DragValue::new(&mut s.bg_opacity).range(0..=100).suffix(" %")).on_hover_text("Opacité du rectangle derrière le texte ; 0 : pas de boîte").changed();
+        ui.label(tr("Box:"));
+        *changed |= ui.add(egui::DragValue::new(&mut s.bg_opacity).range(0..=100).suffix(" %")).on_hover_text(tr("Opacity of the rectangle behind the text; 0: no box")).changed();
         ui.add_enabled_ui(s.bg_opacity > 0, |ui| {
             *changed |= ui.color_edit_button_srgb(&mut s.bg_color).changed();
-            ui.label("Marge :");
+            ui.label(tr("Margin:"));
             *changed |= ui.add(egui::DragValue::new(&mut s.bg_pad).range(0..=100).suffix(" px")).changed();
-            ui.label("Coins :");
+            ui.label(tr("Corners:"));
             *changed |= ui.add(egui::DragValue::new(&mut s.bg_radius).range(0..=100).suffix(" px")).changed();
         });
     });
-    let shown = if s.font.is_empty() { "Police par défaut".to_string() } else {
+    let shown = if s.font.is_empty() { tr("Default font").to_string() } else {
         bdauthor_render::common_fonts().into_iter().find(|(_, f)| *f == s.font).map(|(l, _)| l.to_string()).unwrap_or_else(|| s.font.clone())
     };
     let mut pick = false;
-    egui::ComboBox::from_label("Police").selected_text(shown).show_ui(ui, |ui| {
-        if ui.selectable_label(s.font.is_empty(), "Police par défaut").clicked() { s.font.clear(); *changed = true; }
+    egui::ComboBox::from_label(tr("Font")).selected_text(shown).show_ui(ui, |ui| {
+        if ui.selectable_label(s.font.is_empty(), tr("Default font")).clicked() { s.font.clear(); *changed = true; }
         for (label, file) in bdauthor_render::common_fonts() {
             if ui.selectable_label(s.font == file, label).clicked() { s.font = file.to_string(); *changed = true; }
         }
-        if ui.button("Autre fichier…").clicked() { pick = true; ui.close_menu(); }
+        if ui.button(tr("Other file…")).clicked() { pick = true; ui.close_menu(); }
     });
     if pick {
-        if let Some(p) = rfd::FileDialog::new().add_filter("Polices", &["ttf", "otf"]).pick_file() {
+        if let Some(p) = rfd::FileDialog::new().add_filter(tr("Fonts"), &["ttf", "otf"]).pick_file() {
             s.font = clean(&p);
             *changed = true;
         }
     }
-    crate::help(ui, "Tailles données pour une vidéo de 1080 lignes ; elles s'adaptent automatiquement à 720.");
+    crate::help(ui, tr("Sizes given for a 1080-line video; they adapt automatically to 720."));
 }
 
 /// Onglet « Langues » de la fenetre Projet (audio et sous-titres) : liste des langues du projet (le rang d'une langue est son numero de
@@ -258,7 +259,7 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
 pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
     let mut changed = false;
     {
-        ui.label("Langues des pistes audio et des sous-titres. Le rang dans la liste fixe le numéro de piste, identique dans toutes les vidéos.");
+        ui.label(tr("Languages of the audio and subtitle tracks. The rank in the list sets the track number, identical in all videos."));
         let mut op: Option<(usize, i32)> = None; // (rang, -1 haut / 1 bas / 0 retirer)
         let n = m.languages.len();
         for (k, l) in m.languages.iter_mut().enumerate() {
@@ -266,11 +267,11 @@ pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
                 ui.horizontal(|ui| {
                     ui.label(format!("{}.", k + 1));
                     changed |= ui.add(egui::TextEdit::singleline(&mut l.name).desired_width(150.0)).changed();
-                    ui.label("code :");
+                    ui.label(tr("code:"));
                     changed |= ui.add(egui::TextEdit::singleline(&mut l.code).desired_width(40.0)).changed();
                     if ui.add_enabled(k > 0, egui::Button::new("▲").small()).clicked() { op = Some((k, -1)); }
                     if ui.add_enabled(k + 1 < n, egui::Button::new("▼").small()).clicked() { op = Some((k, 1)); }
-                    if ui.small_button("Retirer").clicked() { op = Some((k, 0)); }
+                    if ui.small_button(tr("Remove")).clicked() { op = Some((k, 0)); }
                 });
             });
         }
@@ -283,7 +284,7 @@ pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
             changed = true;
         }
         ui.add_enabled_ui(m.languages.len() < MAX_SUB_TRACKS, |ui| {
-            ui.menu_button("Ajouter une langue ▾", |ui| {
+            ui.menu_button(tr("Add a language ▾"), |ui| {
                 for code in ["fra", "eng", "deu", "spa", "ita", "por", "nld", "jpn", "zho", "rus", "ara", "kor"] {
                     let name = default_language_name(code);
                     if ui.button(&name).clicked() {
@@ -292,17 +293,17 @@ pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
                         ui.close_menu();
                     }
                 }
-                if ui.button("Autre…").clicked() { m.add_language("Nouvelle langue", "und"); changed = true; ui.close_menu(); }
+                if ui.button(tr("Other…")).clicked() { m.add_language(tr("New language"), "und"); changed = true; ui.close_menu(); }
             });
         });
         if m.languages.len() >= MAX_SUB_TRACKS {
-            ui.label(egui::RichText::new(format!("{MAX_SUB_TRACKS} langues au maximum.")).weak());
+            ui.label(egui::RichText::new(trf!("{} languages maximum.", MAX_SUB_TRACKS)).weak());
         }
         ui.separator();
         if m.languages.is_empty() {
-            ui.label(egui::RichText::new("Aucune langue : ajoutez-en pour choisir la langue des pistes audio et des sous-titres, et pour les boutons « Régler… ».").weak());
+            ui.label(egui::RichText::new(tr("No language: add some to choose the language of audio and subtitle tracks, and for the “Set…” buttons.")).weak());
         } else {
-            crate::help(ui, concat!("Chaque piste audio ou de sous-titres d'une vidéo choisit sa langue dans cette liste. Sous-titres : une vidéo qui n'a pas une langue garde une piste vide à cet endroit. Audio : seules comptent les langues qui ont de l'audio quelque part, et chaque vidéo doit avoir les premières de l'ordre de la liste, sans trou.", "\n\n", "Changer l'ordre change les numéros de piste : les boutons suivent leur langue."));
+            crate::help(ui, tr("Each audio or subtitle track of a video chooses its language from this list. Subtitles: a video that lacks a language keeps an empty track at that place. Audio: only languages that have audio somewhere count, and each video must have the first ones in list order, with no gaps.\n\nChanging the order changes the track numbers: buttons follow their language."));
         }
     }
     changed
@@ -445,55 +446,55 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
     }
     let name = match &t.source {
         SubSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
-        SubSource::Embedded(n) => format!("piste intégrée n° {}", n + 1),
+        SubSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
     };
     let mut open = true;
-    crate::os_window_panels(ctx, "apercu_sous_titres", "Aperçu des sous-titres", [840.0, 760.0], &mut open, Some(170.0), &mut |ui, is_bottom| {
+    crate::os_window_panels(ctx, "apercu_sous_titres", tr("Subtitle preview"), [840.0, 760.0], &mut open, Some(170.0), &mut |ui, is_bottom| {
         if is_bottom {
             // zone du bas, ajustable en glissant son bord superieur : le style de la piste
-            ui.label(egui::RichText::new("Style de la piste").strong());
+            ui.label(egui::RichText::new(tr("Track style")).strong());
             style_ui(ui, &mut t.style, &mut changed);
             return;
         }
         ui.label(egui::RichText::new(name.as_str()).strong());
         match &pv.raw {
-            None => { ui.horizontal(|ui| { ui.spinner(); ui.label("Extraction de la piste…"); }); return; }
+            None => { ui.horizontal(|ui| { ui.spinner(); ui.label(tr("Extracting the track…")); }); return; }
             Some(Err(e)) => { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), e.as_str()); return; }
             Some(Ok(_)) => {}
         }
         let n = pv.shown.len();
         if n == 0 {
-            ui.label("Aucune réplique affichable (vérifiez le décalage).");
+            ui.label(tr("No displayable cue (check the offset)."));
             return;
         }
         ui.horizontal(|ui| {
-            if ui.button("<").on_hover_text("Réplique précédente").clicked() { pv.cue = pv.cue.saturating_sub(1); }
+            if ui.button("<").on_hover_text(tr("Previous cue")).clicked() { pv.cue = pv.cue.saturating_sub(1); }
             ui.add(egui::Slider::new(&mut pv.cue, 0..=n - 1).custom_formatter(|v, _| format!("{} / {}", v as usize + 1, n)).custom_parser(|s| s.split('/').next().and_then(|a| a.trim().parse::<f64>().ok()).map(|v| v - 1.0)));
-            if ui.button(">").on_hover_text("Réplique suivante").clicked() { pv.cue = (pv.cue + 1).min(n - 1); }
-            if ui.button("Plus longue").on_hover_text("Va à la réplique la plus longue, la plus exigeante pour la mise en page").clicked() {
+            if ui.button(">").on_hover_text(tr("Next cue")).clicked() { pv.cue = (pv.cue + 1).min(n - 1); }
+            if ui.button(tr("Longest")).on_hover_text(tr("Goes to the longest cue, the most demanding for layout")).clicked() {
                 pv.cue = (0..n).max_by_key(|&i| plain_text(&pv.shown[i].text).lines().map(|l| l.chars().count()).max().unwrap_or(0) + pv.shown[i].text.lines().count() * 8).unwrap_or(0);
             }
         });
         pv.cue = pv.cue.min(n - 1);
         if pv.issues.is_none() { pv.issues = Some(check_quality(&pv.shown, &pv.lim)); }
         let n_issues = pv.issues.as_ref().map_or(0, |v| v.len());
-        egui::CollapsingHeader::new(if n_issues == 0 { "Contrôle de qualité : aucun problème".to_string() } else { format!("Contrôle de qualité : {n_issues} problème(s)") })
+        egui::CollapsingHeader::new(if n_issues == 0 { tr("Quality check: no problem").to_string() } else { trf!("Quality check: {} problem(s)", n_issues) })
             .id_salt("controle_qualite").default_open(false).show(ui, |ui| {
                 let mut lim = pv.lim;
                 ui.horizontal_wrapped(|ui| {
-                    ui.label("Lecture max :");
-                    ui.add(egui::DragValue::new(&mut lim.max_cps).range(5.0..=60.0).speed(0.5).suffix(" car./s"));
-                    ui.label("Ligne max :");
-                    ui.add(egui::DragValue::new(&mut lim.max_line_chars).range(10..=100).suffix(" car."));
-                    ui.label("Lignes max :");
+                    ui.label(tr("Max reading speed:"));
+                    ui.add(egui::DragValue::new(&mut lim.max_cps).range(5.0..=60.0).speed(0.5).suffix(tr(" chars/s")));
+                    ui.label(tr("Max line length:"));
+                    ui.add(egui::DragValue::new(&mut lim.max_line_chars).range(10..=100).suffix(tr(" chars")));
+                    ui.label(tr("Max lines:"));
                     ui.add(egui::DragValue::new(&mut lim.max_lines).range(1..=6));
-                    ui.label("Durée :");
+                    ui.label(tr("Duration:"));
                     ui.add(egui::DragValue::new(&mut lim.min_ms).range(0..=5000).speed(10.0).suffix(" ms"));
-                    ui.label("à");
+                    ui.label(tr("to"));
                     ui.add(egui::DragValue::new(&mut lim.max_ms).range(1000..=30000).speed(50.0).suffix(" ms"));
-                    ui.label("Intervalle min :");
+                    ui.label(tr("Min gap:"));
                     ui.add(egui::DragValue::new(&mut lim.min_gap_ms).range(0..=1000).speed(5.0).suffix(" ms"));
-                    if ui.small_button("Valeurs usuelles").clicked() { lim = QualityLimits::default(); }
+                    if ui.small_button(tr("Usual values")).clicked() { lim = QualityLimits::default(); }
                 });
                 if lim != pv.lim { pv.lim = lim; pv.issues = None; }
                 if let Some(list) = &pv.issues {
@@ -502,21 +503,21 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
                             let at = pv.shown.get(i.index).map_or(0, |c| c.start_ms);
                             if ui.selectable_label(pv.cue == i.index, format!("{} · {} — {}", clock(at), i.kind.label(), i.detail)).clicked() { pv.cue = i.index; }
                         }
-                        if list.len() > 500 { ui.label(egui::RichText::new(format!("… et {} autres", list.len() - 500)).weak()); }
+                        if list.len() > 500 { ui.label(egui::RichText::new(trf!("… and {} more", list.len() - 500)).weak()); }
                     });
                 }
-                crate::help(ui, "Vérifie les répliques affichées (décalage appliqué, simultanées fusionnées) : vitesse de lecture, longueur et nombre de lignes, durée d'affichage et intervalle avec la suivante. Cliquez sur un problème pour voir la réplique. Les seuils sont ceux d'usage courant ; ils ne modifient pas les sous-titres.");
+                crate::help(ui, tr("Checks the displayed cues (offset applied, simultaneous ones merged): reading speed, length and number of lines, display duration and gap with the next one. Click a problem to see the cue. The thresholds are the usual ones; they do not change the subtitles."));
             });
         let c = pv.shown[pv.cue].clone();
-        ui.label(egui::RichText::new(format!("{} → {}{}", clock(c.start_ms), clock(c.end_ms), c.pos.map_or(String::new(), |p| format!(" · position du fichier : {}", p.label())))).weak());
+        ui.label(egui::RichText::new(format!("{} → {}{}", clock(c.start_ms), clock(c.end_ms), c.pos.map_or(String::new(), |p| trf!(" · position from file: {}", p.label())))).weak());
         ui.horizontal(|ui| {
-            ui.label("Fond :");
-            for (i, l) in ["Noir", "Gris", "Clair", "Image de la vidéo"].iter().enumerate() { if ui.selectable_label(pv.bg == i as u8, *l).clicked() { pv.bg = i as u8; } }
+            ui.label(tr("Background:"));
+            for (i, l) in [tr("Black"), tr("Gray"), tr("Light"), tr("Video frame")].iter().enumerate() { if ui.selectable_label(pv.bg == i as u8, *l).clicked() { pv.bg = i as u8; } }
             ui.separator();
-            ui.label("Vidéo :");
+            ui.label(tr("Video:"));
             for h in [1080u32, 720] { if ui.selectable_label(pv.vh == h, format!("{h}p")).clicked() { pv.vh = h; } }
             ui.separator();
-            ui.checkbox(&mut pv.safe, "Zone de sécurité");
+            ui.checkbox(&mut pv.safe, tr("Safe area"));
         });
         // fond « image de la video » : l'image reelle a l'apparition de la replique (extraite par ffmpeg en arriere-plan, gardee en memoire)
         let mut frame_note = None;
@@ -532,10 +533,10 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
                 }
             }
             match pv.frames.get(&fk) {
-                Some(Err(e)) => frame_note = Some(format!("Image indisponible : {e}")),
+                Some(Err(e)) => frame_note = Some(trf!("Frame unavailable: {}", e)),
                 Some(Ok(_)) => {}
                 None => {
-                    frame_note = Some("Extraction de l'image de la vidéo…".to_string());
+                    frame_note = Some(tr("Extracting the video frame…").to_string());
                     if pv.frame_pending.is_none() {
                         let (tx, rx) = std::sync::mpsc::channel();
                         let (src, vh) = (pv.video_file.clone(), pv.vh);
@@ -566,12 +567,12 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         let fit_w = (ui.available_width() - 4.0).clamp(200.0, 2400.0);
         let ppp = ctx.pixels_per_point();
         ui.horizontal(|ui| {
-            if ui.small_button("−").on_hover_text("Dézoomer").clicked() { pv.zoom = (pv.zoom / 1.25).max(0.25); }
-            if ui.small_button("+").on_hover_text("Zoomer").clicked() { pv.zoom = (pv.zoom * 1.25).min(8.0); }
-            if ui.small_button("Ajuster").on_hover_text("Image entière dans la largeur de la fenêtre").clicked() { pv.zoom = 1.0; }
-            if ui.small_button("1:1").on_hover_text("Un pixel de la vidéo = un pixel de l'écran").clicked() { pv.zoom = ((pv.vh * 16 / 9) as f32 / ppp / fit_w).clamp(0.25, 8.0); }
-            ui.label(format!("{:.0} %", pv.zoom * fit_w * ppp / (pv.vh * 16 / 9) as f32 * 100.0)).on_hover_text("100 % = taille réelle de la vidéo");
-            ui.label(egui::RichText::new("Molette : zoom · glisser : déplacer").weak());
+            if ui.small_button("−").on_hover_text(tr("Zoom out")).clicked() { pv.zoom = (pv.zoom / 1.25).max(0.25); }
+            if ui.small_button("+").on_hover_text(tr("Zoom in")).clicked() { pv.zoom = (pv.zoom * 1.25).min(8.0); }
+            if ui.small_button(tr("Fit")).on_hover_text(tr("Whole image across the window width")).clicked() { pv.zoom = 1.0; }
+            if ui.small_button("1:1").on_hover_text(tr("One video pixel = one screen pixel")).clicked() { pv.zoom = ((pv.vh * 16 / 9) as f32 / ppp / fit_w).clamp(0.25, 8.0); }
+            ui.label(format!("{:.0} %", pv.zoom * fit_w * ppp / (pv.vh * 16 / 9) as f32 * 100.0)).on_hover_text(tr("100% = actual video size"));
+            ui.label(egui::RichText::new(tr("Wheel: zoom · drag: pan")).weak());
         });
         // la molette sur l'image zoome (lue avant les zones de defilement, qui l'utiliseraient sinon pour defiler)
         if ctx.pointer_hover_pos().map_or(false, |p| pv.img_rect.contains(p)) {
@@ -598,7 +599,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             });
             pv.img_rect = out.inner_rect;
         }
-        crate::help(ui, "Aperçu avec la police et le style de la piste (décalage appliqué, répliques simultanées fusionnées) ; le lecteur affichera le même dessin.");
+        crate::help(ui, tr("Preview with the track's font and style (offset applied, simultaneous cues merged); the player will show the same drawing."));
     });
     (changed, open)
 }
