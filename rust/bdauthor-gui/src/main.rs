@@ -223,6 +223,8 @@ struct App {
     autosave_t: std::time::Instant,
     autosave_ok: Option<std::time::Instant>,
     restore_offer: Option<PathBuf>,
+    /// video dont le retrait attend la confirmation de l'utilisateur
+    confirm_remove: Option<usize>,
     recovery_checked: bool,
     /// fenetre d'apercu du rendu d'une piste de sous-titres
     sub_preview: Option<subs_ui::SubPreview>,
@@ -302,7 +304,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, recovery_checked: false, sub_preview: None, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, recovery_checked: false, sub_preview: None, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -846,6 +848,7 @@ impl eframe::App for App {
             // (rang, Some(destination)) : deplacement par glisser-deposer ; (rang, None) : retrait
             let mut op: Option<(usize, Option<usize>)> = None;
             let mut reload: Option<String> = None;
+            let mut ask: Option<usize> = None;
             let mut rows: Vec<egui::Rect> = Vec::new();
             let list = egui::ScrollArea::vertical().id_salt("liste_videos").auto_shrink([false, false]).show(ui, |ui| {
                 for (i, v) in self.model.videos.iter().enumerate() {
@@ -867,13 +870,14 @@ impl eframe::App for App {
                         let shown = if full.chars().count() > max_chars { format!("{}…", full.chars().take(max_chars.saturating_sub(1)).collect::<String>()) } else { full.clone() };
                         if ui.selectable_label(self.sel == Some(i), shown).on_hover_text(format!("{full}\n{}", v.file)).clicked() { self.sel = Some(i); }
                         ui.add_enabled_ui(!busy, |ui| {
-                            if delete_button(ui, "Retirer cette vidéo") { op = Some((i, None)); }
+                            if delete_button(ui, "Retirer cette vidéo") { ask = Some(i); }
                             if ui.small_button("↻").on_hover_text("Recharger cette vidéo (relire la durée, les pistes et les vignettes)").clicked() { reload = Some(v.file.clone()); }
                         });
                     }).response;
                     rows.push(r.rect);
                 }
             });
+            if let Some(i) = ask { self.confirm_remove = Some(i); }
             if let Some(f) = reload {
                 self.durations.remove(&f);
                 self.probe_failed.remove(&f);
@@ -898,6 +902,35 @@ impl eframe::App for App {
                         let from = drag.0;
                         let to = if r > from { r - 1 } else { r };
                         if to != from { op = Some((from, Some(to))); }
+                    }
+                }
+            }
+            // confirmation avant de retirer une video
+            if let Some(i) = self.confirm_remove {
+                match self.model.videos.get(i) {
+                    None => self.confirm_remove = None,
+                    Some(v) => {
+                        let name = if v.title.is_empty() { Path::new(&v.file).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default() } else { v.title.clone() };
+                        let (n_ch, n_sub, n_aud) = (v.chapters.len(), v.subs.len(), v.audio.len());
+                        let mut answer: Option<bool> = None;
+                        egui::Window::new("Retirer la vidéo ?").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                            ui.label(format!("« {name} » va être retirée du projet."));
+                            if n_ch + n_sub + n_aud > 0 {
+                                ui.label(format!("Ses réglages seront perdus : {n_ch} chapitre(s), {n_sub} piste(s) de sous-titres, {n_aud} piste(s) audio."));
+                            }
+                            ui.label(egui::RichText::new("Le fichier vidéo n'est pas supprimé du disque.").weak());
+                            ui.add_space(6.0);
+                            ui.horizontal(|ui| {
+                                if ui.button("Retirer").clicked() { answer = Some(true); }
+                                if ui.button("Annuler").clicked() { answer = Some(false); }
+                            });
+                        });
+                        if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { answer = Some(false); }
+                        match answer {
+                            Some(true) => { op = Some((i, None)); self.confirm_remove = None; }
+                            Some(false) => self.confirm_remove = None,
+                            None => {}
+                        }
                     }
                 }
             }

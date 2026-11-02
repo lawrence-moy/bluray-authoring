@@ -727,3 +727,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Rendu : italique (cisaillement), gras (double passe), souligné et couleur par morceau ; coupure des lignes sur les morceaux.
 - WebVTT : `line:`, `position:`, `align:` -> `CuePos` (champs optionnels : le sens non demandé garde celui de la piste). `size:` non géré.
 - Core : 151 tests verts. Render/GUI à compiler avec recompiler.bat.
+
+## Export 140 — confirmation avant de retirer une vidéo
+- La croix de la liste des vidéos ouvre une fenêtre « Retirer la vidéo ? » (nom, nombre de chapitres, pistes de sous-titres et audio perdus, rappel que le fichier n'est pas supprimé du disque) avec Retirer / Annuler ; Échap annule.
+- GUI uniquement (`main.rs`, champ `confirm_remove`), à compiler avec recompiler.bat.
