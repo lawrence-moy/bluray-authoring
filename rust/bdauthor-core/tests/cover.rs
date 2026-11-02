@@ -179,3 +179,25 @@ fn token_substitution_and_vars() {
     assert_eq!(vars["nb_videos"], "0");
     assert_eq!(vars["annee"], "2026");
 }
+
+#[test]
+fn layers_order_visibility_json() {
+    let mut c = Cover::default();
+    let mut a = CoverItem::text("A", 0.0, 0.0, 10.0, 10.0, 12.0); a.layer = 1;
+    let b = CoverItem::text("B", 0.0, 0.0, 10.0, 10.0, 12.0);
+    let mut d = CoverItem::text("C", 0.0, 0.0, 10.0, 10.0, 12.0); d.layer = 1;
+    c.items = vec![a, b, d];
+    // sans calques declares : tout au meme niveau, ordre de la liste... ici les numeros comptent
+    assert_eq!(draw_order(&c.items, &c.layers), vec![1, 0, 2]);
+    c.layers = vec![CoverLayer::new("Fond"), CoverLayer { name: "Haut".into(), visible: false, locked: true }];
+    assert_eq!(draw_order(&c.items, &c.layers), vec![1]);
+    assert_eq!(layer_state(&c.layers, 1), (false, true));
+    let back = Cover::from_value(c.to_value().as_ref()).unwrap();
+    assert_eq!(back, c);
+    assert_eq!(normalize_layers(vec![CoverLayer::new("Calque 1")]), vec![]);
+    assert_eq!(layers_or_default(&[]).len(), 1);
+    // un calque masque disparait du rendu
+    let l1 = c.layout(72, Path::new(".")).items.len();
+    c.layers[1].visible = true;
+    assert_eq!(l1 + 2, c.layout(72, Path::new(".")).items.len());
+}

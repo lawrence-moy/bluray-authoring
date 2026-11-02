@@ -606,3 +606,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   feuille carree ; le PDF decoupe la couronne (`pdf::image_pdf_shaped`, clip `W* n`) et peut tracer des cercles de repere.
   Editeur partage avec la jaquette via le trait `cover::SheetDoc` ; onglet Jaquette | Etiquette de disque.
 - Export PDF dans un fil separe (message de progression, canal mpsc) ; `FontRenderer::render_sheet(&dyn SheetDoc, dpi, dir, vars)` remplace `render_cover`.
+
+### Jaquette : calques et glisser-deposer
+- `cover::CoverLayer {name, visible, locked}` ; `Cover.layers` / `DiscLabel.layers` (vide = un seul calque implicite « Calque 1 », rien d'ecrit dans le JSON) ; `CoverItem.layer`.
+  JSON : « calques » (nom, visible, verrouille) et « calque » sur l'element s'il n'est pas 0.
+- Ordre de dessin : `draw_order` (par calque puis ordre de la liste) ; un calque masque n'est ni affiche ni exporte ; un calque verrouille n'est plus selectionnable a la souris.
+- Liste des elements groupee par calque (le plus en avant en haut) : glisser un element sur un autre le place devant lui (et dans son calque), sur l'en-tete d'un calque il passe au premier plan de ce calque.
+  Boutons : + Calque, Supprimer le calque (elements reportes sur le voisin), Calque ▲▼, ▲▼ d'un element = dans son calque. Calque actif (●) : recoit les nouveaux elements.

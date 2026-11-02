@@ -1,7 +1,7 @@
 //! Onglet « Jaquette » : feuille a deplier du boitier (dos, tranche, face) et etiquette de disque ; edition a la souris,
 //! annuler / refaire, champs automatiques et export PDF en arriere-plan.
 use crate::App;
-use bdauthor_core::cover::{Cover, CoverItem, CoverKind, DiscLabel, SheetDoc, FIELDS, FORMATS};
+use bdauthor_core::cover::{layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
 use bdauthor_core::design::Align;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Key, Rect, Sense, Stroke};
 use std::collections::BTreeMap;
@@ -21,6 +21,12 @@ pub(crate) struct CoverDrag {
     handle: u8,
     orig: (f64, f64, f64, f64),
     start: (f64, f64),
+}
+
+/// Ou deposer un element glisse dans la liste : juste devant un autre element, ou au premier plan d'un calque.
+enum DropTo {
+    After(usize),
+    Layer(usize),
 }
 
 fn item_label(it: &CoverItem, i: usize) -> String {
@@ -234,20 +240,113 @@ impl App {
     fn items_ui(&mut self, ui: &mut egui::Ui, doc: &mut dyn SheetDoc) -> bool {
         let mut changed = false;
         let n = doc.items().len();
-        egui::ScrollArea::vertical().id_salt("jaquette_liste").max_height(160.0).show(ui, |ui| {
-            for i in 0..n {
-                let label = item_label(&doc.items()[i], i);
-                if ui.selectable_label(self.cover_sel == Some(i), label).clicked() { self.cover_sel = Some(i); }
+        let orig = layers_or_default(doc.layers());
+        let mut layers = orig.clone();
+        let nl = layers.len();
+        let mut active = self.cover_layer.min(nl - 1);
+        let mut drop: Option<(usize, DropTo)> = None;
+        let mut new_sel = self.cover_sel;
+        ui.label(egui::RichText::new("Calques (le plus en avant en haut) : glissez un élément sur un autre pour le placer devant lui, ou sur l'en-tête d'un calque.").weak());
+        egui::ScrollArea::vertical().id_salt("jaquette_liste").max_height(260.0).show(ui, |ui| {
+            for l in (0..nl).rev() {
+                let head = ui.horizontal(|ui| {
+                    if ui.selectable_label(active == l, "●").on_hover_text("Calque actif : il reçoit les nouveaux éléments").clicked() { active = l; }
+                    ui.checkbox(&mut layers[l].visible, "").on_hover_text("Visible (un calque masqué n'est ni affiché ni exporté)");
+                    ui.checkbox(&mut layers[l].locked, "verr.").on_hover_text("Verrouillé : ses éléments ne sont plus sélectionnables à la souris");
+                    ui.add(egui::TextEdit::singleline(&mut layers[l].name).desired_width(150.0));
+                });
+                if head.response.dnd_hover_payload::<usize>().is_some() {
+                    ui.painter().rect_stroke(head.response.rect, 2.0, Stroke::new(2.0_f32, Color32::from_rgb(120, 190, 255)));
+                }
+                if let Some(p) = head.response.dnd_release_payload::<usize>() { drop = Some((*p, DropTo::Layer(l))); }
+                let mut any = false;
+                for i in (0..n).rev().filter(|&i| doc.items()[i].layer == l) {
+                    any = true;
+                    let mut text = egui::RichText::new(item_label(&doc.items()[i], i));
+                    if !layers[l].visible { text = text.weak(); }
+                    let r = ui.horizontal(|ui| {
+                        ui.add_space(18.0);
+                        ui.dnd_drag_source(egui::Id::new(("jaquette_el", i)), i, |ui| ui.selectable_label(self.cover_sel == Some(i), text))
+                    }).inner;
+                    if r.inner.clicked() { new_sel = Some(i); }
+                    if let Some(p) = r.response.dnd_hover_payload::<usize>() {
+                        if *p != i {
+                            let rc = r.response.rect;
+                            ui.painter().line_segment([rc.left_top(), rc.right_top()], Stroke::new(2.0_f32, Color32::from_rgb(120, 190, 255)));
+                        }
+                    }
+                    if let Some(p) = r.response.dnd_release_payload::<usize>() { drop = Some((*p, DropTo::After(i))); }
+                }
+                if !any { ui.horizontal(|ui| { ui.add_space(18.0); ui.label(egui::RichText::new("(vide)").weak()); }); }
             }
-            if n == 0 { ui.label(egui::RichText::new("(aucun élément)").weak()); }
         });
+        if new_sel != self.cover_sel { self.cover_sel = new_sel; }
+        // boutons de calques
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("+ Calque").clicked() {
+                layers.push(CoverLayer::new(&format!("Calque {}", nl + 1)));
+                active = nl;
+            }
+            if nl > 1 && ui.button("Supprimer le calque").on_hover_text("Ses éléments passent dans le calque voisin").clicked() {
+                for it in doc.items_mut().iter_mut() {
+                    if it.layer > active { it.layer -= 1; } else if it.layer == active { it.layer = active.saturating_sub(1); }
+                }
+                layers.remove(active);
+                active = active.saturating_sub(1).min(layers.len() - 1);
+            }
+            let swap = |items: &mut Vec<CoverItem>, a: usize, b: usize| {
+                for it in items.iter_mut() { if it.layer == a { it.layer = b; } else if it.layer == b { it.layer = a; } }
+            };
+            if active + 1 < layers.len() && ui.button("Calque ▲").on_hover_text("Vers l'avant").clicked() {
+                swap(doc.items_mut(), active, active + 1);
+                layers.swap(active, active + 1);
+                active += 1;
+            }
+            if active > 0 && ui.button("Calque ▼").on_hover_text("Vers l'arrière").clicked() {
+                swap(doc.items_mut(), active, active - 1);
+                layers.swap(active, active - 1);
+                active -= 1;
+            }
+        });
+        if let Some((from, to)) = drop {
+            let items = doc.items_mut();
+            if from < items.len() {
+                match to {
+                    DropTo::After(j) if j != from && j < items.len() => {
+                        let lj = items[j].layer;
+                        let mut it = items.remove(from);
+                        it.layer = lj;
+                        let jj = if from < j { j - 1 } else { j };
+                        items.insert(jj + 1, it);
+                        self.cover_sel = Some(jj + 1);
+                        changed = true;
+                    }
+                    DropTo::Layer(l) => {
+                        let mut it = items.remove(from);
+                        it.layer = l;
+                        items.push(it);
+                        self.cover_sel = Some(items.len() - 1);
+                        changed = true;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        if layers != orig {
+            *doc.layers_mut() = normalize_layers(layers);
+            changed = true;
+        }
+        self.cover_layer = active;
+        let n = doc.items().len();
         let (sw, sh) = doc.sheet_mm();
         let bleed = doc.bleed_mm();
         let (tw, th) = (sw - 2.0 * bleed, sh - 2.0 * bleed);
         ui.horizontal_wrapped(|ui| {
             if ui.button("+ Texte").clicked() {
                 let w = (tw * 0.4).min(100.0);
-                doc.items_mut().push(CoverItem::text("Titre", (tw - w) / 2.0, 10.0, w, 30.0, 28.0));
+                let mut it = CoverItem::text("Titre", (tw - w) / 2.0, 10.0, w, 30.0, 28.0);
+                it.layer = active;
+                doc.items_mut().push(it);
                 self.cover_sel = Some(doc.items().len() - 1);
                 changed = true;
             }
@@ -255,7 +354,9 @@ impl App {
                 if let Some(f) = rfd::FileDialog::new().add_filter("Images", &IMG_EXT).pick_file() {
                     let rel = self.relative(&f);
                     let w = (tw * 0.4).min(100.0);
-                    doc.items_mut().push(CoverItem::image(&rel, (tw - w) / 2.0, 50.0, w, (th - 60.0).max(20.0).min(w)));
+                    let mut it = CoverItem::image(&rel, (tw - w) / 2.0, 50.0, w, (th - 60.0).max(20.0).min(w));
+                    it.layer = active;
+                    doc.items_mut().push(it);
                     self.cover_sel = Some(doc.items().len() - 1);
                     changed = true;
                 }
@@ -275,8 +376,13 @@ impl App {
                     self.cover_sel = None;
                     changed = true;
                 }
-                if i > 0 && ui.button("▲").on_hover_text("Reculer (dessiné avant)").clicked() { doc.items_mut().swap(i, i - 1); self.cover_sel = Some(i - 1); changed = true; }
-                if i + 1 < n && ui.button("▼").on_hover_text("Avancer (dessiné après)").clicked() { doc.items_mut().swap(i, i + 1); self.cover_sel = Some(i + 1); changed = true; }
+                let l = doc.items()[i].layer;
+                if let Some(j) = (0..i).rev().find(|&j| doc.items()[j].layer == l) {
+                    if ui.button("▼").on_hover_text("Reculer dans le calque").clicked() { doc.items_mut().swap(i, j); self.cover_sel = Some(j); changed = true; }
+                }
+                if let Some(j) = (i + 1..n).find(|&j| doc.items()[j].layer == l) {
+                    if ui.button("▲").on_hover_text("Avancer dans le calque").clicked() { doc.items_mut().swap(i, j); self.cover_sel = Some(j); changed = true; }
+                }
             }
         });
         let Some(i) = self.cover_sel.filter(|&i| i < doc.items().len()) else { return changed };
@@ -425,8 +531,11 @@ impl App {
         for (x1, y1, x2, y2) in lines { painter.line_segment([to_screen(x1, y1), to_screen(x2, y2)], guide); }
         for (cx, cy, r) in circles { painter.circle_stroke(to_screen(cx, cy), r as f32 * k, guide); }
         let sel = self.cover_sel.filter(|&i| i < doc.items().len());
+        let layers = doc.layers().clone();
+        let usable = |it: &CoverItem| { let (v, l) = layer_state(&layers, it.layer); v && !l };
         // cadres des elements
         for (i, it) in doc.items().iter().enumerate() {
+            if !layer_state(&layers, it.layer).0 { continue; }
             let r = Rect::from_min_max(to_screen(it.x, it.y), to_screen(it.x + it.w, it.y + it.h));
             if sel == Some(i) {
                 painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
@@ -448,14 +557,14 @@ impl App {
         };
         let hit = |p: egui::Pos2, items: &[CoverItem]| -> Option<usize> {
             let (x, y) = to_mm(p);
-            items.iter().rposition(|it| x >= it.x && x <= it.x + it.w && y >= it.y && y <= it.y + it.h)
+            (0..items.len()).filter(|&i| { let it = &items[i]; usable(it) && x >= it.x && x <= it.x + it.w && y >= it.y && y <= it.y + it.h }).max_by_key(|&i| (items[i].layer, i))
         };
         // curseur
         let icon_of = |h: u8| if h == 1 || h == 4 { CursorIcon::ResizeNwSe } else { CursorIcon::ResizeNeSw };
         if let Some(d) = &self.cover_drag {
             ctx.set_cursor_icon(if d.handle == 0 { CursorIcon::Grabbing } else { icon_of(d.handle) });
         } else if let Some(p) = resp.hover_pos() {
-            let h = sel.map(|i| handle_at(p, &doc.items()[i])).unwrap_or(0);
+            let h = sel.filter(|&i| usable(&doc.items()[i])).map(|i| handle_at(p, &doc.items()[i])).unwrap_or(0);
             if h != 0 { ctx.set_cursor_icon(icon_of(h)); }
             else if hit(p, doc.items()).is_some() { ctx.set_cursor_icon(CursorIcon::Grab); }
         }
@@ -463,7 +572,7 @@ impl App {
         if resp.drag_started() {
             if let Some(p) = ui.input(|i| i.pointer.press_origin()).or(resp.interact_pointer_pos()) {
                 let mut target = None;
-                if let Some(i) = sel {
+                if let Some(i) = sel.filter(|&i| usable(&doc.items()[i])) {
                     let h = handle_at(p, &doc.items()[i]);
                     if h != 0 { target = Some((i, h)); }
                 }

@@ -26,14 +26,16 @@ pub struct CoverItem {
     pub h: f64,
     pub rot: u16,
     pub name: String,
+    /// numero du calque (0 = le plus en arriere)
+    pub layer: usize,
 }
 
 impl CoverItem {
     pub fn text(text: &str, x: f64, y: f64, w: f64, h: f64, size_pt: f64) -> CoverItem {
-        CoverItem { kind: CoverKind::Text { text: text.into(), size_pt, color: [255, 255, 255], align: Align::Center, font: String::new() }, x, y, w, h, rot: 0, name: String::new() }
+        CoverItem { kind: CoverKind::Text { text: text.into(), size_pt, color: [255, 255, 255], align: Align::Center, font: String::new() }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
     }
     pub fn image(path: &str, x: f64, y: f64, w: f64, h: f64) -> CoverItem {
-        CoverItem { kind: CoverKind::Image { path: path.into() }, x, y, w, h, rot: 0, name: String::new() }
+        CoverItem { kind: CoverKind::Image { path: path.into() }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
     }
 }
 
@@ -56,11 +58,13 @@ pub struct Cover {
     pub marks: bool,
     pub dpi: u32,
     pub items: Vec<CoverItem>,
+    /// calques, du plus en arriere au plus en avant ; vide : un seul calque implicite
+    pub layers: Vec<CoverLayer>,
 }
 
 impl Default for Cover {
     fn default() -> Cover {
-        Cover { face_mm: 129.0, height_mm: 148.0, spine_mm: 14.0, bleed_mm: 3.0, colors: [[24, 28, 40], [40, 60, 110], [24, 28, 40]], bg_image: String::new(), marks: false, dpi: 300, items: vec![] }
+        Cover { face_mm: 129.0, height_mm: 148.0, spine_mm: 14.0, bleed_mm: 3.0, colors: [[24, 28, 40], [40, 60, 110], [24, 28, 40]], bg_image: String::new(), marks: false, dpi: 300, items: vec![], layers: vec![] }
     }
 }
 
@@ -131,7 +135,7 @@ impl Cover {
             ((b + fw + sp, 0, w - (b + fw + sp), h), self.colors[2]),
         ];
         let abs = |p: &str| -> PathBuf { let q = Path::new(p); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
-        let items = self.items.iter().filter_map(|it| {
+        let items = draw_order(&self.items, &self.layers).into_iter().map(|i| &self.items[i]).filter_map(|it| {
             let (x, y) = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi));
             let (iw, ih) = (mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
             let d = match &it.kind {
@@ -188,6 +192,7 @@ impl Cover {
         ];
         if !self.bg_image.is_empty() { o.push(("image_fond".into(), Value::Str(self.bg_image.clone()))); }
         let items: Vec<Value> = self.items.iter().map(item_to_value).collect();
+        if !self.layers.is_empty() { o.push(("calques".into(), layers_to_value(&self.layers))); }
         o.push(("elements".into(), Value::Arr(items)));
         Some(Value::Obj(o))
     }
@@ -209,6 +214,8 @@ impl Cover {
         if let Some(a) = v.get("elements").and_then(Value::as_array) {
             for (k, e) in a.iter().enumerate() { c.items.push(item_from_value(e, k, "jaquette")?); }
         }
+        c.layers = layers_from_value(v.get("calques"));
+        clamp_layers(&mut c.items, c.layers.len());
         Ok(c)
     }
 }
@@ -278,6 +285,8 @@ pub trait SheetDoc {
     fn dpi(&self) -> u32;
     fn items(&self) -> &Vec<CoverItem>;
     fn items_mut(&mut self) -> &mut Vec<CoverItem>;
+    fn layers(&self) -> &Vec<CoverLayer>;
+    fn layers_mut(&mut self) -> &mut Vec<CoverLayer>;
     /// Zones ou « Placer sur » met un element : (nom, rectangle en mm depuis le coin de la feuille rognee)
     fn zones(&self) -> Vec<(&'static str, (f64, f64, f64, f64))>;
     fn layout_with(&self, dpi: u32, base: &Path, vars: &BTreeMap<String, String>) -> CoverLayout;
@@ -292,6 +301,8 @@ impl SheetDoc for Cover {
     fn dpi(&self) -> u32 { self.dpi }
     fn items(&self) -> &Vec<CoverItem> { &self.items }
     fn items_mut(&mut self) -> &mut Vec<CoverItem> { &mut self.items }
+    fn layers(&self) -> &Vec<CoverLayer> { &self.layers }
+    fn layers_mut(&mut self) -> &mut Vec<CoverLayer> { &mut self.layers }
     fn zones(&self) -> Vec<(&'static str, (f64, f64, f64, f64))> {
         vec![("le dos", self.zone_mm(Zone::Back)), ("la tranche", self.zone_mm(Zone::Spine)), ("la face", self.zone_mm(Zone::Front))]
     }
@@ -317,11 +328,12 @@ pub struct DiscLabel {
     pub marks: bool,
     pub dpi: u32,
     pub items: Vec<CoverItem>,
+    pub layers: Vec<CoverLayer>,
 }
 
 impl Default for DiscLabel {
     fn default() -> DiscLabel {
-        DiscLabel { diameter_mm: 118.0, hole_mm: 25.0, bleed_mm: 2.0, color: [24, 28, 40], bg_image: String::new(), marks: false, dpi: 300, items: vec![] }
+        DiscLabel { diameter_mm: 118.0, hole_mm: 25.0, bleed_mm: 2.0, color: [24, 28, 40], bg_image: String::new(), marks: false, dpi: 300, items: vec![], layers: vec![] }
     }
 }
 
@@ -335,6 +347,7 @@ impl DiscLabel {
             ("couleur".into(), color_hex(self.color)), ("reperes".into(), Value::Bool(self.marks)), ("dpi".into(), Value::Num(self.dpi as f64)),
         ];
         if !self.bg_image.is_empty() { o.push(("image_fond".into(), Value::Str(self.bg_image.clone()))); }
+        if !self.layers.is_empty() { o.push(("calques".into(), layers_to_value(&self.layers))); }
         o.push(("elements".into(), Value::Arr(self.items.iter().map(item_to_value).collect())));
         Some(Value::Obj(o))
     }
@@ -353,6 +366,8 @@ impl DiscLabel {
         if let Some(a) = v.get("elements").and_then(Value::as_array) {
             for (k, e) in a.iter().enumerate() { c.items.push(item_from_value(e, k, "etiquette")?); }
         }
+        c.layers = layers_from_value(v.get("calques"));
+        clamp_layers(&mut c.items, c.layers.len());
         Ok(c)
     }
 }
@@ -363,6 +378,8 @@ impl SheetDoc for DiscLabel {
     fn dpi(&self) -> u32 { self.dpi }
     fn items(&self) -> &Vec<CoverItem> { &self.items }
     fn items_mut(&mut self) -> &mut Vec<CoverItem> { &mut self.items }
+    fn layers(&self) -> &Vec<CoverLayer> { &self.layers }
+    fn layers_mut(&mut self) -> &mut Vec<CoverLayer> { &mut self.layers }
     fn zones(&self) -> Vec<(&'static str, (f64, f64, f64, f64))> {
         let (d, h) = (self.diameter_mm, self.hole_mm);
         // bande au-dessus du trou central et bande en dessous : la ou le texte reste lisible sur un disque
@@ -371,7 +388,7 @@ impl SheetDoc for DiscLabel {
     fn layout_with(&self, dpi: u32, base: &Path, vars: &BTreeMap<String, String>) -> CoverLayout {
         // meme mise en forme que la jaquette : une seule zone couvrant la feuille
         let as_cover = Cover { face_mm: 0.0, spine_mm: self.diameter_mm, height_mm: self.diameter_mm, bleed_mm: self.bleed_mm,
-            colors: [self.color; 3], bg_image: self.bg_image.clone(), marks: false, dpi: self.dpi, items: self.items.clone() };
+            colors: [self.color; 3], bg_image: self.bg_image.clone(), marks: false, dpi: self.dpi, items: self.items.clone(), layers: self.layers.clone() };
         as_cover.layout_with(dpi, base, vars)
     }
     fn to_pdf(&self, sheet: &RgbaImage, title: &str) -> Vec<u8> {
@@ -459,6 +476,7 @@ fn item_to_value(it: &CoverItem) -> Value {
     for (k, v) in [("x", it.x), ("y", it.y), ("w", it.w), ("h", it.h)] { e.push((k.into(), n((v * 100.0).round() / 100.0))); }
     if it.rot != 0 { e.push(("rotation".into(), n(it.rot as f64))); }
     if !it.name.is_empty() { e.push(("nom".into(), Value::Str(it.name.clone()))); }
+    if it.layer != 0 { e.push(("calque".into(), n(it.layer as f64))); }
     Value::Obj(e)
 }
 
@@ -476,5 +494,61 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
         t => return Err(format!("{what}, élément {} : type {:?} inconnu", k + 1, t)),
     };
     let rot = match f("rotation").round() as i64 { 90 => 90, 270 | -90 => 270, _ => 0 };
-    Ok(CoverItem { kind, x: f("x"), y: f("y"), w: f("w").max(1.0), h: f("h").max(1.0), rot, name: e.get("nom").and_then(Value::as_str).unwrap_or("").to_string() })
+    Ok(CoverItem { kind, x: f("x"), y: f("y"), w: f("w").max(1.0), h: f("h").max(1.0), rot, name: e.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), layer: f("calque").max(0.0) as usize })
+}
+
+// ------------------------------------------------------------------ calques
+/// Calque : regroupe des elements, peut etre masque (ni dessine, ni exporte) ou verrouille (non selectionnable a la souris).
+#[derive(Debug, Clone, PartialEq)]
+pub struct CoverLayer {
+    pub name: String,
+    pub visible: bool,
+    pub locked: bool,
+}
+
+impl CoverLayer {
+    pub fn new(name: &str) -> CoverLayer { CoverLayer { name: name.into(), visible: true, locked: false } }
+}
+
+/// Calques tels que l'interface les presente : au moins un (le calque implicite quand la liste est vide).
+pub fn layers_or_default(layers: &[CoverLayer]) -> Vec<CoverLayer> {
+    if layers.is_empty() { vec![CoverLayer::new("Calque 1")] } else { layers.to_vec() }
+}
+
+/// Forme enregistree : un unique calque d'origine devient la liste vide.
+pub fn normalize_layers(layers: Vec<CoverLayer>) -> Vec<CoverLayer> {
+    if layers.len() == 1 && layers[0] == CoverLayer::new("Calque 1") { vec![] } else { layers }
+}
+
+/// (visible, verrouille) du calque `i` ; un numero hors liste vaut le calque implicite.
+pub fn layer_state(layers: &[CoverLayer], i: usize) -> (bool, bool) {
+    layers.get(i).map(|l| (l.visible, l.locked)).unwrap_or((true, false))
+}
+
+/// Indices des elements a dessiner, de l'arriere vers l'avant : par calque, puis dans l'ordre de la liste ; calques masques exclus.
+pub fn draw_order(items: &[CoverItem], layers: &[CoverLayer]) -> Vec<usize> {
+    let mut v: Vec<usize> = (0..items.len()).filter(|&i| layer_state(layers, items[i].layer).0).collect();
+    v.sort_by_key(|&i| items[i].layer);
+    v
+}
+
+fn clamp_layers(items: &mut [CoverItem], n: usize) {
+    let max = n.max(1) - 1;
+    for it in items { it.layer = it.layer.min(max); }
+}
+
+fn layers_to_value(layers: &[CoverLayer]) -> Value {
+    Value::Arr(layers.iter().map(|l| Value::Obj(vec![
+        ("nom".into(), Value::Str(l.name.clone())), ("visible".into(), Value::Bool(l.visible)), ("verrouille".into(), Value::Bool(l.locked)),
+    ])).collect())
+}
+
+fn layers_from_value(v: Option<&Value>) -> Vec<CoverLayer> {
+    let Some(a) = v.and_then(Value::as_array) else { return vec![] };
+    let l: Vec<CoverLayer> = a.iter().enumerate().map(|(k, e)| CoverLayer {
+        name: e.get("nom").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("Calque {}", k + 1)),
+        visible: e.get("visible").and_then(Value::as_bool).unwrap_or(true),
+        locked: e.get("verrouille").and_then(Value::as_bool).unwrap_or(false),
+    }).collect();
+    normalize_layers(l)
 }
