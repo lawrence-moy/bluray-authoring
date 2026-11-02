@@ -712,3 +712,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Aperçu : la position demandée par la réplique est affichée et appliquée.
 - Fichiers d'essai : code/exemples_soustitres/test_placements.ass et .srt (13 répliques, 9 positions).
 - Core : 141 tests verts. GUI à compiler avec recompiler.bat.
+
+## Export 138 — alignement des styles ASS / SSA
+- `parse_ass` lit les sections `[V4+ Styles]` / `[V4 Styles]` : l'alignement du style de chaque réplique donne sa position (pavé numérique en ASS ; 1-3 bas, 5-7 haut, 9-11 milieu en SSA).
+- La balise `\an` de la réplique l'emporte sur son style. Bas centre (défaut) ne demande rien : la position de la piste s'applique.
+- Noms de styles : casse et astérisque initial ignorés. Marges de style non lues.
+- Essais : exemples_soustitres/test_styles.ass, test_styles_ssa.ssa (test_webvtt.vtt : réglages WebVTT non gérés).
+- Core : 143 tests verts. Aucun changement GUI/render.

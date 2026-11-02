@@ -229,17 +229,56 @@ fn parse_ass_time(s: &str) -> Option<i64> {
     parse_srt_time(s)
 }
 
+/// Position demandee par la colonne « Alignment » d'un style ASS (pave numerique 1..9) ou SSA (1-3 bas, 5-7 haut, 9-11 milieu).
+/// Le bas centre, valeur par defaut, ne demande rien : la position de la piste s'applique.
+fn style_pos(a: i64, legacy: bool) -> Option<CuePos> {
+    let (v, h) = if legacy {
+        let v = match a { 1..=3 => VPos::Bottom, 5..=7 => VPos::Top, 9..=11 => VPos::Middle, _ => return None };
+        (v, (a - 1) % 4)
+    } else {
+        let v = match a { 1..=3 => VPos::Bottom, 4..=6 => VPos::Middle, 7..=9 => VPos::Top, _ => return None };
+        (v, (a - 1) % 3)
+    };
+    let h = match h { 0 => HAlign::Left, 1 => HAlign::Center, _ => HAlign::Right };
+    (v != VPos::Bottom || h != HAlign::Center).then_some(CuePos { h, v })
+}
+
 pub fn parse_ass(text: &str) -> Vec<Cue> {
+    use std::collections::HashMap;
     let text = text.replace("\r\n", "\n").replace('\r', "\n");
-    let (mut in_events, mut cols): (bool, Vec<String>) = (false, Vec::new());
+    // 0 : autre section, 1 : styles, 2 : evenements
+    let mut section = 0u8;
+    let (mut cols, mut style_cols): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+    let (mut legacy, mut styles): (bool, HashMap<String, CuePos>) = (false, HashMap::new());
+    let norm = |n: &str| n.trim().trim_start_matches('*').to_lowercase();
     let mut cues = Vec::new();
     for line in text.lines() {
         let l = line.trim();
         if l.starts_with('[') {
-            in_events = l.eq_ignore_ascii_case("[events]");
+            let name = l.to_ascii_lowercase();
+            section = match name.as_str() {
+                "[events]" => 2,
+                "[v4+ styles]" | "[v4++ styles]" => { legacy = false; 1 }
+                "[v4 styles]" => { legacy = true; 1 }
+                _ => 0,
+            };
             continue;
         }
-        if !in_events {
+        if section == 0 {
+            continue;
+        }
+        if section == 1 {
+            if let Some(f) = l.strip_prefix("Format:") {
+                style_cols = f.split(',').map(|c| c.trim().to_ascii_lowercase()).collect();
+            } else if let Some(d) = l.strip_prefix("Style:") {
+                let parts: Vec<&str> = d.splitn(style_cols.len().max(1), ',').collect();
+                let col = |name: &str| style_cols.iter().position(|c| c == name);
+                if let (Some(i_name), Some(i_al)) = (col("name"), col("alignment")) {
+                    if let (Some(n), Some(a)) = (parts.get(i_name), parts.get(i_al).and_then(|x| x.trim().parse::<i64>().ok())) {
+                        if let Some(p) = style_pos(a, legacy) { styles.insert(norm(n), p); }
+                    }
+                }
+            }
             continue;
         }
         if let Some(f) = l.strip_prefix("Format:") {
@@ -248,11 +287,12 @@ pub fn parse_ass(text: &str) -> Vec<Cue> {
             let n = if cols.is_empty() { 10 } else { cols.len() };
             let parts: Vec<&str> = d.splitn(n, ',').collect();
             let col = |name: &str, dflt: usize| cols.iter().position(|c| c == name).unwrap_or(dflt);
-            let (is, ie, it) = (col("start", 1), col("end", 2), col("text", n - 1));
+            let (is, ie, it, iy) = (col("start", 1), col("end", 2), col("text", n - 1), col("style", 3));
             let (Some(a), Some(b), Some(t)) = (parts.get(is).and_then(|x| parse_ass_time(x)), parts.get(ie).and_then(|x| parse_ass_time(x)), parts.get(it)) else {
                 continue;
             };
-            let pos = an_tag(t);
+            // la balise \an de la replique l'emporte sur l'alignement de son style
+            let pos = an_tag(t).or_else(|| parts.get(iy).and_then(|y| styles.get(&norm(y)).copied()));
             let t = strip_tags(&t.replace("\\N", "\n").replace("\\n", "\n").replace("\\h", " "));
             let t = t.lines().map(str::trim).filter(|x| !x.is_empty()).collect::<Vec<_>>().join("\n");
             if !t.is_empty() && b > a {

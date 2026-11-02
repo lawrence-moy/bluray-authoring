@@ -197,3 +197,49 @@ fn file_positions_flag_json() {
     assert!(j.contains("\"positions_fichier\": false"), "{j}");
     assert!(!SubTrackCfg::from_value(&t.to_value()).unwrap().file_positions);
 }
+
+// ------------------------------------------------------------------ alignement des styles ASS / SSA
+#[test]
+fn ass_style_alignment() {
+    let ass = "[V4+ Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding\n\
+Style: Default,Arial,56,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,0,2,60,60,60,1\n\
+Style: *Panneau,Arial,56,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,0,8,60,60,60,1\n\
+Style: Pensees,Arial,56,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,0,7,60,60,60,1\n\
+Style: Droite,Arial,56,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,3,0,6,60,60,60,1\n\
+\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: 0,0:00:01.00,0:00:02.00,Default,,0,0,0,,Normal\n\
+Dialogue: 0,0:00:03.00,0:00:04.00,panneau,,0,0,0,,Haut\n\
+Dialogue: 0,0:00:05.00,0:00:06.00,Pensees,,0,0,0,,Pensee\n\
+Dialogue: 0,0:00:07.00,0:00:08.00,Droite,,0,0,0,,Droite, avec virgule\n\
+Dialogue: 0,0:00:09.00,0:00:10.00,Panneau,,0,0,0,,{\\an2}Force le bas\n\
+Dialogue: 0,0:00:11.00,0:00:12.00,Inconnu,,0,0,0,,Style inexistant\n";
+    let c = parse_ass(ass);
+    let p: Vec<Option<CuePos>> = c.iter().map(|x| x.pos).collect();
+    assert_eq!(c.len(), 6);
+    assert_eq!(p[0], None, "bas centre = defaut : la piste decide");
+    assert_eq!(p[1], pos(HAlign::Center, VPos::Top), "etoile et casse ignorees");
+    assert_eq!(p[2], pos(HAlign::Left, VPos::Top));
+    assert_eq!((p[3], c[3].text.as_str()), (pos(HAlign::Right, VPos::Middle), "Droite, avec virgule"));
+    assert_eq!(p[4], pos(HAlign::Center, VPos::Bottom), "la balise l'emporte sur le style");
+    assert_eq!(p[5], None);
+}
+
+#[test]
+fn ssa_legacy_alignment_numbers() {
+    let ssa = "[V4 Styles]\nFormat: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, TertiaryColour, BackColour, Bold, Italic, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, AlphaLevel, Encoding\n\
+Style: Bas,Arial,56,16777215,255,0,0,0,0,1,3,0,2,60,60,60,0,1\n\
+Style: HG,Arial,56,16777215,255,0,0,0,0,1,3,0,5,60,60,60,0,1\n\
+Style: HC,Arial,56,16777215,255,0,0,0,0,1,3,0,6,60,60,60,0,1\n\
+Style: HD,Arial,56,16777215,255,0,0,0,0,1,3,0,7,60,60,60,0,1\n\
+Style: MG,Arial,56,16777215,255,0,0,0,0,1,3,0,9,60,60,60,0,1\n\
+Style: MD,Arial,56,16777215,255,0,0,0,0,1,3,0,11,60,60,60,0,1\n\
+\n[Events]\nFormat: Marked, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
+Dialogue: Marked=0,0:00:01.00,0:00:02.00,Bas,,0,0,0,,a\n\
+Dialogue: Marked=0,0:00:03.00,0:00:04.00,HG,,0,0,0,,b\n\
+Dialogue: Marked=0,0:00:05.00,0:00:06.00,HC,,0,0,0,,c\n\
+Dialogue: Marked=0,0:00:07.00,0:00:08.00,HD,,0,0,0,,d\n\
+Dialogue: Marked=0,0:00:09.00,0:00:10.00,MG,,0,0,0,,e\n\
+Dialogue: Marked=0,0:00:11.00,0:00:12.00,MD,,0,0,0,,f\n";
+    let p: Vec<Option<CuePos>> = parse_ass(ssa).iter().map(|x| x.pos).collect();
+    assert_eq!(p, vec![None, pos(HAlign::Left, VPos::Top), pos(HAlign::Center, VPos::Top), pos(HAlign::Right, VPos::Top), pos(HAlign::Left, VPos::Middle), pos(HAlign::Right, VPos::Middle)]);
+}
