@@ -692,3 +692,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Textes d explication -> boutons « ? » (export 132)
 - `help(ui, texte)` (main.rs) : petit bouton « ? » dont le texte s affiche au survol ; 40 paragraphes explicatifs (.weak()) convertis automatiquement (textes litteraux de 40 caracteres ou plus ; les libelles d etat et textes formates restent).
+
+## Options « Menu » deplacees dans Projet (export 134)
+- Onglet Projet > « Style des pages » : image et duree du fond, video de fond (+ son), musique, boucle. Onglet Général : sequence d ouverture et menu 1920x1080. L onglet Videos ne garde que les reglages de la video selectionnee.

@@ -642,12 +642,15 @@ impl eframe::App for App {
             let mut style_changed = false;
             let mut pick_sound: Option<u8> = None;
             let mut pick_iso = false;
+            let (bgv, mus) = (self.model.bg_video.clone(), self.model.music.clone());
+            let bg_note = self.bg_note(&bgv, &mus);
             let tab = &mut self.project_tab;
             let m = &mut self.model;
             os_window(ctx, "projet", "Projet", [720.0, 600.0], &mut open, &mut |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(tab, 0, "Général");
                     ui.selectable_value(tab, 1, "Style des boutons");
+                    ui.selectable_value(tab, 4, "Style des pages");
                     ui.selectable_value(tab, 2, "Langues des sous-titres");
                     ui.selectable_value(tab, 3, "Génération ISO");
                 });
@@ -658,6 +661,37 @@ impl eframe::App for App {
                             style_changed = style_ui::style_ui(ui, &mut m.designs.style, "projet", &mut pick_sound);
                         });
                         crate::help(ui, "S'applique à tous les boutons du projet, sauf ceux qui ont leur propre apparence (inspecteur).");
+                    }
+                    4 => {
+                        egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
+                            ui.heading("Fond et musique des menus");
+                            ui.horizontal(|ui| {
+                                ui.label("Image de fond :");
+                                changed |= ui.add(egui::TextEdit::singleline(&mut m.bg).hint_text("(fond généré automatiquement)")).changed();
+                                if ui.button("Choisir…").clicked() {
+                                    if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
+                                        m.bg = clean(&f);
+                                        changed = true;
+                                    }
+                                }
+                                if ui.button("Aucune").clicked() { m.bg.clear(); changed = true; }
+                            });
+                            ui.horizontal(|ui| {
+                                ui.label("Durée du fond :");
+                                changed |= ui.add(egui::DragValue::new(&mut m.bg_seconds).speed(0.5).range(1.0..=600.0).suffix(" s")).changed();
+                            });
+                            changed |= file_row(ui, "Vidéo de fond (animée) :", &mut m.bg_video, "(aucune)", "Vidéos", VIDEO_EXTS);
+                            if !m.bg_video.is_empty() {
+                                changed |= ui.checkbox(&mut m.bg_video_audio, "Garder le son de la vidéo de fond (s'il n'y a pas de musique)").changed();
+                            }
+                            changed |= file_row(ui, "Musique des menus :", &mut m.music, "(aucune)", "Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]);
+                            if !m.bg_video.is_empty() || !m.music.is_empty() {
+                                crate::help(ui, "Le fond tourne en boucle : il dure autant que la vidéo de fond ou, sans vidéo, que la musique. Les textes et images des pages personnalisées sont posés sur la vidéo.");
+                                if let Some(n) = &bg_note { ui.label(egui::RichText::new(n.as_str()).weak()); }
+                            }
+                            changed |= ui.checkbox(&mut m.loop_menu, "Rejouer le fond en boucle (sinon : arrêt sur la dernière image)").changed();
+                            crate::help(ui, "Valeurs par défaut du projet : chaque page de la Mise en page peut avoir son propre fond, sa musique et ses animations.");
+                        });
                     }
                     2 => {
                         egui::ScrollArea::vertical().max_height(560.0).show(ui, |ui| {
@@ -680,6 +714,8 @@ impl eframe::App for App {
                             ui.label("Langue audio par défaut (3 lettres) :").on_hover_text("Langue de la piste audio des vidéos dont les pistes audio ne sont pas choisies");
                             changed |= ui.add(egui::TextEdit::singleline(&mut m.lang).desired_width(50.0)).changed();
                         });
+                        changed |= file_row(ui, "Séquence d'ouverture :", &mut m.intro, "(aucune : le menu s'ouvre directement)", "Vidéos", VIDEO_EXTS);
+                        changed |= ui.checkbox(&mut m.menu_1080, "Menu en 1920x1080 (sinon : taille de la vidéo)").changed();
                         ui.separator();
                         ui.heading("Encodage");
                         ui.horizontal(|ui| {
@@ -959,38 +995,7 @@ impl eframe::App for App {
                         ui.separator();
                     }
 
-                    // titre du disque, langue audio par defaut et encodage : fenetre Edition > Projet
-                    let (bgv, mus) = (self.model.bg_video.clone(), self.model.music.clone());
-                    let bg_note = self.bg_note(&bgv, &mus);
-                    let m = &mut self.model;
-                    ui.heading("Menu");
-                    ui.horizontal(|ui| {
-                        ui.label("Image de fond :");
-                        changed |= ui.add(egui::TextEdit::singleline(&mut m.bg).hint_text("(fond généré automatiquement)")).changed();
-                        if ui.button("Choisir…").clicked() {
-                            if let Some(f) = rfd::FileDialog::new().add_filter("Images", &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
-                                m.bg = clean(&f);
-                                changed = true;
-                            }
-                        }
-                        if ui.button("Aucune").clicked() { m.bg.clear(); changed = true; }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("Durée du fond :");
-                        changed |= ui.add(egui::DragValue::new(&mut m.bg_seconds).speed(0.5).range(1.0..=600.0).suffix(" s")).changed();
-                    });
-                    changed |= file_row(ui, "Vidéo de fond (animée) :", &mut m.bg_video, "(aucune)", "Vidéos", VIDEO_EXTS);
-                    if !m.bg_video.is_empty() {
-                        changed |= ui.checkbox(&mut m.bg_video_audio, "Garder le son de la vidéo de fond (s'il n'y a pas de musique)").changed();
-                    }
-                    changed |= file_row(ui, "Musique des menus :", &mut m.music, "(aucune)", "Audio", &["mp3", "wav", "flac", "m4a", "aac", "ogg", "opus", "ac3", "wma"]);
-                    if !m.bg_video.is_empty() || !m.music.is_empty() {
-                        crate::help(ui, "Le fond tourne en boucle : il dure autant que la vidéo de fond ou, sans vidéo, que la musique. Les textes et images des pages personnalisées sont posés sur la vidéo.");
-                        if let Some(n) = &bg_note { ui.label(egui::RichText::new(n).weak()); }
-                    }
-                    changed |= file_row(ui, "Séquence d'ouverture :", &mut m.intro, "(aucune : le menu s'ouvre directement)", "Vidéos", VIDEO_EXTS);
-                    changed |= ui.checkbox(&mut m.menu_1080, "Menu en 1920x1080 (sinon : taille de la vidéo)").changed();
-                    changed |= ui.checkbox(&mut m.loop_menu, "Rejouer le fond en boucle (sinon : arrêt sur la dernière image)").changed();
+                    // fond, musique et ouverture des menus : fenetre Edition > Projet (onglets « Style des pages » et « Général »)
                     // « vignettes par page generee » retire de l'interface : seules les pages personnalisees sont utilisees (la valeur
                     // eventuelle du fichier reste lue pour la premiere conversion d'un ancien projet)
                     if changed {
