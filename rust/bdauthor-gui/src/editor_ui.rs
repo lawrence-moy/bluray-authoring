@@ -573,7 +573,7 @@ impl App {
     pub(crate) fn layout_central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         let Some(info) = self.current_info() else {
             if self.model.videos.is_empty() {
-                ui.label("Ajoutez des vidéos dans l'onglet « Projet » pour composer les pages de menu.");
+                ui.label("Ajoutez des vidéos dans l'onglet « Vidéos » pour composer les pages de menu.");
                 return;
             }
             ui.label("Aucune page de menu.");
@@ -1618,7 +1618,7 @@ impl App {
     pub(crate) fn page_list_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("Pages et calques");
         if self.model.videos.is_empty() {
-            ui.label("Ajoutez des vidéos dans l'onglet « Projet ».");
+            ui.label("Ajoutez des vidéos dans l'onglet « Vidéos ».");
             return;
         }
         let mut op: Option<LayerOp> = None;
