@@ -69,6 +69,25 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     });
                     if cur.is_none() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), "à choisir"); }
                 });
+                // cadence : seulement pour les fichiers dont les temps sont en images (MicroDVD : .sub, .txt)
+                if let SubSource::File(f) = &t.source {
+                    let ext = Path::new(f).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                    if ext == "sub" || ext == "txt" {
+                        ui.horizontal(|ui| {
+                            ui.label("Cadence (si le fichier est en images) :");
+                            let shown = t.fps.map_or("Automatique (23,976)".to_string(), |v| format!("{v} i/s"));
+                            egui::ComboBox::from_id_salt("cadence_sous_titres").selected_text(shown).show_ui(ui, |ui| {
+                                if ui.selectable_label(t.fps.is_none(), "Automatique (23,976)").clicked() { t.fps = None; changed = true; }
+                                for v in [23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94] {
+                                    if ui.selectable_label(t.fps == Some(v), format!("{v} i/s")).clicked() { t.fps = Some(v); changed = true; }
+                                }
+                            });
+                            if let Some(v) = &mut t.fps {
+                                changed |= ui.add(egui::DragValue::new(v).speed(0.01).range(1.0..=240.0).suffix(" i/s")).changed();
+                            }
+                        }).response.on_hover_text("Les fichiers MicroDVD comptent en images, pas en secondes : choisissez la cadence de la vidéo d'origine (une première ligne {1}{1}25 dans le fichier la fixe déjà). Un mauvais choix étire ou comprime les temps.");
+                    }
+                }
                 ui.horizontal(|ui| {
                     ui.label("Décalage :");
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
@@ -268,7 +287,7 @@ impl SubPreview {
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path) -> SubPreview {
         let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0), zoom: 1.0, img_rect: egui::Rect::NOTHING };
         match &t.source {
-            SubSource::File(f) => p.raw = Some(load_cues(&abs(base, f))),
+            SubSource::File(f) => p.raw = Some(bdauthor_core::subtitle::load_cues_fps(&abs(base, f), t.fps)),
             SubSource::Embedded(idx) => {
                 let (tx, rx) = std::sync::mpsc::channel();
                 let (src, idx) = (video_file.to_path_buf(), *idx);

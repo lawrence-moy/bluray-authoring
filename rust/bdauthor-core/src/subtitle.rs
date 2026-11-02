@@ -293,11 +293,16 @@ fn sniff(text: &str) -> &'static str {
 
 /// Choisit le format (`.ass` / `.ssa` d'apres l'extension, les autres d'apres le contenu : SRT, WebVTT, MicroDVD, SubViewer, SBV, SAMI), puis ordonne par debut.
 pub fn parse_file_text(ext: &str, text: &str) -> Vec<Cue> {
+    parse_file_text_fps(ext, text, None)
+}
+
+/// Comme `parse_file_text`, avec la cadence (images/s) a utiliser pour les formats dont les temps sont en images (MicroDVD).
+pub fn parse_file_text_fps(ext: &str, text: &str, fps: Option<f64>) -> Vec<Cue> {
     let kind = if matches!(ext.to_ascii_lowercase().as_str(), "ass" | "ssa") { "ass" } else { sniff(text) };
     let mut c = match kind {
         "ass" => parse_ass(text),
         "sami" => parse_sami(text),
-        "microdvd" => parse_microdvd(text, 23.976),
+        "microdvd" => parse_microdvd(text, fps.unwrap_or(23.976)),
         "subviewer" => parse_subviewer(text),
         _ => parse_srt(text),
     };
@@ -309,9 +314,14 @@ pub fn parse_file_text(ext: &str, text: &str) -> Vec<Cue> {
 const NATIVE_EXT: [&str; 9] = ["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv"];
 
 pub fn load_cues(path: &std::path::Path) -> Result<Vec<Cue>, String> {
+    load_cues_fps(path, None)
+}
+
+/// Comme `load_cues`, avec la cadence des formats a temps en images (voir `SubTrackCfg::fps`).
+pub fn load_cues_fps(path: &std::path::Path, fps: Option<f64>) -> Result<Vec<Cue>, String> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
     let b = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut c = parse_file_text(&ext, &decode_text(&b));
+    let mut c = parse_file_text_fps(&ext, &decode_text(&b), fps);
     if c.is_empty() && !ext.is_empty() && !NATIVE_EXT.contains(&ext.as_str()) {
         // TTML, LRC, STL, JACOsub... : ffmpeg les convertit en SRT
         let tools = crate::ffmpeg::Tools::locate().map_err(|e| format!("{}: format non reconnu et ffmpeg introuvable ({e})", path.display()))?;
@@ -443,15 +453,17 @@ pub struct SubTrackCfg {
     pub lang: String,
     /// Decalage a appliquer aux temps (ms, peut etre negatif).
     pub offset_ms: i64,
+    /// Cadence (images/s) des fichiers dont les temps sont en images (MicroDVD) quand le fichier ne l'indique pas ; `None` : 23,976.
+    pub fps: Option<f64>,
     pub style: SubStyle,
 }
 
 impl SubTrackCfg {
     pub fn from_file(path: &str, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, style: SubStyle::default() }
     }
     pub fn embedded(index: u32, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, style: SubStyle::default() }
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
@@ -475,6 +487,7 @@ impl SubTrackCfg {
             lang_id: v.get("langue_id").and_then(Value::as_i64).filter(|n| *n >= 1).map_or(0, |n| n as u32),
             lang: v.get("langue").and_then(Value::as_str).unwrap_or("und").into(),
             offset_ms: v.get("decalage_ms").and_then(Value::as_f64).map_or(0, |x| x.round() as i64),
+            fps: v.get("cadence_ips").and_then(Value::as_f64).filter(|f| f.is_finite() && *f >= 1.0 && *f <= 240.0),
             style: st,
         })
     }
@@ -492,6 +505,7 @@ impl SubTrackCfg {
         if self.offset_ms != 0 {
             o.push(("decalage_ms".into(), Value::Num(self.offset_ms as f64)));
         }
+        if let Some(f) = self.fps { o.push(("cadence_ips".into(), Value::Num(f))); }
         let s = &self.style;
         let mut st = Vec::new();
         if !s.font.is_empty() { st.push(("police".to_string(), Value::Str(s.font.clone()))); }

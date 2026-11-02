@@ -679,3 +679,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Lecture directe : SRT, WebVTT (horaires mm:ss.mmm acceptes), MicroDVD (cadence par {1}{1}fps, sinon 23,976), SubViewer 2 et SBV, SAMI (premiere classe de langue). Format reconnu d apres le contenu (sauf .ass/.ssa).
 - Autres extensions (TTML, LRC, STL...) : conversion par ffmpeg (`convert_subtitle_file_to_srt`) si le lecteur direct ne trouve rien.
 - Tests : tests/subtitle_formats.rs.
+
+## Cadence par piste de sous-titres (export 128)
+- SubTrackCfg.fps (JSON "cadence_ips", ecrit seulement si defini) pour les fichiers a temps en images (MicroDVD) ; `load_cues_fps` / `parse_file_text_fps` ; liste de cadences dans le panneau (visible pour .sub et .txt), prise en compte a la construction et dans l apercu.

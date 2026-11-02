@@ -670,7 +670,7 @@ fn add_subtitles(
         };
         if let Some(m) = t.problems().into_iter().next() { return bad(format!("video {num}, sous-titres {} : {m}", k + 1)); }
         let cues = match &t.source {
-            SubSource::File(f) => load_cues(&abs(f)).map_err(Error::Format)?,
+            SubSource::File(f) => crate::subtitle::load_cues_fps(&abs(f), t.fps).map_err(Error::Format)?,
             SubSource::Embedded(idx) => {
                 let dst = tmp.join(format!("sous_titres_{num}_{idx}.srt"));
                 ffmpeg::extract_subtitle_srt(env.tools, src, *idx, &dst)?;

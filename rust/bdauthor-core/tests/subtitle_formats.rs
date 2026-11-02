@@ -50,3 +50,14 @@ fn srt_still_fine_and_wrong_extension() {
     assert_eq!(parse_file_text("txt", t).len(), 2);
     assert_eq!(parse_file_text("srt", t).len(), 2);
 }
+
+#[test]
+fn track_fps_json_and_parse() {
+    let mut t = SubTrackCfg::from_file("a.sub", "fra");
+    assert!(!t.to_value().to_pretty().contains("cadence_ips"));
+    t.fps = Some(25.0);
+    let back = SubTrackCfg::from_value(&t.to_value()).unwrap();
+    assert_eq!(back.fps, Some(25.0));
+    let c = parse_file_text_fps("sub", "{25}{50}x", Some(25.0));
+    assert_eq!((c[0].start_ms, c[0].end_ms), (1000, 2000));
+}
