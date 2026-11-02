@@ -613,3 +613,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Ordre de dessin : `draw_order` (par calque puis ordre de la liste) ; un calque masque n'est ni affiche ni exporte ; un calque verrouille n'est plus selectionnable a la souris.
 - Liste des elements groupee par calque (le plus en avant en haut) : glisser un element sur un autre le place devant lui (et dans son calque), sur l'en-tete d'un calque il passe au premier plan de ce calque.
   Boutons : + Calque, Supprimer le calque (elements reportes sur le voisin), Calque ▲▼, ▲▼ d'un element = dans son calque. Calque actif (●) : recoit les nouveaux elements.
+
+### Jaquette : liste des calques au design de la gestion des pages
+- Meme presentation que « Pages et calques » du mode Mise en page : cadre groupe, poignee ☰ (en gras pour un calque, grise pour un element), + / − pour replier, 👁/◌ masquer, 🔒/🔓 verrouiller,
+  ✏ ou double-clic pour renommer, 🗑 (supprimer le calque, ses elements au voisin ou supprimes), « (n) » = nombre d'elements, + tout / − tout.
+- Depot : trait bleu a l'endroit d'insertion calcule d'apres la position du pointeur (sous un en-tete : premier plan du calque ; sous un element : juste derriere lui ; un calque s'insere entre deux calques).

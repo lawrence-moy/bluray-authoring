@@ -23,10 +23,19 @@ pub(crate) struct CoverDrag {
     start: (f64, f64),
 }
 
-/// Ou deposer un element glisse dans la liste : juste devant un autre element, ou au premier plan d'un calque.
-enum DropTo {
-    After(usize),
+/// Ligne de la liste, glissable par sa poignee ☰ (calque ou element).
+#[derive(Clone, Copy)]
+enum CoverRow {
     Layer(usize),
+    Item(usize),
+}
+
+/// Modification demandee par la liste, appliquee apres son dessin.
+enum CoverOp {
+    Add,
+    Remove(usize, bool),
+    MoveItem { from: usize, layer: usize, before: Option<usize> },
+    MoveLayer { from: usize, to: usize },
 }
 
 fn item_label(it: &CoverItem, i: usize) -> String {
@@ -179,6 +188,8 @@ impl App {
             (self.model.cover, self.model.label) = cur;
             self.cover_sel = None;
             self.cover_drag = None;
+            self.cover_closed.clear();
+            self.cover_layer_edit = None;
             self.cover_changed();
         }
     }
@@ -199,6 +210,9 @@ impl App {
         if redo { self.cover_undo_redo(true); }
         if page != self.cover_page {
             self.cover_page = page;
+            self.cover_closed.clear();
+            self.cover_layer_edit = None;
+            self.cover_layer = 0;
             self.cover_sel = None;
             self.cover_drag = None;
             self.cover_tex = None;
@@ -244,93 +258,157 @@ impl App {
         let mut layers = orig.clone();
         let nl = layers.len();
         let mut active = self.cover_layer.min(nl - 1);
-        let mut drop: Option<(usize, DropTo)> = None;
-        let mut new_sel = self.cover_sel;
-        ui.label(egui::RichText::new("Calques (le plus en avant en haut) : glissez un élément sur un autre pour le placer devant lui, ou sur l'en-tête d'un calque.").weak());
-        egui::ScrollArea::vertical().id_salt("jaquette_liste").max_height(260.0).show(ui, |ui| {
-            for l in (0..nl).rev() {
-                let head = ui.horizontal(|ui| {
-                    if ui.selectable_label(active == l, "●").on_hover_text("Calque actif : il reçoit les nouveaux éléments").clicked() { active = l; }
-                    ui.checkbox(&mut layers[l].visible, "").on_hover_text("Visible (un calque masqué n'est ni affiché ni exporté)");
-                    ui.checkbox(&mut layers[l].locked, "verr.").on_hover_text("Verrouillé : ses éléments ne sont plus sélectionnables à la souris");
-                    ui.add(egui::TextEdit::singleline(&mut layers[l].name).desired_width(150.0));
-                });
-                if head.response.dnd_hover_payload::<usize>().is_some() {
-                    ui.painter().rect_stroke(head.response.rect, 2.0, Stroke::new(2.0_f32, Color32::from_rgb(120, 190, 255)));
-                }
-                if let Some(p) = head.response.dnd_release_payload::<usize>() { drop = Some((*p, DropTo::Layer(l))); }
-                let mut any = false;
-                for i in (0..n).rev().filter(|&i| doc.items()[i].layer == l) {
-                    any = true;
-                    let mut text = egui::RichText::new(item_label(&doc.items()[i], i));
-                    if !layers[l].visible { text = text.weak(); }
+        let mut op: Option<CoverOp> = None;
+        let mut pick: Option<usize> = None;
+        let mut toggle: Option<usize> = None;
+        let mut activate: Option<usize> = None;
+        let mut rename_done = false;
+        let mut rows: Vec<(CoverRow, Rect)> = Vec::new();
+        let pm = |open: bool| if open { "−" } else { "+" };
+        ui.label(egui::RichText::new("Calques et éléments (du premier plan, en haut, à l'arrière-plan). Glissez la poignée ☰ pour réordonner, changer un élément de calque, ou déplacer un calque. + / − : déplier ou replier.").weak());
+        ui.horizontal_wrapped(|ui| {
+            if ui.button("+ Calque").on_hover_text("Nouveau calque au premier plan ; les nouveaux éléments vont dans le calque actif").clicked() { op = Some(CoverOp::Add); }
+            if ui.small_button("+ tout").on_hover_text("Déplier tous les calques").clicked() { self.cover_closed.clear(); }
+            if ui.small_button("− tout").on_hover_text("Replier tous les calques").clicked() { for l in 0..nl { self.cover_closed.insert(l); } }
+        });
+        egui::ScrollArea::vertical().id_salt("jaquette_liste").auto_shrink([false, true]).max_height(300.0).show(ui, |ui| {
+            let list = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
+                ui.set_min_width(ui.available_width());
+                for l in (0..nl).rev() {
+                    let open = !self.cover_closed.contains(&l);
+                    let count = (0..n).filter(|&i| doc.items()[i].layer == l).count();
                     let r = ui.horizontal(|ui| {
-                        ui.add_space(18.0);
-                        ui.dnd_drag_source(egui::Id::new(("jaquette_el", i)), i, |ui| ui.selectable_label(self.cover_sel == Some(i), text))
-                    }).inner;
-                    if r.inner.clicked() { new_sel = Some(i); }
-                    if let Some(p) = r.response.dnd_hover_payload::<usize>() {
-                        if *p != i {
-                            let rc = r.response.rect;
-                            ui.painter().line_segment([rc.left_top(), rc.right_top()], Stroke::new(2.0_f32, Color32::from_rgb(120, 190, 255)));
+                        let _ = ui.dnd_drag_source(egui::Id::new(("cal", l)), CoverRow::Layer(l), |ui| ui.label(egui::RichText::new("☰").strong()))
+                            .response.on_hover_text("Glisser pour déplacer le calque (avec ses éléments)");
+                        if ui.small_button(pm(open)).on_hover_text(if open { "Replier le calque" } else { "Déplier le calque" }).clicked() { toggle = Some(l); }
+                        let vis = layers[l].visible;
+                        if ui.small_button(if vis { "👁" } else { "◌" }).on_hover_text(if vis { "Masquer (un calque masqué n'est ni affiché ni exporté)" } else { "Calque masqué : afficher" }).clicked() { layers[l].visible = !vis; }
+                        let locked = layers[l].locked;
+                        if ui.small_button(if locked { "🔒" } else { "🔓" }).on_hover_text(if locked { "Verrouillé : ses éléments ne se sélectionnent plus à la souris ; déverrouiller" } else { "Verrouiller (plus de sélection ni de déplacement à la souris)" }).clicked() { layers[l].locked = !locked; }
+                        let editing = matches!(&self.cover_layer_edit, Some((e, _)) if *e == l);
+                        if editing {
+                            if let Some((_, text)) = &mut self.cover_layer_edit {
+                                let te = ui.add(egui::TextEdit::singleline(text).desired_width(130.0));
+                                if !te.has_focus() && !te.lost_focus() { te.request_focus(); }
+                                if te.lost_focus() { rename_done = true; }
+                            }
+                        } else {
+                            let resp = ui.selectable_label(active == l, egui::RichText::new(format!("{}  ({count})", layers[l].name))).on_hover_text("Calque actif : reçoit les nouveaux éléments. Double-clic : renommer");
+                            if resp.clicked() { activate = Some(l); }
+                            if resp.double_clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
+                            if ui.small_button("✏").on_hover_text("Renommer le calque").clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
+                            if nl > 1 {
+                                let _ = ui.menu_button("🗑", |ui| {
+                                    if ui.button("Supprimer le calque (ses éléments vont au calque voisin)").clicked() { op = Some(CoverOp::Remove(l, true)); ui.close_menu(); }
+                                    if ui.button("Supprimer le calque et ses éléments").clicked() { op = Some(CoverOp::Remove(l, false)); ui.close_menu(); }
+                                }).response.on_hover_text("Supprimer le calque");
+                            }
                         }
+                    }).response;
+                    rows.push((CoverRow::Layer(l), r.rect));
+                    if !open { continue; }
+                    for i in (0..n).rev().filter(|&i| doc.items()[i].layer == l) {
+                        let mut text = egui::RichText::new(item_label(&doc.items()[i], i));
+                        if !layers[l].visible { text = text.weak(); }
+                        let r = ui.horizontal(|ui| {
+                            ui.add_space(40.0);
+                            let _ = ui.dnd_drag_source(egui::Id::new(("cel", i)), CoverRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak()))
+                                .response.on_hover_text("Glisser pour changer l'ordre ou le calque");
+                            if ui.selectable_label(self.cover_sel == Some(i), text).clicked() { pick = Some(i); }
+                        }).response;
+                        rows.push((CoverRow::Item(i), r.rect));
                     }
-                    if let Some(p) = r.response.dnd_release_payload::<usize>() { drop = Some((*p, DropTo::After(i))); }
+                    if count == 0 {
+                        ui.horizontal(|ui| { ui.add_space(40.0); ui.label(egui::RichText::new("(vide : glissez-y des éléments)").weak().italics()); });
+                    }
                 }
-                if !any { ui.horizontal(|ui| { ui.add_space(18.0); ui.label(egui::RichText::new("(vide)").weak()); }); }
+            });
+
+            // ---- glisser-deposer : trait bleu a l'endroit de depot
+            let area = list.response.rect;
+            let (Some(drag), Some(pos)) = (egui::DragAndDrop::payload::<CoverRow>(ui.ctx()), ui.ctx().pointer_hover_pos()) else { return };
+            if !area.expand(8.0).contains(pos) || rows.is_empty() { return; }
+            let released = ui.input(|i| i.pointer.any_released());
+            let blue = Stroke::new(2.5_f32, Color32::from_rgb(90, 170, 255));
+            let r = rows.iter().filter(|(_, rc)| rc.center().y < pos.y).count();
+            let bottom = rows.last().map_or(area.bottom(), |x| x.1.bottom());
+            match *drag {
+                CoverRow::Item(from) => {
+                    let y = if r < rows.len() { rows[r].1.top() } else { bottom };
+                    ui.painter().hline(area.x_range(), y, blue);
+                    if released {
+                        egui::DragAndDrop::clear_payload(ui.ctx());
+                        // sous un en-tete : au premier plan de ce calque ; sous un element : juste derriere lui
+                        let (layer, before) = if r == 0 { (nl - 1, None) } else {
+                            match rows[r - 1].0 {
+                                CoverRow::Layer(l) => (l, None),
+                                CoverRow::Item(j) => (doc.items()[j].layer, Some(j)),
+                            }
+                        };
+                        op = Some(CoverOp::MoveItem { from, layer, before });
+                    }
+                }
+                CoverRow::Layer(from) => {
+                    // un calque s'insere entre deux calques
+                    let header_rows: Vec<usize> = rows.iter().enumerate().filter(|(_, (row, _))| matches!(row, CoverRow::Layer(_))).map(|(k, _)| k).collect();
+                    let above = header_rows.iter().filter(|&&k| k < r).count();
+                    let line_at = header_rows.get(above).copied().unwrap_or(rows.len());
+                    let y = if line_at < rows.len() { rows[line_at].1.top() } else { bottom };
+                    ui.painter().hline(area.x_range(), y, blue);
+                    if released {
+                        egui::DragAndDrop::clear_payload(ui.ctx());
+                        let disp_from = nl - 1 - from;
+                        let disp_to = if above > disp_from { above - 1 } else { above };
+                        let to = nl - 1 - disp_to.min(nl - 1);
+                        if to != from { op = Some(CoverOp::MoveLayer { from, to }); }
+                    }
+                }
             }
         });
-        if new_sel != self.cover_sel { self.cover_sel = new_sel; }
-        // boutons de calques
-        ui.horizontal_wrapped(|ui| {
-            if ui.button("+ Calque").clicked() {
+        if let Some(i) = pick { self.cover_sel = Some(i); }
+        if let Some(l) = activate { active = l; }
+        if let Some(l) = toggle { if !self.cover_closed.remove(&l) { self.cover_closed.insert(l); } }
+        if rename_done {
+            if let Some((l, t)) = self.cover_layer_edit.take() {
+                if l < layers.len() && !t.trim().is_empty() { layers[l].name = t.trim().to_string(); }
+            }
+        }
+        match op {
+            Some(CoverOp::Add) => {
                 layers.push(CoverLayer::new(&format!("Calque {}", nl + 1)));
                 active = nl;
             }
-            if nl > 1 && ui.button("Supprimer le calque").on_hover_text("Ses éléments passent dans le calque voisin").clicked() {
+            Some(CoverOp::Remove(l, keep)) if nl > 1 && l < nl => {
+                let items = doc.items_mut();
+                if !keep { items.retain(|it| it.layer != l); }
+                for it in items.iter_mut() {
+                    if it.layer > l { it.layer -= 1; } else if it.layer == l { it.layer = l.saturating_sub(1); }
+                }
+                layers.remove(l);
+                active = active.min(layers.len() - 1);
+                self.cover_sel = None;
+                self.cover_closed.clear();
+            }
+            Some(CoverOp::MoveItem { from, layer, before }) if from < n && layer < nl => {
+                let items = doc.items_mut();
+                let mut it = items.remove(from);
+                it.layer = layer;
+                let at = match before { Some(j) => if j > from { j - 1 } else { j }, None => items.len() };
+                items.insert(at, it);
+                self.cover_sel = Some(at);
+                changed = true;
+            }
+            Some(CoverOp::MoveLayer { from, to }) if from < nl && to < nl => {
+                let moved = layers.remove(from);
+                layers.insert(to, moved);
                 for it in doc.items_mut().iter_mut() {
-                    if it.layer > active { it.layer -= 1; } else if it.layer == active { it.layer = active.saturating_sub(1); }
+                    let l = it.layer;
+                    it.layer = if l == from { to } else if from < to && l > from && l <= to { l - 1 } else if from > to && l >= to && l < from { l + 1 } else { l };
                 }
-                layers.remove(active);
-                active = active.saturating_sub(1).min(layers.len() - 1);
+                active = if active == from { to } else if from < to && active > from && active <= to { active - 1 } else if from > to && active >= to && active < from { active + 1 } else { active };
+                self.cover_closed.clear();
             }
-            let swap = |items: &mut Vec<CoverItem>, a: usize, b: usize| {
-                for it in items.iter_mut() { if it.layer == a { it.layer = b; } else if it.layer == b { it.layer = a; } }
-            };
-            if active + 1 < layers.len() && ui.button("Calque ▲").on_hover_text("Vers l'avant").clicked() {
-                swap(doc.items_mut(), active, active + 1);
-                layers.swap(active, active + 1);
-                active += 1;
-            }
-            if active > 0 && ui.button("Calque ▼").on_hover_text("Vers l'arrière").clicked() {
-                swap(doc.items_mut(), active, active - 1);
-                layers.swap(active, active - 1);
-                active -= 1;
-            }
-        });
-        if let Some((from, to)) = drop {
-            let items = doc.items_mut();
-            if from < items.len() {
-                match to {
-                    DropTo::After(j) if j != from && j < items.len() => {
-                        let lj = items[j].layer;
-                        let mut it = items.remove(from);
-                        it.layer = lj;
-                        let jj = if from < j { j - 1 } else { j };
-                        items.insert(jj + 1, it);
-                        self.cover_sel = Some(jj + 1);
-                        changed = true;
-                    }
-                    DropTo::Layer(l) => {
-                        let mut it = items.remove(from);
-                        it.layer = l;
-                        items.push(it);
-                        self.cover_sel = Some(items.len() - 1);
-                        changed = true;
-                    }
-                    _ => {}
-                }
-            }
+            _ => {}
         }
         if layers != orig {
             *doc.layers_mut() = normalize_layers(layers);
