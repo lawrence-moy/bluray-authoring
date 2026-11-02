@@ -25,6 +25,24 @@ impl VPos {
     }
 }
 
+/// Alignement horizontal du bloc de texte (et des lignes dans le bloc).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HAlign {
+    Left,
+    Center,
+    Right,
+}
+
+impl HAlign {
+    pub const ALL: [HAlign; 3] = [HAlign::Left, HAlign::Center, HAlign::Right];
+    pub fn name(self) -> &'static str {
+        match self { HAlign::Left => "gauche", HAlign::Center => "centre", HAlign::Right => "droite" }
+    }
+    pub fn from_name(s: &str) -> Option<HAlign> {
+        match s { "gauche" => Some(HAlign::Left), "centre" => Some(HAlign::Center), "droite" => Some(HAlign::Right), _ => None }
+    }
+}
+
 /// Style d'une piste de sous-titres. Les tailles sont donnees pour une video de 1080 lignes (mises a l'echelle pour 720).
 #[derive(Debug, Clone, PartialEq)]
 pub struct SubStyle {
@@ -35,11 +53,32 @@ pub struct SubStyle {
     pub outline: i32,
     pub pos: VPos,
     pub margin: i32,
+    /// Alignement horizontal ; avec « gauche » ou « droite », le bloc est place a `margin_x` du bord.
+    pub halign: HAlign,
+    /// Marge laterale (px, pour 1080 lignes) utilisee par les alignements gauche et droite.
+    pub margin_x: i32,
+    /// Largeur maximale du texte, en % de la largeur de la video.
+    pub max_width: i32,
+    /// Coupe les lignes trop longues aux espaces (sinon la taille du texte est reduite).
+    pub wrap: bool,
+    /// Ombre portee : decalage en px (0 : aucune), couleur et opacite en %.
+    pub shadow: i32,
+    pub shadow_color: [u8; 3],
+    pub shadow_opacity: i32,
+    /// Boite derriere le texte : opacite en % (0 : aucune), couleur, marge interieure et rayon des coins (px).
+    pub bg_opacity: i32,
+    pub bg_color: [u8; 3],
+    pub bg_pad: i32,
+    pub bg_radius: i32,
 }
 
 impl Default for SubStyle {
     fn default() -> Self {
-        SubStyle { font: String::new(), size: 56, color: [255, 255, 255], outline_color: [0, 0, 0], outline: 3, pos: VPos::Bottom, margin: 70 }
+        SubStyle { font: String::new(), size: 56, color: [255, 255, 255], outline_color: [0, 0, 0], outline: 3, pos: VPos::Bottom, margin: 70,
+            halign: HAlign::Center, margin_x: 100, max_width: 92, wrap: false,
+            shadow: 0, shadow_color: [0, 0, 0], shadow_opacity: 70,
+            bg_opacity: 0, bg_color: [0, 0, 0], bg_pad: 12, bg_radius: 8,
+        }
     }
 }
 
@@ -379,6 +418,106 @@ pub fn merge(cues: &[Cue]) -> Vec<Cue> {
     out
 }
 
+/// Retire les indications entre crochets `[...]` ou parentheses `(...)` (sous-titres pour sourds et malentendants) ; une replique
+/// qui n'a plus de texte disparait, une ligne vide est supprimee.
+pub fn strip_notes(cues: &[Cue]) -> Vec<Cue> {
+    fn clean_line(l: &str) -> String {
+        let (mut out, mut depth) = (String::new(), 0usize);
+        for c in l.chars() {
+            match c {
+                '[' | '(' => depth += 1,
+                ']' | ')' if depth > 0 => depth -= 1,
+                _ if depth == 0 => out.push(c),
+                _ => {}
+            }
+        }
+        // espaces doubles laisses par le retrait, et tiret de dialogue orphelin
+        let t = out.split_whitespace().collect::<Vec<_>>().join(" ");
+        if t.chars().all(|c| matches!(c, '-' | '\u{2013}' | '\u{2014}' | '\u{266a}' | '\u{266b}')) { String::new() } else { t }
+    }
+    cues.iter()
+        .filter_map(|c| {
+            let t = c.text.lines().map(clean_line).filter(|l| !l.is_empty()).collect::<Vec<_>>().join("\n");
+            (!t.is_empty()).then(|| Cue { start_ms: c.start_ms, end_ms: c.end_ms, text: t })
+        })
+        .collect()
+}
+
+// ------------------------------------------------------------------ controle de qualite
+/// Seuils du controle de qualite (usage courant : 20 caracteres par seconde, 42 par ligne, 2 lignes).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct QualityLimits {
+    pub max_cps: f64,
+    pub max_line_chars: usize,
+    pub max_lines: usize,
+    pub min_ms: i64,
+    pub max_ms: i64,
+    pub min_gap_ms: i64,
+}
+
+impl Default for QualityLimits {
+    fn default() -> Self {
+        QualityLimits { max_cps: 20.0, max_line_chars: 42, max_lines: 2, min_ms: 800, max_ms: 7000, min_gap_ms: 80 }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IssueKind {
+    TooFast,
+    LongLine,
+    TooManyLines,
+    TooShort,
+    TooLong,
+    TightGap,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct QualityIssue {
+    /// Rang de la replique dans la liste controlee.
+    pub index: usize,
+    pub kind: IssueKind,
+    pub detail: String,
+}
+
+impl IssueKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            IssueKind::TooFast => "Lecture trop rapide",
+            IssueKind::LongLine => "Ligne trop longue",
+            IssueKind::TooManyLines => "Trop de lignes",
+            IssueKind::TooShort => "Affichage trop court",
+            IssueKind::TooLong => "Affichage trop long",
+            IssueKind::TightGap => "Trop proche de la suivante",
+        }
+    }
+}
+
+/// Controle des repliques (deja fusionnees, decalage applique) : vitesse de lecture, longueur et nombre de lignes, durees, intervalle.
+pub fn check_quality(cues: &[Cue], lim: &QualityLimits) -> Vec<QualityIssue> {
+    let mut out = Vec::new();
+    for (i, c) in cues.iter().enumerate() {
+        let dur = c.end_ms - c.start_ms;
+        let chars: usize = c.text.lines().map(|l| l.trim().chars().count()).sum();
+        let mut push = |kind, detail: String| out.push(QualityIssue { index: i, kind, detail });
+        if dur > 0 {
+            let cps = chars as f64 * 1000.0 / dur as f64;
+            if cps > lim.max_cps { push(IssueKind::TooFast, format!("{cps:.1} caractères/s (maximum {})", lim.max_cps)); }
+        }
+        if let Some(l) = c.text.lines().map(|l| l.trim().chars().count()).max() {
+            if l > lim.max_line_chars { push(IssueKind::LongLine, format!("{l} caractères (maximum {})", lim.max_line_chars)); }
+        }
+        let n = c.text.lines().count();
+        if n > lim.max_lines { push(IssueKind::TooManyLines, format!("{n} lignes (maximum {})", lim.max_lines)); }
+        if dur < lim.min_ms { push(IssueKind::TooShort, format!("{dur} ms (minimum {})", lim.min_ms)); }
+        if dur > lim.max_ms { push(IssueKind::TooLong, format!("{dur} ms (maximum {})", lim.max_ms)); }
+        if let Some(nx) = cues.get(i + 1) {
+            let gap = nx.start_ms - c.end_ms;
+            if gap > 0 && gap < lim.min_gap_ms { push(IssueKind::TightGap, format!("{gap} ms avant la suivante (minimum {})", lim.min_gap_ms)); }
+        }
+    }
+    out
+}
+
 // ------------------------------------------------------------------ reglages d'une piste (projet)
 use crate::json::Value;
 
@@ -461,15 +600,17 @@ pub struct SubTrackCfg {
     pub offset_ms: i64,
     /// Cadence (images/s) des fichiers dont les temps sont en images (MicroDVD) quand le fichier ne l'indique pas ; `None` : 23,976.
     pub fps: Option<f64>,
+    /// Retire les indications entre crochets ou parentheses ([musique], (rires)...) des repliques.
+    pub strip_notes: bool,
     pub style: SubStyle,
 }
 
 impl SubTrackCfg {
     pub fn from_file(path: &str, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, style: SubStyle::default() }
     }
     pub fn embedded(index: u32, lang: &str) -> Self {
-        SubTrackCfg { source: SubSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, style: SubStyle::default() }
+        SubTrackCfg { source: SubSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, fps: None, strip_notes: false, style: SubStyle::default() }
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
@@ -487,12 +628,24 @@ impl SubTrackCfg {
             if let Some(x) = s.get("contour").and_then(Value::as_i64) { st.outline = x.clamp(0, 30) as i32; }
             if let Some(x) = s.get("position").and_then(Value::as_str) { st.pos = VPos::from_name(x).ok_or_else(|| format!("position de sous-titre inconnue : {x}"))?; }
             if let Some(x) = s.get("marge").and_then(Value::as_i64) { st.margin = x.clamp(0, 540) as i32; }
+            if let Some(x) = s.get("alignement").and_then(Value::as_str) { st.halign = HAlign::from_name(x).ok_or_else(|| format!("alignement de sous-titre inconnu : {x}"))?; }
+            if let Some(x) = s.get("marge_cote").and_then(Value::as_i64) { st.margin_x = x.clamp(0, 960) as i32; }
+            if let Some(x) = s.get("largeur_max").and_then(Value::as_i64) { st.max_width = x.clamp(30, 100) as i32; }
+            if let Some(x) = s.get("cesure").and_then(Value::as_bool) { st.wrap = x; }
+            if let Some(x) = s.get("ombre").and_then(Value::as_i64) { st.shadow = x.clamp(0, 30) as i32; }
+            if let Some(x) = s.get("ombre_couleur").and_then(Value::as_str) { st.shadow_color = parse_hex(x)?; }
+            if let Some(x) = s.get("ombre_opacite").and_then(Value::as_i64) { st.shadow_opacity = x.clamp(0, 100) as i32; }
+            if let Some(x) = s.get("fond_opacite").and_then(Value::as_i64) { st.bg_opacity = x.clamp(0, 100) as i32; }
+            if let Some(x) = s.get("fond_couleur").and_then(Value::as_str) { st.bg_color = parse_hex(x)?; }
+            if let Some(x) = s.get("fond_marge").and_then(Value::as_i64) { st.bg_pad = x.clamp(0, 100) as i32; }
+            if let Some(x) = s.get("fond_arrondi").and_then(Value::as_i64) { st.bg_radius = x.clamp(0, 100) as i32; }
         }
         Ok(SubTrackCfg {
             source,
             lang_id: v.get("langue_id").and_then(Value::as_i64).filter(|n| *n >= 1).map_or(0, |n| n as u32),
             lang: v.get("langue").and_then(Value::as_str).unwrap_or("und").into(),
             offset_ms: v.get("decalage_ms").and_then(Value::as_f64).map_or(0, |x| x.round() as i64),
+            strip_notes: v.get("retirer_indications").and_then(Value::as_bool).unwrap_or(false),
             fps: v.get("cadence_ips").and_then(Value::as_f64).filter(|f| f.is_finite() && *f >= 1.0 && *f <= 240.0),
             style: st,
         })
@@ -512,6 +665,7 @@ impl SubTrackCfg {
             o.push(("decalage_ms".into(), Value::Num(self.offset_ms as f64)));
         }
         if let Some(f) = self.fps { o.push(("cadence_ips".into(), Value::Num(f))); }
+        if self.strip_notes { o.push(("retirer_indications".into(), Value::Bool(true))); }
         let s = &self.style;
         let mut st = Vec::new();
         if !s.font.is_empty() { st.push(("police".to_string(), Value::Str(s.font.clone()))); }
@@ -521,6 +675,22 @@ impl SubTrackCfg {
         st.push(("contour".into(), Value::Num(s.outline as f64)));
         st.push(("position".into(), Value::Str(s.pos.name().into())));
         st.push(("marge".into(), Value::Num(s.margin as f64)));
+        let d = SubStyle::default();
+        if s.halign != d.halign { st.push(("alignement".into(), Value::Str(s.halign.name().into()))); }
+        if s.margin_x != d.margin_x { st.push(("marge_cote".into(), Value::Num(s.margin_x as f64))); }
+        if s.max_width != d.max_width { st.push(("largeur_max".into(), Value::Num(s.max_width as f64))); }
+        if s.wrap { st.push(("cesure".into(), Value::Bool(true))); }
+        if s.shadow != 0 {
+            st.push(("ombre".into(), Value::Num(s.shadow as f64)));
+            st.push(("ombre_couleur".into(), hex(s.shadow_color)));
+            st.push(("ombre_opacite".into(), Value::Num(s.shadow_opacity as f64)));
+        }
+        if s.bg_opacity != 0 {
+            st.push(("fond_opacite".into(), Value::Num(s.bg_opacity as f64)));
+            st.push(("fond_couleur".into(), hex(s.bg_color)));
+            st.push(("fond_marge".into(), Value::Num(s.bg_pad as f64)));
+            st.push(("fond_arrondi".into(), Value::Num(s.bg_radius as f64)));
+        }
         o.push(("style".into(), Value::Obj(st)));
         Value::Obj(o)
     }

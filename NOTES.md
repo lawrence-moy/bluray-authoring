@@ -695,3 +695,11 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Options « Menu » deplacees dans Projet (export 134)
 - Onglet Projet > « Style des pages » : image et duree du fond, video de fond (+ son), musique, boucle. Onglet Général : sequence d ouverture et menu 1920x1080. L onglet Videos ne garde que les reglages de la video selectionnee.
+
+## Export 136 — réglages avancés des sous-titres
+- Style de piste : alignement gauche/centre/droite + marge latérale, largeur maximale (%), coupe des lignes longues (équilibrée), ombre portée (px, couleur, opacité), boîte derrière le texte (opacité, couleur, marge, coins). JSON : clés écrites seulement si non défaut.
+- Piste : option « Retirer les indications [..] et (..) » (`retirer_indications`).
+- `pgs::place` (position commune disque/aperçu), paliers d'opacité PGS ajoutés pour boîte et ombre.
+- Aperçu : panneau « Contrôle de qualité » (vitesse, longueur/nombre de lignes, durées, intervalle) avec saut à la réplique.
+- Non fait : positions par réplique ({\an8}), car cela demande un champ de plus dans `Cue`.
+- Core : 136 tests verts. Render/GUI à compiler avec recompiler.bat.

@@ -5,7 +5,7 @@ use crate::m2ts::Segment;
 use crate::mux::{plane_ticks, ts5, PesSpec};
 use crate::palette::{quantize_images, RgbaImage};
 use crate::project::Renderer;
-use crate::subtitle::{Cue, SubStyle, VPos};
+use crate::subtitle::{Cue, HAlign, SubStyle, VPos};
 use std::collections::BTreeMap;
 
 pub const PG_PID0: u16 = 0x1200;
@@ -191,7 +191,24 @@ pub fn crop_visible(im: &RgbaImage, alpha_min: u8) -> Option<(RgbaImage, u32, u3
 pub fn scaled_style(s: &SubStyle, vh: u32) -> SubStyle {
     let k = vh as f64 / 1080.0;
     let sc = |v: i32| (v as f64 * k).round() as i32;
-    SubStyle { size: sc(s.size).max(8), outline: sc(s.outline), margin: sc(s.margin), ..s.clone() }
+    SubStyle { size: sc(s.size).max(8), outline: sc(s.outline), margin: sc(s.margin), margin_x: sc(s.margin_x), shadow: sc(s.shadow), bg_pad: sc(s.bg_pad), bg_radius: sc(s.bg_radius), ..s.clone() }
+}
+
+/// Coin haut-gauche d'une image `w` x `h` (style deja mis a l'echelle) dans une video `video`.
+pub fn place(st: &SubStyle, video: (u32, u32), w: u32, h: u32) -> (u32, u32) {
+    let (w, h) = (w.min(video.0), h.min(video.1));
+    let mx = st.margin_x.max(0) as u32;
+    let x = match st.halign {
+        HAlign::Center => (video.0 - w) / 2,
+        HAlign::Left => mx.min(video.0 - w),
+        HAlign::Right => video.0.saturating_sub(w + mx),
+    };
+    let y = match st.pos {
+        VPos::Bottom => video.1.saturating_sub(st.margin.max(0) as u32 + h),
+        VPos::Top => (st.margin.max(0) as u32).min(video.1 - h),
+        VPos::Middle => (video.1 - h) / 2,
+    };
+    (x, y)
 }
 
 /// Image quantifiee et placee d'un texte ; `None` si le texte ne produit aucun pixel visible.
@@ -200,13 +217,21 @@ pub fn render_cue(text: &str, style: &SubStyle, renderer: &dyn Renderer, video: 
     let Some(img) = renderer.subtitle(text, &st, video.0) else { return Ok(None) };
     let Some((img, _, _)) = crop_visible(&img, 12) else { return Ok(None) };
     let (w, h) = (img.width.min(video.0), img.height.min(video.1));
-    let x = (video.0 - w) / 2;
-    let y = match style.pos {
-        VPos::Bottom => video.1.saturating_sub(st.margin.max(0) as u32 + h),
-        VPos::Top => (st.margin.max(0) as u32).min(video.1 - h),
-        VPos::Middle => (video.1 - h) / 2,
-    };
-    let (entries, mut rows) = quantize_images(&[&img], 6, &[255, 190, 120, 60], 12, false)?;
+    let (x, y) = place(&st, video, w, h);
+    // paliers d'opacite : les 4 habituels (bords lisses) plus ceux de la boite et de l'ombre, pour qu'ils soient rendus exactement
+    let mut levels = vec![255u8, 190, 120, 60];
+    let mut colors = 6;
+    if st.bg_opacity > 0 {
+        levels.push((st.bg_opacity.clamp(1, 100) as u32 * 255 / 100) as u8);
+        colors += 2;
+    }
+    if st.shadow > 0 {
+        levels.push((st.shadow_opacity.clamp(1, 100) as u32 * 255 / 100) as u8);
+        colors += 1;
+    }
+    levels.sort_unstable_by(|a, b| b.cmp(a));
+    levels.dedup();
+    let (entries, mut rows) = quantize_images(&[&img], colors, &levels, 12, false)?;
     Ok(Some(SubImage { x: x as u16, y: y as u16, w: w as u16, h: h as u16, entries, rows: rows.remove(0) }))
 }
 

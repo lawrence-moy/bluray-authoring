@@ -4,7 +4,7 @@ use bdauthor_core::film::MAX_SUB_TRACKS;
 use bdauthor_core::model::{ProjectModel, VideoEntry};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::Renderer;
-use bdauthor_core::subtitle::{default_language_name, load_cues, merge, next_language_id, shift, Cue, Language, SubSource, SubStyle, SubTrackCfg, VPos};
+use bdauthor_core::subtitle::{check_quality, default_language_name, load_cues, merge, next_language_id, shift, strip_notes, Cue, HAlign, Language, QualityIssue, QualityLimits, SubSource, SubStyle, SubTrackCfg, VPos};
 use bdauthor_render::FontRenderer;
 use eframe::egui;
 use std::collections::HashMap;
@@ -93,6 +93,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     ui.label("Décalage :");
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
                 });
+                changed |= ui.checkbox(&mut t.strip_notes, "Retirer les indications [entre crochets] et (entre parenthèses)")
+                    .on_hover_text("Pour les sous-titres destinés aux sourds et malentendants : [Musique], (rires), (soupir)… sont supprimés ; une réplique qui ne contient que cela disparaît.").changed();
                 style_ui(ui, &mut t.style, &mut changed);
                 ui.horizontal(|ui| {
                     if ui.button("Aperçu du rendu…").on_hover_text("Voir les répliques de cette piste dessinées avec son style").clicked() { *preview = Some(k); }
@@ -178,6 +180,41 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
         ui.label("Marge :");
         *changed |= ui.add(egui::DragValue::new(&mut s.margin).range(0..=540).suffix(" px")).changed();
     });
+    ui.horizontal(|ui| {
+        ui.label("Alignement :");
+        for a in HAlign::ALL {
+            if ui.selectable_label(s.halign == a, a.name()).clicked() && s.halign != a { s.halign = a; *changed = true; }
+        }
+        ui.add_enabled_ui(s.halign != HAlign::Center, |ui| {
+            ui.label("Marge latérale :");
+            *changed |= ui.add(egui::DragValue::new(&mut s.margin_x).range(0..=960).suffix(" px")).changed();
+        });
+    });
+    ui.horizontal(|ui| {
+        ui.label("Largeur maximale :");
+        *changed |= ui.add(egui::DragValue::new(&mut s.max_width).range(30..=100).suffix(" %")).on_hover_text("Part de la largeur de l'image que le texte peut occuper").changed();
+        *changed |= ui.checkbox(&mut s.wrap, "Couper les lignes longues").on_hover_text("Coupe aux espaces et équilibre les lignes ; sinon la taille du texte est réduite pour que tout tienne").changed();
+    });
+    ui.horizontal(|ui| {
+        ui.label("Ombre :");
+        *changed |= ui.add(egui::DragValue::new(&mut s.shadow).range(0..=30).suffix(" px")).on_hover_text("0 : pas d'ombre").changed();
+        ui.add_enabled_ui(s.shadow > 0, |ui| {
+            *changed |= ui.color_edit_button_srgb(&mut s.shadow_color).changed();
+            ui.label("Opacité :");
+            *changed |= ui.add(egui::DragValue::new(&mut s.shadow_opacity).range(0..=100).suffix(" %")).changed();
+        });
+    });
+    ui.horizontal(|ui| {
+        ui.label("Boîte :");
+        *changed |= ui.add(egui::DragValue::new(&mut s.bg_opacity).range(0..=100).suffix(" %")).on_hover_text("Opacité du rectangle derrière le texte ; 0 : pas de boîte").changed();
+        ui.add_enabled_ui(s.bg_opacity > 0, |ui| {
+            *changed |= ui.color_edit_button_srgb(&mut s.bg_color).changed();
+            ui.label("Marge :");
+            *changed |= ui.add(egui::DragValue::new(&mut s.bg_pad).range(0..=100).suffix(" px")).changed();
+            ui.label("Coins :");
+            *changed |= ui.add(egui::DragValue::new(&mut s.bg_radius).range(0..=100).suffix(" px")).changed();
+        });
+    });
     let shown = if s.font.is_empty() { "Police par défaut".to_string() } else {
         bdauthor_render::common_fonts().into_iter().find(|(_, f)| *f == s.font).map(|(l, _)| l.to_string()).unwrap_or_else(|| s.font.clone())
     };
@@ -262,6 +299,9 @@ pub struct SubPreview {
     rx: Option<std::sync::mpsc::Receiver<Result<Vec<Cue>, String>>>,
     shown: Vec<Cue>,
     shown_offset: Option<i64>,
+    /// controle de qualite : seuils et problemes trouves (recalcules quand les repliques ou les seuils changent)
+    lim: QualityLimits,
+    issues: Option<Vec<QualityIssue>>,
     cue: usize,
     bg: u8,
     vh: u32,
@@ -283,7 +323,7 @@ pub struct SubPreview {
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path, auto_fps: Option<f64>) -> SubPreview {
-        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0), zoom: 1.0, img_rect: egui::Rect::NOTHING };
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0), zoom: 1.0, img_rect: egui::Rect::NOTHING };
         match &t.source {
             SubSource::File(f) => p.raw = Some(bdauthor_core::subtitle::load_cues_fps(&abs(base, f), t.fps.or(auto_fps))),
             SubSource::Embedded(idx) => {
@@ -333,12 +373,7 @@ fn render_preview(r: &FontRenderer, text: &str, style: &SubStyle, base: &Path, v
     if let Some(img) = r.subtitle(text, &st, vw) {
         if let Some((img, _, _)) = bdauthor_core::pgs::crop_visible(&img, 12) {
             let (w, h) = (img.width.min(vw), img.height.min(vh));
-            let x0 = (vw - w) / 2;
-            let y0 = match style.pos {
-                VPos::Bottom => vh.saturating_sub(st.margin.max(0) as u32 + h),
-                VPos::Top => (st.margin.max(0) as u32).min(vh - h),
-                VPos::Middle => (vh - h) / 2,
-            };
+            let (x0, y0) = bdauthor_core::pgs::place(&st, (vw, vh), w, h);
             for y in 0..h {
                 for x in 0..w {
                     let p = img.pixel(x, y);
@@ -365,9 +400,12 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
     }
     let Some(t) = v.subs.get_mut(pv.track) else { return (false, false) };
     if let Some(Ok(raw)) = &pv.raw {
-        if pv.shown_offset != Some(t.offset_ms) {
-            pv.shown = merge(&shift(raw, t.offset_ms));
-            pv.shown_offset = Some(t.offset_ms);
+        let skey = t.offset_ms * 2 + t.strip_notes as i64;
+        if pv.shown_offset != Some(skey) {
+            let src = if t.strip_notes { strip_notes(raw) } else { raw.clone() };
+            pv.shown = merge(&shift(&src, t.offset_ms));
+            pv.shown_offset = Some(skey);
+            pv.issues = None;
             pv.cue = pv.cue.min(pv.shown.len().saturating_sub(1));
             pv.key.clear();
         }
@@ -404,6 +442,38 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             }
         });
         pv.cue = pv.cue.min(n - 1);
+        if pv.issues.is_none() { pv.issues = Some(check_quality(&pv.shown, &pv.lim)); }
+        let n_issues = pv.issues.as_ref().map_or(0, |v| v.len());
+        egui::CollapsingHeader::new(if n_issues == 0 { "Contrôle de qualité : aucun problème".to_string() } else { format!("Contrôle de qualité : {n_issues} problème(s)") })
+            .id_salt("controle_qualite").default_open(false).show(ui, |ui| {
+                let mut lim = pv.lim;
+                ui.horizontal_wrapped(|ui| {
+                    ui.label("Lecture max :");
+                    ui.add(egui::DragValue::new(&mut lim.max_cps).range(5.0..=60.0).speed(0.5).suffix(" car./s"));
+                    ui.label("Ligne max :");
+                    ui.add(egui::DragValue::new(&mut lim.max_line_chars).range(10..=100).suffix(" car."));
+                    ui.label("Lignes max :");
+                    ui.add(egui::DragValue::new(&mut lim.max_lines).range(1..=6));
+                    ui.label("Durée :");
+                    ui.add(egui::DragValue::new(&mut lim.min_ms).range(0..=5000).speed(10.0).suffix(" ms"));
+                    ui.label("à");
+                    ui.add(egui::DragValue::new(&mut lim.max_ms).range(1000..=30000).speed(50.0).suffix(" ms"));
+                    ui.label("Intervalle min :");
+                    ui.add(egui::DragValue::new(&mut lim.min_gap_ms).range(0..=1000).speed(5.0).suffix(" ms"));
+                    if ui.small_button("Valeurs usuelles").clicked() { lim = QualityLimits::default(); }
+                });
+                if lim != pv.lim { pv.lim = lim; pv.issues = None; }
+                if let Some(list) = &pv.issues {
+                    egui::ScrollArea::vertical().id_salt("liste_problemes").max_height(130.0).show(ui, |ui| {
+                        for i in list.iter().take(500) {
+                            let at = pv.shown.get(i.index).map_or(0, |c| c.start_ms);
+                            if ui.selectable_label(pv.cue == i.index, format!("{} · {} — {}", clock(at), i.kind.label(), i.detail)).clicked() { pv.cue = i.index; }
+                        }
+                        if list.len() > 500 { ui.label(egui::RichText::new(format!("… et {} autres", list.len() - 500)).weak()); }
+                    });
+                }
+                crate::help(ui, "Vérifie les répliques affichées (décalage appliqué, simultanées fusionnées) : vitesse de lecture, longueur et nombre de lignes, durée d'affichage et intervalle avec la suivante. Cliquez sur un problème pour voir la réplique. Les seuils sont ceux d'usage courant ; ils ne modifient pas les sous-titres.");
+            });
         let c = pv.shown[pv.cue].clone();
         ui.label(egui::RichText::new(format!("{} → {}", clock(c.start_ms), clock(c.end_ms))).weak());
         ui.horizontal(|ui| {

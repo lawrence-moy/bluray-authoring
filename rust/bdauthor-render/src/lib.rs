@@ -188,6 +188,41 @@ fn draw_line_f(img: &mut RgbaImage, font: &FontVec, text: &str, size: f32, rgb: 
     }
 }
 
+/// Coupe aux espaces les lignes plus larges que `avail` ; les lignes coupees sont equilibrees (meme nombre de lignes, largeur minimale).
+fn wrap_lines(font: &FontVec, lines: &[String], size: f32, avail: f32) -> Vec<String> {
+    let greedy = |line: &str, w: f32| -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        for word in line.split_whitespace() {
+            let cand = if cur.is_empty() { word.to_string() } else { format!("{cur} {word}") };
+            if !cur.is_empty() && text_extent(font, &cand, size).0 > w {
+                out.push(std::mem::take(&mut cur));
+                cur = word.to_string();
+            } else {
+                cur = cand;
+            }
+        }
+        if !cur.is_empty() { out.push(cur); }
+        out
+    };
+    let mut res = Vec::new();
+    for l in lines {
+        if text_extent(font, l, size).0 <= avail {
+            res.push(l.clone());
+            continue;
+        }
+        let n = greedy(l, avail).len();
+        // plus petite largeur qui tient encore en `n` lignes
+        let (mut lo, mut hi) = (avail * 0.3, avail);
+        for _ in 0..14 {
+            let mid = (lo + hi) / 2.0;
+            if greedy(l, mid).len() <= n { hi = mid; } else { lo = mid; }
+        }
+        res.extend(greedy(l, hi));
+    }
+    res
+}
+
 /// Rectangle arrondi plein (rayon `radius`), bords lisses (alpha partiel sur 1 px).
 pub fn rounded_rect(w: u32, h: u32, radius: f32, rgb: [u8; 3]) -> RgbaImage {
     let mut im = RgbaImage::new(w, h);
@@ -791,38 +826,71 @@ impl bdauthor_core::project::Renderer for FontRenderer {
     }
 
     fn subtitle(&self, text: &str, style: &bdauthor_core::subtitle::SubStyle, max_w: u32) -> Option<RgbaImage> {
+        use bdauthor_core::subtitle::HAlign;
         if text.trim().is_empty() {
             return None;
         }
         let custom = self.custom_font(&style.font, Path::new(""));
         let font: &FontVec = custom.as_deref().unwrap_or(&self.font);
-        let lines: Vec<&str> = text.split('\n').collect();
         let outline = style.outline.max(0);
-        let pad = outline + 4;
-        // la plus longue ligne doit tenir dans la largeur de la video : la taille est reduite sinon
-        let avail = (max_w as f32 * 0.92 - 2.0 * pad as f32).max(40.0);
+        let shadow = style.shadow.max(0);
+        let boxed = style.bg_opacity > 0;
+        let bpad = if boxed { style.bg_pad.max(0) } else { 0 };
+        // marge transparente autour du texte : contour, ombre et boite doivent tenir dans l'image
+        let pad = outline + 4 + shadow + bpad;
+        let avail = (max_w as f32 * style.max_width.clamp(30, 100) as f32 / 100.0 - 2.0 * pad as f32).max(40.0);
         let mut size = style.size.max(8) as f32;
+        let src_lines: Vec<String> = text.split('\n').map(String::from).collect();
+        let lines: Vec<String> = if style.wrap { wrap_lines(font, &src_lines, size, avail) } else { src_lines };
+        // une ligne qui depasse encore (mot trop long, ou coupure desactivee) : la taille est reduite
         let widest = |sz: f32| lines.iter().map(|l| text_extent(font, l, sz).0).fold(0.0f32, f32::max);
         let wide = widest(size);
         if wide > avail {
             size = (size * avail / wide).max(8.0);
         }
+        let text = lines.join("\n");
+        let align = match style.halign { HAlign::Left => Align::Left, HAlign::Center => Align::Center, HAlign::Right => Align::Right };
         let lh = text_extent(font, "Ag", size).1 * 1.1;
         let (tw, th) = (widest(size).ceil() as i32 + 2, (lh * lines.len() as f32).ceil() as i32);
         let (w, h) = (tw + 2 * pad, th + 2 * pad);
         let mut im = RgbaImage::new(w as u32, h as u32);
+        if boxed {
+            let (bw, bh) = ((tw + 2 * bpad) as u32, (th + 2 * bpad) as u32);
+            let radius = (style.bg_radius.max(0) as f32).min(bw.min(bh) as f32 / 2.0);
+            let mut b = rounded_rect(bw, bh, radius, style.bg_color);
+            let k = style.bg_opacity.clamp(0, 100) as u32;
+            for p in b.data.chunks_exact_mut(4) {
+                p[3] = (p[3] as u32 * k / 100) as u8;
+            }
+            blit(&mut im, &b, pad - bpad, pad - bpad, 1.0);
+        }
+        // texte et contour sur une couche a part : l'ombre en reprend la silhouette
+        let mut fg = RgbaImage::new(w as u32, h as u32);
         let rect = |dx: i32, dy: i32| (pad + dx, pad + dy, tw, th);
         if outline > 0 {
             // contour : le texte redessine a tous les decalages entiers du disque de rayon `outline`
             for dy in -outline..=outline {
                 for dx in -outline..=outline {
                     if dx * dx + dy * dy <= outline * outline + outline / 2 {
-                        draw_text_block(&mut im, font, text, size, style.outline_color, rect(dx, dy), Align::Center);
+                        draw_text_block(&mut fg, font, &text, size, style.outline_color, rect(dx, dy), align);
                     }
                 }
             }
         }
-        draw_text_block(&mut im, font, text, size, style.color, rect(0, 0), Align::Center);
+        draw_text_block(&mut fg, font, &text, size, style.color, rect(0, 0), align);
+        if shadow > 0 {
+            let mut sh = RgbaImage::new(w as u32, h as u32);
+            let k = style.shadow_opacity.clamp(0, 100) as u32;
+            for (d, s) in sh.data.chunks_exact_mut(4).zip(fg.data.chunks_exact(4)) {
+                d[..3].copy_from_slice(&style.shadow_color);
+                d[3] = (s[3] as u32 * k / 100) as u8;
+            }
+            // decalee vers le bas et la droite
+            let mut moved = RgbaImage::new(w as u32, h as u32);
+            blit(&mut moved, &sh, shadow, shadow, 1.0);
+            blit(&mut im, &moved, 0, 0, 1.0);
+        }
+        blit(&mut im, &fg, 0, 0, 1.0);
         Some(im)
     }
 
