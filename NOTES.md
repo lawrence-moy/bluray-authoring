@@ -655,3 +655,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 ## Jaquette : types de trait et fleches (export 120)
 - LineStyle (plein, tirets, pointilles, tirets+points, double) et LineArrow (aucune, debut, fin, deux) sur CoverKind::Shape ; JSON "trait" / "fleche" (ecrits seulement si non par defaut).
 - `move_line_end` : les fleches suivent leur extremite quand les bouts se croisent. Rendu : `draw_segment` (motifs le long du trait, pointes en triangle lisse).
+
+## Sauvegarde automatique du projet (export 121)
+- Option Configuration : sauvegarde auto toutes les N min (defaut 2), uniquement si le projet a change et sans bouton souris enfonce. Fichier `<projet>.autosave.json` a cote du projet (projet sans nom : `recuperation.autosave.json` dans le dossier de config). Le projet lui-meme n est modifie que par Enregistrer.
+- Ecriture atomique (fichier .tmp puis renommage), aussi pour Enregistrer. Enregistrer supprime la sauvegarde auto.
+- A l ouverture (et au demarrage), si la sauvegarde auto est plus recente que le projet : fenetre Restaurer / Ignorer / Supprimer.

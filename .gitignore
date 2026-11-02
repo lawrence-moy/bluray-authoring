@@ -20,3 +20,6 @@ __pycache__/
 # divers
 *.log
 Thumbs.db
+
+*.autosave.json
+*.autosave.json.tmp

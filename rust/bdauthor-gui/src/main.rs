@@ -38,6 +38,35 @@ struct Config {
     ffmpeg_path: String,
     /// Pendant un glissement, espace les rendus de l'apercu selon la duree du dernier rendu (sinon : a chaque image).
     adaptive_preview: bool,
+    /// sauvegarde automatique du projet (fichier a cote, jamais le projet lui-meme) toutes les `autosave_min` minutes
+    autosave: bool,
+    autosave_min: u32,
+}
+
+/// Ecrit `text` dans un fichier temporaire voisin puis le renomme : un plantage ou un disque plein en cours d'ecriture ne laisse jamais un fichier tronque.
+fn write_atomic(path: &Path, text: &str) -> std::io::Result<()> {
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+    std::fs::write(&tmp, text)?;
+    std::fs::rename(&tmp, path).map_err(|e| { let _ = std::fs::remove_file(&tmp); e })
+}
+
+/// Fichier de sauvegarde automatique : `<projet>.autosave.json` a cote du projet ; un projet jamais enregistre utilise le dossier de configuration.
+fn autosave_path(project: Option<&Path>) -> Option<PathBuf> {
+    match project {
+        Some(p) => {
+            let stem = p.file_stem()?.to_string_lossy().into_owned();
+            Some(p.with_file_name(format!("{stem}.autosave.json")))
+        }
+        None => Config::path().map(|c| c.with_file_name("recuperation.autosave.json")),
+    }
+}
+
+/// « il y a 3 min », « il y a 2 h », « il y a 4 j » pour un fichier modifie a `t`.
+fn age_text(t: std::time::SystemTime) -> String {
+    let s = std::time::SystemTime::now().duration_since(t).map(|d| d.as_secs()).unwrap_or(0);
+    if s < 90 { "il y a moins de 2 minutes".into() } else if s < 5400 { format!("il y a {} min", s / 60) } else if s < 172800 { format!("il y a {} h", s / 3600) } else { format!("il y a {} jours", s / 86400) }
 }
 
 /// Charge du glisser-deposer de la liste des videos (rang de la video).
@@ -50,12 +79,14 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new() };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2 };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
                     Some(("adaptive_preview", v)) => c.adaptive_preview = v.trim() != "false",
                     Some(("ffmpeg_path", v)) => c.ffmpeg_path = v.trim().to_string(),
+                    Some(("autosave", v)) => c.autosave = v.trim() != "false",
+                    Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
                     _ => {}
                 }
             }
@@ -68,7 +99,7 @@ impl Config {
             if let Some(d) = p.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
-            let _ = std::fs::write(p, format!("adaptive_preview={}\nffmpeg_path={}\n", self.adaptive_preview, self.ffmpeg_path));
+            let _ = std::fs::write(p, format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min));
         }
     }
 }
@@ -130,6 +161,11 @@ struct App {
     /// aimantation et zone de securite
     cover_snap: bool,
     cover_safe: bool,
+    /// sauvegarde automatique : dernier essai, derniere reussite, sauvegarde proposee a la restauration
+    autosave_t: std::time::Instant,
+    autosave_ok: Option<std::time::Instant>,
+    restore_offer: Option<PathBuf>,
+    recovery_checked: bool,
     cover_tex: Option<egui::TextureHandle>,
     cover_gen: u64,
     cover_seen: u64,
@@ -206,7 +242,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, recovery_checked: false, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -247,6 +283,45 @@ impl App {
         self.history.reset(&self.model.designs);
     }
 
+    /// Sauvegarde automatique : seulement si le projet a change, hors geste a la souris ; ne touche jamais au fichier du projet.
+    fn autosave_tick(&mut self, ctx: &egui::Context) {
+        if !self.cfg.autosave { return; }
+        let every = std::time::Duration::from_secs(self.cfg.autosave_min.max(1) as u64 * 60);
+        ctx.request_repaint_after(std::time::Duration::from_secs(30));
+        if !self.dirty || self.autosave_t.elapsed() < every || ctx.input(|i| i.pointer.any_down()) { return; }
+        self.autosave_t = std::time::Instant::now();
+        let Some(p) = autosave_path(self.path.as_deref()) else { return };
+        if let Some(d) = p.parent() { let _ = std::fs::create_dir_all(d); }
+        match write_atomic(&p, &self.model.to_json()) {
+            Ok(()) => self.autosave_ok = Some(std::time::Instant::now()),
+            Err(e) => self.notice = format!("Sauvegarde automatique impossible : {e}"),
+        }
+    }
+
+    /// Une sauvegarde automatique plus recente que le projet (ou, sans projet, le fichier de recuperation) est proposee a la restauration.
+    fn check_recovery(&mut self) {
+        let Some(a) = autosave_path(self.path.as_deref()) else { return };
+        let Ok(am) = std::fs::metadata(&a).and_then(|m| m.modified()) else { return };
+        let newer = match &self.path {
+            Some(p) => std::fs::metadata(p).and_then(|m| m.modified()).map(|pm| am > pm).unwrap_or(true),
+            None => true,
+        };
+        if newer { self.restore_offer = Some(a); }
+    }
+
+    fn restore_autosave(&mut self, a: &Path) {
+        match std::fs::read_to_string(a).map_err(|e| e.to_string()).and_then(|t| ProjectModel::from_json(&t)) {
+            Ok(m) => {
+                self.model = m;
+                self.dirty = true;
+                self.sel = if self.model.videos.is_empty() { None } else { Some(0) };
+                self.reset_editor();
+                self.notice = "Sauvegarde automatique restaurée : enregistrez le projet pour la conserver.".into();
+            }
+            Err(e) => self.notice = format!("Sauvegarde automatique illisible : {e}"),
+        }
+    }
+
     fn open(&mut self) {
         let Some(p) = rfd::FileDialog::new().add_filter("Projet bdauthor", &["json"]).pick_file() else { return };
         match std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| ProjectModel::from_json(&t)) {
@@ -257,6 +332,8 @@ impl App {
                 self.sel = if self.model.videos.is_empty() { None } else { Some(0) };
                 self.reset_editor();
                 self.notice = "Projet ouvert.".into();
+                self.restore_offer = None;
+                self.check_recovery();
             }
             Err(e) => self.notice = format!("Impossible d'ouvrir le projet : {e}"),
         }
@@ -271,8 +348,12 @@ impl App {
         } else {
             self.path.clone().unwrap()
         };
-        match std::fs::write(&target, self.model.to_json()) {
+        match write_atomic(&target, &self.model.to_json()) {
             Ok(()) => {
+                // la sauvegarde automatique n'a plus lieu d'etre : le projet est a jour
+                for q in [autosave_path(self.path.as_deref()), autosave_path(Some(target.as_path())), autosave_path(None)].into_iter().flatten() { let _ = std::fs::remove_file(q); }
+                self.autosave_ok = None;
+                self.restore_offer = None;
                 self.path = Some(target);
                 self.dirty = false;
                 self.notice = "Projet enregistré.".into();
@@ -413,6 +494,8 @@ impl eframe::App for App {
         }
         self.poll_worker();
         self.history_step(ctx);
+        if !self.recovery_checked { self.recovery_checked = true; self.check_recovery(); }
+        self.autosave_tick(ctx);
         if self.running() {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
@@ -421,12 +504,32 @@ impl eframe::App for App {
         if self.model.sync_chapters() { self.dirty = true; self.bump(); }
         // durees des videos (affichees dans la liste) : sondees une fois, en tache de fond
         self.request_durations();
+        if let Some(a) = self.restore_offer.clone() {
+            let when = std::fs::metadata(&a).and_then(|m| m.modified()).map(age_text).unwrap_or_default();
+            let mut done = false;
+            egui::Window::new("Récupération du projet").collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ctx, |ui| {
+                ui.label(format!("Une sauvegarde automatique plus récente que le projet a été trouvée ({when}). Le programme s'est peut-être arrêté avant l'enregistrement."));
+                ui.label(egui::RichText::new(clean(&a)).weak());
+                ui.horizontal(|ui| {
+                    if ui.button("Restaurer").clicked() { self.restore_autosave(&a); done = true; }
+                    if ui.button("Ignorer").on_hover_text("Garde le fichier de sauvegarde ; il sera proposé à la prochaine ouverture").clicked() { done = true; }
+                    if ui.button("Supprimer la sauvegarde").clicked() { let _ = std::fs::remove_file(&a); done = true; }
+                });
+            });
+            if done { self.restore_offer = None; }
+        }
         let mut open = self.show_config;
         egui::Window::new("Configuration").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             let before = self.cfg.clone();
             ui.checkbox(&mut self.cfg.adaptive_preview, "Ajuster le rafraîchissement de l'aperçu pendant le déplacement");
             ui.label(format!("Dernier rendu de l'aperçu : {:.1} ms", self.render_ms));
             ui.label(egui::RichText::new("Activé : l'aperçu est redessiné au rythme que votre machine peut tenir (le cadre suit toujours la souris sans retard). Désactivé : l'aperçu est redessiné à chaque image, ce qui est plus fluide sur une machine rapide mais peut ralentir sur une page chargée.").weak());
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.checkbox(&mut self.cfg.autosave, "Sauvegarde automatique du projet toutes les");
+                ui.add_enabled(self.cfg.autosave, egui::DragValue::new(&mut self.cfg.autosave_min).range(1..=60).suffix(" min"));
+            });
+            ui.label(egui::RichText::new("Écrite dans un fichier à côté du projet (nom.autosave.json), seulement si le projet a changé ; le projet lui-même n'est modifié que par « Enregistrer ». Proposée à la restauration après un arrêt imprévu.").weak());
             ui.separator();
             ui.label("Chemin de ffmpeg (dossier contenant ffmpeg et ffprobe, ou ffmpeg lui-même) :");
             ui.horizontal(|ui| {
@@ -577,6 +680,9 @@ impl eframe::App for App {
                 ui.separator();
                 let name = self.path.as_ref().map(|p| clean(p)).unwrap_or_else(|| "(projet non enregistré)".into());
                 ui.label(format!("{}{}", name, if self.dirty { " *" } else { "" }));
+                if let (true, Some(t)) = (self.dirty, self.autosave_ok) {
+                    ui.label(egui::RichText::new(format!("(sauvegarde auto il y a {} min)", t.elapsed().as_secs() / 60)).weak());
+                }
             });
             if !self.notice.is_empty() {
                 ui.label(egui::RichText::new(&self.notice).weak());
