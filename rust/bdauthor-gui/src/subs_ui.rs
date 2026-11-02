@@ -356,7 +356,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
     };
     let mut open = true;
     crate::os_window(ctx, "apercu_sous_titres", "Aperçu des sous-titres", [840.0, 760.0], &mut open, &mut |ui| {
-        ui.label(egui::RichText::new(name).strong());
+        ui.label(egui::RichText::new(name.as_str()).strong());
         match &pv.raw {
             None => { ui.horizontal(|ui| { ui.spinner(); ui.label("Extraction de la piste…"); }); return; }
             Some(Err(e)) => { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), e.as_str()); return; }
