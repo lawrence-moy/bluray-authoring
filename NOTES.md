@@ -682,3 +682,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Cadence par piste de sous-titres (export 128)
 - SubTrackCfg.fps (JSON "cadence_ips", ecrit seulement si defini) pour les fichiers a temps en images (MicroDVD) ; `load_cues_fps` / `parse_file_text_fps` ; liste de cadences dans le panneau (visible pour .sub et .txt), prise en compte a la construction et dans l apercu.
+
+## Correctif fenetre Configuration + cadence automatique (export 129)
+- La fenetre Configuration (fenetre systeme) n appelait os_window qu a chaque image meme fermee : elle s affichait au demarrage et ne se fermait pas. Maintenant appelee seulement si ouverte.
+- Cadence MicroDVD par defaut = cadence sondee de la video (si courante : `plausible_fps`), sinon 23,976 ; reglage manuel de la piste prioritaire.

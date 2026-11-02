@@ -559,7 +559,8 @@ impl eframe::App for App {
             if !keep { self.sub_preview = None; }
         }
         let mut open = self.show_config;
-        os_window(ctx, "configuration", "Configuration", [640.0, 480.0], &mut open, &mut |ui| {
+        // une fenetre systeme existe tant qu'on l'appelle : seulement quand elle est ouverte
+        if open { os_window(ctx, "configuration", "Configuration", [640.0, 480.0], &mut open, &mut |ui| {
             let before = self.cfg.clone();
             ui.checkbox(&mut self.cfg.adaptive_preview, "Ajuster le rafraîchissement de l'aperçu pendant le déplacement");
             ui.label(format!("Dernier rendu de l'aperçu : {:.1} ms", self.render_ms));
@@ -602,7 +603,7 @@ impl eframe::App for App {
             if ui.checkbox(&mut self.model.cache, "Réutiliser les vidéos déjà encodées (cache)").changed() { self.dirty = true; }
             ui.label(egui::RichText::new("Réglage enregistré avec le projet.").weak());
             if self.cfg != before { Tools::set_custom_path(&self.cfg.ffmpeg_path); self.cfg.save(); }
-        });
+        }); }
         self.show_config = open;
 
         // fenetre du projet (Edition > Projet) : onglets General (disque, encodage), Style des boutons, Langues
@@ -912,10 +913,12 @@ impl eframe::App for App {
                         changed |= audio_ui::panel(ui, v, &mut self.model.languages, &mut self.audio_probes, &sub_base);
                         ui.separator();
                         let mut want_preview = None;
-                        changed |= subs_ui::panel(ui, v, &mut self.model.languages, &mut self.sub_probes, &sub_base, &mut want_preview);
+                        // cadence de la video (sondee) : sert de cadence par defaut aux sous-titres a temps en images
+                        let auto_fps = self.video_sizes.get(&v.file).and_then(|x| bdauthor_core::subtitle::plausible_fps(x.1));
+                        changed |= subs_ui::panel(ui, v, &mut self.model.languages, &mut self.sub_probes, &sub_base, &mut want_preview, auto_fps);
                         if let (Some(k), Some(vi)) = (want_preview, self.sel) {
                             let file = if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { sub_base.join(&v.file) };
-                            if let Some(t) = v.subs.get(k) { self.sub_preview = Some(subs_ui::SubPreview::new(vi, k, t, &file, &sub_base)); }
+                            if let Some(t) = v.subs.get(k) { self.sub_preview = Some(subs_ui::SubPreview::new(vi, k, t, &file, &sub_base, auto_fps)); }
                         }
                         ui.separator();
                     } else {

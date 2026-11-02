@@ -32,7 +32,7 @@ pub(crate) fn language_for_code(langs: &mut Vec<Language>, code: &str) -> u32 {
 }
 
 /// Retourne vrai si quelque chose a change. `langs` : langues de sous-titres du projet (le rang d'une langue est son numero de piste).
-pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path, preview: &mut Option<usize>) -> bool {
+pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path, preview: &mut Option<usize>, auto_fps: Option<f64>) -> bool {
     let mut changed = false;
     ui.label("Sous-titres (affichés par le lecteur, au choix avec la télécommande) :");
     let mut del = None;
@@ -75,9 +75,10 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     if ext == "sub" || ext == "txt" {
                         ui.horizontal(|ui| {
                             ui.label("Cadence (si le fichier est en images) :");
-                            let shown = t.fps.map_or("Automatique (23,976)".to_string(), |v| format!("{v} i/s"));
+                            let auto = auto_fps.map_or("Automatique (23,976 i/s)".to_string(), |v| format!("Automatique ({v:.3} i/s, d'après la vidéo)"));
+                            let shown = t.fps.map_or(auto.clone(), |v| format!("{v} i/s"));
                             egui::ComboBox::from_id_salt("cadence_sous_titres").selected_text(shown).show_ui(ui, |ui| {
-                                if ui.selectable_label(t.fps.is_none(), "Automatique (23,976)").clicked() { t.fps = None; changed = true; }
+                                if ui.selectable_label(t.fps.is_none(), auto.as_str()).clicked() { t.fps = None; changed = true; }
                                 for v in [23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94] {
                                     if ui.selectable_label(t.fps == Some(v), format!("{v} i/s")).clicked() { t.fps = Some(v); changed = true; }
                                 }
@@ -284,10 +285,10 @@ pub struct SubPreview {
 
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
-    pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path) -> SubPreview {
+    pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path, auto_fps: Option<f64>) -> SubPreview {
         let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0), zoom: 1.0, img_rect: egui::Rect::NOTHING };
         match &t.source {
-            SubSource::File(f) => p.raw = Some(bdauthor_core::subtitle::load_cues_fps(&abs(base, f), t.fps)),
+            SubSource::File(f) => p.raw = Some(bdauthor_core::subtitle::load_cues_fps(&abs(base, f), t.fps.or(auto_fps))),
             SubSource::Embedded(idx) => {
                 let (tx, rx) = std::sync::mpsc::channel();
                 let (src, idx) = (video_file.to_path_buf(), *idx);

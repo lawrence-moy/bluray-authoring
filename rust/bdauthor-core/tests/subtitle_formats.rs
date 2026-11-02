@@ -61,3 +61,12 @@ fn track_fps_json_and_parse() {
     let c = parse_file_text_fps("sub", "{25}{50}x", Some(25.0));
     assert_eq!((c[0].start_ms, c[0].end_ms), (1000, 2000));
 }
+
+#[test]
+fn plausible_video_fps() {
+    assert_eq!(plausible_fps(25.0), Some(25.0));
+    assert!(plausible_fps(23.976023).is_some());
+    assert!(plausible_fps(1000.0).is_none());
+    assert!(plausible_fps(0.0).is_none());
+    assert!(plausible_fps(26.5).is_none());
+}

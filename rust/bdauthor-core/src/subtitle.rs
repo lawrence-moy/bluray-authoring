@@ -310,6 +310,12 @@ pub fn parse_file_text_fps(ext: &str, text: &str, fps: Option<f64>) -> Vec<Cue> 
     c
 }
 
+/// Cadence mesuree d'une video (images/s) si c'est une cadence courante (23,976, 24, 25, 29,97, 30, 50, 59,94, 60) ; sinon `None`
+/// (video a cadence variable ou mal lue) : on ne s'en sert pas pour convertir des numeros d'images en temps.
+pub fn plausible_fps(f: f64) -> Option<f64> {
+    [23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94, 60.0].iter().any(|r| (f - r).abs() < 0.02).then_some(f)
+}
+
 /// Extensions lues directement (les autres formats texte passent par ffmpeg s'il est installe).
 const NATIVE_EXT: [&str; 9] = ["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv"];
 

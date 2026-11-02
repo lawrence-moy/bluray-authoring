@@ -658,7 +658,7 @@ type SubSlot = (Option<crate::subtitle::SubTrackCfg>, [u8; 3]);
 /// `keep_empty` : garde aussi les pistes sans replique affichable (numerotation par langues) ; sinon elles sont ignorees.
 #[allow(clippy::too_many_arguments)]
 fn add_subtitles(
-    env: &mut BuildEnv, src: &Path, base: &Path, cfg: &[SubSlot], keep_empty: bool, audio_langs: &[[u8; 3]], tmp: &Path, m2ts: &[u8], num: usize,
+    env: &mut BuildEnv, src: &Path, base: &Path, cfg: &[SubSlot], keep_empty: bool, audio_langs: &[[u8; 3]], tmp: &Path, m2ts: &[u8], num: usize, video_fps: f64,
 ) -> Result<(Vec<u8>, Vec<(u16, [u8; 3])>)> {
     use crate::subtitle::{load_cues, shift, SubSource};
     let abs = |f: &str| -> PathBuf { let q = Path::new(f); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
@@ -670,7 +670,7 @@ fn add_subtitles(
         };
         if let Some(m) = t.problems().into_iter().next() { return bad(format!("video {num}, sous-titres {} : {m}", k + 1)); }
         let cues = match &t.source {
-            SubSource::File(f) => crate::subtitle::load_cues_fps(&abs(f), t.fps).map_err(Error::Format)?,
+            SubSource::File(f) => crate::subtitle::load_cues_fps(&abs(f), t.fps.or(crate::subtitle::plausible_fps(video_fps))).map_err(Error::Format)?,
             SubSource::Embedded(idx) => {
                 let dst = tmp.join(format!("sous_titres_{num}_{idx}.srt"));
                 ffmpeg::extract_subtitle_srt(env.tools, src, *idx, &dst)?;
@@ -847,7 +847,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         // sous-titres PGS : ajoutes par remuxage du clip encode (le cache ne contient pas les sous-titres)
         let (m2ts, pg) = if n_slots > 0 {
             // avec une liste de langues, toutes les videos ont les memes pistes (vides au besoin) : un meme numero = une meme langue
-            add_subtitles(env, &src, &base, &slots[i], true, &a_langs, &tmp.0, &m2ts, i + 1)?
+            add_subtitles(env, &src, &base, &slots[i], true, &a_langs, &tmp.0, &m2ts, i + 1, info.fps())?
         } else if all_subs[i].is_empty() {
             (m2ts, Vec::new())
         } else {
@@ -855,7 +855,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 let tl: [u8; 3] = t.lang.as_bytes().try_into().map_err(|_| Error::Format(format!("video {}, sous-titres {} : langue invalide", i + 1, k + 1)))?;
                 Ok((Some(t.clone()), tl))
             }).collect::<Result<_>>()?;
-            add_subtitles(env, &src, &base, &cfg, false, &a_langs, &tmp.0, &m2ts, i + 1)?
+            add_subtitles(env, &src, &base, &cfg, false, &a_langs, &tmp.0, &m2ts, i + 1, info.fps())?
         };
         let sc = scan_clip(&m2ts)?;
         let pg_langs: Vec<[u8; 3]> = pg.iter().map(|x| x.1).collect();
