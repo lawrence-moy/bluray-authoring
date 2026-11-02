@@ -179,13 +179,34 @@ fn label_format(ui: &mut egui::Ui, l: &mut DiscLabel) -> bool {
     changed
 }
 
-fn spawn_export<D: SheetDoc + Send + 'static>(doc: D, what: &'static str, base: PathBuf, vars: BTreeMap<String, String>, path: PathBuf, tx: std::sync::mpsc::Sender<String>) {
+/// Format d'export : PDF a la taille de la feuille, PDF A4 a decouper, ou image PNG (rognee au format fini si demande).
+#[derive(Clone, Copy)]
+enum ExportKind {
+    Pdf,
+    A4,
+    Png { trim: bool },
+}
+
+fn spawn_export<D: SheetDoc + Send + 'static>(doc: D, kind: ExportKind, what: &'static str, base: PathBuf, vars: BTreeMap<String, String>, path: PathBuf, tx: std::sync::mpsc::Sender<String>) {
     std::thread::spawn(move || {
         let run = || -> Result<String, String> {
             let r = bdauthor_render::FontRenderer::new().map_err(|e| e.to_string())?;
             let img = r.render_sheet(&doc, doc.dpi(), &base, &vars).map_err(|e| e.to_string())?;
             let title = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| what.into());
-            std::fs::write(&path, doc.to_pdf(&img, &title)).map_err(|e| e.to_string())?;
+            let bytes = match kind {
+                ExportKind::Pdf => doc.to_pdf(&img, &title),
+                ExportKind::A4 => doc.to_pdf_a4(&img, &title)?,
+                ExportKind::Png { trim } => {
+                    let out = if trim {
+                        // le fond perdu occupe la meme largeur de chaque cote : on le retire
+                        let (sw, _) = doc.sheet_mm();
+                        let b = (doc.bleed_mm() / sw * img.width as f64).round() as i32;
+                        bdauthor_core::cover::crop(&img, b, b, img.width as i32 - 2 * b, img.height as i32 - 2 * b)
+                    } else { img };
+                    bdauthor_core::png::write_png_print(&out, doc.dpi())
+                }
+            };
+            std::fs::write(&path, bytes).map_err(|e| e.to_string())?;
             Ok(format!("{what} exportée : {}", path.display()))
         };
         let _ = tx.send(run().unwrap_or_else(|e| format!("Export impossible : {e}")));
@@ -303,8 +324,13 @@ impl App {
                 ui.spinner();
                 ui.label("Export en cours… (vous pouvez continuer à travailler)");
             });
-        } else if ui.button("Exporter en PDF…").on_hover_text("Image à la résolution choisie, dans un PDF aux dimensions exactes").clicked() {
-            self.cover_export();
+        } else {
+            ui.horizontal_wrapped(|ui| {
+                if ui.button("Exporter en PDF…").on_hover_text("Image à la résolution choisie, dans un PDF aux dimensions exactes").clicked() { self.cover_export(ExportKind::Pdf); }
+                if ui.button("Exporter en PNG…").on_hover_text("Image à la résolution choisie (la résolution est enregistrée dans le fichier)").clicked() { self.cover_export(ExportKind::Png { trim: self.cover_png_trim }); }
+                if ui.button("Imprimer sur A4…").on_hover_text("PDF A4 avec la jaquette à sa taille réelle, centrée, et des repères de coupe : à imprimer à 100 % (sans « ajuster à la page »), puis à découper").clicked() { self.cover_export(ExportKind::A4); }
+            });
+            ui.checkbox(&mut self.cover_png_trim, "PNG rogné au format fini (sans fond perdu)");
         }
         if changed { self.cover_changed(); }
     }
@@ -605,14 +631,20 @@ impl App {
     }
 
     /// Choisit le fichier puis lance le rendu et l'ecriture du PDF dans un fil separe.
-    fn cover_export(&mut self) {
-        let (what, file) = if self.cover_page == 0 { ("Jaquette", "jaquette.pdf") } else { ("Étiquette", "etiquette.pdf") };
-        let Some(path) = rfd::FileDialog::new().add_filter("PDF", &["pdf"]).set_file_name(file).save_file() else { return };
+    fn cover_export(&mut self, kind: ExportKind) {
+        let name = if self.cover_page == 0 { "jaquette" } else { "etiquette" };
+        let what = if self.cover_page == 0 { "Jaquette" } else { "Étiquette" };
+        let (ext, label, file) = match kind {
+            ExportKind::Pdf => ("pdf", "PDF", format!("{name}.pdf")),
+            ExportKind::A4 => ("pdf", "PDF", format!("{name}_A4.pdf")),
+            ExportKind::Png { .. } => ("png", "PNG", format!("{name}.png")),
+        };
+        let Some(path) = rfd::FileDialog::new().add_filter(label, &[ext]).set_file_name(file).save_file() else { return };
         if let Err(e) = &self.renderer { self.notice = format!("Export impossible : {e}"); return; }
         let (base, vars) = (self.base_dir(), self.cover_vars());
         let (tx, rx) = channel();
-        if self.cover_page == 0 { spawn_export(self.model.cover.clone(), what, base, vars, path, tx); }
-        else { spawn_export(self.model.label.clone(), what, base, vars, path, tx); }
+        if self.cover_page == 0 { spawn_export(self.model.cover.clone(), kind, what, base, vars, path, tx); }
+        else { spawn_export(self.model.label.clone(), kind, what, base, vars, path, tx); }
         self.cover_export_rx = Some(rx);
         self.notice = "Export en cours…".into();
     }

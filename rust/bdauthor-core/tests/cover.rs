@@ -201,3 +201,30 @@ fn layers_order_visibility_json() {
     c.layers[1].visible = true;
     assert_eq!(l1 + 2, c.layout(72, Path::new(".")).items.len());
 }
+
+#[test]
+fn a4_and_png_outputs() {
+    // jaquette Blu-ray standard : 272 x 148 mm finis -> A4 paysage
+    let c = Cover::default();
+    let sheet = c.layout(72, Path::new(".")).background();
+    let pdf = c.to_pdf_a4(&sheet, "A4").unwrap();
+    let text = String::from_utf8_lossy(&pdf).into_owned();
+    assert!(text.contains("/MediaBox [0 0 841.890 595.276]"), "{}", &text[..300.min(text.len())]);
+    std::fs::write(std::env::temp_dir().join("bd_cover_a4.pdf"), &pdf).unwrap();
+    // trop grande : refusee
+    let mut big = Cover::default();
+    big.face_mm = 200.0;
+    assert!(big.to_pdf_a4(&sheet, "x").is_err());
+    // etiquette : A4 portrait
+    let l = DiscLabel::default();
+    let ls = l.layout_with(72, Path::new("."), &Default::default()).background();
+    let pdf = l.to_pdf_a4(&ls, "e").unwrap();
+    assert!(String::from_utf8_lossy(&pdf).contains("/MediaBox [0 0 595.276 841.890]"));
+    std::fs::write(std::env::temp_dir().join("bd_label_a4.pdf"), &pdf).unwrap();
+    // PNG : signature, pHYs (300 dpi = 11811 px/m), IDAT decompressible
+    let png = bdauthor_core::png::write_png_print(&sheet, 300);
+    assert_eq!(&png[..8], &[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+    assert!(png.windows(4).any(|w| w == b"pHYs"));
+    assert!(png.windows(4).any(|w| w == 11811u32.to_be_bytes()));
+    std::fs::write(std::env::temp_dir().join("bd_cover.png"), &png).unwrap();
+}

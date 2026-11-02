@@ -624,3 +624,9 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   Etat propre a l'onglet (cover_zoom, cover_pan), remis a zero au changement Jaquette | Etiquette.
 - Apercu plus fin quand on zoome : 96, 144 ou 192 dpi selon l'echelle a l'ecran (`cover_tex_dpi`), re-rendu seulement au changement de palier.
 - Regles graduees en haut et a gauche, mm ou pouces (bascule), zero au coin haut gauche de la feuille rognee, pas adapte au zoom, trait du pointeur, bande de l'element selectionne ; coordonnees du pointeur dans la ligne d'aide.
+
+### Jaquette : export PNG et impression A4
+- `png::write_png_print(img, dpi)` : PNG compresse (zlib maison), RVB si opaque, resolution enregistree (pHYs). Case « PNG rogne au format fini » (retire le fond perdu).
+- `SheetDoc::to_pdf_a4` : page A4 portrait ou paysage (portrait si possible, avec 8 mm de marge pour les reperes), jaquette ou etiquette a sa taille reelle, centree.
+  Jaquette : traits de coupe aux coins et de pliage de la tranche ; etiquette : disque decoupe en couronne, contour et trou traces, 4 reperes en croix. Erreur claire si le format fini ne tient pas sur A4.
+  A imprimer a 100 % (sans « ajuster a la page »). Boutons « Exporter en PDF », « Exporter en PNG », « Imprimer sur A4 » : tous en arriere-plan.

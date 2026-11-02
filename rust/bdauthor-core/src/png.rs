@@ -59,3 +59,32 @@ pub fn write_png(im: &RgbaImage) -> Vec<u8> {
     chunk(&mut out, b"IEND", &[]);
     out
 }
+
+/// PNG compresse pour l'impression : RVB si l'image est opaque (RVBA sinon), avec la resolution `dpi` enregistree (chunk pHYs).
+pub fn write_png_print(im: &RgbaImage, dpi: u32) -> Vec<u8> {
+    let opaque = im.data.chunks_exact(4).all(|p| p[3] == 255);
+    let (bpp, ctype) = if opaque { (3usize, 2u8) } else { (4usize, 6u8) };
+    let mut raw = Vec::with_capacity((im.width as usize * bpp + 1) * im.height as usize);
+    let stride = im.width as usize * 4;
+    for y in 0..im.height as usize {
+        raw.push(0);
+        let row = &im.data[y * stride..(y + 1) * stride];
+        if opaque { for p in row.chunks_exact(4) { raw.extend_from_slice(&p[..3]); } } else { raw.extend_from_slice(row); }
+    }
+    let z = crate::deflate::zlib_compress(&raw);
+    let mut out = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
+    let mut ihdr = Vec::new();
+    ihdr.extend_from_slice(&im.width.to_be_bytes());
+    ihdr.extend_from_slice(&im.height.to_be_bytes());
+    ihdr.extend_from_slice(&[8, ctype, 0, 0, 0]);
+    chunk(&mut out, b"IHDR", &ihdr);
+    let ppm = (dpi as f64 / 0.0254).round() as u32;
+    let mut phys = Vec::new();
+    phys.extend_from_slice(&ppm.to_be_bytes());
+    phys.extend_from_slice(&ppm.to_be_bytes());
+    phys.push(1);
+    chunk(&mut out, b"pHYs", &phys);
+    chunk(&mut out, b"IDAT", &z);
+    chunk(&mut out, b"IEND", &[]);
+    out
+}

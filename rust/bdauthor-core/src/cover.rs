@@ -157,15 +157,11 @@ impl Cover {
 
     /// PDF de la jaquette a partir de son image `sheet` (feuille entiere, fond perdu compris). Avec les traits de coupe, la page
     /// est agrandie de 10 mm de chaque cote : traits de coupe aux quatre coins de la jaquette rognee, traits de pliage de la tranche.
-    pub fn to_pdf(&self, sheet: &RgbaImage, title: &str) -> Vec<u8> {
-        let (sw, sh) = self.sheet_mm();
-        if !self.marks {
-            return pdf::image_pdf((sw, sh), sheet, (0.0, 0.0, sw, sh), &[], title);
-        }
-        let m = 10.0;
+    /// Traits de coupe aux quatre coins de la jaquette rognee dont le coin haut gauche est en (x0, y0) sur la page, et traits de
+    /// pliage de la tranche en haut et en bas (mm depuis le coin haut gauche de la page).
+    fn cut_lines(&self, x0: f64, y0: f64) -> Vec<(f64, f64, f64, f64)> {
         let (tw, th) = self.trim_mm();
-        let b = self.bleed_mm;
-        let (x0, y0, x1, y1) = (m + b, m + b, m + b + tw, m + b + th); // jaquette rognee dans la page
+        let (x1, y1) = (x0 + tw, y0 + th);
         let t = 6.0; // longueur des traits
         let gap = 1.5; // ecart entre le trait et le coin (pour ne pas couvrir le fond perdu)
         let mut lines = vec![];
@@ -173,11 +169,32 @@ impl Cover {
             lines.push((x + dx * gap, y, x + dx * (gap + t), y));
             lines.push((x, y + dy * gap, x, y + dy * (gap + t)));
         }
-        // pliages : bords de la tranche, en haut et en bas
         for fx in [x0 + self.face_mm, x0 + self.face_mm + self.spine_mm] {
             lines.push((fx, y0 - gap, fx, y0 - gap - t));
             lines.push((fx, y1 + gap, fx, y1 + gap + t));
         }
+        lines
+    }
+
+    /// PDF sur une page A4 (portrait ou paysage selon la place), jaquette a sa taille reelle, centree, avec traits de coupe et de
+    /// pliage : a imprimer a 100 % (sans « ajuster a la page ») puis a decouper.
+    pub fn to_pdf_a4(&self, sheet: &RgbaImage, title: &str) -> Result<Vec<u8>, String> {
+        let (sw, sh) = self.sheet_mm();
+        let (tw, th) = self.trim_mm();
+        let page = a4_page(tw, th, "La jaquette")?;
+        let (x0, y0) = ((page.0 - tw) / 2.0, (page.1 - th) / 2.0);
+        let b = self.bleed_mm;
+        Ok(pdf::image_pdf(page, sheet, (x0 - b, y0 - b, sw, sh), &self.cut_lines(x0, y0), title))
+    }
+
+    pub fn to_pdf(&self, sheet: &RgbaImage, title: &str) -> Vec<u8> {
+        let (sw, sh) = self.sheet_mm();
+        if !self.marks {
+            return pdf::image_pdf((sw, sh), sheet, (0.0, 0.0, sw, sh), &[], title);
+        }
+        let m = 10.0;
+        let b = self.bleed_mm;
+        let lines = self.cut_lines(m + b, m + b);
         pdf::image_pdf((sw + 2.0 * m, sh + 2.0 * m), sheet, (m, m, sw, sh), &lines, title)
     }
 
@@ -291,6 +308,8 @@ pub trait SheetDoc {
     fn zones(&self) -> Vec<(&'static str, (f64, f64, f64, f64))>;
     fn layout_with(&self, dpi: u32, base: &Path, vars: &BTreeMap<String, String>) -> CoverLayout;
     fn to_pdf(&self, sheet: &RgbaImage, title: &str) -> Vec<u8>;
+    /// PDF A4 a taille reelle, centre, avec reperes de decoupe ; erreur si le format fini ne tient pas sur un A4.
+    fn to_pdf_a4(&self, sheet: &RgbaImage, title: &str) -> Result<Vec<u8>, String>;
     /// Reperes dessines sur l'apercu : rectangles (x, y, w, h), traits (x1, y1, x2, y2) et cercles (cx, cy, r), en mm depuis le coin rogne
     fn guides(&self) -> (Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64)>);
 }
@@ -308,6 +327,7 @@ impl SheetDoc for Cover {
     }
     fn layout_with(&self, dpi: u32, base: &Path, vars: &BTreeMap<String, String>) -> CoverLayout { Cover::layout_with(self, dpi, base, vars) }
     fn to_pdf(&self, sheet: &RgbaImage, title: &str) -> Vec<u8> { Cover::to_pdf(self, sheet, title) }
+    fn to_pdf_a4(&self, sheet: &RgbaImage, title: &str) -> Result<Vec<u8>, String> { Cover::to_pdf_a4(self, sheet, title) }
     fn guides(&self) -> (Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64)>) {
         let (tw, th) = self.trim_mm();
         let f = [self.face_mm, self.face_mm + self.spine_mm];
@@ -398,6 +418,19 @@ impl SheetDoc for DiscLabel {
         let clip = [(cx, cy, self.diameter_mm / 2.0 + self.bleed_mm), (cx, cy, (self.hole_mm / 2.0 - self.bleed_mm).max(0.5))];
         let circles = if self.marks { vec![(cx, cy, self.diameter_mm / 2.0), (cx, cy, self.hole_mm / 2.0)] } else { vec![] };
         pdf::image_pdf_shaped((sw, sh), sheet, (0.0, 0.0, sw, sh), &[], &clip, &circles, title)
+    }
+    fn to_pdf_a4(&self, sheet: &RgbaImage, title: &str) -> Result<Vec<u8>, String> {
+        let (sw, sh) = self.sheet_mm();
+        let d = self.diameter_mm;
+        let page = a4_page(d, d, "L'étiquette")?;
+        let (cx, cy) = (page.0 / 2.0, page.1 / 2.0);
+        let r = d / 2.0;
+        let clip = [(cx, cy, r + self.bleed_mm), (cx, cy, (self.hole_mm / 2.0 - self.bleed_mm).max(0.5))];
+        // contour et trou traces, plus quatre reperes en croix hors du fond perdu
+        let circles = [(cx, cy, r), (cx, cy, self.hole_mm / 2.0)];
+        let (gap, t) = (self.bleed_mm + 1.5, 5.0);
+        let lines = [(cx - r - gap, cy, cx - r - gap - t, cy), (cx + r + gap, cy, cx + r + gap + t, cy), (cx, cy - r - gap, cx, cy - r - gap - t), (cx, cy + r + gap, cx, cy + r + gap + t)];
+        Ok(pdf::image_pdf_shaped(page, sheet, (cx - sw / 2.0, cy - sh / 2.0, sw, sh), &lines, &clip, &circles, title))
     }
     fn guides(&self) -> (Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64)>) {
         let r = self.diameter_mm / 2.0;
@@ -551,4 +584,13 @@ fn layers_from_value(v: Option<&Value>) -> Vec<CoverLayer> {
         locked: e.get("verrouille").and_then(Value::as_bool).unwrap_or(false),
     }).collect();
     normalize_layers(l)
+}
+
+/// Page A4 (largeur, hauteur en mm) la mieux adaptee a un format fini `tw` x `th` avec 8 mm de marge pour les reperes de coupe :
+/// portrait si possible, sinon paysage.
+fn a4_page(tw: f64, th: f64, what: &str) -> Result<(f64, f64), String> {
+    let (nw, nh) = (tw + 16.0, th + 16.0);
+    if nw <= 210.0 && nh <= 297.0 { Ok((210.0, 297.0)) }
+    else if nw <= 297.0 && nh <= 210.0 { Ok((297.0, 210.0)) }
+    else { Err(format!("{what} ({tw:.0} × {th:.0} mm, plus 8 mm de marge pour les repères) ne tient pas sur une page A4.")) }
 }
