@@ -665,3 +665,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Liste des videos : bouton supprimer dessine (croix) et nom raccourci pour que les boutons restent visibles.
 - Option « Automatiques, un toutes les » retiree de l interface (le champ auto_s reste lu pour les anciens projets, avec un bouton « Les retirer »).
 - Sous-titres : « Aperçu du rendu… » par piste (fichier ou piste integree) : fenetre avec navigation dans les repliques, fonds, 1080p/720p, zone de securite, edition du style en direct.
+
+## Apercu des sous-titres : fond « Image de la video » (export 123)
+- Quatrieme fond : image reelle de la video a l apparition de la replique (extract_thumbnail_rgba en arriere-plan, cache de 6 images).

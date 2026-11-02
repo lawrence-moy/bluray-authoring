@@ -1,5 +1,5 @@
 //! Panneau « Sous-titres » d'une video : pistes PGS issues de fichiers .srt/.ass ou de pistes texte integrees a la video.
-use bdauthor_core::ffmpeg::{extract_subtitle_srt, list_subtitle_streams, SubStreamInfo, Tools};
+use bdauthor_core::ffmpeg::{extract_subtitle_srt, extract_thumbnail_rgba, list_subtitle_streams, SubStreamInfo, Tools};
 use bdauthor_core::film::MAX_SUB_TRACKS;
 use bdauthor_core::model::{ProjectModel, VideoEntry};
 use bdauthor_core::palette::RgbaImage;
@@ -250,12 +250,18 @@ pub struct SubPreview {
     safe: bool,
     key: String,
     tex: Option<egui::TextureHandle>,
+    /// fond « image de la video » : fichier video, images deja extraites (instant en ms, hauteur) et extraction en cours
+    video_file: PathBuf,
+    frames: HashMap<(i64, u32), Result<RgbaImage, String>>,
+    frame_pending: Option<(i64, u32)>,
+    frame_rx: Option<std::sync::mpsc::Receiver<((i64, u32), Result<RgbaImage, String>)>>,
+    key_frame: (i64, u32),
 }
 
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path) -> SubPreview {
-        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None };
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0) };
         match &t.source {
             SubSource::File(f) => p.raw = Some(load_cues(&abs(base, f))),
             SubSource::Embedded(idx) => {
@@ -285,7 +291,7 @@ fn clock(ms: i64) -> String {
 }
 
 /// Une replique sur un fond uni de `vh` lignes (16/9), placee comme dans la piste PGS finale.
-fn render_preview(r: &FontRenderer, text: &str, style: &SubStyle, base: &Path, vh: u32, bg: u8) -> egui::ColorImage {
+fn render_preview(r: &FontRenderer, text: &str, style: &SubStyle, base: &Path, vh: u32, bg: u8, frame: Option<&RgbaImage>) -> egui::ColorImage {
     let vw = vh * 16 / 9;
     let mut st = bdauthor_core::pgs::scaled_style(style, vh);
     if !st.font.is_empty() {
@@ -293,8 +299,15 @@ fn render_preview(r: &FontRenderer, text: &str, style: &SubStyle, base: &Path, v
         if c.is_file() { st.font = c.to_string_lossy().into_owned(); }
     }
     let g = [0u8, 110, 225][bg.min(2) as usize];
-    let mut canvas = RgbaImage::new(vw, vh);
-    for p in canvas.data.chunks_exact_mut(4) { p.copy_from_slice(&[g, g, g, 255]); }
+    let mut canvas = match frame {
+        Some(f) if f.width == vw && f.height == vh => f.clone(),
+        _ => {
+            let mut c = RgbaImage::new(vw, vh);
+            let g = if bg >= 3 { 70 } else { g };
+            for p in c.data.chunks_exact_mut(4) { p.copy_from_slice(&[g, g, g, 255]); }
+            c
+        }
+    };
     if let Some(img) = r.subtitle(text, &st, vw) {
         if let Some((img, _, _)) = bdauthor_core::pgs::crop_visible(&img, 12) {
             let (w, h) = (img.width.min(vw), img.height.min(vh));
@@ -367,19 +380,56 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         ui.label(egui::RichText::new(format!("{} → {}", clock(c.start_ms), clock(c.end_ms))).weak());
         ui.horizontal(|ui| {
             ui.label("Fond :");
-            for (i, l) in ["Noir", "Gris", "Clair"].iter().enumerate() { if ui.selectable_label(pv.bg == i as u8, *l).clicked() { pv.bg = i as u8; } }
+            for (i, l) in ["Noir", "Gris", "Clair", "Image de la vidéo"].iter().enumerate() { if ui.selectable_label(pv.bg == i as u8, *l).clicked() { pv.bg = i as u8; } }
             ui.separator();
             ui.label("Vidéo :");
             for h in [1080u32, 720] { if ui.selectable_label(pv.vh == h, format!("{h}p")).clicked() { pv.vh = h; } }
             ui.separator();
             ui.checkbox(&mut pv.safe, "Zone de sécurité");
         });
-        let key = format!("{}|{}|{}|{:?}|{}", pv.cue, pv.bg, pv.vh, t.style, c.text);
+        // fond « image de la video » : l'image reelle a l'apparition de la replique (extraite par ffmpeg en arriere-plan, gardee en memoire)
+        let mut frame_note = None;
+        if pv.bg == 3 {
+            let fk = (c.start_ms + ((c.end_ms - c.start_ms) / 2).min(300), pv.vh);
+            if let Some(rx) = &pv.frame_rx {
+                if let Ok((k, r)) = rx.try_recv() {
+                    if pv.frames.len() >= 6 { pv.frames.clear(); }
+                    pv.frames.insert(k, r);
+                    pv.frame_pending = None;
+                    pv.frame_rx = None;
+                    pv.key.clear();
+                }
+            }
+            match pv.frames.get(&fk) {
+                Some(Err(e)) => frame_note = Some(format!("Image indisponible : {e}")),
+                Some(Ok(_)) => {}
+                None => {
+                    frame_note = Some("Extraction de l'image de la vidéo…".to_string());
+                    if pv.frame_pending.is_none() {
+                        let (tx, rx) = std::sync::mpsc::channel();
+                        let (src, vh) = (pv.video_file.clone(), pv.vh);
+                        std::thread::spawn(move || {
+                            let r = Tools::locate().map_err(|e| e.to_string()).and_then(|tools| {
+                                extract_thumbnail_rgba(&tools, &src, (vh * 16 / 9, vh), Some(fk.0 as f64 / 1000.0), 0.0).map_err(|e| e.to_string())
+                            });
+                            let _ = tx.send((fk, r));
+                        });
+                        pv.frame_pending = Some(fk);
+                        pv.frame_rx = Some(rx);
+                    }
+                    ctx.request_repaint_after(std::time::Duration::from_millis(150));
+                }
+            }
+            pv.key_frame = fk;
+        }
+        let key = format!("{}|{}|{}|{:?}|{}|{}", pv.cue, pv.bg, pv.vh, t.style, c.text, pv.frames.contains_key(&pv.key_frame));
         if key != pv.key || pv.tex.is_none() {
-            let img = render_preview(renderer, &c.text, &t.style, base, pv.vh, pv.bg);
+            let frame = if pv.bg == 3 { pv.frames.get(&pv.key_frame).and_then(|r| r.as_ref().ok()) } else { None };
+            let img = render_preview(renderer, &c.text, &t.style, base, pv.vh, pv.bg, frame);
             pv.tex = Some(ctx.load_texture("apercu_sous_titres", img, egui::TextureOptions::LINEAR));
             pv.key = key;
         }
+        if let Some(n) = &frame_note { ui.label(egui::RichText::new(n).weak()); }
         if let Some(tex) = &pv.tex {
             let w = ui.available_width().min(900.0);
             let size = egui::vec2(w, w * 9.0 / 16.0);
