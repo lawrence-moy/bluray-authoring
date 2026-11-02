@@ -660,3 +660,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Option Configuration : sauvegarde auto toutes les N min (defaut 2), uniquement si le projet a change et sans bouton souris enfonce. Fichier `<projet>.autosave.json` a cote du projet (projet sans nom : `recuperation.autosave.json` dans le dossier de config). Le projet lui-meme n est modifie que par Enregistrer.
 - Ecriture atomique (fichier .tmp puis renommage), aussi pour Enregistrer. Enregistrer supprime la sauvegarde auto.
 - A l ouverture (et au demarrage), si la sauvegarde auto est plus recente que le projet : fenetre Restaurer / Ignorer / Supprimer.
+
+## Liste des videos, reperes de chapitre, apercu des sous-titres (export 122)
+- Liste des videos : bouton supprimer dessine (croix) et nom raccourci pour que les boutons restent visibles.
+- Option « Automatiques, un toutes les » retiree de l interface (le champ auto_s reste lu pour les anciens projets, avec un bouton « Les retirer »).
+- Sous-titres : « Aperçu du rendu… » par piste (fichier ou piste integree) : fenetre avec navigation dans les repliques, fonds, 1080p/720p, zone de securite, edition du style en direct.

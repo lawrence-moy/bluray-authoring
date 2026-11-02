@@ -1,8 +1,11 @@
 //! Panneau « Sous-titres » d'une video : pistes PGS issues de fichiers .srt/.ass ou de pistes texte integrees a la video.
-use bdauthor_core::ffmpeg::{list_subtitle_streams, SubStreamInfo, Tools};
+use bdauthor_core::ffmpeg::{extract_subtitle_srt, list_subtitle_streams, SubStreamInfo, Tools};
 use bdauthor_core::film::MAX_SUB_TRACKS;
 use bdauthor_core::model::{ProjectModel, VideoEntry};
-use bdauthor_core::subtitle::{default_language_name, next_language_id, Language, SubSource, SubStyle, SubTrackCfg, VPos};
+use bdauthor_core::palette::RgbaImage;
+use bdauthor_core::project::Renderer;
+use bdauthor_core::subtitle::{default_language_name, load_cues, merge, next_language_id, shift, Cue, Language, SubSource, SubStyle, SubTrackCfg, VPos};
+use bdauthor_render::FontRenderer;
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -29,7 +32,7 @@ pub(crate) fn language_for_code(langs: &mut Vec<Language>, code: &str) -> u32 {
 }
 
 /// Retourne vrai si quelque chose a change. `langs` : langues de sous-titres du projet (le rang d'une langue est son numero de piste).
-pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path) -> bool {
+pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path, preview: &mut Option<usize>) -> bool {
     let mut changed = false;
     ui.label("Sous-titres (affichés par le lecteur, au choix avec la télécommande) :");
     let mut del = None;
@@ -71,7 +74,10 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
                 });
                 style_ui(ui, &mut t.style, &mut changed);
-                if ui.button("Retirer cette piste").clicked() { del = Some(k); }
+                ui.horizontal(|ui| {
+                    if ui.button("Aperçu du rendu…").on_hover_text("Voir les répliques de cette piste dessinées avec son style").clicked() { *preview = Some(k); }
+                    if ui.button("Retirer cette piste").clicked() { del = Some(k); }
+                });
             });
         });
     }
@@ -227,4 +233,165 @@ pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
         }
     }
     changed
+}
+
+// ------------------------------------------------------------------ apercu du rendu
+/// Fenetre d'apercu d'une piste de sous-titres : les repliques (decalage applique, repliques simultanees fusionnees) dessinees avec le style de la piste.
+pub struct SubPreview {
+    pub video: usize,
+    pub track: usize,
+    raw: Option<Result<Vec<Cue>, String>>,
+    rx: Option<std::sync::mpsc::Receiver<Result<Vec<Cue>, String>>>,
+    shown: Vec<Cue>,
+    shown_offset: Option<i64>,
+    cue: usize,
+    bg: u8,
+    vh: u32,
+    safe: bool,
+    key: String,
+    tex: Option<egui::TextureHandle>,
+}
+
+impl SubPreview {
+    /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
+    pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path) -> SubPreview {
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None };
+        match &t.source {
+            SubSource::File(f) => p.raw = Some(load_cues(&abs(base, f))),
+            SubSource::Embedded(idx) => {
+                let (tx, rx) = std::sync::mpsc::channel();
+                let (src, idx) = (video_file.to_path_buf(), *idx);
+                std::thread::spawn(move || {
+                    let r: Result<Vec<Cue>, String> = (|| {
+                        let tools = Tools::locate().map_err(|e| e.to_string())?;
+                        let dst = std::env::temp_dir().join(format!("bdauthor_apercu_{}_{idx}.srt", std::process::id()));
+                        extract_subtitle_srt(&tools, &src, idx, &dst).map_err(|e| e.to_string())?;
+                        let r = load_cues(&dst);
+                        let _ = std::fs::remove_file(&dst);
+                        r
+                    })();
+                    let _ = tx.send(r);
+                });
+                p.rx = Some(rx);
+            }
+        }
+        p
+    }
+}
+
+fn clock(ms: i64) -> String {
+    let ms = ms.max(0);
+    format!("{}:{:02}:{:02}.{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
+}
+
+/// Une replique sur un fond uni de `vh` lignes (16/9), placee comme dans la piste PGS finale.
+fn render_preview(r: &FontRenderer, text: &str, style: &SubStyle, base: &Path, vh: u32, bg: u8) -> egui::ColorImage {
+    let vw = vh * 16 / 9;
+    let mut st = bdauthor_core::pgs::scaled_style(style, vh);
+    if !st.font.is_empty() {
+        let c = abs(base, &st.font);
+        if c.is_file() { st.font = c.to_string_lossy().into_owned(); }
+    }
+    let g = [0u8, 110, 225][bg.min(2) as usize];
+    let mut canvas = RgbaImage::new(vw, vh);
+    for p in canvas.data.chunks_exact_mut(4) { p.copy_from_slice(&[g, g, g, 255]); }
+    if let Some(img) = r.subtitle(text, &st, vw) {
+        if let Some((img, _, _)) = bdauthor_core::pgs::crop_visible(&img, 12) {
+            let (w, h) = (img.width.min(vw), img.height.min(vh));
+            let x0 = (vw - w) / 2;
+            let y0 = match style.pos {
+                VPos::Bottom => vh.saturating_sub(st.margin.max(0) as u32 + h),
+                VPos::Top => (st.margin.max(0) as u32).min(vh - h),
+                VPos::Middle => (vh - h) / 2,
+            };
+            for y in 0..h {
+                for x in 0..w {
+                    let p = img.pixel(x, y);
+                    if p[3] == 0 { continue; }
+                    let a = p[3] as f32 / 255.0;
+                    let mut d = canvas.pixel(x0 + x, y0 + y);
+                    for c in 0..3 { d[c] = (p[c] as f32 * a + d[c] as f32 * (1.0 - a)).round() as u8; }
+                    canvas.set(x0 + x, y0 + y, d);
+                }
+            }
+        }
+    }
+    egui::ColorImage::from_rgba_unmultiplied([vw as usize, vh as usize], &canvas.data)
+}
+
+/// Dessine la fenetre. Retourne (le style a change, la fenetre reste ouverte).
+pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEntry, renderer: &FontRenderer, base: &Path) -> (bool, bool) {
+    let mut changed = false;
+    if let Some(rx) = &pv.rx {
+        match rx.try_recv() {
+            Ok(r) => { pv.raw = Some(r); pv.rx = None; }
+            Err(_) => ctx.request_repaint_after(std::time::Duration::from_millis(150)),
+        }
+    }
+    let Some(t) = v.subs.get_mut(pv.track) else { return (false, false) };
+    if let Some(Ok(raw)) = &pv.raw {
+        if pv.shown_offset != Some(t.offset_ms) {
+            pv.shown = merge(&shift(raw, t.offset_ms));
+            pv.shown_offset = Some(t.offset_ms);
+            pv.cue = pv.cue.min(pv.shown.len().saturating_sub(1));
+            pv.key.clear();
+        }
+    }
+    let name = match &t.source {
+        SubSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
+        SubSource::Embedded(n) => format!("piste intégrée n° {}", n + 1),
+    };
+    let mut open = true;
+    egui::Window::new("Aperçu des sous-titres").open(&mut open).default_width(760.0).show(ctx, |ui| {
+        ui.label(egui::RichText::new(name).strong());
+        match &pv.raw {
+            None => { ui.horizontal(|ui| { ui.spinner(); ui.label("Extraction de la piste…"); }); return; }
+            Some(Err(e)) => { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), e.as_str()); return; }
+            Some(Ok(_)) => {}
+        }
+        let n = pv.shown.len();
+        if n == 0 {
+            ui.label("Aucune réplique affichable (vérifiez le décalage).");
+            return;
+        }
+        ui.horizontal(|ui| {
+            if ui.button("<").on_hover_text("Réplique précédente").clicked() { pv.cue = pv.cue.saturating_sub(1); }
+            ui.add(egui::Slider::new(&mut pv.cue, 0..=n - 1).custom_formatter(|v, _| format!("{} / {}", v as usize + 1, n)).custom_parser(|s| s.split('/').next().and_then(|a| a.trim().parse::<f64>().ok()).map(|v| v - 1.0)));
+            if ui.button(">").on_hover_text("Réplique suivante").clicked() { pv.cue = (pv.cue + 1).min(n - 1); }
+            if ui.button("Plus longue").on_hover_text("Va à la réplique la plus longue, la plus exigeante pour la mise en page").clicked() {
+                pv.cue = (0..n).max_by_key(|&i| pv.shown[i].text.lines().map(|l| l.chars().count()).max().unwrap_or(0) + pv.shown[i].text.lines().count() * 8).unwrap_or(0);
+            }
+        });
+        pv.cue = pv.cue.min(n - 1);
+        let c = pv.shown[pv.cue].clone();
+        ui.label(egui::RichText::new(format!("{} → {}", clock(c.start_ms), clock(c.end_ms))).weak());
+        ui.horizontal(|ui| {
+            ui.label("Fond :");
+            for (i, l) in ["Noir", "Gris", "Clair"].iter().enumerate() { if ui.selectable_label(pv.bg == i as u8, *l).clicked() { pv.bg = i as u8; } }
+            ui.separator();
+            ui.label("Vidéo :");
+            for h in [1080u32, 720] { if ui.selectable_label(pv.vh == h, format!("{h}p")).clicked() { pv.vh = h; } }
+            ui.separator();
+            ui.checkbox(&mut pv.safe, "Zone de sécurité");
+        });
+        let key = format!("{}|{}|{}|{:?}|{}", pv.cue, pv.bg, pv.vh, t.style, c.text);
+        if key != pv.key || pv.tex.is_none() {
+            let img = render_preview(renderer, &c.text, &t.style, base, pv.vh, pv.bg);
+            pv.tex = Some(ctx.load_texture("apercu_sous_titres", img, egui::TextureOptions::LINEAR));
+            pv.key = key;
+        }
+        if let Some(tex) = &pv.tex {
+            let w = ui.available_width().min(900.0);
+            let size = egui::vec2(w, w * 9.0 / 16.0);
+            let r = ui.image((tex.id(), size)).rect;
+            if pv.safe {
+                // zone de securite titre : 90 % de la largeur et de la hauteur
+                let inner = r.shrink2(egui::vec2(r.width() * 0.05, r.height() * 0.05));
+                ui.painter().rect_stroke(inner, 0.0, egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(255, 170, 60)));
+            }
+        }
+        ui.label(egui::RichText::new("Aperçu avec la police et le style de la piste (décalage appliqué, répliques simultanées fusionnées) ; le lecteur affichera le même dessin.").weak());
+        egui::CollapsingHeader::new("Modifier le style de la piste").default_open(false).show(ui, |ui| style_ui(ui, &mut t.style, &mut changed));
+    });
+    (changed, open)
 }

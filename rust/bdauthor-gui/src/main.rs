@@ -69,6 +69,19 @@ fn age_text(t: std::time::SystemTime) -> String {
     if s < 90 { "il y a moins de 2 minutes".into() } else if s < 5400 { format!("il y a {} min", s / 60) } else if s < 172800 { format!("il y a {} h", s / 3600) } else { format!("il y a {} jours", s / 86400) }
 }
 
+/// Petit bouton « supprimer » dessine (une croix) : le glyphe ✕ n'est pas dans la police par defaut.
+fn delete_button(ui: &mut egui::Ui, tip: &str) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+    let vis = *ui.style().interact(&resp);
+    let p = ui.painter();
+    p.rect(rect, 3.0, vis.bg_fill, vis.bg_stroke);
+    let r = rect.shrink(6.0);
+    let line = egui::Stroke::new(1.8_f32, vis.fg_stroke.color);
+    p.line_segment([r.left_top(), r.right_bottom()], line);
+    p.line_segment([r.right_top(), r.left_bottom()], line);
+    resp.on_hover_text(tip).clicked()
+}
+
 /// Charge du glisser-deposer de la liste des videos (rang de la video).
 #[derive(Clone, Copy)]
 struct VideoDrag(usize);
@@ -166,6 +179,8 @@ struct App {
     autosave_ok: Option<std::time::Instant>,
     restore_offer: Option<PathBuf>,
     recovery_checked: bool,
+    /// fenetre d'apercu du rendu d'une piste de sous-titres
+    sub_preview: Option<subs_ui::SubPreview>,
     cover_tex: Option<egui::TextureHandle>,
     cover_gen: u64,
     cover_seen: u64,
@@ -242,7 +257,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, recovery_checked: false, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, recovery_checked: false, sub_preview: None, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -518,6 +533,15 @@ impl eframe::App for App {
             });
             if done { self.restore_offer = None; }
         }
+        if let (Some(pv), Ok(r)) = (self.sub_preview.as_mut(), &self.renderer) {
+            let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+            let (ch, keep) = match self.model.videos.get_mut(pv.video) {
+                Some(v) => subs_ui::preview_window(ctx, pv, v, r, &base),
+                None => (false, false),
+            };
+            if ch { self.dirty = true; }
+            if !keep { self.sub_preview = None; }
+        }
         let mut open = self.show_config;
         egui::Window::new("Configuration").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
             let before = self.cfg.clone();
@@ -750,13 +774,17 @@ impl eframe::App for App {
                             let _ = ui.dnd_drag_source(egui::Id::new(("video", i)), VideoDrag(i), |ui| ui.label(egui::RichText::new("☰").strong()))
                                 .response.on_hover_text("Glisser pour changer l'ordre des vidéos");
                         }
-                        if ui.selectable_label(self.sel == Some(i), match self.durations.get(&v.file) {
+                        // les boutons gardent leur place : le nom est raccourci pour tenir dans la largeur du panneau
+                        let max_chars = ((ui.available_width() - 62.0).max(60.0) / 7.0) as usize;
+                        let full = match self.durations.get(&v.file) {
                             Some(d) => format!("{:>2}. {} ({})", i + 1, label, duration_text(*d)),
                             None if self.probe_failed.contains(&v.file) => format!("{:>2}. {} (inconnue)", i + 1, label),
                             None => format!("{:>2}. {}", i + 1, label),
-                        }).on_hover_text(v.file.as_str()).clicked() { self.sel = Some(i); }
+                        };
+                        let shown = if full.chars().count() > max_chars { format!("{}…", full.chars().take(max_chars.saturating_sub(1)).collect::<String>()) } else { full.clone() };
+                        if ui.selectable_label(self.sel == Some(i), shown).on_hover_text(format!("{full}\n{}", v.file)).clicked() { self.sel = Some(i); }
                         ui.add_enabled_ui(!busy, |ui| {
-                            if ui.small_button("✕").on_hover_text("Retirer cette vidéo").clicked() { op = Some((i, None)); }
+                            if delete_button(ui, "Retirer cette vidéo") { op = Some((i, None)); }
                             if ui.small_button("↻").on_hover_text("Recharger cette vidéo (relire la durée, les pistes et les vignettes)").clicked() { reload = Some(v.file.clone()); }
                         });
                     }).response;
@@ -836,17 +864,14 @@ impl eframe::App for App {
                         });
                         ui.separator();
                         ui.label("Repères de chapitre (touches suivant / précédent de la télécommande, vignettes de chapitre, pages de départ) :");
-                        ui.horizontal(|ui| {
-                            let mut on = v.auto_s.is_some();
-                            if ui.checkbox(&mut on, "Automatiques, un toutes les").changed() {
-                                v.auto_s = if on { Some(60.0) } else { None };
-                                changed = true;
-                            }
-                            if let Some(a) = &mut v.auto_s {
-                                changed |= ui.add(egui::DragValue::new(a).speed(1.0).range(1.0..=1.0e6).suffix(" s")).changed();
-                            }
-                        });
-                        ui.label(egui::RichText::new("Les chapitres manuels, s'il y en a, remplacent les automatiques. Une vignette de chapitre (page) peut se lier à l'un d'eux, ou en créer un.").weak());
+                        if v.auto_s.is_some() {
+                            // ancienne option (repères automatiques) : plus proposée, mais un projet existant peut encore l'utiliser
+                            ui.horizontal(|ui| {
+                                ui.colored_label(egui::Color32::from_rgb(230, 170, 60), "Ce projet utilise d'anciens repères automatiques.");
+                                if ui.small_button("Les retirer").clicked() { v.auto_s = None; changed = true; }
+                            });
+                        }
+                        ui.label(egui::RichText::new("Une vignette de chapitre (page) peut se lier à l'un d'eux, ou en créer un.").weak());
                         let mut del = None;
                         for (k, c) in v.chapters.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
@@ -870,7 +895,12 @@ impl eframe::App for App {
                         ui.separator();
                         changed |= audio_ui::panel(ui, v, &mut self.model.languages, &mut self.audio_probes, &sub_base);
                         ui.separator();
-                        changed |= subs_ui::panel(ui, v, &mut self.model.languages, &mut self.sub_probes, &sub_base);
+                        let mut want_preview = None;
+                        changed |= subs_ui::panel(ui, v, &mut self.model.languages, &mut self.sub_probes, &sub_base, &mut want_preview);
+                        if let (Some(k), Some(vi)) = (want_preview, self.sel) {
+                            let file = if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { sub_base.join(&v.file) };
+                            if let Some(t) = v.subs.get(k) { self.sub_preview = Some(subs_ui::SubPreview::new(vi, k, t, &file, &sub_base)); }
+                        }
                         ui.separator();
                     } else {
                         ui.label("Ajoutez des vidéos puis sélectionnez-en une pour régler son titre, sa vignette et ses chapitres.");
