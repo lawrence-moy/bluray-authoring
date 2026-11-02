@@ -336,9 +336,9 @@ impl FontRenderer {
         use bdauthor_core::cover::CoverDecor as D;
         match d {
             D::Image { path, x, y, w, h } => self.compose_on(im, &[Decor::Image { path: path.clone(), x: *x, y: *y, w: *w, h: *h }]),
-            D::Shape { shape, x, y, w, h, fill, stroke, stroke_px, radius_px, flip } => {
+            D::Shape { shape, x, y, w, h, fill, stroke, stroke_px, radius_px, flip, style, arrow } => {
                 if *shape == bdauthor_core::cover::ShapeKind::Line {
-                    if let Some(c) = stroke.or(*fill) { draw_segment(&mut im, (*x, *y, *w, *h), *flip, c, *stroke_px); }
+                    if let Some(c) = stroke.or(*fill) { draw_segment(&mut im, (*x, *y, *w, *h), *flip, c, *stroke_px, *style, *arrow); }
                     return Ok(im);
                 }
                 draw_shape(&mut im, *shape, (*x, *y, *w, *h), *fill, *stroke, *stroke_px, *radius_px);
@@ -428,21 +428,81 @@ fn over_pixel(im: &mut RgbaImage, x: i32, y: i32, rgb: [u8; 3], a: f32) {
     im.set(x as u32, y as u32, [mix(d[0], rgb[0]), mix(d[1], rgb[1]), mix(d[2], rgb[2]), (oa * 255.0).round() as u8]);
 }
 
-/// Segment d'epaisseur `stroke_px` (extremites arrondies) entre deux coins opposes du cadre `rect` ; `flip` : bas gauche -> haut droit.
-fn draw_segment(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb: [u8; 3], stroke_px: i32) {
+/// Distance signee (negative a l'interieur) d'un point au triangle (a, b, c), quel que soit son sens.
+fn sd_triangle(p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f32 {
+    let (e0, e1, e2) = ((b.0 - a.0, b.1 - a.1), (c.0 - b.0, c.1 - b.1), (a.0 - c.0, a.1 - c.1));
+    let (v0, v1, v2) = ((p.0 - a.0, p.1 - a.1), (p.0 - b.0, p.1 - b.1), (p.0 - c.0, p.1 - c.1));
+    let proj = |v: (f32, f32), e: (f32, f32)| { let t = ((v.0 * e.0 + v.1 * e.1) / (e.0 * e.0 + e.1 * e.1).max(1e-9)).clamp(0.0, 1.0); (v.0 - e.0 * t, v.1 - e.1 * t) };
+    let (q0, q1, q2) = (proj(v0, e0), proj(v1, e1), proj(v2, e2));
+    let s = if e0.0 * e2.1 - e0.1 * e2.0 >= 0.0 { 1.0 } else { -1.0 };
+    let cand = [
+        (q0.0 * q0.0 + q0.1 * q0.1, s * (v0.0 * e0.1 - v0.1 * e0.0)),
+        (q1.0 * q1.0 + q1.1 * q1.1, s * (v1.0 * e1.1 - v1.1 * e1.0)),
+        (q2.0 * q2.0 + q2.1 * q2.1, s * (v2.0 * e2.1 - v2.1 * e2.0)),
+    ];
+    let d = cand.iter().fold((f32::MAX, f32::MAX), |m, c| (m.0.min(c.0), m.1.min(c.1)));
+    -d.0.sqrt() * if d.1 >= 0.0 { 1.0 } else { -1.0 }
+}
+
+/// Segment d'epaisseur `stroke_px` entre deux coins opposes du cadre `rect` (`flip` : bas gauche -> haut droit), avec son type de trait
+/// (plein a bouts arrondis, tirets, pointilles, tirets et points, double) et d'eventuelles pointes de fleche.
+fn draw_segment(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb: [u8; 3], stroke_px: i32,
+                style: bdauthor_core::cover::LineStyle, arrow: bdauthor_core::cover::LineArrow) {
+    use bdauthor_core::cover::LineStyle as S;
     let (x, y, w, h) = rect;
     let (x0, x1) = (x as f32, (x + w) as f32);
     let ((ax, ay), (bx, by)) = if flip { ((x0, (y + h) as f32), (x1, y as f32)) } else { ((x0, y as f32), (x1, (y + h) as f32)) };
-    let half = stroke_px.max(1) as f32 / 2.0;
     let (dx, dy) = (bx - ax, by - ay);
-    let len2 = dx * dx + dy * dy;
-    let m = half.ceil() as i32 + 1;
+    let len = dx.hypot(dy);
+    let (ux, uy) = if len > 0.0 { (dx / len, dy / len) } else { (1.0, 0.0) };
+    let u = stroke_px.max(1) as f32;
+    let width = if style == S::Double { u.max(3.0) } else { u };
+    let half = width / 2.0;
+    let (arrow_a, arrow_b) = arrow.flags();
+    let head_len = (width * 4.0).max(8.0).min(len * 0.6);
+    let head_half = head_len * 0.45;
+    // le fut s'arrete a la base des pointes
+    let s0 = if arrow_a { head_len * 0.9 } else { 0.0 };
+    let s1 = len - if arrow_b { head_len * 0.9 } else { 0.0 };
+    // motifs (debut, fin) en unites d'epaisseur, sur une periode
+    let (period, dashes): (f32, Vec<(f32, f32)>) = match style {
+        S::Dashed => (7.0 * u, vec![(0.0, 4.0 * u)]),
+        S::DashDot => (9.0 * u, vec![(0.0, 4.0 * u), (6.0 * u, 7.0 * u)]),
+        _ => (0.0, Vec::new()),
+    };
+    let m = (half.max(head_half)).ceil() as i32 + 2;
+    let tip_a = (ax, ay);
+    let tip_b = (bx, by);
+    let base_a = (ax + ux * head_len, ay + uy * head_len);
+    let base_b = (bx - ux * head_len, by - uy * head_len);
+    let (nx, ny) = (-uy, ux);
     for py in (y - m).max(0)..(y + h + m).min(im.height as i32) {
         for px in (x - m).max(0)..(x + w + m).min(im.width as i32) {
             let (qx, qy) = (px as f32 + 0.5, py as f32 + 0.5);
-            let t = if len2 > 0.0 { (((qx - ax) * dx + (qy - ay) * dy) / len2).clamp(0.0, 1.0) } else { 0.0 };
-            let d = ((qx - (ax + t * dx)).powi(2) + (qy - (ay + t * dy)).powi(2)).sqrt() - half;
-            over_pixel(im, px, py, rgb, (0.5 - d).clamp(0.0, 1.0));
+            let (rx, ry) = (qx - ax, qy - ay);
+            let s = rx * ux + ry * uy;
+            let o = rx * nx + ry * ny;
+            let ends = (s - s0 + 0.5).clamp(0.0, 1.0).min((s1 - s + 0.5).clamp(0.0, 1.0));
+            let mut cov = match style {
+                S::Solid => {
+                    let t = ((s).clamp(s0, s1.max(s0))) - s;
+                    (0.5 - ((t * t + o * o).sqrt() - half)).clamp(0.0, 1.0)
+                }
+                S::Double => (0.5 - ((o.abs() - width / 3.0).abs() - width / 6.0)).clamp(0.0, 1.0) * ends,
+                S::Dashed | S::DashDot => {
+                    let r = (s - s0).rem_euclid(period);
+                    let on = dashes.iter().map(|&(a, b)| (r - a + 0.5).clamp(0.0, 1.0).min((b - r + 0.5).clamp(0.0, 1.0))).fold(0.0_f32, f32::max);
+                    (0.5 - (o.abs() - half)).clamp(0.0, 1.0) * on * ends
+                }
+                S::Dotted => {
+                    let p = 2.0 * width;
+                    let r = (s - s0).rem_euclid(p) - p / 2.0;
+                    (0.5 - ((r * r + o * o).sqrt() - half)).clamp(0.0, 1.0) * ends
+                }
+            };
+            if arrow_a { cov = cov.max((0.5 - sd_triangle((qx, qy), tip_a, (base_a.0 + nx * head_half, base_a.1 + ny * head_half), (base_a.0 - nx * head_half, base_a.1 - ny * head_half))).clamp(0.0, 1.0)); }
+            if arrow_b { cov = cov.max((0.5 - sd_triangle((qx, qy), tip_b, (base_b.0 + nx * head_half, base_b.1 + ny * head_half), (base_b.0 - nx * head_half, base_b.1 - ny * head_half))).clamp(0.0, 1.0)); }
+            over_pixel(im, px, py, rgb, cov);
         }
     }
 }

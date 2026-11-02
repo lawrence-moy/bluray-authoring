@@ -38,6 +38,30 @@ impl Default for TextFx {
     }
 }
 
+/// Type de trait d'une ligne.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineStyle { Solid, Dashed, Dotted, DashDot, Double }
+
+impl LineStyle {
+    pub const ALL: [LineStyle; 5] = [LineStyle::Solid, LineStyle::Dashed, LineStyle::Dotted, LineStyle::DashDot, LineStyle::Double];
+    pub fn name(self) -> &'static str { match self { LineStyle::Solid => "plein", LineStyle::Dashed => "tirets", LineStyle::Dotted => "points", LineStyle::DashDot => "tirets_points", LineStyle::Double => "double" } }
+    pub fn from_name(s: &str) -> Option<LineStyle> { LineStyle::ALL.into_iter().find(|l| l.name() == s) }
+    pub fn label(self) -> &'static str { match self { LineStyle::Solid => "Trait plein", LineStyle::Dashed => "Tirets", LineStyle::Dotted => "Pointillés", LineStyle::DashDot => "Tirets et points", LineStyle::Double => "Double trait" } }
+}
+
+/// Pointes de fleche d'une ligne : `Start` au bout de gauche (ou du haut si la ligne est verticale), `End` a l'autre.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LineArrow { None, Start, End, Both }
+
+impl LineArrow {
+    pub const ALL: [LineArrow; 4] = [LineArrow::None, LineArrow::Start, LineArrow::End, LineArrow::Both];
+    pub fn name(self) -> &'static str { match self { LineArrow::None => "aucune", LineArrow::Start => "debut", LineArrow::End => "fin", LineArrow::Both => "deux" } }
+    pub fn from_name(s: &str) -> Option<LineArrow> { LineArrow::ALL.into_iter().find(|l| l.name() == s) }
+    pub fn label(self) -> &'static str { match self { LineArrow::None => "Aucune", LineArrow::Start => "Au début", LineArrow::End => "À la fin", LineArrow::Both => "Aux deux bouts" } }
+    pub fn flags(self) -> (bool, bool) { match self { LineArrow::None => (false, false), LineArrow::Start => (true, false), LineArrow::End => (false, true), LineArrow::Both => (true, true) } }
+    pub fn from_flags(start: bool, end: bool) -> LineArrow { match (start, end) { (false, false) => LineArrow::None, (true, false) => LineArrow::Start, (false, true) => LineArrow::End, _ => LineArrow::Both } }
+}
+
 /// Forme geometrique.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ShapeKind { Rect, Ellipse, Line }
@@ -56,7 +80,7 @@ pub enum CoverKind {
     /// rectangle (coins arrondis de rayon `radius_mm`), ellipse inscrite dans le cadre, ou trait horizontal au milieu du cadre
     /// (tourne par `rot`) ; `fill` et `stroke` : couleurs, `None` = absent ; la bordure est a l'interieur du cadre
     /// `flip` (lignes) : la ligne va du coin bas gauche au coin haut droit du cadre au lieu de haut gauche -> bas droit
-    Shape { shape: ShapeKind, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_mm: f64, radius_mm: f64, flip: bool },
+    Shape { shape: ShapeKind, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_mm: f64, radius_mm: f64, flip: bool, style: LineStyle, arrow: LineArrow },
 }
 
 /// Element de jaquette. Position et taille en millimetres depuis le coin haut gauche de la jaquette *rognee* (le fond perdu a
@@ -99,9 +123,21 @@ impl CoverItem {
         }
     }
 
+    /// Deplace une extremite d'une ligne : `moving_start` indique si c'est le bout « debut » (celui qui porte `LineArrow::Start`) ;
+    /// `fixed` est l'autre bout, `to` la nouvelle position. Les pointes de fleche suivent leur extremite meme si les bouts se croisent.
+    pub fn move_line_end(&mut self, moving_start: bool, fixed: (f64, f64), to: (f64, f64)) {
+        let (st, en) = match &self.kind { CoverKind::Shape { shape: ShapeKind::Line, arrow, .. } => arrow.flags(), _ => return };
+        let (mv, fx) = if moving_start { (st, en) } else { (en, st) };
+        self.set_line_ends(fixed, to);
+        // le bout « debut » est le plus a gauche (a x egal, le plus haut)
+        let to_is_start = to.0 < fixed.0 || (to.0 == fixed.0 && to.1 <= fixed.1);
+        let (a, b) = if to_is_start { (mv, fx) } else { (fx, mv) };
+        if let CoverKind::Shape { arrow, .. } = &mut self.kind { *arrow = LineArrow::from_flags(a, b); }
+    }
+
     pub fn shape(shape: ShapeKind, x: f64, y: f64, w: f64, h: f64) -> CoverItem {
         let (fill, stroke) = if shape == ShapeKind::Line { (None, Some([255, 255, 255])) } else { (Some([255, 255, 255]), None) };
-        CoverItem { kind: CoverKind::Shape { shape, fill, stroke, stroke_mm: 0.5, radius_mm: 0.0, flip: false }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
+        CoverItem { kind: CoverKind::Shape { shape, fill, stroke, stroke_mm: 0.5, radius_mm: 0.0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
     }
     pub fn image(path: &str, x: f64, y: f64, w: f64, h: f64) -> CoverItem {
         CoverItem { kind: CoverKind::Image { path: path.into() }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
@@ -162,7 +198,7 @@ pub struct CoverLayout {
 pub enum CoverDecor {
     Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
-    Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, flip: bool },
+    Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, flip: bool, style: LineStyle, arrow: LineArrow },
 }
 
 impl CoverDecor {
@@ -242,8 +278,8 @@ impl Cover {
                     if path.is_empty() { return None; }
                     CoverDecor::Image { path: abs(path), x, y, w: iw, h: ih }
                 }
-                CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip } => {
-                    CoverDecor::Shape { flip: *flip, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0) }
+                CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
+                    CoverDecor::Shape { flip: *flip, style: *style, arrow: *arrow, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0) }
                 }
             };
             Some((d, if is_line { 0 } else { it.rot }))
@@ -632,7 +668,9 @@ fn item_to_value(it: &CoverItem) -> Value {
             if fx.valign != d.valign { e.push(("alignement_v".into(), Value::Str(fx.valign.name().into()))); }
             if fx.autofit { e.push(("ajuster".into(), Value::Bool(true))); }
         }
-        CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip } => {
+        CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
+            if *style != LineStyle::Solid { e.push(("trait".into(), Value::Str(style.name().into()))); }
+            if *arrow != LineArrow::None { e.push(("fleche".into(), Value::Str(arrow.name().into()))); }
             if *flip { e.push(("inverse".into(), Value::Bool(true))); }
             e.push(("type".into(), Value::Str("forme".into())));
             e.push(("forme".into(), Value::Str(shape.name().into())));
@@ -683,6 +721,8 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
             stroke_mm: e.get("epaisseur_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.5).clamp(0.0, 50.0),
             radius_mm: e.get("rayon_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 200.0),
             flip: matches!(e.get("inverse"), Some(Value::Bool(true))),
+            style: e.get("trait").and_then(Value::as_str).and_then(LineStyle::from_name).unwrap_or(LineStyle::Solid),
+            arrow: e.get("fleche").and_then(Value::as_str).and_then(LineArrow::from_name).unwrap_or(LineArrow::None),
         },
         Some("image") => CoverKind::Image { path: e.get("fichier").and_then(Value::as_str).ok_or_else(|| format!("{what}, élément {} : « fichier » manquant", k + 1))?.to_string() },
         t => return Err(format!("{what}, élément {} : type {:?} inconnu", k + 1, t)),

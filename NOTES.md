@@ -651,3 +651,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - CoverKind::Shape gagne `flip` (JSON "inverse") ; `CoverItem::line_ends/set_line_ends` ; cadre de largeur ou hauteur nulle autorise pour une ligne.
 - GUI : deux poignees (Maj : pas de 45 degres, aimantation, autre extremite comme repere), selection au clic sur le segment, champs Debut/Fin X,Y. Rendu : segment a bouts arrondis (`draw_line`).
 - Une ligne creee avant cet export (cadre h=2 mm) devient legerement oblique.
+
+## Jaquette : types de trait et fleches (export 120)
+- LineStyle (plein, tirets, pointilles, tirets+points, double) et LineArrow (aucune, debut, fin, deux) sur CoverKind::Shape ; JSON "trait" / "fleche" (ecrits seulement si non par defaut).
+- `move_line_end` : les fleches suivent leur extremite quand les bouts se croisent. Rendu : `draw_segment` (motifs le long du trait, pointes en triangle lisse).

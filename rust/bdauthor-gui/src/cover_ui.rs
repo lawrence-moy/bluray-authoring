@@ -1,7 +1,7 @@
 //! Onglet « Jaquette » : feuille a deplier du boitier (dos, tranche, face) et etiquette de disque ; edition a la souris,
 //! annuler / refaire, champs automatiques et export PDF en arriere-plan.
 use crate::App;
-use bdauthor_core::cover::{ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
+use bdauthor_core::cover::{LineArrow, LineStyle, ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
 use bdauthor_core::design::Align;
 use bdauthor_core::editor::ItemAlign;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Key, Rect, Sense, Stroke};
@@ -741,8 +741,23 @@ impl App {
                 ui.label("Y"); ui.add(egui::DragValue::new(&mut q.1).range(-bleed..=sh).speed(0.5).suffix(" mm"));
                 ui.end_row();
             });
-            if (p, q) != before { it.set_line_ends(p, q); changed = true; }
-            ui.label(egui::RichText::new("Déplacez les deux extrémités sur la feuille (Maj : angle par pas de 45°).").weak());
+            if p != before.0 { it.move_line_end(true, q, p); changed = true; }
+            else if q != before.1 { it.move_line_end(false, p, q); changed = true; }
+            if let CoverKind::Shape { style, arrow, .. } = &mut it.kind {
+                ui.horizontal(|ui| {
+                    ui.label("Type de trait");
+                    egui::ComboBox::from_id_salt("jaquette_trait").selected_text(style.label()).show_ui(ui, |ui| {
+                        for st in LineStyle::ALL { if ui.selectable_label(*style == st, st.label()).clicked() { *style = st; changed = true; } }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Flèches");
+                    egui::ComboBox::from_id_salt("jaquette_fleche").selected_text(arrow.label()).show_ui(ui, |ui| {
+                        for a in LineArrow::ALL { if ui.selectable_label(*arrow == a, a.label()).clicked() { *arrow = a; changed = true; } }
+                    });
+                });
+            }
+            ui.label(egui::RichText::new("Déplacez les deux extrémités sur la feuille (Maj : angle par pas de 45°). « Début » = extrémité de gauche (ou du haut).").weak());
             return changed;
         }
         egui::Grid::new("jaquette_geom").num_columns(4).show(ui, |ui| {
@@ -1120,7 +1135,7 @@ impl App {
                         if let Some(g) = near(my, &ys) { my = g; snapped.1 = Some(g); }
                     }
                     let before = doc.items()[d.item].line_ends();
-                    doc.items_mut()[d.item].set_line_ends((fx, fy), (mx, my));
+                    doc.items_mut()[d.item].move_line_end(d.handle == 5, (fx, fy), (mx, my));
                     if doc.items()[d.item].line_ends() != before { self.cover_changed(); }
                 }
             }

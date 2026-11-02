@@ -309,3 +309,23 @@ fn line_endpoints() {
     let lay = c3.layout(96, std::path::Path::new("."));
     assert!(lay.items.iter().any(|(d, rot)| matches!(d, CoverDecor::Shape { h: 0, .. }) && *rot == 0));
 }
+
+#[test]
+fn line_styles_arrows_json() {
+    let mut it = CoverItem::shape(ShapeKind::Line, 0.0, 0.0, 10.0, 0.0);
+    it.set_line_ends((10.0, 10.0), (50.0, 10.0));
+    if let CoverKind::Shape { style, arrow, .. } = &mut it.kind { *style = LineStyle::DashDot; *arrow = LineArrow::End; }
+    // on tire le bout de droite (fin) au-dela du bout de gauche : la fleche reste sur le bout deplace
+    it.move_line_end(false, (10.0, 10.0), (-20.0, 10.0));
+    assert_eq!(it.line_ends(), Some(((-20.0, 10.0), (10.0, 10.0))));
+    assert!(matches!(&it.kind, CoverKind::Shape { arrow: LineArrow::Start, .. }));
+    let mut c = Cover::default();
+    c.items.push(it);
+    let back = Cover::from_value(c.to_value().as_ref()).unwrap();
+    assert_eq!(back, c);
+    let plain = CoverItem::shape(ShapeKind::Line, 0.0, 0.0, 10.0, 0.0);
+    let mut c2 = Cover::default();
+    c2.items.push(plain);
+    let json = c2.to_value().unwrap().to_pretty();
+    assert!(!json.contains("\"trait\"") && !json.contains("\"fleche\""), "{json}");
+}
