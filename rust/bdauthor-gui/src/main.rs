@@ -759,7 +759,8 @@ impl eframe::App for App {
             }
         });
 
-        egui::TopBottomPanel::bottom("construction").default_height(160.0).min_height(60.0).resizable(true).show(ctx, |ui| {
+        // zone de construction : masquee dans l'onglet Jaquette (sauf pendant une construction, pour garder la progression et « Annuler »)
+        if self.mode != Mode::Jaquette || busy { egui::TopBottomPanel::bottom("construction").default_height(160.0).min_height(60.0).resizable(true).show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if busy {
                     if ui.button("Annuler").clicked() { self.cancel.store(true, Ordering::Relaxed); }
@@ -777,7 +778,7 @@ impl eframe::App for App {
                     ui.monospace(l);
                 }
             });
-        });
+        }); }
 
         if self.mode == Mode::Jaquette {
             self.cover_screen(ctx, busy);
