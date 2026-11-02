@@ -380,7 +380,13 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         SubSource::Embedded(n) => format!("piste intégrée n° {}", n + 1),
     };
     let mut open = true;
-    crate::os_window(ctx, "apercu_sous_titres", "Aperçu des sous-titres", [840.0, 760.0], &mut open, &mut |ui| {
+    crate::os_window_panels(ctx, "apercu_sous_titres", "Aperçu des sous-titres", [840.0, 760.0], &mut open, Some(170.0), &mut |ui, is_bottom| {
+        if is_bottom {
+            // zone du bas, ajustable en glissant son bord superieur : le style de la piste
+            ui.label(egui::RichText::new("Style de la piste").strong());
+            style_ui(ui, &mut t.style, &mut changed);
+            return;
+        }
         ui.label(egui::RichText::new(name.as_str()).strong());
         match &pv.raw {
             None => { ui.horizontal(|ui| { ui.spinner(); ui.label("Extraction de la piste…"); }); return; }
@@ -457,7 +463,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         if let Some(n) = &frame_note { ui.label(egui::RichText::new(n).weak()); }
         // zoom : boutons, molette (ou Ctrl + molette) sur l'image ; glisser l'image pour la deplacer
         // largeur de la fenetre (le contenu est dans une zone defilante, donc sa largeur disponible ne veut rien dire)
-        let fit_w = (ctx.screen_rect().width() - 40.0).clamp(200.0, 2400.0);
+        let fit_w = (ui.available_width() - 4.0).clamp(200.0, 2400.0);
         let ppp = ctx.pixels_per_point();
         ui.horizontal(|ui| {
             if ui.small_button("−").on_hover_text("Dézoomer").clicked() { pv.zoom = (pv.zoom / 1.25).max(0.25); }
@@ -478,8 +484,9 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         }
         if let Some(tex) = &pv.tex {
             let size = egui::vec2(fit_w * pv.zoom, fit_w * pv.zoom * 9.0 / 16.0);
-            let max_h = (ctx.screen_rect().height() - 330.0).max(220.0);
-            let out = egui::ScrollArea::both().id_salt("apercu_zoom").max_height(max_h).auto_shrink([false, true]).show(ui, |ui| {
+            // l'image occupe toute la hauteur laissee par la zone du bas (que l'on regle en glissant son bord)
+            let max_h = (ui.available_height() - 28.0).max(80.0);
+            let out = egui::ScrollArea::both().id_salt("apercu_zoom").max_height(max_h).auto_shrink([false, false]).show(ui, |ui| {
                 let resp = ui.image((tex.id(), size));
                 if pv.safe {
                     // zone de securite titre : 90 % de la largeur et de la hauteur
@@ -492,7 +499,6 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             pv.img_rect = out.inner_rect;
         }
         ui.label(egui::RichText::new("Aperçu avec la police et le style de la piste (décalage appliqué, répliques simultanées fusionnées) ; le lecteur affichera le même dessin.").weak());
-        egui::CollapsingHeader::new("Modifier le style de la piste").default_open(false).show(ui, |ui| style_ui(ui, &mut t.style, &mut changed));
     });
     (changed, open)
 }

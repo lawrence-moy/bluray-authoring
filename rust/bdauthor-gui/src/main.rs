@@ -72,14 +72,31 @@ fn age_text(t: std::time::SystemTime) -> String {
 /// Fenetre reelle du systeme (viewport secondaire) : elle peut sortir du cadre de la fenetre principale, passer sur un autre ecran et se
 /// redimensionner. `open` repasse a faux a la fermeture. Si le systeme ne gere pas les fenetres multiples, c'est une fenetre flottante classique.
 pub(crate) fn os_window(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2], open: &mut bool, add: &mut dyn FnMut(&mut egui::Ui)) {
+    os_window_panels(ctx, id, title, size, open, None, &mut |ui, _| add(ui));
+}
+
+/// Comme `os_window`, avec en plus une zone du bas dont la hauteur se regle en glissant son bord (`bottom` : hauteur initiale ; `add` est
+/// alors appele deux fois, d'abord pour la zone du bas (`true`), puis pour le contenu principal (`false`), qui n'a pas de defilement propre).
+pub(crate) fn os_window_panels(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2], open: &mut bool, bottom: Option<f32>, add: &mut dyn FnMut(&mut egui::Ui, bool)) {
     let builder = egui::ViewportBuilder::default().with_title(title).with_inner_size(size).with_min_inner_size([320.0, 200.0]);
     ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(id), builder, |ctx, class| {
         if class == egui::ViewportClass::Embedded {
             let mut still = true;
-            egui::Window::new(title).open(&mut still).default_width(size[0]).show(ctx, |ui| add(ui));
+            egui::Window::new(title).open(&mut still).default_width(size[0]).show(ctx, |ui| {
+                if bottom.is_some() { add(ui, true); ui.separator(); }
+                add(ui, false);
+            });
             if !still { *open = false; }
         } else {
-            egui::CentralPanel::default().show(ctx, |ui| { egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| add(ui)); });
+            match bottom {
+                Some(h) => {
+                    egui::TopBottomPanel::bottom(egui::Id::new((id, "bas"))).resizable(true).default_height(h).height_range(60.0..=900.0).show(ctx, |ui| {
+                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| add(ui, true));
+                    });
+                    egui::CentralPanel::default().show(ctx, |ui| add(ui, false));
+                }
+                None => { egui::CentralPanel::default().show(ctx, |ui| { egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| add(ui, false)); }); }
+            }
             if ctx.input(|i| i.viewport().close_requested()) { *open = false; }
         }
     });

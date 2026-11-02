@@ -686,3 +686,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 ## Correctif fenetre Configuration + cadence automatique (export 129)
 - La fenetre Configuration (fenetre systeme) n appelait os_window qu a chaque image meme fermee : elle s affichait au demarrage et ne se fermait pas. Maintenant appelee seulement si ouverte.
 - Cadence MicroDVD par defaut = cadence sondee de la video (si courante : `plausible_fps`), sinon 23,976 ; reglage manuel de la piste prioritaire.
+
+## Apercu des sous-titres : zone du bas ajustable (export 130)
+- `os_window_panels` : TopBottomPanel redimensionnable en bas (style de la piste), contenu principal sans defilement propre ; l image occupe la hauteur restante.
