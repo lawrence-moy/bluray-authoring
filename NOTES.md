@@ -668,3 +668,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Apercu des sous-titres : fond « Image de la video » (export 123)
 - Quatrieme fond : image reelle de la video a l apparition de la replique (extract_thumbnail_rgba en arriere-plan, cache de 6 images).
+
+## Fenetres systeme (export 124)
+- `os_window` (viewport immediat eframe) pour Configuration, Projet et Apercu des sous-titres : fenetres deplacables hors du cadre principal. Repli sur une fenetre flottante si le backend ne gere pas les viewports.

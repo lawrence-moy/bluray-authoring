@@ -69,6 +69,22 @@ fn age_text(t: std::time::SystemTime) -> String {
     if s < 90 { "il y a moins de 2 minutes".into() } else if s < 5400 { format!("il y a {} min", s / 60) } else if s < 172800 { format!("il y a {} h", s / 3600) } else { format!("il y a {} jours", s / 86400) }
 }
 
+/// Fenetre reelle du systeme (viewport secondaire) : elle peut sortir du cadre de la fenetre principale, passer sur un autre ecran et se
+/// redimensionner. `open` repasse a faux a la fermeture. Si le systeme ne gere pas les fenetres multiples, c'est une fenetre flottante classique.
+pub(crate) fn os_window(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2], open: &mut bool, add: &mut dyn FnMut(&mut egui::Ui)) {
+    let builder = egui::ViewportBuilder::default().with_title(title).with_inner_size(size).with_min_inner_size([320.0, 200.0]);
+    ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(id), builder, |ctx, class| {
+        if class == egui::ViewportClass::Embedded {
+            let mut still = true;
+            egui::Window::new(title).open(&mut still).default_width(size[0]).show(ctx, |ui| add(ui));
+            if !still { *open = false; }
+        } else {
+            egui::CentralPanel::default().show(ctx, |ui| { egui::ScrollArea::both().auto_shrink([false, false]).show(ui, |ui| add(ui)); });
+            if ctx.input(|i| i.viewport().close_requested()) { *open = false; }
+        }
+    });
+}
+
 /// Petit bouton « supprimer » dessine (une croix) : le glyphe ✕ n'est pas dans la police par defaut.
 fn delete_button(ui: &mut egui::Ui, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
@@ -543,7 +559,7 @@ impl eframe::App for App {
             if !keep { self.sub_preview = None; }
         }
         let mut open = self.show_config;
-        egui::Window::new("Configuration").open(&mut open).collapsible(false).resizable(false).show(ctx, |ui| {
+        os_window(ctx, "configuration", "Configuration", [640.0, 480.0], &mut open, &mut |ui| {
             let before = self.cfg.clone();
             ui.checkbox(&mut self.cfg.adaptive_preview, "Ajuster le rafraîchissement de l'aperçu pendant le déplacement");
             ui.label(format!("Dernier rendu de l'aperçu : {:.1} ms", self.render_ms));
@@ -598,7 +614,7 @@ impl eframe::App for App {
             let mut pick_iso = false;
             let tab = &mut self.project_tab;
             let m = &mut self.model;
-            egui::Window::new("Projet").open(&mut open).resizable(false).show(ctx, |ui| {
+            os_window(ctx, "projet", "Projet", [720.0, 600.0], &mut open, &mut |ui| {
                 ui.horizontal(|ui| {
                     ui.selectable_value(tab, 0, "Général");
                     ui.selectable_value(tab, 1, "Style des boutons");

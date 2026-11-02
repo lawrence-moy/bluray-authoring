@@ -355,7 +355,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         SubSource::Embedded(n) => format!("piste intégrée n° {}", n + 1),
     };
     let mut open = true;
-    egui::Window::new("Aperçu des sous-titres").open(&mut open).default_width(760.0).show(ctx, |ui| {
+    crate::os_window(ctx, "apercu_sous_titres", "Aperçu des sous-titres", [840.0, 760.0], &mut open, &mut |ui| {
         ui.label(egui::RichText::new(name).strong());
         match &pv.raw {
             None => { ui.horizontal(|ui| { ui.spinner(); ui.label("Extraction de la piste…"); }); return; }
