@@ -913,7 +913,10 @@ impl App {
                     painter.rect_stroke(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Stroke::new(1.0_f32, Color32::BLACK));
                 }
             } else if selection.contains(&i) {
-                painter.rect_stroke(r, 0.0, Stroke::new(1.5_f32, Color32::WHITE));
+                // selection multiple : meme rendu que l'editeur de menu (fond sombre + tirets clairs, visible sur tout decor)
+                let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
+                painter.add(egui::Shape::line(pts.to_vec(), Stroke::new(3.0_f32, Color32::from_black_alpha(170))));
+                painter.extend(egui::Shape::dashed_line(&pts, Stroke::new(2.0_f32, Color32::WHITE), 7.0, 5.0));
             } else {
                 painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(120, 190, 255, 110)));
             }

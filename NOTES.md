@@ -643,3 +643,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Sélection multiple (Maj/Ctrl+clic, rectangle de sélection, liste), déplacement de groupe, Ctrl+C/X/V (jaquette ↔ étiquette), Dupliquer/Supprimer, panneau d'alignement (`align_cover`).
 - Formes : rectangle, ellipse, ligne (remplissage, bordure, coins arrondis). Texte : contour, ombre, interligne, alignement vertical, ajustement au cadre.
 - Core testé (122 tests) ; render et gui à compiler avec recompiler.bat.
+
+## Jaquette : selection multiple en tirets (export 117)
+- Les elements en selection multiple ont le meme rendu que l editeur de menu (fond sombre + tirets blancs).
