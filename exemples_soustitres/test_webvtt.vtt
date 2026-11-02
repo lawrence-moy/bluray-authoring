@@ -1,0 +1,47 @@
+WEBVTT
+
+NOTE Positions propres a WebVTT : line, position, align, size.
+NOTE Ce fichier sert a verifier la lecture ; les reglages seront ignores tant qu'ils ne sont pas pris en charge.
+
+cue1
+00:00:01.000 --> 00:00:03.000
+Sans reglage : bas centre
+
+00:00:03.200 --> 00:00:05.200 line:0
+line:0 : tout en haut
+
+cue3
+00:00:05.400 --> 00:00:07.400 line:10% align:start position:10%
+line:10% align:start position:10% : haut gauche
+
+00:00:07.600 --> 00:00:09.600 line:10% align:end position:90%
+line:10% align:end position:90% : haut droite
+
+cue5
+00:00:09.800 --> 00:00:11.800 line:50%
+line:50% : milieu
+
+00:00:12.000 --> 00:00:14.000 line:50% align:start position:5%
+line:50% align:start position:5% : milieu gauche
+
+cue7
+00:00:14.200 --> 00:00:16.200 line:50% align:end position:95%
+line:50% align:end position:95% : milieu droite
+
+00:00:16.400 --> 00:00:18.400 line:-1
+line:-1 : derniere ligne (bas)
+
+cue9
+00:00:18.600 --> 00:00:20.600 line:90% align:start position:5%
+line:90% align:start position:5% : bas gauche
+
+00:00:20.800 --> 00:00:22.800 line:90% align:end position:95%
+line:90% align:end position:95% : bas droite
+
+cue11
+00:00:23.000 --> 00:00:25.000 size:40% align:start position:5%
+size:40% align:start : bloc etroit a gauche, texte long pour verifier que la largeur de 40 % est respectee
+
+00:00:25.200 --> 00:00:27.200
+<v Marie>Balise de locuteur retiree</v>
+<c.yellow>Balise de classe</c> et <i>italique</i>
