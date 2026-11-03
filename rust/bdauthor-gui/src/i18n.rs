@@ -12,7 +12,7 @@ use std::sync::RwLock;
 
 const FR_JSON: &str = include_str!("../lang/fr.json");
 
-pub use bdauthor_core::i18n::{format_tr, num, tr, Table};
+pub use bdauthor_core::i18n::{num, tr, Table};
 pub(crate) use bdauthor_core::trf;
 static CODE: RwLock<String> = RwLock::new(String::new());
 
@@ -55,6 +55,7 @@ pub fn set_language(code: &str) {
     }
 }
 
+#[allow(dead_code)]
 pub fn current() -> String {
     CODE.read().map(|c| c.clone()).unwrap_or_default()
 }
@@ -99,6 +100,7 @@ pub fn template(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use bdauthor_core::i18n::format_tr;
 
     #[test]
     fn placeholders_in_order_and_by_index() {
