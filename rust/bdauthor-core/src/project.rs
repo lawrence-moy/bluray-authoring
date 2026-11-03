@@ -110,13 +110,27 @@ fn mmss(t: f64) -> String {
     format!("{}:{:02}", s / 60, s % 60)
 }
 
+/// Marge (90 kHz) du calage d'un repere : une image d'acces placee a l'instant du chapitre compte meme si son horodatage
+/// arrondi depasse d'un tic (cadences comme 24000/1001 : instants non entiers en 90 kHz).
+const SNAP_TOL: i64 = 45;
+
+/// Instants des chapitres manuels d'une video du projet (hors 0), pour les images cles forcees.
+fn chapter_times(v: &Value, duration: f64) -> Vec<f64> {
+    let mut t: Vec<f64> = v.get("chapitres").and_then(Value::as_array).unwrap_or(&[]).iter()
+        .filter_map(|c| match c { Value::Obj(_) => c.get("t").and_then(Value::as_f64), _ => c.as_f64() })
+        .filter(|t| *t > 0.0 && *t < duration).collect();
+    t.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    t.dedup();
+    t
+}
+
 /// Repere (45 kHz) d'un instant `t` (secondes depuis le debut) d'une video : debut exact pour 0, sinon image d'acces qui precede.
 fn snap_mark(sc: &ClipScan, t: f64) -> u32 {
     if t <= 0.0 {
         return (sc.start90 / 2) as u32;
     }
     let target = sc.start90 as i64 + py_round(t * 90000.0) as i64;
-    let best = sc.eps.iter().map(|e| e.0).filter(|&p| p as i64 <= target).max().or_else(|| sc.eps.iter().map(|e| e.0).min()).unwrap_or(sc.start90);
+    let best = sc.eps.iter().map(|e| e.0).filter(|&p| p as i64 <= target + SNAP_TOL).max().or_else(|| sc.eps.iter().map(|e| e.0).min()).unwrap_or(sc.start90);
     (best / 2) as u32
 }
 
@@ -534,7 +548,7 @@ pub fn parse_chapters(v: &Value, sc: &ClipScan) -> Result<Vec<Chapter>> {
             sc.start90 / 2
         } else {
             let target = sc.start90 as i64 + py_round(t * 90000.0) as i64;
-            eps.iter().copied().filter(|&p| p as i64 <= target).max().or(eps.first().copied()).unwrap_or(sc.start90) / 2
+            eps.iter().copied().filter(|&p| p as i64 <= target + SNAP_TOL).max().or(eps.first().copied()).unwrap_or(sc.start90) / 2
         };
         out.entry(m45).or_insert(name);
     }
@@ -596,6 +610,8 @@ fn cache_key_with(path: &Path, lang: [u8; 3], o: &EncodeOpts, info: &ffmpeg::Vid
         s.push_str(&format!("|cible={}", tg.label));
     }
     if !extra.is_empty() { s.push_str(&format!("|audio={extra}")); }
+    // chapitres exacts : une image cle par chapitre, donc un encodage par liste d'instants
+    if !o.force_keys.is_empty() { s.push_str(&format!("|cles={}", ffmpeg::force_keys_args(&o.force_keys).get(1).cloned().unwrap_or_default())); }
     Ok(format!("{:016x}", fnv1a(s.as_bytes())))
 }
 
@@ -825,6 +841,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         };
         let a_sig = if audio_plan.is_some() { audio_signature(&a_tracks, &a_langs) } else { String::new() };
         audio_langs.push(a_langs.clone());
+        // chapitres exacts : une image cle IDR a chaque chapitre (les reperes tombent alors sur l'image choisie)
+        let eopts = match v.get("chapitres_exacts").and_then(Value::as_bool) {
+            Some(true) => EncodeOpts { force_keys: chapter_times(v, info.duration_s), ..eopts.clone() },
+            _ => eopts.clone(),
+        };
         let cached = match &cache_dir {
             Some(d) => {
                 let f = d.join(format!("{}.m2ts", cache_key_with(&src, lang, &eopts, &info, &a_sig)?));

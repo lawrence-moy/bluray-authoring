@@ -754,3 +754,12 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 ## Export 144 — largeur des menus après changement de langue
 - egui garde la taille d'un menu ou d'une liste déroulante depuis sa première ouverture : après un changement de langue, `memory.reset_areas()` l'oublie pour qu'elle s'adapte aux nouveaux textes (les fenêtres internes reprennent aussi leur place par défaut).
 - GUI uniquement (`main.rs`), à compiler avec recompiler.bat.
+
+## Export 145 — éditeur de chapitres (fenêtre avec image, lecture et frise)
+- Bouton « Éditeur de chapitres… » sous la liste des chapitres d'une vidéo (la liste reste pour les retouches rapides). Fenêtre `chapters_ui.rs` : image exacte à l'instant choisi (960 px de large), image par image / ±1 s / ±10 s / début / fin, lecture sans son, raccourcis (← →, Maj, Ctrl, Espace, C, Début, Fin), liste des chapitres (nom, aller, supprimer, placer le chapitre sélectionné ici), saut à l'image clé précédente/suivante de la source.
+- Frise : graduations adaptées au zoom (molette autour du pointeur, Maj + molette ou barre pour défiler), vignettes de toute la vidéo (48 images clés, en arrière-plan), images clés de la source quand la vue fait moins de 10 min, repères de chapitre à glisser, tête de lecture ; clic ou glisser = aller à cet instant.
+- Vignettes : « Utiliser l'image affichée » pour la vignette de la vidéo (`vignette_s`) et pour les vignettes de page liées au chapitre sélectionné (`thumb_at` de chaque vignette liée) ; retour à automatique / « suit le chapitre ».
+- Brouillon jusqu'à « Valider » (« Annuler » ou fermer : rien ne change). Instants enregistrés au dix-millième de seconde (image exacte).
+- Option par vidéo « Image clé exacte sur chaque chapitre » (JSON `chapitres_exacts`, écrit seulement si vrai) : l'encodage reçoit `-force_key_frames` (instants avancés de 0,5 ms) + `-forced-idr 1`, la clé de cache inclut ces instants ; calage des repères avec une tolérance de 45 tics (0,5 ms).
+- Cœur : `ffmpeg::frame_args`, `extract_frame_rgba` (image exacte ou image clé, sur la sortie standard), `FrameStream` (lecture temps réel, arrêtée à la destruction), `list_keyframes` / `parse_keyframes_compact`, `force_keys_args`, `EncodeOpts::force_keys`. Essais : tests/chapter_editor.rs (dont un essai réel ffmpeg : image clé forcée à 1,48 s retrouvée dans l'encodage).
+- Core : 156 tests verts. GUI à compiler avec recompiler.bat (non compilé dans le conteneur).

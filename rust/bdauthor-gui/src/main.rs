@@ -9,6 +9,7 @@ mod style_ui;
 mod sim_ui;
 mod iso_ui;
 mod cover_ui;
+mod chapters_ui;
 
 use crate::i18n::{tr, trf};
 use bdauthor_core::check::Kind;
@@ -119,7 +120,7 @@ pub(crate) fn help(ui: &mut egui::Ui, text: &str) {
 }
 
 /// Petit bouton « supprimer » dessine (une croix) : le glyphe ✕ n'est pas dans la police par defaut.
-fn delete_button(ui: &mut egui::Ui, tip: &str) -> bool {
+pub(crate) fn delete_button(ui: &mut egui::Ui, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
     let vis = *ui.style().interact(&resp);
     let p = ui.painter();
@@ -234,6 +235,9 @@ struct App {
     recovery_checked: bool,
     /// fenetre d'apercu du rendu d'une piste de sous-titres
     sub_preview: Option<subs_ui::SubPreview>,
+    /// editeur de chapitres ouvert (une video a la fois) et demande d'ouverture (rang de la video)
+    chapter_editor: Option<chapters_ui::ChapterEditor>,
+    chapter_request: Option<usize>,
     cover_tex: Option<egui::TextureHandle>,
     cover_gen: u64,
     cover_seen: u64,
@@ -310,7 +314,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, recovery_checked: false, sub_preview: None, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, recovery_checked: false, sub_preview: None, chapter_editor: None, chapter_request: None, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -591,6 +595,15 @@ impl eframe::App for App {
             };
             if ch { self.dirty = true; }
             if !keep { self.sub_preview = None; }
+        }
+        if let Some(vi) = self.chapter_request.take() {
+            let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+            self.chapter_editor = chapters_ui::ChapterEditor::new(&self.model, vi, &base);
+        }
+        let res = self.chapter_editor.as_mut().map(|ed| chapters_ui::window(ctx, ed, &mut self.model));
+        if let Some((ch, keep)) = res {
+            if ch { self.dirty = true; self.bump(); }
+            if !keep { self.chapter_editor = None; }
         }
         let mut open = self.show_config;
         // une fenetre systeme existe tant qu'on l'appelle : seulement quand elle est ouverte
@@ -1038,6 +1051,7 @@ impl eframe::App for App {
                             v.chapters.push(ChapterEntry { id, t, title: String::new() });
                             changed = true;
                         }
+                        if ui.button(tr("Chapter editor…")).on_hover_text(tr("Opens a window with the video image by image, playback and a timeline, to place the chapters and choose the thumbnail images.")).clicked() { self.chapter_request = self.sel; }
                         ui.separator();
                         changed |= audio_ui::panel(ui, v, &mut self.model.languages, &mut self.audio_probes, &sub_base);
                         ui.separator();

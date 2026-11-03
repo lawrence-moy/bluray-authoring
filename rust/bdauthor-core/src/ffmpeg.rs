@@ -303,11 +303,13 @@ pub struct EncodeOpts {
     pub keyint: u32,
     pub audio_bitrate: String,
     pub preset: String,
+    /// Instants (secondes depuis le debut) ou placer une image cle IDR : chapitres exacts. Vide : GOP reguliers seulement.
+    pub force_keys: Vec<f64>,
 }
 
 impl Default for EncodeOpts {
     fn default() -> Self {
-        EncodeOpts { crf: 18, maxrate: 30000, keyint: 30, audio_bitrate: "192k".into(), preset: "medium".into() }
+        EncodeOpts { crf: 18, maxrate: 30000, keyint: 30, audio_bitrate: "192k".into(), preset: "medium".into(), force_keys: Vec::new() }
     }
 }
 
@@ -435,6 +437,7 @@ pub fn encode_args_tracks(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOp
     }
     a.push(vf);
     a.extend(x264_args_scan(o.crf, o.maxrate, o.keyint, &o.preset, tg.scan));
+    a.extend(force_keys_args(&o.force_keys));
     a.extend(["-c:a", "ac3", "-b:a"].iter().map(|x| x.to_string()));
     a.push(o.audio_bitrate.clone());
     a.extend(["-ar", "48000", "-ac", "2", "-f", "mpegts", "-pes_payload_size", "0"].iter().map(|x| x.to_string()));
@@ -600,6 +603,116 @@ pub fn extract_thumbnail_rgba(tools: &Tools, src: &Path, size: (u32, u32), at: O
     let _ = std::fs::remove_file(&tmp);
     r?;
     crate::palette::RgbaImage::from_raw(size.0, size.1, data?).map_err(|_| Error::Format(tr("thumbnail: unexpected size (video too short?)").into()))
+}
+
+/// Arguments `-force_key_frames` (images cles IDR aux instants donnes) ; aucun si la liste est vide. Chaque instant est avance
+/// d'une demi-milliseconde : ffmpeg force la premiere image dont l'horodatage atteint l'instant, et un chapitre enregistre au
+/// dix-millieme pres pourrait sinon tomber juste apres son image et forcer la suivante.
+pub fn force_keys_args(times: &[f64]) -> Vec<String> {
+    let t: Vec<String> = times.iter().filter(|t| **t > 0.0).map(|t| format!("{:.4}", (t - 0.0005).max(0.0))).collect();
+    if t.is_empty() { return Vec::new(); }
+    vec!["-force_key_frames".into(), t.join(","), "-forced-idr".into(), "1".into()]
+}
+
+/// Arguments ffmpeg d'une image de la video a l'instant `t`, en pixels RGBA de `size` sur la sortie standard.
+/// `exact` : l'image exacte (decodage depuis l'image cle qui precede) ; sinon l'image cle la plus proche (bien plus rapide).
+pub fn frame_args(src: &Path, t: f64, size: (u32, u32), exact: bool) -> Vec<String> {
+    let mut a: Vec<String> = vec!["-v".into(), "error".into(), "-nostdin".into(), "-ss".into(), format!("{:.4}", t.max(0.0))];
+    if !exact { a.push("-noaccurate_seek".into()); }
+    a.extend(["-i".to_string(), s(src), "-frames:v".into(), "1".into(), "-an".into(), "-sn".into(), "-vf".into(), format!("scale={}:{}", size.0, size.1)]);
+    a.extend(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"].iter().map(|x| x.to_string()));
+    a
+}
+
+/// Une image de la video a l'instant `t` (voir `frame_args`), sans fichier intermediaire.
+pub fn extract_frame_rgba(tools: &Tools, src: &Path, t: f64, size: (u32, u32), exact: bool) -> Result<crate::palette::RgbaImage> {
+    let mut c = Command::new(&tools.ffmpeg);
+    c.args(frame_args(src, t, size, exact)).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    no_window(&mut c);
+    let out = c.output()?;
+    let need = size.0 as usize * size.1 as usize * 4;
+    if !out.status.success() || out.stdout.len() < need {
+        let err = String::from_utf8_lossy(&out.stderr);
+        if out.status.success() { return Err(Error::Format(tr("no image at this time (beyond the end of the video?)").into())); }
+        return Err(Error::Ffmpeg { code: out.status.code(), stderr: err.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n") });
+    }
+    let mut data = out.stdout;
+    data.truncate(need);
+    crate::palette::RgbaImage::from_raw(size.0, size.1, data).map_err(|_| Error::Format(tr("thumbnail: unexpected size (video too short?)").into()))
+}
+
+/// Lecture d'une video en temps reel, sans le son : images RGBA de `size` envoyees au fil de l'eau. Arretee a la destruction.
+pub struct FrameStream {
+    child: Child,
+    /// images dans l'ordre, au rythme de la video
+    pub rx: std::sync::mpsc::Receiver<crate::palette::RgbaImage>,
+}
+
+impl FrameStream {
+    pub fn start(tools: &Tools, src: &Path, t: f64, size: (u32, u32)) -> Result<FrameStream> {
+        let mut a: Vec<String> = vec!["-v".into(), "error".into(), "-nostdin".into(), "-re".into(), "-ss".into(), format!("{:.4}", t.max(0.0))];
+        a.extend(["-i".to_string(), s(src), "-an".into(), "-sn".into(), "-vf".into(), format!("scale={}:{}", size.0, size.1)]);
+        a.extend(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"].iter().map(|x| x.to_string()));
+        let mut c = Command::new(&tools.ffmpeg);
+        c.args(a).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+        no_window(&mut c);
+        let mut child = c.spawn()?;
+        let mut out = child.stdout.take().expect("stdout");
+        // file courte : si l'affichage prend du retard, ffmpeg attend au lieu d'accumuler des images en memoire
+        let (tx, rx) = std::sync::mpsc::sync_channel(3);
+        let need = size.0 as usize * size.1 as usize * 4;
+        std::thread::spawn(move || loop {
+            let mut buf = vec![0u8; need];
+            if out.read_exact(&mut buf).is_err() { break; }
+            match crate::palette::RgbaImage::from_raw(size.0, size.1, buf) {
+                Ok(img) => { if tx.send(img).is_err() { break; } }
+                Err(_) => break,
+            }
+        });
+        Ok(FrameStream { child, rx })
+    }
+}
+
+impl Drop for FrameStream {
+    fn drop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+/// Instants des images cles de la premiere piste video (sortie `-of compact` de ffprobe), depuis le debut du fichier, croissants.
+pub fn parse_keyframes_compact(text: &str) -> Vec<f64> {
+    let mut start = None;
+    let mut keys = Vec::new();
+    for l in text.lines() {
+        let l = l.trim();
+        if let Some(r) = l.strip_prefix("frame|") {
+            let num = |k: &str| r.split('|').find_map(|kv| kv.strip_prefix(k).and_then(|v| v.parse::<f64>().ok()));
+            if let Some(t) = num("pts_time=").or_else(|| num("best_effort_timestamp_time=")) { keys.push(t); }
+        } else if let Some(r) = l.strip_prefix("format|").or_else(|| l.strip_prefix("stream|")) {
+            if let Some(v) = r.split('|').find_map(|kv| kv.strip_prefix("start_time=")) {
+                if let Ok(t) = v.parse::<f64>() { start.get_or_insert(t); }
+            }
+        }
+    }
+    let s0 = start.unwrap_or_else(|| keys.first().copied().unwrap_or(0.0));
+    let mut out: Vec<f64> = keys.into_iter().map(|t| (t - s0).max(0.0)).collect();
+    out.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    out.dedup_by(|a, b| (*a - *b).abs() < 1e-6);
+    out
+}
+
+/// Images cles de la video (lecture des seules images cles : quelques secondes pour un film).
+pub fn list_keyframes(tools: &Tools, src: &Path) -> Result<Vec<f64>> {
+    let mut c = Command::new(&tools.ffprobe);
+    c.args(["-v", "error", "-select_streams", "v:0", "-skip_frame", "nokey", "-show_entries", "frame=pts_time,best_effort_timestamp_time:format=start_time", "-of", "compact"]).arg(src);
+    c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    no_window(&mut c);
+    let out = c.output()?;
+    if !out.status.success() {
+        return Err(Error::Probe(String::from_utf8_lossy(&out.stderr).trim().to_string()));
+    }
+    Ok(parse_keyframes_compact(&String::from_utf8_lossy(&out.stdout)))
 }
 
 /// Son de menu : echantillons 16 bits gros-boutistes, stereo, 48 kHz (10 s au plus), pour sound.bdmv.

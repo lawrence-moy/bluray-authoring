@@ -29,6 +29,8 @@ pub struct VideoEntry {
     pub subs: Vec<crate::subtitle::SubTrackCfg>,
     /// Pistes audio choisies (vide : la premiere piste audio du fichier, dans la langue du disque).
     pub audio: Vec<crate::audio::AudioTrackCfg>,
+    /// Une image cle exacte a chaque chapitre a l'encodage (JSON `chapitres_exacts`) : le chapitre demarre a l'image choisie.
+    pub exact_chapters: bool,
     raw: Value,
 }
 
@@ -79,7 +81,7 @@ impl VideoEntry {
     }
 
     pub fn new(file: &str) -> Self {
-        VideoEntry { file: file.into(), title: String::new(), thumb_s: None, chapters: vec![], auto_s: None, subs: vec![], audio: vec![], raw: Value::Obj(vec![]) }
+        VideoEntry { file: file.into(), title: String::new(), thumb_s: None, chapters: vec![], auto_s: None, subs: vec![], audio: vec![], exact_chapters: false, raw: Value::Obj(vec![]) }
     }
 }
 
@@ -150,6 +152,7 @@ impl ProjectModel {
             e.title = x.get("titre").and_then(Value::as_str).unwrap_or("").into();
             e.thumb_s = x.get("vignette_s").and_then(Value::as_f64);
             e.auto_s = x.get("chapitres_auto_s").and_then(Value::as_f64);
+            e.exact_chapters = x.get("chapitres_exacts").and_then(Value::as_bool).unwrap_or(false);
             e.subs = crate::subtitle::tracks_from_value(x.get("soustitres"))?;
             e.audio = crate::audio::tracks_from_value(x.get("pistes_audio"))?;
             for c in x.get("chapitres").and_then(Value::as_array).unwrap_or(&[]) {
@@ -196,6 +199,7 @@ impl ProjectModel {
             set(&mut o, "titre", if e.title.is_empty() { None } else { Some(s(&e.title)) });
             set(&mut o, "vignette_s", e.thumb_s.map(n));
             set(&mut o, "chapitres_auto_s", e.auto_s.map(n));
+            set(&mut o, "chapitres_exacts", e.exact_chapters.then_some(Value::Bool(true)));
             let subs: Vec<SubTrackCfg> = e.subs.iter().map(|t| self.synced_track(t)).collect();
             set(&mut o, "soustitres", crate::subtitle::tracks_to_value(&subs));
             let audio: Vec<crate::audio::AudioTrackCfg> = e.audio.iter().map(|t| { let mut t = t.clone(); if let Some(l) = self.language(t.lang_id) { t.lang = l.code.clone(); } t }).collect();
