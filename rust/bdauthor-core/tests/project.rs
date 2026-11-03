@@ -1,4 +1,5 @@
 //! Construction complete d'un disque avec un vrai ffmpeg (ignore si ffmpeg est absent) et un moteur de dessin minimal.
+mod common;
 use bdauthor_core::ffmpeg::Tools;
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::*;
@@ -63,6 +64,7 @@ impl Renderer for Flat {
 
 #[test]
 fn layout_and_pagination() {
+    common::fr();
     assert_eq!(paginate(12, None).unwrap().len(), 1);
     let p = paginate(13, None).unwrap();
     assert_eq!(p.iter().map(|g| g.len()).collect::<Vec<_>>(), vec![7, 6]);
@@ -81,6 +83,7 @@ fn layout_and_pagination() {
 
 #[test]
 fn full_project() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
     let dir: PathBuf = std::env::var_os("BDAUTHOR_TEST_OUT").map(PathBuf::from).unwrap_or_else(|| std::env::temp_dir().join(format!("bdauthor_proj_{}", std::process::id())));
     let _ = std::fs::remove_dir_all(&dir);
@@ -125,6 +128,7 @@ fn full_project() {
 
 #[test]
 fn custom_layout_project() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { return };
     let dir = std::env::temp_dir().join(format!("bdauthor_design_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -208,6 +212,7 @@ fn custom_layout_project() {
 
 #[test]
 fn project_with_subtitles() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
     let dir = std::env::temp_dir().join(format!("bdauthor_projsub_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -264,6 +269,7 @@ fn project_with_subtitles() {
 
 #[test]
 fn styled_buttons_project() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { return };
     let dir = std::env::temp_dir().join(format!("bdauthor_style_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -344,6 +350,7 @@ fn styled_buttons_project() {
 
 #[test]
 fn home_intro_and_play_all() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { return };
     let dir = std::env::temp_dir().join(format!("bdauthor_home_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -395,6 +402,7 @@ fn home_intro_and_play_all() {
 
 #[test]
 fn animated_menu_background_with_music() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { return };
     let dir = std::env::temp_dir().join(format!("bdauthor_animbg_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -458,6 +466,7 @@ fn animated_menu_background_with_music() {
 
 #[test]
 fn per_page_backgrounds() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { return };
     let dir = std::env::temp_dir().join(format!("bdauthor_pagebg_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -511,6 +520,7 @@ fn per_page_backgrounds() {
 
 #[test]
 fn invalid_main_layout_stops_before_encoding() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { return };
     let dir = std::env::temp_dir().join(format!("bdauthor_badlayout_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -539,6 +549,7 @@ fn invalid_main_layout_stops_before_encoding() {
 
 #[test]
 fn generic_pages_with_chapter_thumbnails() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { return };
     let dir = std::env::temp_dir().join(format!("bdauthor_generic_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -613,6 +624,7 @@ fn generic_pages_with_chapter_thumbnails() {
 
 #[test]
 fn language_list_fixes_track_numbers() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
     let dir = std::env::temp_dir().join(format!("bdauthor_langs_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
@@ -681,6 +693,7 @@ fn language_list_fixes_track_numbers() {
 
 #[test]
 fn several_audio_tracks_per_video() {
+    common::fr();
     let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
     let dir = std::env::temp_dir().join(format!("bdauthor_audio_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);

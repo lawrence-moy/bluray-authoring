@@ -1,3 +1,4 @@
+mod common;
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::pgs::*;
 use bdauthor_core::project::Renderer;
@@ -7,6 +8,7 @@ use std::sync::Arc;
 
 #[test]
 fn srt_basic() {
+    common::fr();
     let src = "\u{feff}1\r\n00:00:01,500 --> 00:00:03,000\r\n<i>Bonjour</i> &amp; salut\r\nDeuxi\u{e8}me ligne\r\n\r\n2\r\n00:01:02.5 --> 00:01:04,250 X1:10\r\n{\\an8}Haut\r\n\r\n3\r\n00:00:05,000 --> 00:00:04,000\r\nignore\r\n";
     let c = parse_srt(src);
     assert_eq!(c.len(), 2);
@@ -17,6 +19,7 @@ fn srt_basic() {
 
 #[test]
 fn ass_basic() {
+    common::fr();
     let src = "[Script Info]\nTitle: x\n\n[V4+ Styles]\nStyle: a,b,c\n\n[Events]\nFormat: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text\n\
 Dialogue: 0,0:00:01.50,0:00:03.00,Default,,0,0,0,,{\\i1}Bonjour, monde\\Nligne 2{\\i0}\nComment: 0,0:00:01.50,0:00:03.00,Default,,0,0,0,,non\nDialogue: 0,1:02:03.04,1:02:04.00,Default,,0,0,0,,Fin\n";
     let c = parse_ass(src);
@@ -28,6 +31,7 @@ Dialogue: 0,0:00:01.50,0:00:03.00,Default,,0,0,0,,{\\i1}Bonjour, monde\\Nligne 2
 
 #[test]
 fn decode_encodings() {
+    common::fr();
     assert_eq!(decode_text(&[0x63, 0x61, 0x66, 0xE9, 0x92]), "café’");
     assert_eq!(decode_text("é".as_bytes()), "é");
     assert_eq!(decode_text(&[0xFF, 0xFE, b'a', 0, 0xE9, 0]), "aé");
@@ -35,6 +39,7 @@ fn decode_encodings() {
 
 #[test]
 fn merge_overlaps() {
+    common::fr();
     let c = |s, e, t: &str| Cue { start_ms: s, end_ms: e, text: t.into(), pos: None };
     let m = merge(&[c(0, 3000, "A"), c(1000, 2000, "B"), c(5000, 6000, "C"), c(6000, 7000, "C"), c(8000, 8000, "vide")]);
     assert_eq!(m, vec![c(0, 1000, "A"), c(1000, 2000, "A\nB"), c(2000, 3000, "A"), c(5000, 7000, "C")]);
@@ -74,6 +79,7 @@ fn cues() -> Vec<Cue> {
 
 #[test]
 fn pgs_roundtrip() {
+    common::fr();
     let base = 54_000_000u64;
     let specs = encode_track(&cues(), &SubStyle::default(), &Flat, (1920, 1080), 1, base, base).unwrap();
     // l'ordre des DTS ne decroit jamais
@@ -104,6 +110,7 @@ fn pgs_roundtrip() {
 
 #[test]
 fn pgs_720_scaling_and_positions() {
+    common::fr();
     let mut st = SubStyle::default();
     st.pos = VPos::Top;
     let im = render_cue("Haut", &st, &Flat, (1280, 720)).unwrap().unwrap();
@@ -115,6 +122,7 @@ fn pgs_720_scaling_and_positions() {
 
 #[test]
 fn pgs_fragmented_ods() {
+    common::fr();
     // image bruitee : le RLE depasse la taille maximale d'un segment
     let (w, h) = (700u16, 200u16);
     let mut x = 12345u32;
@@ -142,6 +150,7 @@ fn pgs_fragmented_ods() {
 
 #[test]
 fn start_is_delayed_when_too_early() {
+    common::fr();
     let c = vec![Cue { start_ms: 0, end_ms: 2000, text: "Tot".into(), pos: None }];
     let base = 54_000_000u64;
     let specs = encode_track(&c, &SubStyle::default(), &Flat, (1920, 1080), 1, base, base).unwrap();
@@ -151,6 +160,7 @@ fn start_is_delayed_when_too_early() {
 
 #[test]
 fn model_json_roundtrip_with_subtitles() {
+    common::fr();
     use bdauthor_core::model::ProjectModel;
     let src = r##"{ "titre": "T", "langue": "fra", "videos": [
         {"fichier": "a.mp4", "inconnu": 7, "soustitres": [

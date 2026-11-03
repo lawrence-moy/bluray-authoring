@@ -4,6 +4,8 @@
 //! (titres 1..N), fond de menu = clip N (image fixe, sans audio), playlist de menu N (fond + menu IG), clip IG 80002 ;
 //! pagination au-dela de 12 elements (voir `paginate`), menus de chapitres, cache d'encodage.
 //! Le dessin (vignettes, libelles, fond) est delegue a un `Renderer` : le crate `bdauthor-render` en fournit un complet.
+use crate::i18n::tr;
+use crate::trf;
 use crate::check::{check_bdmv, Report};
 use crate::style::ButtonStyle;
 use crate::design::{nav_applicable, Align, Designs, Item, Kind, NavAction, PageDesign, PageMusic, PageVisual, SlotReturn, Target};
@@ -65,7 +67,7 @@ pub trait Renderer {
     /// derive de l'image normale avec les effets du style. Erreur si ce moteur ne sait pas charger d'images.
     fn skin_button(&self, skin: &[Option<PathBuf>; 3], w: u32, h: u32, style: &ButtonStyle) -> std::result::Result<[Arc<RgbaImage>; 3], String> {
         let _ = (skin, w, h, style);
-        Err("images d'etats non gerees par ce moteur de dessin".into())
+        Err(tr("button state images not supported by this drawing engine").into())
     }
     /// Image (fond transparent) d'une replique de sous-titre : texte centre, contour compris, aux tailles du style (deja a l'echelle de
     /// la video). `max_w` : largeur disponible (le texte est reduit s'il deborde). `None` si ce moteur ne sait pas dessiner de sous-titres.
@@ -122,8 +124,8 @@ struct SlotSpec { label: String, source: PathBuf, at: Option<f64>, duration: f64
 
 /// Arrete la construction sur des erreurs de mise en page : chaque erreur est ecrite dans le journal, puis l'ensemble est renvoye.
 fn layout_failure<T>(errs: &[String], log: &mut dyn FnMut(&str)) -> Result<T> {
-    for e in errs { log(&format!("ERREUR de mise en page : {e}")); }
-    bad(format!("{} erreur(s) de mise en page, a corriger dans l'editeur : {}", errs.len(), errs.join(" | ")))
+    for e in errs { log(&trf!("LAYOUT ERROR: {}", e)); }
+    bad(trf!("{} layout error(s), to fix in the editor: {}", errs.len(), errs.join(" | ")))
 }
 
 /// Image `img` centree dans un cadre transparent de `w` x `h` (rognee si plus grande).
@@ -211,7 +213,7 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], pa
             Kind::Slot { thumb_h, video, .. } => {
                 // vignette sans video : absente du disque
                 let Some(v) = video else { continue };
-                let sp = (e.slot_spec)(it).ok_or_else(|| Error::Format(format!("vignette : la video {} n'existe pas", v + 1)))?;
+                let sp = (e.slot_spec)(it).ok_or_else(|| Error::Format(trf!("thumbnail: video {} does not exist", v + 1)))?;
                 let th = py_round(*thumb_h as f64 * s) as i32;
                 let thumb = ffmpeg::extract_thumbnail_rgba(e.tools, &sp.source, (w as u32, th as u32), sp.at, sp.duration)?;
                 let label = sp.label.clone();
@@ -248,7 +250,7 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], pa
             let mut all = Vec::new();
             for f in &skin.sel_frames {
                 let paths = [one(skin.normal_file()), one(f), one(&skin.activated)];
-                all.push(renderer.skin_button(&paths, w as u32, h as u32, &st).map_err(|m| Error::Format(format!("animation ({f}) : {m}")))?[1].clone());
+                all.push(renderer.skin_button(&paths, w as u32, h as u32, &st).map_err(|m| Error::Format(trf!("animation ({}): {}", f, m)))?[1].clone());
             }
             states[1] = all.remove(0);
             frames = all;
@@ -265,7 +267,7 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], pa
             let mut all = Vec::new();
             for f in &skin.normal_frames {
                 let paths = [one(f), one(&skin.selected), one(&skin.activated)];
-                all.push(renderer.skin_button(&paths, w as u32, h as u32, &st).map_err(|m| Error::Format(format!("animation ({f}) : {m}")))?[0].clone());
+                all.push(renderer.skin_button(&paths, w as u32, h as u32, &st).map_err(|m| Error::Format(trf!("animation ({}): {}", f, m)))?[0].clone());
             }
             // la premiere image est deja l'etat normal ; les suivantes forment l'animation
             nframes = all.into_iter().skip(1).collect();
@@ -306,7 +308,7 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], pa
             crate::design::SubChoice::Keep => {}
             crate::design::SubChoice::Off => commands.insert(0, crate::mobj::set_pg_stream(None)),
             crate::design::SubChoice::Lang(id) => {
-                let rank = e.langs.iter().position(|l| *l == id).ok_or_else(|| Error::Format("sous-titres d'un bouton : la langue choisie n'existe plus dans la liste des langues".into()))?;
+                let rank = e.langs.iter().position(|l| *l == id).ok_or_else(|| Error::Format(tr("subtitles of a button: the chosen language no longer exists in the language list").into()))?;
                 commands.insert(0, crate::mobj::set_pg_stream(Some(rank)));
             }
         }
@@ -367,7 +369,7 @@ fn file_id(p: &Path) -> String {
 #[allow(clippy::too_many_arguments)]
 fn menu_bg_clip(env: &BuildEnv, mb: &MenuBg, image: Option<&Path>, layer: Option<&RgbaImage>, tmp: &Path, name: &str, fond_s: f64, size: (u32, u32), fps: &str, opts: &EncodeOpts, files: &mut BTreeMap<String, Vec<u8>>, num: u32) -> Result<ClipScan> {
     if !mb.animated() {
-        let img = image.ok_or_else(|| Error::Format("fond de menu : image manquante".into()))?;
+        let img = image.ok_or_else(|| Error::Format(tr("menu background: missing image").into()))?;
         return still_clip(env.tools, env.cancel, img, fond_s, size, fps, opts, files, num);
     }
     let layer_png = match layer {
@@ -381,7 +383,7 @@ fn menu_bg_clip(env: &BuildEnv, mb: &MenuBg, image: Option<&Path>, layer: Option
     };
     let visual = match &mb.video {
         Some(v) => ffmpeg::BgVisual::Video(v, mb.video_audio),
-        None => ffmpeg::BgVisual::Image(image.ok_or_else(|| Error::Format("fond de menu : image manquante".into()))?),
+        None => ffmpeg::BgVisual::Image(image.ok_or_else(|| Error::Format(tr("menu background: missing image").into()))?),
     };
     let vis_id = match visual { ffmpeg::BgVisual::Video(v, a) => format!("{}|{a}", file_id(v)), ffmpeg::BgVisual::Image(i) => format!("{:x}", fnv1a(&std::fs::read(i)?)) };
     let key = format!(
@@ -434,7 +436,7 @@ pub struct Cell { pub x: i32, pub y: i32, pub w: i32, pub th: i32, pub h: i32 }
 /// (marge 60, plus `reserve` pixels pour des boutons additionnels). Premiere grille qui tient.
 pub fn layout(n: usize, size: (u32, u32), reserve: i32) -> Result<Vec<Cell>> {
     if n > MAX_PER_PAGE || n < 1 {
-        return bad(format!("{n} elements sur une page : 1 a {MAX_PER_PAGE}"));
+        return bad(trf!("{} items on a page: 1 to {}", n, MAX_PER_PAGE));
     }
     let s = size.0 as f64 / 1920.0;
     let avail = 1080 - 250 - 60 - reserve;
@@ -449,7 +451,7 @@ pub fn layout(n: usize, size: (u32, u32), reserve: i32) -> Result<Vec<Cell>> {
             break;
         }
     }
-    let Some((cols, rows, w, th, h, gx, gy, total_h)) = found else { return bad(format!("{n} elements ne tiennent pas dans le menu")) };
+    let Some((cols, rows, w, th, h, gx, gy, total_h)) = found else { return bad(trf!("{} items do not fit in the menu", n)) };
     let total_w = cols as i32 * w + (cols as i32 - 1) * gx;
     let (x0, y0) = ((1920 - total_w) / 2, 250 + (avail - total_h) / 2);
     let r = |v: i32| py_round(v as f64 * s) as i32;
@@ -472,7 +474,7 @@ pub fn layout(n: usize, size: (u32, u32), reserve: i32) -> Result<Vec<Cell>> {
 pub fn paginate(count: usize, par_page: Option<usize>) -> Result<Vec<Vec<usize>>> {
     if let Some(p) = par_page {
         if !(1..=MAX_PER_PAGE).contains(&p) {
-            return bad(format!("menu.par_page : 1 a {MAX_PER_PAGE}"));
+            return bad(trf!("menu.par_page: 1 to {}", MAX_PER_PAGE));
         }
     }
     if count <= par_page.unwrap_or(MAX_PER_PAGE) {
@@ -503,10 +505,10 @@ pub fn parse_chapters(v: &Value, sc: &ClipScan) -> Result<Vec<Chapter>> {
         for c in a {
             match c {
                 Value::Obj(_) => {
-                    let t = c.get("t").and_then(Value::as_f64).ok_or_else(|| Error::Format("chapitre sans temps « t »".into()))?;
+                    let t = c.get("t").and_then(Value::as_f64).ok_or_else(|| Error::Format(tr("chapter without time “t”").into()))?;
                     spec.push((t, c.get("titre").and_then(Value::as_str).map(String::from)));
                 }
-                _ => spec.push((c.as_f64().ok_or_else(|| Error::Format("chapitre : nombre de secondes attendu".into()))?, None)),
+                _ => spec.push((c.as_f64().ok_or_else(|| Error::Format(tr("chapter: number of seconds expected").into()))?, None)),
             }
         }
     }
@@ -549,7 +551,7 @@ pub fn parse_chapters(v: &Value, sc: &ClipScan) -> Result<Vec<Chapter>> {
         return Ok(vec![]);
     }
     if chapters.len() > MAX_CHAPTERS {
-        return bad(format!("{} chapitres : {MAX_CHAPTERS} au maximum par video", chapters.len()));
+        return bad(trf!("{} chapters: {} at most per video", chapters.len(), MAX_CHAPTERS));
     }
     Ok(chapters)
 }
@@ -639,14 +641,14 @@ fn fps_str(fps: f64) -> Result<&'static str> {
         x if x == 29.97 => "30000/1001",
         x if x == 50.0 => "50",
         x if x == 59.94 => "60000/1001",
-        x => return bad(format!("cadence {x} non geree")),
+        x => return bad(trf!("frame rate {} not supported", x)),
     })
 }
 
 fn get_usize(v: Option<&Value>, what: &str) -> Result<Option<usize>> {
     match v {
         None | Some(Value::Null) => Ok(None),
-        Some(x) => x.as_i64().filter(|n| *n >= 0).map(|n| Some(n as usize)).ok_or_else(|| Error::Format(format!("{what} : entier positif attendu"))),
+        Some(x) => x.as_i64().filter(|n| *n >= 0).map(|n| Some(n as usize)).ok_or_else(|| Error::Format(trf!("{}: positive integer expected", what))),
     }
 }
 
@@ -668,7 +670,7 @@ fn add_subtitles(
             specs.push(crate::film::SubSpec { lang: *tl, cues: vec![], style: crate::subtitle::SubStyle::default() });
             continue;
         };
-        if let Some(m) = t.problems().into_iter().next() { return bad(format!("video {num}, sous-titres {} : {m}", k + 1)); }
+        if let Some(m) = t.problems().into_iter().next() { return bad(trf!("video {}, subtitles {}: {}", num, k + 1, m)); }
         let cues = match &t.source {
             SubSource::File(f) => crate::subtitle::load_cues_enc(&abs(f), t.fps.or(crate::subtitle::plausible_fps(video_fps)), t.charset, &t.lang).map_err(Error::Format)?,
             SubSource::Embedded(idx) => {
@@ -692,7 +694,7 @@ fn add_subtitles(
     let mut kept = Vec::new();
     for (k, t) in tracks.into_iter().enumerate() {
         if t.specs.is_empty() && cfg[k].0.is_some() {
-            (env.log)(&format!("   sous-titres {} : aucune replique affichable{}", k + 1, if keep_empty { " (piste vide)" } else { ", piste ignoree" }));
+            (env.log)(&trf!("   subtitles {}: no displayable cue{}", k + 1, if keep_empty { tr(" (empty track)") } else { tr(", track ignored") }));
         }
         if !t.specs.is_empty() {
             kept.push(t);
@@ -702,7 +704,7 @@ fn add_subtitles(
     }
     let n_sets: usize = kept.iter().map(|t| t.specs.len()).sum();
     let (out, _) = crate::film::mux_encoded_tracks(&enc, audio_langs, &kept)?;
-    (env.log)(&format!("   {} piste(s) de sous-titres ajoutee(s) ({} segments)", kept.len(), n_sets));
+    (env.log)(&trf!("   {} subtitle track(s) added ({} segments)", kept.len(), n_sets));
     Ok((out, kept.iter().enumerate().map(|(k, t)| (crate::pgs::PG_PID0 + k as u16, t.lang)).collect()))
 }
 
@@ -714,10 +716,10 @@ fn slot_tracks(langs: &[crate::subtitle::Language], all: &[Vec<crate::subtitle::
     for (i, tracks) in all.iter().enumerate() {
         for (k, t) in tracks.iter().enumerate() {
             let Some(rank) = langs.iter().position(|l| l.id == t.lang_id) else {
-                return bad(format!("video {}, sous-titres {} : langue a choisir dans la liste des langues du projet", i + 1, k + 1));
+                return bad(trf!("video {}, subtitles {}: language to choose from the project's language list", i + 1, k + 1));
             };
             if tracks[..k].iter().any(|o| o.lang_id == t.lang_id) {
-                return bad(format!("video {}, sous-titres {} : la langue « {} » est deja utilisee par une autre piste de cette video", i + 1, k + 1, langs[rank].name));
+                return bad(trf!("video {}, subtitles {}: the language “{}” is already used by another track of this video", i + 1, k + 1, langs[rank].name));
             }
             used = used.max(rank + 1);
         }
@@ -732,13 +734,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let base = std::fs::canonicalize(project_path).unwrap_or_else(|_| project_path.to_path_buf());
     let base = base.parent().map(Path::to_path_buf).unwrap_or_default();
     let proj = json::parse(&std::fs::read_to_string(project_path)?).map_err(|e| Error::Format(e.to_string()))?;
-    let vids = proj.get("videos").and_then(Value::as_array).ok_or_else(|| Error::Format("champ « videos » (liste) absent".into()))?;
+    let vids = proj.get("videos").and_then(Value::as_array).ok_or_else(|| Error::Format(tr("“videos” field (list) missing").into()))?;
     let n = vids.len();
     if !(1..=MAX_VIDEOS).contains(&n) {
-        return bad(format!("1 a {MAX_VIDEOS} videos attendues, {n} donnees"));
+        return bad(trf!("1 to {} videos expected, {} given", MAX_VIDEOS, n));
     }
     let lang_s = proj.get("langue").and_then(Value::as_str).unwrap_or("und");
-    let lang: [u8; 3] = lang_s.as_bytes().try_into().map_err(|_| Error::Format(format!("langue « {lang_s} » : 3 lettres attendues (ex. fra)")))?;
+    let lang: [u8; 3] = lang_s.as_bytes().try_into().map_err(|_| Error::Format(trf!("language “{}”: 3 letters expected (e.g. fra)", lang_s)))?;
     let empty = Value::Obj(vec![]);
     let enc_cfg = proj.get("encodage").unwrap_or(&empty);
     let mut eopts = EncodeOpts::default();
@@ -752,7 +754,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let boucle = menu_cfg.get("boucle").and_then(Value::as_bool).unwrap_or(false);
     let fond_s = menu_cfg.get("fond_secondes").and_then(Value::as_f64).unwrap_or(5.0);
     let p = |f: &str| -> PathBuf { let q = Path::new(f); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
-    let vfile = |v: &Value| -> Result<String> { v.get("fichier").and_then(Value::as_str).map(String::from).ok_or_else(|| Error::Format("video sans champ « fichier »".into())) };
+    let vfile = |v: &Value| -> Result<String> { v.get("fichier").and_then(Value::as_str).map(String::from).ok_or_else(|| Error::Format(tr("video without “file” field").into())) };
     let vtitle = |v: &Value| -> String {
         v.get("titre").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| {
             Path::new(v.get("fichier").and_then(Value::as_str).unwrap_or("")).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
@@ -760,13 +762,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     };
     // pages du menu verifiees avant tout encodage (sauf les instants des chapitres, compares plus tard a la duree reelle des videos)
     if let Some(v) = proj.get("mise_en_page") {
-        let ds = Designs::from_value(v).map_err(|e| Error::Format(format!("mise_en_page : {e}")))?;
+        let ds = Designs::from_value(v).map_err(|e| Error::Format(trf!("layout: {}", e)))?;
         let np = ds.free.len();
         let mut errs = Vec::new();
         for (k, d) in ds.free.iter().enumerate() {
-            errs.extend(d.validate(k, np, n).into_iter().filter(|x| x.error).map(|x| format!("page {} : {}", k + 1, x.msg)));
+            errs.extend(d.validate(k, np, n).into_iter().filter(|x| x.error).map(|x| trf!("page {}: {}", k + 1, x.msg)));
             for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay(e) | Target::Audio(_, e) => e.map_or(true, |q| q < np) }) {
-                errs.push(format!("page {} : {}", k + 1, pr.msg));
+                errs.push(trf!("page {}: {}", k + 1, pr.msg));
             }
         }
         if !errs.is_empty() {
@@ -786,7 +788,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     // langues de sous-titres du projet : le rang d'une langue est son numero de piste dans toutes les videos
     let languages = crate::subtitle::languages_from_value(proj.get("langues")).map_err(Error::Format)?;
     if languages.len() > crate::film::MAX_SUB_TRACKS {
-        return bad(format!("{} langues de sous-titres : {} au maximum", languages.len(), crate::film::MAX_SUB_TRACKS));
+        return bad(trf!("{} subtitle languages: {} at most", languages.len(), crate::film::MAX_SUB_TRACKS));
     }
     let lang_ids: Vec<u32> = languages.iter().map(|l| l.id).collect();
     let all_subs: Vec<Vec<crate::subtitle::SubTrackCfg>> = vids.iter().map(|v| crate::subtitle::tracks_from_value(v.get("soustitres")).map_err(Error::Format)).collect::<Result<_>>()?;
@@ -794,7 +796,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     // pistes audio : meme regle de numerotation par langue (les langues audio viennent de la meme liste)
     let all_audio: Vec<Vec<crate::audio::AudioTrackCfg>> = vids.iter().map(|v| crate::audio::tracks_from_value(v.get("pistes_audio")).map_err(Error::Format)).collect::<Result<_>>()?;
     if languages.is_empty() && all_audio.iter().any(|t| !t.is_empty()) {
-        return bad("pistes audio configurees mais aucune langue dans la liste des langues du projet (menu Edition > Langues des sous-titres)");
+        return bad(tr("audio tracks configured but no language in the project's language list (menu Edit > Subtitle languages)"));
     }
     let audio_plan = crate::audio::plan_audio(&languages, lang_s, &all_audio).map_err(Error::Format)?;
     let mut audio_langs: Vec<Vec<[u8; 3]>> = Vec::new();
@@ -803,7 +805,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     for (i, v) in vids.iter().enumerate() {
         let name = vfile(v)?;
         let src = p(&name);
-        (env.log)(&format!("[{}/{n}] encodage de {name} ...", i + 1));
+        (env.log)(&trf!("[{}/{}] encoding {} ...", i + 1, n, name));
         let info = ffmpeg::probe(env.tools, &src)?;
         durations.push(info.duration_s);
         // pistes audio de cette video (chemins complets) et leurs langues
@@ -813,7 +815,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 for x in &mut t {
                     if let crate::audio::AudioSource::File(f) = &mut x.source {
                         let full = p(f);
-                        if !full.is_file() { return bad(format!("video {}, piste audio : fichier introuvable ({f})", i + 1)); }
+                        if !full.is_file() { return bad(trf!("video {}, audio track: file not found ({})", i + 1, f)); }
                         *f = full.to_string_lossy().into_owned();
                     }
                 }
@@ -831,12 +833,12 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             None => None,
         };
         let m2ts = match cached {
-            Some((b, _)) => { (env.log)("   (deja encodee : cache)"); b }
+            Some((b, _)) => { (env.log)(tr("   (already encoded: cache)")); b }
             None => {
                 let (lo, hi) = (i as f64 / n as f64 * 0.85, (i + 1) as f64 / n as f64 * 0.85);
                 let progress = &mut *env.progress;
                 let (m, st) = crate::film::make_film_m2ts_tracks(env.tools, &src, &a_langs, &a_tracks, &eopts, None, &mut |f| progress(lo + (hi - lo) * f), env.cancel)?;
-                (env.log)(&format!("   {} : {} images, {} trames audio", st.cible, st.images, st.trames_audio));
+                (env.log)(&trf!("   {}: {} frames, {} audio frames", st.cible, st.images, st.trames_audio));
                 if let Some(d) = &cache_dir {
                     std::fs::create_dir_all(d)?;
                     let f = d.join(format!("{}.m2ts", cache_key_with(&src, lang, &eopts, &info, &a_sig)?));
@@ -855,7 +857,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             (m2ts, Vec::new())
         } else {
             let cfg: Vec<SubSlot> = all_subs[i].iter().enumerate().map(|(k, t)| {
-                let tl: [u8; 3] = t.lang.as_bytes().try_into().map_err(|_| Error::Format(format!("video {}, sous-titres {} : langue invalide", i + 1, k + 1)))?;
+                let tl: [u8; 3] = t.lang.as_bytes().try_into().map_err(|_| Error::Format(trf!("video {}, subtitles {}: invalid language", i + 1, k + 1)))?;
                 Ok((Some(t.clone()), tl))
             }).collect::<Result<_>>()?;
             add_subtitles(env, &src, &base, &cfg, false, &a_langs, &tmp.0, &m2ts, i + 1, info.fps())?
@@ -874,7 +876,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         video_chapters.push(parse_chapters(v, sc)?);
     }
     let mut designs = match proj.get("mise_en_page") {
-        Some(v) => Designs::from_value(v).map_err(|e| Error::Format(format!("mise_en_page : {e}")))?,
+        Some(v) => Designs::from_value(v).map_err(|e| Error::Format(trf!("layout: {}", e)))?,
         None => Designs::default(),
     };
     if designs.free.is_empty() {
@@ -882,7 +884,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             .map(|(v, ch)| GenVideo { title: vtitle(v), chapters: ch.iter().map(|c| (c.t_rel, c.name.clone())).collect() })
             .collect();
         designs.free = generate_pages(&gv, &title, &designs.style).map_err(Error::Format)?.free;
-        (env.log)(&format!("aucune page de menu : {} page(s) de depart generee(s)", designs.free.len()));
+        (env.log)(&trf!("no menu page: {} starter page(s) generated", designs.free.len()));
     }
     let pages: Vec<PageDesign> = designs.free.clone();
     // sons des menus : un identifiant par fichier distinct, dans l'ordre de rencontre (style du projet puis elements)
@@ -896,21 +898,21 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 add(b);
             }
         }
-        if order.len() > crate::sound::MAX_SOUNDS { return bad(format!("trop de sons de menu differents ({}, {} au plus)", order.len(), crate::sound::MAX_SOUNDS)); }
+        if order.len() > crate::sound::MAX_SOUNDS { return bad(trf!("too many different menu sounds ({}, {} at most)", order.len(), crate::sound::MAX_SOUNDS)); }
         order.into_iter().enumerate().map(|(k, f)| (f, k as u8)).collect()
     };
     let np = pages.len();
     if np == 0 {
-        return bad("aucune page de menu : ajoutez au moins une page dans l'editeur");
+        return bad(tr("no menu page: add at least one page in the editor"));
     }
     {
         let mut errs = Vec::new();
         for (k, d) in pages.iter().enumerate() {
             for pr in d.validate(k, np, n) {
-                if pr.error { errs.push(format!("page {} : {}", k + 1, pr.msg)); } else { (env.log)(&format!("page {} : {}", k + 1, pr.msg)); }
+                if pr.error { errs.push(trf!("page {}: {}", k + 1, pr.msg)); } else { (env.log)(&trf!("page {}: {}", k + 1, pr.msg)); }
             }
             for pr in d.check_targets(&|t| match t { Target::Main(q) => q < np, Target::Video(v) => v < n, Target::Stay(e) | Target::Audio(_, e) => e.map_or(true, |q| q < np) }) {
-                errs.push(format!("page {} : {}", k + 1, pr.msg));
+                errs.push(trf!("page {}: {}", k + 1, pr.msg));
             }
         }
         if !errs.is_empty() {
@@ -929,14 +931,14 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 if let (Some(v), Some(t)) = (it.fixed_video(), it.chapter_start()) {
                     if v != i { continue; }
                     if t >= dur {
-                        return bad(format!("page {} : vignette de chapitre a {} au-dela de la fin de la video {} ({})", k + 1, mmss(t), i + 1, mmss(dur)));
+                        return bad(trf!("page {}: chapter thumbnail at {} beyond the end of video {} ({})", k + 1, mmss(t), i + 1, mmss(dur)));
                     }
                     set.insert(snap_mark(sc, t));
                 }
             }
         }
         if !set.is_empty() { set.insert((sc.start90 / 2) as u32); }
-        if set.len() > MAX_CHAPTERS { return bad(format!("video {} : {} reperes de chapitre, {MAX_CHAPTERS} au maximum", i + 1, set.len())); }
+        if set.len() > MAX_CHAPTERS { return bad(trf!("video {}: {} chapter marks, {} at most", i + 1, set.len(), MAX_CHAPTERS)); }
         marks.push(set.into_iter().collect());
     }
     let mark_index = |v: usize, t: f64| -> u32 { let m = snap_mark(&scans[v], t); marks[v].iter().position(|&x| x == m).unwrap_or(0) as u32 };
@@ -958,7 +960,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let home_idx = match designs.home {
         None => 0,
         Some(Target::Main(q)) if q < np => q,
-        Some(_) => return bad("page d'accueil inexistante (page supprimee ?)"),
+        Some(_) => return bad(tr("home page does not exist (page deleted?)")),
     };
     let set_ret = |r: u32| Command::new(MOVE_RI_INSN, R_RETURN, r);
     // destination d'un lien : (titre, commandes) ; `origin` : titre ou revenir apres une video
@@ -990,7 +992,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let fmt = (first.width, first.height, first.fps);
     for (i, sc) in scans.iter().enumerate().skip(1) {
         if (sc.width, sc.height, sc.fps) != fmt {
-            (env.log)(&format!("avertissement : la video {} est en {}x{} {} i/s, la premiere en {}x{} {} i/s (un changement de format peut provoquer un temps mort a la lecture)", i + 1, sc.width, sc.height, sc.fps, fmt.0, fmt.1, fmt.2));
+            (env.log)(&trf!("warning: video {} is {}x{} {} fps, the first is {}x{} {} fps (a format change can cause a freeze during playback)", i + 1, sc.width, sc.height, sc.fps, fmt.0, fmt.1, fmt.2));
         }
     }
     let size = (first.width, first.height);
@@ -1057,7 +1059,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let clip = build_menu_clip(buttons, &MenuOptions { ics_pts: pts, video_size: menu_size, ui_model: 0, rgb_colors: 63, frame_rate_code: FRAME_RATES.iter().find(|r| r.0 == bgscan.fps).map_or(1, |r| r.2),
             anim_fps: if anim_fps == 0 { crate::design::DEFAULT_ANIM_FPS } else { anim_fps } as f64 }).map_err(Error::Format)?;
         if clip.m2ts.len() > 6 * 1024 * 1024 {
-            return bad(format!("{label} trop lourd ({:.1} Mo) : reduire le nombre d'elements de la page ", clip.m2ts.len() as f64 / 1e6));
+            return bad(trf!("{} too heavy ({} MB): reduce the number of items on the page ", label, format!("{:.1}", clip.m2ts.len() as f64 / 1e6)));
         }
         if looping { anim_clips.borrow_mut().insert(bg_num); }
         let stats = MenuStats { pts, bytes: clip.m2ts.len(), objects: clip.menu.ods.len(), palette: clip.menu.pds.entries.len() };
@@ -1091,7 +1093,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             f
         }
     };
-    (env.log)("encodage du fond de menu ...");
+    (env.log)(tr("encoding menu background ..."));
     let fps = fps_str(first.fps)?;
     let bg_sc = menu_bg_clip(env, &mb, Some(&bg_png), None, &tmp.0, "fond", fond_s, size, fps, &still_opts, &mut files, n as u32)?;
     (env.progress)(0.9);
@@ -1099,7 +1101,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
 
     let weight_note = |pix: &[u64], what: &str| -> Option<String> {
         let total: u64 = pix.iter().sum();
-        (total > crate::style::DECODED_LIMIT).then(|| format!("avertissement : {what} : images de boutons de {:.1} Mo, au-dela des {:.0} Mo qu'un lecteur garantit (allegez halos, agrandissements, etats actives ou nombre de boutons)", total as f64 / 1048576.0, crate::style::DECODED_LIMIT as f64 / 1048576.0))
+        (total > crate::style::DECODED_LIMIT).then(|| trf!("warning: {}: button images of {} MB, beyond the {} MB a player guarantees (lighten glows, enlargements, activated states or number of buttons)", what, format!("{:.1}", total as f64 / 1048576.0), format!("{:.0}", crate::style::DECODED_LIMIT as f64 / 1048576.0)))
     };
 
     // 5. une page de menu par page generique : titre n+1+k, playlist n+k, clip de menu 80002+k
@@ -1107,7 +1109,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let mut next_bg = (n + 1) as u32;
     let mut first_page: Option<MenuStats> = None;
     for (k, d) in pages.iter().enumerate() {
-        let what = format!("page {}{}", k + 1, if d.name.is_empty() { String::new() } else { format!(" ({})", d.name) });
+        let what = trf!("page {}{}", k + 1, if d.name.is_empty() { String::new() } else { format!(" ({})", d.name) });
         let origin = page_title(k);
         // vignettes : video depuis le debut ou depuis un repere, ou destination choisie ; retour selon la vignette
         let slot_spec = |it: &Item| -> Option<SlotSpec> {
@@ -1138,7 +1140,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         };
         let decor_r = scale_decor(d, sc_);
         let (buttons, pix) = page_buttons(&benv, d, &decor_r, k, np, &target)?;
-        if buttons.is_empty() { return bad(format!("{what} : aucun bouton (le lecteur ne pourrait pas en sortir)")); }
+        if buttons.is_empty() { return bad(trf!("{}: no button (the player could not leave it)", what)); }
         if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
         let decor: Vec<Decor> = scale_decor(d, sd).into_iter().map(|(_, d)| d).collect();
         let pbg = page_bg(d)?;
@@ -1162,7 +1164,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     // 6. playlists des videos (avec leurs reperes), « Tout lire », sequence d'ouverture, navigation
     let mut video_params = Vec::new();
     for (i, sc) in scans.iter().enumerate() {
-        if sc.audio_codes.is_empty() { return bad(format!("la video {} n'a pas de piste audio exploitable", i + 1)); }
+        if sc.audio_codes.is_empty() { return bad(trf!("video {} has no usable audio track", i + 1)); }
         let stns: Vec<AudioStn> = sc.audio_codes.iter().enumerate().map(|(k, &(pid, coding, fmt_rate))| {
             AudioStn { pid, coding, fmt_rate, lang: audio_langs[i].get(k).or(audio_langs[i].last()).copied().unwrap_or(lang) }
         }).collect();
@@ -1189,7 +1191,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         None => None,
         Some(f) => {
             let src = p(f);
-            (env.log)(&format!("sequence d'ouverture {f} ..."));
+            (env.log)(&trf!("opening sequence {} ...", f));
             let info = ffmpeg::probe(env.tools, &src)?;
             let cache_file = match &cache_dir { Some(d) => Some(d.join(format!("{}.m2ts", cache_key(&src, lang, &eopts, &info)?))), None => None };
             let m2ts = match cache_file.as_ref().and_then(|c| std::fs::read(c).ok()).filter(|b| !b.is_empty() && b.len() % 192 == 0) {
@@ -1210,7 +1212,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             let sc = scan_clip(&m2ts)?;
             files.insert(format!("CLIPINF/{num:05}.clpi"), make_clip_clpi(&m2ts, lang, 0, None, "0100")?);
             files.insert(format!("STREAM/{num:05}.m2ts"), m2ts);
-            let (pid_a, type_a, code_a) = *sc.audio_codes.first().ok_or_else(|| Error::Format("sequence d'ouverture sans audio".into()))?;
+            let (pid_a, type_a, code_a) = *sc.audio_codes.first().ok_or_else(|| Error::Format(tr("opening sequence without audio").into()))?;
             let pl = next_pl;
             next_pl += 1;
             files.insert(format!("PLAYLIST/{pl:05}.mpls"), make_playlist(&PlaylistParams {
@@ -1225,7 +1227,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let anim = anim_clips.borrow().clone();
     if !anim.is_empty() {
         let bytes: usize = anim.iter().filter_map(|num| files.get(&format!("STREAM/{num:05}.m2ts"))).map(Vec::len).sum();
-        (env.log)(&format!("fonds de menu animes ou sonores : {} clip(s), {:.0} Mo au total", anim.len(), bytes as f64 / 1e6));
+        (env.log)(&trf!("animated or sound menu backgrounds: {} clip(s), {} MB in total", anim.len(), format!("{:.0}", bytes as f64 / 1e6)));
     }
     let jump_back = Command::new(JUMP_TITLE_REG_INSN, R_RETURN, 0);
     let mut objs = vec![MovieObject::new(vec![Command::new(JUMP_TITLE_INSN, page_title(home_idx), 0)])]; // 0 : Top Menu -> accueil
@@ -1246,7 +1248,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     if let Some(pl) = play_all_pl {
         objs.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, pl, 0), jump_back]));
     }
-    if objs.len() != total_titles as usize + 1 { return bad("objets de navigation : numerotation inattendue"); }
+    if objs.len() != total_titles as usize + 1 { return bad(tr("navigation objects: unexpected numbering")); }
     let fp = match intro_pl {
         Some(pl) => {
             objs.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, pl, 0), Command::new(JUMP_TITLE_INSN, 0, 0)]));
@@ -1264,11 +1266,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let mut sounds = Vec::new();
         for (f, _) in by_id {
             let path = p(f);
-            if !path.is_file() { return bad(format!("son de menu introuvable : {f}")); }
+            if !path.is_file() { return bad(trf!("menu sound not found: {}", f)); }
             sounds.push(ffmpeg::decode_menu_sound(env.tools, &path)?);
         }
         let data = crate::sound::make_sound_bdmv(&sounds);
-        (env.log)(&format!("sons des menus : {} son(s), {:.1} s en tout, {:.0} Ko", sounds.len(), sounds.iter().map(|s| s.seconds()).sum::<f64>(), data.len() as f64 / 1024.0));
+        (env.log)(&trf!("menu sounds: {} sound(s), {} s in total, {} KB", sounds.len(), format!("{:.1}", sounds.iter().map(|s| s.seconds()).sum::<f64>()), format!("{:.0}", data.len() as f64 / 1024.0)));
         files.insert("AUXDATA/sound.bdmv".into(), data);
     }
 

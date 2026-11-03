@@ -1,4 +1,5 @@
 //! Image ISO UDF 2.50 : ecriture, relecture de la structure, verification contre le dossier source.
+mod common;
 use bdauthor_core::iso::*;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::AtomicBool;
@@ -49,6 +50,7 @@ fn entry<'a>(t: &'a IsoTree, path: &str) -> &'a IsoEntry { t.entries.iter().find
 
 #[test]
 fn write_read_verify() {
+    common::fr();
     let src = disc("base");
     let iso = src.parent().unwrap().join("disque.iso");
     let mut o = opts("MON DISQUE");
@@ -90,6 +92,7 @@ fn write_read_verify() {
 
 #[test]
 fn corruption_detected() {
+    common::fr();
     let src = disc("corrompu");
     let iso = src.parent().unwrap().join("disque.iso");
     let stop = AtomicBool::new(false);
@@ -116,6 +119,7 @@ fn corruption_detected() {
 
 #[test]
 fn options() {
+    common::fr();
     let src = disc("options");
     let dir = src.parent().unwrap();
     let stop = AtomicBool::new(false);
@@ -150,6 +154,7 @@ fn options() {
 
 #[test]
 fn big_files_split_and_cancel() {
+    common::fr();
     let src = disc("etendues");
     let dir = src.parent().unwrap();
     let stop = AtomicBool::new(false);
@@ -170,6 +175,7 @@ fn big_files_split_and_cancel() {
 
 #[test]
 fn project_settings() {
+    common::fr();
     use bdauthor_core::json::parse;
     use bdauthor_core::model::ProjectModel;
     // par defaut : rien n'est ecrit dans le projet
@@ -205,6 +211,7 @@ fn project_settings() {
 
 #[test]
 fn finish_after_build() {
+    common::fr();
     let src = disc("fin");
     let dir = src.parent().unwrap().to_path_buf();
     let stop = AtomicBool::new(false);
@@ -236,6 +243,7 @@ fn finish_after_build() {
 
 #[test]
 fn compat_date_and_margin() {
+    common::fr();
     let src = disc("compat");
     let dir = src.parent().unwrap().to_path_buf();
     let stop = AtomicBool::new(false);

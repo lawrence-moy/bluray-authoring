@@ -1,4 +1,5 @@
 //! Langues de sous-titres du projet : liste, rattachement des pistes, conversion des anciens projets, validation.
+mod common;
 use bdauthor_core::design::*;
 use bdauthor_core::model::*;
 
@@ -11,6 +12,7 @@ const PROJECT: &str = r##"{ "titre": "T", "langue": "fra",
 
 #[test]
 fn validation_of_languages() {
+    common::fr();
     let mut m = ProjectModel::from_json(PROJECT).unwrap();
     assert_eq!(m.designs.free[0].items[0].sub, SubChoice::Lang(2));
     // enregistrement et relecture
@@ -46,6 +48,7 @@ fn validation_of_languages() {
 
 #[test]
 fn language_choice_json() {
+    common::fr();
     let t = r#"{"videos":[{"fichier":"a"}],"langues":[{"id":4,"nom":"Anglais","code":"eng"}],
       "mise_en_page":{"pages":[{"nom":"P","elements":[{"type":"texte","texte":"x","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"rester":true},"soustitres":{"langue":4}}]}]}}"#;
     let m = ProjectModel::from_json(t).unwrap();
@@ -56,6 +59,7 @@ fn language_choice_json() {
 
 #[test]
 fn audio_language_action() {
+    common::fr();
     // texte cliquable (pas seulement un bouton) qui regle la langue audio 4
     let t = r#"{"videos":[{"fichier":"a","pistes_audio":[{"piste":1,"langue":"eng","langue_id":4}]}],"langues":[{"id":4,"nom":"Anglais","code":"eng"}],
       "mise_en_page":{"pages":[{"nom":"P","elements":[{"type":"texte","texte":"x","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"audio_langue":4}}]}]}}"#;
@@ -79,6 +83,7 @@ fn audio_language_action() {
 
 #[test]
 fn setting_then_exit_page() {
+    common::fr();
     // reglage des sous-titres puis page 2 ; reglage audio puis page 3 ; JSON, renumerotation et suppression de page
     let t = r#"{"videos":[{"fichier":"a"}],"langues":[{"id":4,"nom":"Anglais","code":"eng"}],
       "mise_en_page":{"pages":[

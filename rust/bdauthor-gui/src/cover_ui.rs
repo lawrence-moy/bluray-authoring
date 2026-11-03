@@ -139,7 +139,7 @@ fn cover_format(ui: &mut egui::Ui, c: &mut Cover) -> bool {
     egui::CollapsingHeader::new(tr("Format and printing")).default_open(true).show(ui, |ui| {
         egui::ComboBox::from_id_salt("jaquette_format").selected_text(tr("Choose a standard format…")).show_ui(ui, |ui| {
             for (k, f) in FORMATS.iter().enumerate() {
-                if ui.selectable_label(false, f.0).clicked() { c.set_format(k); changed = true; }
+                if ui.selectable_label(false, tr(f.0)).clicked() { c.set_format(k); changed = true; }
             }
         });
         egui::Grid::new("jaquette_dims").num_columns(4).show(ui, |ui| {
@@ -627,6 +627,7 @@ impl App {
                 ui.horizontal(|ui| {
                     egui::ComboBox::from_id_salt("jaquette_champs").selected_text(tr("Insert an automatic field…")).show_ui(ui, |ui| {
                         for (k, desc) in FIELDS {
+                            let desc = tr(desc);
                             if ui.selectable_label(false, format!("{{{k}}} — {desc}")).clicked() { text.push_str(&format!("{{{k}}}")); changed = true; }
                         }
                     });

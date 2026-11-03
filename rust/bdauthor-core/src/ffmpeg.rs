@@ -6,6 +6,8 @@
 //! * `make_still_ts` : image fixe -> clip video seul. `extract_thumbnail` : une image de la video.
 //! La progression est rapportee par `-progress pipe:1` ; l'annulation tue le processus ffmpeg.
 
+use crate::i18n::tr;
+use crate::trf;
 use std::collections::BTreeMap;
 use std::fmt;
 use std::io::{BufRead, BufReader, Read};
@@ -29,12 +31,12 @@ pub enum Error {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Io(e) => write!(f, "erreur d'entree/sortie : {e}"),
+            Error::Io(e) => f.write_str(&trf!("I/O error: {}", e)),
             Error::NotFound(m) => write!(f, "{m}"),
-            Error::Probe(m) => write!(f, "source illisible : {m}"),
-            Error::Ffmpeg { code, stderr } => write!(f, "ffmpeg a echoue (code {code:?}) : {}", stderr.trim()),
-            Error::Cancelled => write!(f, "operation annulee"),
-            Error::Format(m) => write!(f, "donnees invalides : {m}"),
+            Error::Probe(m) => f.write_str(&trf!("unreadable source: {}", m)),
+            Error::Ffmpeg { code, stderr } => f.write_str(&trf!("ffmpeg failed (code {}): {}", format!("{:?}", code), stderr.trim())),
+            Error::Cancelled => f.write_str(tr("operation cancelled")),
+            Error::Format(m) => f.write_str(&trf!("invalid data: {}", m)),
         }
     }
 }
@@ -111,8 +113,7 @@ impl Tools {
             return Ok(Tools { ffmpeg: f, ffprobe: p });
         }
         Err(Error::NotFound(
-            "ffmpeg/ffprobe introuvables : placez ffmpeg.exe et ffprobe.exe a cote du programme, \
-             ou indiquez leur dossier dans la variable BDAUTHOR_FFMPEG_DIR, ou ajoutez-les au PATH."
+            tr("ffmpeg/ffprobe not found: put ffmpeg.exe and ffprobe.exe next to the program, or give their folder in the BDAUTHOR_FFMPEG_DIR variable, or add them to the PATH.")
                 .into(),
         ))
     }
@@ -177,14 +178,14 @@ pub fn parse_probe_flat(text: &str) -> Result<VideoInfo> {
     let video = streams
         .values()
         .find(|s| s.get("codec_type").map(String::as_str) == Some("video"))
-        .ok_or_else(|| Error::Probe("aucun flux video".into()))?;
+        .ok_or_else(|| Error::Probe(tr("no video stream").into()))?;
     let get = |m: &BTreeMap<String, String>, k: &str| m.get(k).cloned().unwrap_or_default();
     let (n, d) = get(video, "r_frame_rate")
         .split_once('/')
         .map(|(a, b)| (a.parse::<u32>().unwrap_or(0), b.parse::<u32>().unwrap_or(1)))
         .unwrap_or((0, 1));
     if n == 0 {
-        return Err(Error::Probe("cadence d'images illisible".into()));
+        return Err(Error::Probe(tr("unreadable frame rate").into()));
     }
     let pix_fmt = get(video, "pix_fmt");
     Ok(VideoInfo {
@@ -511,7 +512,7 @@ pub fn probe_duration(tools: &Tools, src: &Path) -> Result<f64> {
         .find_map(|l| l.strip_prefix("format.duration=").map(|v| v.trim().trim_matches('"').parse::<f64>()))
         .and_then(|r| r.ok())
         .filter(|d| *d > 0.0)
-        .ok_or_else(|| Error::Probe(format!("{} : duree illisible", src.display())))
+        .ok_or_else(|| Error::Probe(trf!("{}: unreadable duration", src.display())))
 }
 
 /// Visuel d'un fond de menu anime ou sonore.
@@ -598,7 +599,7 @@ pub fn extract_thumbnail_rgba(tools: &Tools, src: &Path, size: (u32, u32), at: O
     let data = std::fs::read(&tmp);
     let _ = std::fs::remove_file(&tmp);
     r?;
-    crate::palette::RgbaImage::from_raw(size.0, size.1, data?).map_err(|_| Error::Format("miniature : taille inattendue (video trop courte ?)".into()))
+    crate::palette::RgbaImage::from_raw(size.0, size.1, data?).map_err(|_| Error::Format(tr("thumbnail: unexpected size (video too short?)").into()))
 }
 
 /// Son de menu : echantillons 16 bits gros-boutistes, stereo, 48 kHz (10 s au plus), pour sound.bdmv.
@@ -612,7 +613,7 @@ pub fn decode_menu_sound(tools: &Tools, src: &Path) -> Result<crate::sound::Soun
     let _ = std::fs::remove_file(&tmp);
     r?;
     let samples = data?;
-    if samples.is_empty() { return Err(Error::Format(format!("son de menu vide : {}", src.display()))); }
+    if samples.is_empty() { return Err(Error::Format(trf!("empty menu sound: {}", src.display()))); }
     Ok(crate::sound::Sound { channels: 2, samples })
 }
 
@@ -732,11 +733,7 @@ pub fn extract_subtitle_srt(tools: &Tools, src: &Path, index: u32, dst: &Path) -
     no_window(&mut c);
     let out = c.output()?;
     if !out.status.success() {
-        return Err(Error::Format(format!(
-            "extraction de la piste de sous-titres {} impossible (seuls les sous-titres texte sont geres) : {}",
-            index + 1,
-            String::from_utf8_lossy(&out.stderr).trim()
-        )));
+        return Err(Error::Format(trf!("cannot extract subtitle track {} (only text subtitles are supported): {}", index + 1, String::from_utf8_lossy(&out.stderr).trim())));
     }
     Ok(())
 }
@@ -748,7 +745,7 @@ pub fn convert_subtitle_file_to_srt(tools: &Tools, src: &Path, dst: &Path) -> Re
     no_window(&mut c);
     let out = c.output()?;
     if !out.status.success() {
-        return Err(Error::Format(format!("conversion des sous-titres impossible ({}) : {}", src.display(), String::from_utf8_lossy(&out.stderr).trim())));
+        return Err(Error::Format(trf!("subtitle conversion failed ({}): {}", src.display(), String::from_utf8_lossy(&out.stderr).trim())));
     }
     Ok(())
 }

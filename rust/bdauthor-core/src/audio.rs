@@ -1,4 +1,6 @@
 //! Pistes audio d'une video : source (piste de la video ou fichier audio), langue du projet, decalage ; choix des pistes du disque.
+use crate::i18n::tr;
+use crate::trf;
 use crate::json::Value;
 use crate::subtitle::Language;
 
@@ -38,7 +40,7 @@ impl AudioTrackCfg {
         let source = match (v.get("fichier").and_then(Value::as_str), v.get("piste").and_then(Value::as_i64)) {
             (Some(f), _) => AudioSource::File(f.into()),
             (None, Some(n)) if n >= 0 => AudioSource::Embedded(n as u32),
-            _ => return Err("pistes audio : « fichier » ou « piste » attendu".into()),
+            _ => return Err(tr("audio tracks: “file” or “track” expected").into()),
         };
         Ok(AudioTrackCfg {
             source,
@@ -67,8 +69,8 @@ impl AudioTrackCfg {
     /// Problemes de reglage (liste vide si tout va bien).
     pub fn problems(&self) -> Vec<String> {
         let mut p = Vec::new();
-        if self.lang.len() != 3 || !self.lang.is_ascii() { p.push("langue : 3 lettres attendues (ex. fra)".to_string()); }
-        if let AudioSource::File(f) = &self.source { if f.trim().is_empty() { p.push("fichier audio non choisi".to_string()); } }
+        if self.lang.len() != 3 || !self.lang.is_ascii() { p.push(tr("language: 3 letters expected (e.g. fra)").to_string()); }
+        if let AudioSource::File(f) = &self.source { if f.trim().is_empty() { p.push(tr("audio file not chosen").to_string()); } }
         p
     }
 }
@@ -77,7 +79,7 @@ impl AudioTrackCfg {
 pub fn tracks_from_value(v: Option<&Value>) -> Result<Vec<AudioTrackCfg>, String> {
     match v {
         None | Some(Value::Null) => Ok(vec![]),
-        Some(a) => a.as_array().ok_or("« pistes_audio » : liste attendue")?.iter().map(AudioTrackCfg::from_value).collect(),
+        Some(a) => a.as_array().ok_or(tr("“pistes_audio”: list expected"))?.iter().map(AudioTrackCfg::from_value).collect(),
     }
 }
 
@@ -114,16 +116,16 @@ pub fn plan_audio(languages: &[Language], project_lang: &str, videos: &[Vec<Audi
     for (i, tracks) in videos.iter().enumerate() {
         if tracks.is_empty() {
             let Some(l) = languages.iter().find(|l| l.code == project_lang) else {
-                return Err(format!("video {} : pas de piste audio configuree, et la langue du disque « {project_lang} » n'est pas dans la liste des langues du projet", i + 1));
+                return Err(trf!("video {}: no audio track configured, and the disc language “{}” is not in the project's language list", i + 1, project_lang));
             };
             ids.push(vec![l.id]);
             continue;
         }
-        if tracks.len() > MAX_AUDIO_TRACKS { return Err(format!("video {} : {MAX_AUDIO_TRACKS} pistes audio au maximum", i + 1)); }
+        if tracks.len() > MAX_AUDIO_TRACKS { return Err(trf!("video {}: {} audio tracks at most", i + 1, MAX_AUDIO_TRACKS)); }
         let mut v = Vec::new();
         for (k, t) in tracks.iter().enumerate() {
-            let Some(l) = lang_of(t.lang_id) else { return Err(format!("video {}, piste audio {} : langue a choisir dans la liste des langues du projet", i + 1, k + 1)) };
-            if v.contains(&l.id) { return Err(format!("video {}, piste audio {} : la langue « {} » est deja utilisee par une autre piste audio de cette video", i + 1, k + 1, l.name)); }
+            let Some(l) = lang_of(t.lang_id) else { return Err(trf!("video {}, audio track {}: language to choose from the project's language list", i + 1, k + 1)) };
+            if v.contains(&l.id) { return Err(trf!("video {}, audio track {}: the language “{}” is already used by another audio track of this video", i + 1, k + 1, l.name)); }
             v.push(l.id);
         }
         ids.push(v);
@@ -135,10 +137,7 @@ pub fn plan_audio(languages: &[Language], project_lang: &str, videos: &[Vec<Audi
         ranks.sort_unstable();
         if ranks != (0..ranks.len()).collect::<Vec<_>>() {
             let names: Vec<&str> = slots.iter().filter_map(|id| lang_of(*id)).map(|l| l.name.as_str()).collect();
-            return Err(format!(
-                "video {} : ses langues audio doivent etre les premieres de l'ordre commun ({}) pour que chaque langue ait le meme numero de piste dans toutes les videos ; reordonnez la liste des langues ou ses pistes audio",
-                i + 1, names.join(", ")
-            ));
+            return Err(trf!("video {}: its audio languages must be the first ones of the common order ({}) so that each language has the same track number in all videos; reorder the language list or its audio tracks", i + 1, names.join(", ")));
         }
         if tracks.is_empty() {
             let l = lang_of(v[0]).unwrap();

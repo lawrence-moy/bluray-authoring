@@ -1,3 +1,4 @@
+mod common;
 use bdauthor_core::json::{parse, Value};
 use bdauthor_core::model::*;
 
@@ -8,6 +9,7 @@ const EX: &str = r#"{ "titre": "Mes vidéos", "langue": "fra", "inconnu": {"a": 
 
 #[test]
 fn roundtrip_preserves_everything() {
+    common::fr();
     let m = ProjectModel::from_json(EX).unwrap();
     assert_eq!(m.videos.len(), 2);
     assert_eq!(m.videos[0].chapters.len(), 3);
@@ -28,6 +30,7 @@ fn roundtrip_preserves_everything() {
 
 #[test]
 fn edits_and_validation() {
+    common::fr();
     let mut m = ProjectModel::from_json(EX).unwrap();
     m.videos[1].title = "Seconde".into();
     m.videos[1].auto_s = None;
@@ -48,12 +51,14 @@ fn edits_and_validation() {
 
 #[test]
 fn json_writer_roundtrip() {
+    common::fr();
     let v = parse(r#"{"a":"é\"\n\u0001","b":[1,2.5,[],{}],"c":null}"#).unwrap();
     assert_eq!(parse(&v.to_pretty()).unwrap(), v);
 }
 
 #[test]
 fn designs_persist_and_follow_videos() {
+    common::fr();
     use bdauthor_core::design::*;
     let mut m = ProjectModel::from_json(EX).unwrap();
     let mut p = PageDesign::blank_free(0);
@@ -74,6 +79,7 @@ fn designs_persist_and_follow_videos() {
 
 #[test]
 fn chapter_list_matches_builder_rules() {
+    common::fr();
     let m = ProjectModel::from_json(EX).unwrap();
     let a = m.videos[0].chapter_list(Some(600.0));
     assert_eq!(a.iter().map(|c| c.0).collect::<Vec<_>>(), vec![0.0, 120.0, 300.0]);

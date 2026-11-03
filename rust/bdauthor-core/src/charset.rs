@@ -1,4 +1,5 @@
 //! Pages de code des fichiers de sous-titres (sans dependance externe : tables generees dans `charset_tables.rs` et `charset_data/`).
+use crate::i18n::tr;
 use crate::charset_tables as t;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,11 +45,11 @@ impl Charset {
     /// Libelle affiche.
     pub fn label(self) -> &'static str {
         match self {
-            Charset::Auto => "Automatique", Charset::Utf8 => "UTF-8", Charset::Cp1252 => "Europe de l'Ouest (Windows-1252)",
-            Charset::Cp1250 => "Europe centrale (Windows-1250)", Charset::Cp1251 => "Cyrillique (Windows-1251)", Charset::Cp1253 => "Grec (Windows-1253)",
-            Charset::Cp1254 => "Turc (Windows-1254)", Charset::Cp1255 => "Hébreu (Windows-1255)", Charset::Cp1256 => "Arabe (Windows-1256)",
-            Charset::Cp1257 => "Baltique (Windows-1257)", Charset::Cp1258 => "Vietnamien (Windows-1258)", Charset::Cp874 => "Thaï (Windows-874)",
-            Charset::ShiftJis => "Japonais (Shift-JIS)", Charset::Gbk => "Chinois simplifié (GBK)", Charset::Big5 => "Chinois traditionnel (Big5)", Charset::Uhc => "Coréen (CP949)",
+            Charset::Auto => tr("Automatic"), Charset::Utf8 => "UTF-8", Charset::Cp1252 => tr("Western Europe (Windows-1252)"),
+            Charset::Cp1250 => tr("Central Europe (Windows-1250)"), Charset::Cp1251 => tr("Cyrillic (Windows-1251)"), Charset::Cp1253 => tr("Greek (Windows-1253)"),
+            Charset::Cp1254 => tr("Turkish (Windows-1254)"), Charset::Cp1255 => tr("Hebrew (Windows-1255)"), Charset::Cp1256 => tr("Arabic (Windows-1256)"),
+            Charset::Cp1257 => tr("Baltic (Windows-1257)"), Charset::Cp1258 => tr("Vietnamese (Windows-1258)"), Charset::Cp874 => tr("Thai (Windows-874)"),
+            Charset::ShiftJis => tr("Japanese (Shift-JIS)"), Charset::Gbk => tr("Simplified Chinese (GBK)"), Charset::Big5 => tr("Traditional Chinese (Big5)"), Charset::Uhc => tr("Korean (CP949)"),
         }
     }
 

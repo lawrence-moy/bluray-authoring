@@ -2,6 +2,7 @@
 //!
 //! Ce module ne depend d'aucune bibliotheque d'images : chaque bouton porte deja ses images RGBA
 //! (normal, selectionne, active). Le rendu du texte et le chargement des PNG sont dans `render` (feature `render`).
+use crate::trf;
 use crate::clpi::{AtcSeq, ClipInfo, Clpi, Program, ProgramInfo, SequenceInfo, Stream, StcSeq};
 use crate::ig::*;
 use crate::m2ts::Segment;
@@ -101,7 +102,7 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
     let mut owner: Vec<[usize; 3]> = Vec::new();
     for (n, b) in buttons.iter().enumerate() {
         if b.images.is_empty() {
-            return Err(format!("le bouton {n} n'a aucune image"));
+            return Err(trf!("button {} has no image", n));
         }
         let mut ids = [0usize; 3];
         for k in 0..3 {
@@ -144,7 +145,7 @@ pub fn build_menu(buttons: &[MenuButton], o: &MenuOptions) -> Result<BuiltMenu, 
     let rects: Vec<(i32, i32, i32, i32)> = buttons.iter().map(|b| (b.x, b.y, b.width(), b.height())).collect();
     for (n, r) in rects.iter().enumerate() {
         if r.0 < 0 || r.1 < 0 || r.0 + r.2 > o.video_size.0 as i32 || r.1 + r.3 > o.video_size.1 as i32 {
-            return Err(format!("le bouton {n} ({},{},{}x{}) sort de l'ecran {:?}", r.0, r.1, r.2, r.3, o.video_size));
+            return Err(trf!("button {} ({},{},{}x{}) goes off screen {}", n, r.0, r.1, r.2, r.3, format!("{:?}", o.video_size)));
         }
     }
     let nbs = auto_neighbors(&rects);

@@ -1,4 +1,5 @@
 //! Pages du menu : pages de depart, edition des pages, simulation des vignettes de chapitre.
+mod common;
 use bdauthor_core::convert::{generate_pages, GenVideo};
 use bdauthor_core::design::*;
 use bdauthor_core::editor::*;
@@ -16,6 +17,7 @@ fn slots(d: &PageDesign) -> Vec<(Option<usize>, Option<f64>, Option<Target>)> {
 
 #[test]
 fn starter_pages() {
+    common::fr();
     // 3 videos sur une page ; la video 2 a 3 chapitres (une page de chapitres)
     let v = vec![gv("A", &[]), gv("B", &[0.0, 60.0, 125.0]), gv("C", &[])];
     let st = ButtonStyle { dim: 9, ..ButtonStyle::default() };
@@ -55,6 +57,7 @@ fn model(n: usize) -> ProjectModel {
 
 #[test]
 fn editing_pages() {
+    common::fr();
     let mut m = model(2);
     m.videos[0].chapters = vec![ChapterEntry { id: 1, t: 0.0, title: "Debut".into() }, ChapterEntry { id: 2, t: 30.0, title: "Suite".into() }];
     // chapitres automatiques sans duree connue : pages de depart differees
@@ -97,6 +100,7 @@ fn editing_pages() {
 
 #[test]
 fn simulation_of_chapter_thumbnails() {
+    common::fr();
     let mut m = model(2);
     let mut d = PageDesign::blank_free(0);
     d.items.push(Item::video_slot(100, 100, 400, 260, 225, 1, Some(42.0), "Scene"));

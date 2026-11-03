@@ -10,6 +10,8 @@
 //!
 //! Les entrees de fichiers sont dans la partition de metadonnees (reference 1) ; les donnees des fichiers dans la partition
 //! physique (reference 0, descripteurs longs). Tout est en ecriture sequentielle : les fichiers sont recopies tels quels.
+use crate::i18n::tr;
+use crate::trf;
 use crate::ffmpeg::{Error, Result};
 use std::fs::File;
 use std::io::{BufWriter, Read, Seek, SeekFrom, Write};
@@ -142,7 +144,7 @@ struct Node {
 const TOP: [&str; 2] = ["BDMV", "CERTIFICATE"];
 
 fn scan(src: &Path) -> Result<Vec<Node>> {
-    if !src.join("BDMV").is_dir() { return bad(format!("pas de dossier BDMV dans {}", src.display())); }
+    if !src.join("BDMV").is_dir() { return bad(trf!("no BDMV folder in {}", src.display())); }
     let mut nodes = vec![Node { name: String::new(), src: src.to_path_buf(), dir: true, size: 0, children: vec![], parent: 0, uid: 0, efe: 0, dir_block: 0, dir_len: 0, data: 0 }];
     fn walk(nodes: &mut Vec<Node>, k: usize, top: bool) -> Result<()> {
         let mut entries: Vec<(String, PathBuf, bool, u64)> = Vec::new();
@@ -156,7 +158,7 @@ fn scan(src: &Path) -> Result<Vec<Node>> {
         }
         entries.sort_by(|a, b| a.0.cmp(&b.0));
         for (name, path, dir, size) in entries {
-            if name.encode_utf16().count() > 254 { return bad(format!("nom trop long : {name}")); }
+            if name.encode_utf16().count() > 254 { return bad(trf!("name too long: {}", name)); }
             let c = nodes.len();
             nodes.push(Node { name, src: path, dir, size, children: vec![], parent: k, uid: 0, efe: 0, dir_block: 0, dir_len: 0, data: 0 });
             nodes[k].children.push(c);
@@ -387,7 +389,7 @@ struct EfeData<'a> {
 fn efe(e: &EfeData, date: &Stamp) -> Result<Vec<u8>> {
     let mut b = vec![0u8; BS];
     let (flags, ad_len) = if !e.long.is_empty() { (1u16, e.long.len() * 16) } else { (0u16, e.short.len() * 8) };
-    if 216 + ad_len > BS { return bad("fichier trop gros pour l'image (trop d'etendues)"); }
+    if 216 + ad_len > BS { return bad(tr("file too large for the image (too many extents)")); }
     // ICB tag
     put32(&mut b, 16, 0);
     put16(&mut b, 20, 4);
@@ -482,7 +484,7 @@ fn plan(src: &Path, opt: &IsoOptions, max_extent: u32, date: &Stamp) -> Result<P
         if opt.align && is_stream(&nodes[k].name) { cur = round_up(cur, ALIGN); }
         nodes[k].data = cur;
         let blocks = nodes[k].size.div_ceil(SECTOR);
-        if cur as u64 + blocks > u32::MAX as u64 / 2 { return bad("image trop grande"); }
+        if cur as u64 + blocks > u32::MAX as u64 / 2 { return bad(tr("image too large")); }
         cur += blocks as u32;
     }
     let mirror_at = if opt.mirror { let m = round_up(cur, ALIGN); cur = m + meta_blocks; m } else { meta_at };
@@ -756,7 +758,7 @@ pub fn write_iso_ext(src: &Path, out: &Path, opt: &IsoOptions, max_extent: u32, 
                 if cancel.load(Ordering::Relaxed) { return Err(Error::Cancelled); }
                 let want = left.min(buf.len() as u64) as usize;
                 let got = f.read(&mut buf[..want])?;
-                if got == 0 { return bad(format!("{} a change pendant la creation de l'image", rel(&p.nodes, k))); }
+                if got == 0 { return bad(trf!("{} changed during image creation", rel(&p.nodes, k))); }
                 w.write_all(&buf[..got])?;
                 left -= got as u64;
                 done += got as u64;
@@ -788,7 +790,7 @@ pub fn write_iso_ext(src: &Path, out: &Path, opt: &IsoOptions, max_extent: u32, 
         w.flush()?;
         let f = w.into_inner().map_err(|e| Error::Io(e.into_error()))?;
         f.sync_all()?;
-        if f.metadata()?.len() != total { return bad("taille de l'image inattendue"); }
+        if f.metadata()?.len() != total { return bad(tr("unexpected image size")); }
         Ok(())
     })();
     if let Err(e) = res {
@@ -1060,7 +1062,7 @@ pub fn verify_iso(iso: &Path, src: &Path, cancel: &AtomicBool, progress: &mut dy
     if want != got {
         let missing: Vec<&str> = want.iter().filter(|w| !got.contains(w)).map(|w| w.0.as_str()).take(5).collect();
         let extra: Vec<&str> = got.iter().filter(|g| !want.contains(g)).map(|g| g.0.as_str()).take(5).collect();
-        return bad(format!("arborescence differente du dossier (manquants ou differents : {missing:?} ; en trop : {extra:?})"));
+        return bad(trf!("tree differs from the folder (missing or different: {} ; extra: {})", format!("{:?}", missing), format!("{:?}", extra)));
     }
     let total: u64 = tree.entries.iter().map(|e| e.size).sum::<u64>().max(1);
     let mut done = 0u64;
@@ -1077,7 +1079,7 @@ pub fn verify_iso(iso: &Path, src: &Path, cancel: &AtomicBool, progress: &mut dy
                 let n = left.min(a.len() as u64) as usize;
                 f.read_exact(&mut a[..n])?;
                 s.read_exact(&mut b[..n])?;
-                if a[..n] != b[..n] { return bad(format!("contenu different pour {}", e.path)); }
+                if a[..n] != b[..n] { return bad(trf!("content differs for {}", e.path)); }
                 left -= n as u64;
                 done += n as u64;
                 progress(done as f64 / total as f64);
@@ -1140,11 +1142,11 @@ impl IsoSettings {
             None | Some("dossier") => IsoKeep::Folder,
             Some("iso") => IsoKeep::Iso,
             Some("les_deux") => IsoKeep::Both,
-            Some(x) => return Err(format!("iso.conserver : « {x} » inconnu (dossier, iso, les_deux)")),
+            Some(x) => return Err(trf!("iso.conserver: “{}” unknown (dossier, iso, les_deux)", x)),
         };
         s.file = st("fichier");
         if let Some(c) = v.get("capacite").and_then(crate::json::Value::as_str) {
-            s.capacity = CAPACITIES.iter().position(|(n, _)| *n == c).ok_or(format!("iso.capacite : « {c} » inconnue (BD-25, BD-50, BD-100)"))?;
+            s.capacity = CAPACITIES.iter().position(|(n, _)| *n == c).ok_or(trf!("iso.capacite: “{}” unknown (BD-25, BD-50, BD-100)", c))?;
         }
         s.opts.label = st("nom_volume");
         s.opts.owner = st("proprietaire");
@@ -1153,18 +1155,18 @@ impl IsoSettings {
         s.opts.udf = match v.get("udf").and_then(crate::json::Value::as_str) {
             None | Some("2.50") => UdfRev::V250,
             Some("2.60") => UdfRev::V260,
-            Some(x) => return Err(format!("iso.udf : « {x} » inconnue (2.50, 2.60)")),
+            Some(x) => return Err(trf!("iso.udf: “{}” unknown (2.50, 2.60)", x)),
         };
         s.opts.align = flag("aligner", true);
         s.opts.play_order = flag("ordre_lecture", true);
         s.opts.mirror = flag("miroir", true);
         s.opts.date = match v.get("date").and_then(crate::json::Value::as_str) {
-            Some(t) => IsoDate::Custom(IsoStamp::parse(t).ok_or(format!("iso.date : « {t} » invalide (AAAA-MM-JJ HH:MM)"))?),
+            Some(t) => IsoDate::Custom(IsoStamp::parse(t).ok_or(trf!("iso.date: “{}” invalid (YYYY-MM-DD HH:MM)", t))?),
             None => if flag("date_fixe", false) { IsoDate::Fixed } else { IsoDate::Now },
         };
         s.opts.compat = flag("compatibilite", true);
         if let Some(m) = v.get("marge").and_then(crate::json::Value::as_f64) {
-            if !(0.0..=100.0).contains(&m) { return Err(format!("iso.marge : 0 a 100 (0 : desactivee), {m} donne")); }
+            if !(0.0..=100.0).contains(&m) { return Err(trf!("iso.marge: 0 to 100 (0: disabled), {} given", m)); }
             s.margin = m.round() as u8;
         }
         s.verify = flag("verifier", true);
@@ -1204,17 +1206,17 @@ impl IsoSettings {
     }
 }
 
-fn gb(b: u64) -> String { format!("{:.1} Go", b as f64 / 1e9).replace('.', ",") }
+fn gb(b: u64) -> String { trf!("{} GB", crate::i18n::num(format!("{:.1}", b as f64 / 1e9))) }
 
 /// Avertissement de capacite pour une image de `size` octets : au-dela du disque vise, ou de la marge de securite (`margin` %,
 /// 0 : desactivee).
 pub fn capacity_warning(size: u64, capacity: usize, margin: u8) -> Option<String> {
     let (cap_name, cap) = CAPACITIES[capacity.min(CAPACITIES.len() - 1)];
     if size > cap {
-        Some(format!("Avertissement : l'image ({}) dépasse la capacité d'un {cap_name} ({}).", gb(size), gb(cap)))
+        Some(trf!("Warning: the image ({}) exceeds the capacity of a {} ({}).", gb(size), cap_name, gb(cap)))
     } else if margin > 0 && size as f64 > cap as f64 * margin as f64 / 100.0 {
         let pct = format!("{:.1}", size as f64 / cap as f64 * 100.0).replace('.', ",");
-        Some(format!("Avertissement : l'image occupe {pct} % d'un {cap_name}, au-delà de la marge de sécurité ({margin} %) : la gravure est moins fiable tout au bord du disque."))
+        Some(trf!("Warning: the image takes up {} % of a {}, beyond the safety margin ({} %): burning is less reliable right at the edge of the disc.", pct, cap_name, margin))
     } else {
         None
     }
@@ -1233,19 +1235,19 @@ pub fn finish_build(out_dir: &Path, iso: &Path, s: &IsoSettings, title: &str, ca
         summary += &m;
         summary.push('\n');
     }
-    log(&format!("image ISO : écriture de {} ({}, volume « {} »)", iso.display(), gb(size), opt.label));
+    log(&trf!("ISO image: writing {} ({}, volume “{}”)", iso.display(), gb(size), opt.label));
     if let Some(d) = iso.parent() { if !d.as_os_str().is_empty() { std::fs::create_dir_all(d)?; } }
     let verify = s.verify;
     let rep = write_iso(out_dir, iso, &opt, cancel, &mut |p| progress(if verify { p * 0.6 } else { p }))?;
     if verify {
-        log("image ISO : vérification…");
+        log(tr("ISO image: verifying…"));
         let n = verify_iso(iso, out_dir, cancel, &mut |p| progress(0.6 + p * 0.4))?;
-        log(&format!("image ISO : vérifiée, {n} fichiers identiques au dossier"));
+        log(&trf!("ISO image: verified, {} files identical to the folder", n));
     }
-    summary += &format!("Image ISO : {} ({}, {:.0} % d'un {cap_name}){}", iso.display(), gb(rep.bytes), rep.bytes as f64 / cap as f64 * 100.0, if verify { ", vérifiée" } else { "" });
+    summary += &trf!("ISO image: {} ({}, {} % of a {}){}", iso.display(), gb(rep.bytes), format!("{:.0}", rep.bytes as f64 / cap as f64 * 100.0), cap_name, if verify { tr(", verified") } else { "" });
     if s.keep == IsoKeep::Iso {
         std::fs::remove_dir_all(out_dir)?;
-        log("dossier de construction supprimé (seule l'image est gardée)");
+        log(tr("build folder deleted (only the image is kept)"));
     }
     Ok(summary)
 }

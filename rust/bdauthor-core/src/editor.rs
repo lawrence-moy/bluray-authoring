@@ -1,5 +1,6 @@
 //! Logique de l'editeur de mise en page, independante de l'interface : liste des pages, selection a la souris,
 //! deplacement et redimensionnement avec aimantation, reprise d'un decor sur d'autres pages.
+use crate::trf;
 use crate::design::{Designs, Item, Kind, Layer, NavAction, PageDesign, Target, PLANE};
 use crate::model::ProjectModel;
 use std::collections::HashMap;
@@ -484,7 +485,7 @@ fn gen_videos(m: &ProjectModel, durations: &HashMap<String, f64>) -> Result<Vec<
     for (i, v) in m.videos.iter().enumerate() {
         let d = durations.get(&v.file).copied();
         if v.chapters.is_empty() && v.auto_s.is_some() && d.is_none() {
-            return Err(format!("duree de la video {} inconnue", i + 1));
+            return Err(trf!("duration of video {} unknown", i + 1));
         }
         out.push(crate::convert::GenVideo { title: video_title(m, i), chapters: v.chapter_list(d) });
     }

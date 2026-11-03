@@ -6,75 +6,19 @@
 //! * le francais est integre (`lang/fr.json`) ; d'autres langues peuvent etre ajoutees sans recompiler : un fichier
 //!   `<code>.json` dans le dossier `langues` a cote du programme (cle `"_name"` = nom affiche dans la liste).
 use bdauthor_core::json::{parse, Value};
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::RwLock;
 
 const FR_JSON: &str = include_str!("../lang/fr.json");
 
-type Table = HashMap<&'static str, &'static str>;
-static TABLE: RwLock<Option<Table>> = RwLock::new(None);
+pub use bdauthor_core::i18n::{format_tr, num, tr, Table};
+pub(crate) use bdauthor_core::trf;
 static CODE: RwLock<String> = RwLock::new(String::new());
 
 fn leak(s: String) -> &'static str {
     Box::leak(s.into_boxed_str())
 }
-
-/// Texte traduit dans la langue choisie, ou le texte d'origine (anglais) s'il n'a pas de traduction.
-pub fn tr(s: &'static str) -> &'static str {
-    if let Ok(g) = TABLE.read() {
-        if let Some(t) = g.as_ref().and_then(|m| m.get(s)) {
-            return t;
-        }
-    }
-    s
-}
-
-/// Texte avec valeurs : dans le modele (traduit), `{}` prend les valeurs dans l'ordre et `{0}`, `{1}`... une valeur precise
-/// (utile quand une langue change l'ordre des mots).
-pub fn format_tr(template: &'static str, args: &[String]) -> String {
-    let t = tr(template);
-    let mut out = String::with_capacity(t.len() + 16);
-    let mut next = 0;
-    let mut rest = t;
-    while let Some(i) = rest.find('{') {
-        out.push_str(&rest[..i]);
-        let after = &rest[i + 1..];
-        match after.find('}') {
-            Some(j) => {
-                let name = &after[..j];
-                let idx = if name.is_empty() {
-                    next += 1;
-                    Some(next - 1)
-                } else {
-                    name.parse::<usize>().ok()
-                };
-                match idx.and_then(|k| args.get(k)) {
-                    Some(v) => out.push_str(v),
-                    None => {
-                        out.push('{');
-                        out.push_str(name);
-                        out.push('}');
-                    }
-                }
-                rest = &after[j + 1..];
-            }
-            None => {
-                out.push('{');
-                rest = after;
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-macro_rules! trf {
-    ($t:expr $(, $v:expr)* $(,)?) => {
-        $crate::i18n::format_tr($t, &[$(($v).to_string()),*])
-    };
-}
-pub(crate) use trf;
 
 /// Dossier des langues ajoutees par l'utilisateur : `langues` a cote du programme.
 pub fn user_dir() -> Option<PathBuf> {
@@ -104,17 +48,11 @@ pub fn set_language(code: &str) {
             read_table(&s, &mut t);
         }
     }
-    if let Ok(mut g) = TABLE.write() {
-        *g = if t.is_empty() { None } else { Some(t) };
-    }
+    bdauthor_core::i18n::set_decimal_comma(code == "fr");
+    bdauthor_core::i18n::set_table(if t.is_empty() { None } else { Some(t) });
     if let Ok(mut c) = CODE.write() {
         *c = code.to_string();
     }
-}
-
-/// Nombre ecrit avec la virgule decimale en francais.
-pub fn num(s: String) -> String {
-    if current() == "fr" { s.replace('.', ",") } else { s }
 }
 
 pub fn current() -> String {

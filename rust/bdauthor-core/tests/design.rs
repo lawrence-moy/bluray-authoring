@@ -1,3 +1,4 @@
+mod common;
 use bdauthor_core::design::*;
 use bdauthor_core::json::parse;
 
@@ -16,6 +17,7 @@ fn page(n: usize) -> PageDesign {
 
 #[test]
 fn validation() {
+    common::fr();
     let mut d = page(3);
     assert!(d.validate(0, 2, 3).iter().all(|p| !p.error), "{:?}", d.validate(0, 2, 3));
     // « Suivant » sur la derniere page : sans objet
@@ -38,6 +40,7 @@ fn validation() {
 
 #[test]
 fn pages_json_swap_remove() {
+    common::fr();
     let mut ds = Designs::default();
     let mut p = PageDesign::blank_free(1);
     p.items.push(slot(100, 200, Some(2)));
@@ -68,6 +71,7 @@ fn pages_json_swap_remove() {
 
 #[test]
 fn goto_buttons_json_remap_and_check() {
+    common::fr();
     let mut ds = Designs::default();
     let mut p = page(2);
     p.items.push(Item::nav(NavAction::Goto, 100, 900, 300, 80)); // cible par defaut : page 1
@@ -100,6 +104,7 @@ fn goto_buttons_json_remap_and_check() {
 
 #[test]
 fn clickable_text_image_and_video_targets() {
+    common::fr();
     let mut ds = Designs::default();
     let mut p = page(2);
     let mut t = Item::text("Lire", 100, 900, 300, 80, 50);
@@ -142,6 +147,7 @@ fn clickable_text_image_and_video_targets() {
 
 #[test]
 fn slot_with_destination() {
+    common::fr();
     let mut p = page(2);
     p.items.push(Item { x: 100, y: 850, w: 250, h: 200, kind: Kind::Slot { thumb_h: 150, video: Some(2), link: Some(Target::Main(1)), start: None, chapter: None, label: String::new(), thumb_at: None, ret: Default::default() }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     assert_eq!(p.slot_count(), 3);
@@ -165,6 +171,7 @@ fn slot_with_destination() {
 
 #[test]
 fn button_style_json_scale_weight() {
+    common::fr();
     use bdauthor_core::style::*;
     let mut st = ButtonStyle::default();
     st.glow = 20; st.zoom = 10; st.activated = true; st.sel_border = [1, 2, 3]; st.underline = true; st.dim = 30;
@@ -207,6 +214,7 @@ fn button_style_json_scale_weight() {
 
 #[test]
 fn home_page_json_and_remap() {
+    common::fr();
     let mut ds = Designs::default();
     assert!(ds.is_empty());
     ds.home = Some(Target::Main(2));
@@ -224,6 +232,7 @@ fn home_page_json_and_remap() {
 
 #[test]
 fn page_background_json() {
+    common::fr();
     let mut p = page(1);
     assert!(!p.to_value().to_pretty().contains("fond_page"));
     p.bg = PageBg { visual: PageVisual::Video("fond.mp4".into(), true), music: PageMusic::Silent };

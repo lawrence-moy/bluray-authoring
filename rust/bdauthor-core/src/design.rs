@@ -2,6 +2,8 @@
 //!
 //! Toutes les coordonnees sont exprimees sur un plan de reference 1920x1080 ; le constructeur les met a l'echelle de la taille du menu.
 //! Sans mise en page personnalisee, une page garde la grille automatique (`default_main` / `default_chapter`), identique a celle de Python.
+use crate::i18n::tr;
+use crate::trf;
 use crate::ig::py_round;
 use crate::json::Value;
 use crate::style::{ButtonStyle, Look, Skin, Weight};
@@ -90,10 +92,10 @@ impl NavAction {
     }
     pub fn from_name(s: &str) -> Option<Self> { Self::ALL.into_iter().find(|a| a.name() == s) }
     pub fn default_text(self) -> &'static str {
-        match self { NavAction::Prev => "< Précédent", NavAction::Next => "Suivant >", NavAction::PlayAll => "Tout lire", NavAction::Goto => "Aller à…" }
+        match self { NavAction::Prev => tr("< Previous"), NavAction::Next => tr("Next >"), NavAction::PlayAll => tr("Play all"), NavAction::Goto => tr("Go to…") }
     }
     pub fn label(self) -> &'static str {
-        match self { NavAction::Prev => "Page précédente", NavAction::Next => "Page suivante", NavAction::PlayAll => "Tout lire", NavAction::Goto => "Aller à une page ou lire une vidéo" }
+        match self { NavAction::Prev => tr("Previous page"), NavAction::Next => tr("Next page"), NavAction::PlayAll => tr("Play all"), NavAction::Goto => tr("Go to a page or play a video") }
     }
 }
 
@@ -412,20 +414,20 @@ impl PageDesign {
         let mut p = Vec::new();
         let (err, warn) = (|m: String| Problem { error: true, msg: m }, |m: String| Problem { error: false, msg: m });
         let all = self.slot_count();
-        if all > MAX_PER_PAGE { p.push(err(format!("{all} vignettes : {MAX_PER_PAGE} au maximum par page."))); }
+        if all > MAX_PER_PAGE { p.push(err(trf!("{} thumbnails: {} at most per page.", all, MAX_PER_PAGE))); }
         let mut slot_no = 0;
         for (k, it) in self.items.iter().enumerate() {
-            if it.w < 8 || it.h < 8 { p.push(err(format!("Élément {} trop petit.", k + 1))); }
+            if it.w < 8 || it.h < 8 { p.push(err(trf!("Item {} too small.", k + 1))); }
             if it.x < 0 || it.y < 0 || it.x + it.w > PLANE.0 || it.y + it.h > PLANE.1 {
-                let m = format!("Élément {} dépasse de l'écran.", k + 1);
+                let m = trf!("Item {} extends beyond the screen.", k + 1);
                 p.push(if it.is_button() { err(m) } else { warn(m) });
             }
             if let Kind::Slot { thumb_h, video, .. } = it.kind {
                 slot_no += 1;
-                if thumb_h < 8 || thumb_h > it.h { p.push(err(format!("Élément {} : hauteur de vignette incohérente.", k + 1))); }
+                if thumb_h < 8 || thumb_h > it.h { p.push(err(trf!("Item {}: inconsistent thumbnail height.", k + 1))); }
                 match video {
-                    None => p.push(warn(format!("Vignette {slot_no} : sans vidéo, elle n'apparaîtra pas sur le disque."))),
-                    Some(v) if v >= n_videos => p.push(err(format!("Vignette {slot_no} : la vidéo {} n'existe pas.", v + 1))),
+                    None => p.push(warn(trf!("Thumbnail {}: without video, it will not appear on the disc.", slot_no))),
+                    Some(v) if v >= n_videos => p.push(err(trf!("Thumbnail {}: video {} does not exist.", slot_no, v + 1))),
                     _ => {}
                 }
             }
@@ -433,17 +435,17 @@ impl PageDesign {
                 if let NavLink::Item(id) = it.nav.get(d) {
                     let name = ["haut", "bas", "gauche", "droite"][d];
                     match self.item_by_id(id) {
-                        None => p.push(warn(format!("Élément {} : la flèche {name} mène à un élément supprimé (navigation automatique à la place).", k + 1))),
-                        Some(t) if t == k => p.push(warn(format!("Élément {} : la flèche {name} mène à lui-même.", k + 1))),
+                        None => p.push(warn(trf!("Item {}: arrow {} leads to a deleted item (automatic navigation instead).", k + 1, name))),
+                        Some(t) if t == k => p.push(warn(trf!("Item {}: arrow {} leads to itself.", k + 1, name))),
                         _ => {}
                     }
                 }
             }
             if let Kind::Nav { action: NavAction::Goto, target: None, .. } = it.kind {
-                p.push(err(format!("Élément {} : choisissez la page cible du bouton.", k + 1)));
+                p.push(err(trf!("Item {}: choose the button's target page.", k + 1)));
             }
             if let Kind::Nav { action, .. } = it.kind {
-                if !nav_applicable(action, page, pages) { p.push(warn(format!("« {} » n'apparaîtra pas sur cette page.", action.label()))); }
+                if !nav_applicable(action, page, pages) { p.push(warn(trf!("“{}” will not appear on this page.", action.label()))); }
             }
         }
         let active: Vec<(usize, &Item)> = self.items.iter().enumerate().filter(|(_, i)| match &i.kind {
@@ -454,7 +456,7 @@ impl PageDesign {
         for (ai, (a, ia)) in active.iter().enumerate() {
             for (b, ib) in &active[ai + 1..] {
                 if ia.x < ib.x + ib.w && ib.x < ia.x + ia.w && ia.y < ib.y + ib.h && ib.y < ia.y + ia.h {
-                    p.push(warn(format!("Les éléments {} et {} se chevauchent.", a + 1, b + 1)));
+                    p.push(warn(trf!("Items {} and {} overlap.", a + 1, b + 1)));
                 }
             }
         }
@@ -464,7 +466,7 @@ impl PageDesign {
             _ => matches!(i.link(), Some(Target::Main(_) | Target::Stay(Some(_)) | Target::Audio(_, Some(_)))),
         });
         if !exits && page > 0 {
-            p.push(warn("Aucun bouton vers une autre page : on n'en sortira qu'avec la touche Menu de la télécommande.".into()));
+            p.push(warn(tr("No button to another page: the only way out is the remote control's Menu key.").into()));
         }
         p
     }
@@ -475,10 +477,10 @@ impl PageDesign {
         for (k, it) in self.items.iter().enumerate() {
             let t = match it.kind { Kind::Nav { action: NavAction::Goto, target: Some(t), .. } => Some(t), _ => it.link() };
             if let Some(t) = t {
-                if !exists(t) { p.push(Problem { error: true, msg: format!("Élément {} : la destination n'existe pas.", k + 1) }); }
+                if !exists(t) { p.push(Problem { error: true, msg: trf!("Item {}: the destination does not exist.", k + 1) }); }
             }
             if let Some(v) = it.fixed_video() {
-                if !exists(Target::Video(v)) { p.push(Problem { error: true, msg: format!("Élément {} : la vidéo {} n'existe pas.", k + 1, v + 1) }); }
+                if !exists(Target::Video(v)) { p.push(Problem { error: true, msg: trf!("Item {}: video {} does not exist.", k + 1, v + 1) }); }
             }
         }
         p
@@ -618,13 +620,13 @@ impl PageDesign {
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
         let mut items = Vec::new();
-        for (k, e) in v.get("elements").and_then(Value::as_array).ok_or("page sans « elements »")?.iter().enumerate() {
-            let at = |key: &str| -> Result<i32, String> { e.get(key).and_then(Value::as_f64).map(|x| x.round() as i32).ok_or_else(|| format!("élément {} : « {key} » manquant", k + 1)) };
+        for (k, e) in v.get("elements").and_then(Value::as_array).ok_or(tr("page without “elements”"))?.iter().enumerate() {
+            let at = |key: &str| -> Result<i32, String> { e.get(key).and_then(Value::as_f64).map(|x| x.round() as i32).ok_or_else(|| trf!("item {}: “{}” missing", k + 1, key)) };
             let st = |key: &str| e.get(key).and_then(Value::as_str);
             let link = || -> Result<Option<Target>, String> {
-                match e.get("cible") { None | Some(Value::Null) => Ok(None), Some(c) => Target::from_value(c).map(Some).ok_or_else(|| format!("élément {} : cible invalide", k + 1)) }
+                match e.get("cible") { None | Some(Value::Null) => Ok(None), Some(c) => Target::from_value(c).map(Some).ok_or_else(|| trf!("item {}: invalid target", k + 1)) }
             };
-            let kind = match st("type").ok_or_else(|| format!("élément {} sans type", k + 1))? {
+            let kind = match st("type").ok_or_else(|| trf!("item {} without type", k + 1))? {
                 "vignette" => {
                     let one = |key: &str| e.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
                     let video = one("video");
@@ -634,24 +636,24 @@ impl PageDesign {
                                  thumb_at: num("image_s"), ret: SlotReturn::from_value(e.get("retour")) }
                 }
                 "navigation" => {
-                    let action = st("action").and_then(NavAction::from_name).ok_or_else(|| format!("élément {} : action inconnue", k + 1))?;
+                    let action = st("action").and_then(NavAction::from_name).ok_or_else(|| trf!("item {}: unknown action", k + 1))?;
                     let target = match e.get("cible") {
-                        Some(c) if action == NavAction::Goto => Some(Target::from_value(c).ok_or_else(|| format!("élément {} : cible invalide", k + 1))?),
+                        Some(c) if action == NavAction::Goto => Some(Target::from_value(c).ok_or_else(|| trf!("item {}: invalid target", k + 1))?),
                         _ => None,
                     };
                     Kind::Nav { action, text: st("texte").unwrap_or(action.default_text()).to_string(), target }
                 }
                 "texte" => {
                     let c = st("couleur").unwrap_or("#ffffff").trim_start_matches('#');
-                    let rgb = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6).ok_or_else(|| format!("élément {} : couleur invalide", k + 1))?;
+                    let rgb = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6).ok_or_else(|| trf!("item {}: invalid color", k + 1))?;
                     Kind::Text { text: st("texte").unwrap_or("").to_string(), size: at("taille")?, color: [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8],
                                  align: st("alignement").and_then(Align::from_name).unwrap_or(Align::Center), font: st("police").unwrap_or("").to_string(), link: link()? }
                 }
-                "image" => Kind::Image { path: st("fichier").ok_or_else(|| format!("élément {} : « fichier » manquant", k + 1))?.to_string(), link: link()? },
-                t => return Err(format!("élément {} : type « {t} » inconnu", k + 1)),
+                "image" => Kind::Image { path: st("fichier").ok_or_else(|| trf!("item {}: “fichier” missing", k + 1))?.to_string(), link: link()? },
+                t => return Err(trf!("item {}: unknown type “{}”", k + 1, t)),
             };
             let look = Look {
-                style: match e.get("style") { Some(v @ Value::Obj(_)) => Some(ButtonStyle::from_value(v).map_err(|m| format!("élément {} : {m}", k + 1))?), _ => None },
+                style: match e.get("style") { Some(v @ Value::Obj(_)) => Some(ButtonStyle::from_value(v).map_err(|m| trf!("item {}: {}", k + 1, m))?), _ => None },
                 skin: e.get("images_etats").map(Skin::from_value).unwrap_or_default(),
                 sounds: e.get("sons").map(crate::style::ItemSounds::from_value),
             };
@@ -829,11 +831,11 @@ impl Designs {
         let mut d = Designs::default();
         if let Some(pages) = v.get("pages").and_then(Value::as_array) {
             for (k, page) in pages.iter().enumerate() {
-                d.free.push(PageDesign::from_value(page).map_err(|e| format!("page {} : {e}", k + 1))?);
+                d.free.push(PageDesign::from_value(page).map_err(|e| trf!("page {}: {}", k + 1, e))?);
             }
         }
-        if let Some(h) = v.get("accueil") { d.home = Some(Target::from_value(h).ok_or("page d'accueil invalide")?); }
-        if let Some(st) = v.get("style_boutons") { d.style = ButtonStyle::from_value(st).map_err(|e| format!("style des boutons : {e}"))?; }
+        if let Some(h) = v.get("accueil") { d.home = Some(Target::from_value(h).ok_or(tr("invalid home page"))?); }
+        if let Some(st) = v.get("style_boutons") { d.style = ButtonStyle::from_value(st).map_err(|e| trf!("button style: {}", e))?; }
         Ok(d)
     }
 }

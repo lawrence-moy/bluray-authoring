@@ -17,6 +17,7 @@ pub mod film;
 pub mod ig;
 pub mod index;
 pub mod iso;
+pub mod i18n;
 pub mod json;
 pub mod m2ts;
 pub mod mobj;

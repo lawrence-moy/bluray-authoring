@@ -724,7 +724,7 @@ pub fn load_cues_enc(path: &std::path::Path, fps: Option<f64>, charset: crate::c
     let mut c = parse_file_text_fps(&ext, &crate::charset::decode(&b, charset, crate::charset::Charset::for_language(lang)), fps);
     if c.is_empty() && !ext.is_empty() && !NATIVE_EXT.contains(&ext.as_str()) {
         // TTML, LRC, STL, JACOsub... : ffmpeg les convertit en SRT
-        let tools = crate::ffmpeg::Tools::locate().map_err(|e| format!("{}: format non reconnu et ffmpeg introuvable ({e})", path.display()))?;
+        let tools = crate::ffmpeg::Tools::locate().map_err(|e| trf!("{}: unrecognized format and ffmpeg not found ({})", path.display(), e))?;
         let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
         let dst = std::env::temp_dir().join(format!("bdauthor_sub_{}_{nanos}.srt", std::process::id()));
         let r = crate::ffmpeg::convert_subtitle_file_to_srt(&tools, path, &dst).map_err(|e| e.to_string());
@@ -734,7 +734,7 @@ pub fn load_cues_enc(path: &std::path::Path, fps: Option<f64>, charset: crate::c
         c = parse_file_text("srt", &decode_text(&t.map_err(|e| e.to_string())?));
     }
     if c.is_empty() {
-        return Err(format!("{}: aucune replique lisible", path.display()));
+        return Err(trf!("{}: no readable cue", path.display()));
     }
     Ok(c)
 }
@@ -864,12 +864,12 @@ pub struct QualityIssue {
 impl IssueKind {
     pub fn label(self) -> &'static str {
         match self {
-            IssueKind::TooFast => "Lecture trop rapide",
-            IssueKind::LongLine => "Ligne trop longue",
-            IssueKind::TooManyLines => "Trop de lignes",
-            IssueKind::TooShort => "Affichage trop court",
-            IssueKind::TooLong => "Affichage trop long",
-            IssueKind::TightGap => "Trop proche de la suivante",
+            IssueKind::TooFast => tr("Reading too fast"),
+            IssueKind::LongLine => tr("Line too long"),
+            IssueKind::TooManyLines => tr("Too many lines"),
+            IssueKind::TooShort => tr("Display too short"),
+            IssueKind::TooLong => tr("Display too long"),
+            IssueKind::TightGap => tr("Too close to the next one"),
         }
     }
 }
@@ -884,24 +884,26 @@ pub fn check_quality(cues: &[Cue], lim: &QualityLimits) -> Vec<QualityIssue> {
         let mut push = |kind, detail: String| out.push(QualityIssue { index: i, kind, detail });
         if dur > 0 {
             let cps = chars as f64 * 1000.0 / dur as f64;
-            if cps > lim.max_cps { push(IssueKind::TooFast, format!("{cps:.1} caractères/s (maximum {})", lim.max_cps)); }
+            if cps > lim.max_cps { push(IssueKind::TooFast, trf!("{} characters/s (maximum {})", format!("{:.1}", cps), lim.max_cps)); }
         }
         if let Some(l) = plain.lines().map(|l| l.trim().chars().count()).max() {
-            if l > lim.max_line_chars { push(IssueKind::LongLine, format!("{l} caractères (maximum {})", lim.max_line_chars)); }
+            if l > lim.max_line_chars { push(IssueKind::LongLine, trf!("{} characters (maximum {})", l, lim.max_line_chars)); }
         }
         let n = plain.lines().count();
-        if n > lim.max_lines { push(IssueKind::TooManyLines, format!("{n} lignes (maximum {})", lim.max_lines)); }
-        if dur < lim.min_ms { push(IssueKind::TooShort, format!("{dur} ms (minimum {})", lim.min_ms)); }
-        if dur > lim.max_ms { push(IssueKind::TooLong, format!("{dur} ms (maximum {})", lim.max_ms)); }
+        if n > lim.max_lines { push(IssueKind::TooManyLines, trf!("{} lines (maximum {})", n, lim.max_lines)); }
+        if dur < lim.min_ms { push(IssueKind::TooShort, trf!("{} ms (minimum {})", dur, lim.min_ms)); }
+        if dur > lim.max_ms { push(IssueKind::TooLong, trf!("{} ms (maximum {})", dur, lim.max_ms)); }
         if let Some(nx) = cues.get(i + 1) {
             let gap = nx.start_ms - c.end_ms;
-            if gap > 0 && gap < lim.min_gap_ms { push(IssueKind::TightGap, format!("{gap} ms avant la suivante (minimum {})", lim.min_gap_ms)); }
+            if gap > 0 && gap < lim.min_gap_ms { push(IssueKind::TightGap, trf!("{} ms before the next one (minimum {})", gap, lim.min_gap_ms)); }
         }
     }
     out
 }
 
 // ------------------------------------------------------------------ reglages d'une piste (projet)
+use crate::i18n::tr;
+use crate::trf;
 use crate::json::Value;
 
 /// D'ou viennent les repliques.
@@ -924,7 +926,7 @@ pub struct Language {
 
 impl Language {
     pub fn from_value(v: &Value) -> Result<Self, String> {
-        let id = v.get("id").and_then(Value::as_i64).filter(|n| *n >= 1).ok_or("langues : « id » (entier >= 1) attendu")? as u32;
+        let id = v.get("id").and_then(Value::as_i64).filter(|n| *n >= 1).ok_or(tr("languages: “id” (integer >= 1) expected"))? as u32;
         let code = v.get("code").and_then(Value::as_str).unwrap_or("und").to_string();
         let name = v.get("nom").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| code.clone());
         Ok(Language { id, name, code })
@@ -946,10 +948,10 @@ pub fn next_language_id(langs: &[Language]) -> u32 {
 /// Nom usuel d'une langue d'apres son code ISO 639-2 (code lui-meme sinon).
 pub fn default_language_name(code: &str) -> String {
     match code {
-        "fra" | "fre" => "Français", "eng" => "Anglais", "deu" | "ger" => "Allemand", "spa" => "Espagnol", "ita" => "Italien",
-        "por" => "Portugais", "nld" | "dut" => "Néerlandais", "jpn" => "Japonais", "zho" | "chi" => "Chinois", "rus" => "Russe",
-        "ara" => "Arabe", "kor" => "Coréen", "pol" => "Polonais", "swe" => "Suédois", "dan" => "Danois", "nor" => "Norvégien",
-        "fin" => "Finnois", "tur" => "Turc", "heb" => "Hébreu", "und" => "Langue inconnue",
+        "fra" | "fre" => tr("French"), "eng" => tr("English"), "deu" | "ger" => tr("German"), "spa" => tr("Spanish"), "ita" => tr("Italian"),
+        "por" => tr("Portuguese"), "nld" | "dut" => tr("Dutch"), "jpn" => tr("Japanese"), "zho" | "chi" => tr("Chinese"), "rus" => tr("Russian"),
+        "ara" => tr("Arabic"), "kor" => tr("Korean"), "pol" => tr("Polish"), "swe" => tr("Swedish"), "dan" => tr("Danish"), "nor" => tr("Norwegian"),
+        "fin" => tr("Finnish"), "tur" => tr("Turkish"), "heb" => tr("Hebrew"), "und" => tr("Unknown language"),
         c => return c.to_string(),
     }
     .to_string()
@@ -959,10 +961,10 @@ pub fn default_language_name(code: &str) -> String {
 pub fn languages_from_value(v: Option<&Value>) -> Result<Vec<Language>, String> {
     let out: Vec<Language> = match v {
         None | Some(Value::Null) => vec![],
-        Some(a) => a.as_array().ok_or("« langues » : liste attendue")?.iter().map(Language::from_value).collect::<Result<_, _>>()?,
+        Some(a) => a.as_array().ok_or(tr("“langues”: list expected"))?.iter().map(Language::from_value).collect::<Result<_, _>>()?,
     };
     for (k, l) in out.iter().enumerate() {
-        if out[..k].iter().any(|x| x.id == l.id) { return Err(format!("langues : identifiant {} en double", l.id)); }
+        if out[..k].iter().any(|x| x.id == l.id) { return Err(trf!("languages: duplicate identifier {}", l.id)); }
     }
     Ok(out)
 }
@@ -1006,7 +1008,7 @@ impl SubTrackCfg {
         let source = match (v.get("fichier").and_then(Value::as_str), v.get("piste").and_then(Value::as_i64)) {
             (Some(f), _) => SubSource::File(f.into()),
             (None, Some(n)) if n >= 0 => SubSource::Embedded(n as u32),
-            _ => return Err("sous-titres : « fichier » ou « piste » attendu".into()),
+            _ => return Err(tr("subtitles: “file” or “track” expected").into()),
         };
         let mut st = SubStyle::default();
         if let Some(s) = v.get("style") {
@@ -1015,9 +1017,9 @@ impl SubTrackCfg {
             if let Some(x) = s.get("couleur").and_then(Value::as_str) { st.color = parse_hex(x)?; }
             if let Some(x) = s.get("contour_couleur").and_then(Value::as_str) { st.outline_color = parse_hex(x)?; }
             if let Some(x) = s.get("contour").and_then(Value::as_i64) { st.outline = x.clamp(0, 30) as i32; }
-            if let Some(x) = s.get("position").and_then(Value::as_str) { st.pos = VPos::from_name(x).ok_or_else(|| format!("position de sous-titre inconnue : {x}"))?; }
+            if let Some(x) = s.get("position").and_then(Value::as_str) { st.pos = VPos::from_name(x).ok_or_else(|| trf!("unknown subtitle position: {}", x))?; }
             if let Some(x) = s.get("marge").and_then(Value::as_i64) { st.margin = x.clamp(0, 540) as i32; }
-            if let Some(x) = s.get("alignement").and_then(Value::as_str) { st.halign = HAlign::from_name(x).ok_or_else(|| format!("alignement de sous-titre inconnu : {x}"))?; }
+            if let Some(x) = s.get("alignement").and_then(Value::as_str) { st.halign = HAlign::from_name(x).ok_or_else(|| trf!("unknown subtitle alignment: {}", x))?; }
             if let Some(x) = s.get("marge_cote").and_then(Value::as_i64) { st.margin_x = x.clamp(0, 960) as i32; }
             if let Some(x) = s.get("largeur_max").and_then(Value::as_i64) { st.max_width = x.clamp(30, 100) as i32; }
             if let Some(x) = s.get("cesure").and_then(Value::as_bool) { st.wrap = x; }
@@ -1039,7 +1041,7 @@ impl SubTrackCfg {
             keep_format: v.get("mise_en_forme").and_then(Value::as_bool).unwrap_or(true),
             charset: match v.get("encodage").and_then(Value::as_str) {
                 None => crate::charset::Charset::Auto,
-                Some(x) => crate::charset::Charset::from_name(x).ok_or_else(|| format!("encodage de sous-titres inconnu : {x}"))?,
+                Some(x) => crate::charset::Charset::from_name(x).ok_or_else(|| trf!("unknown subtitle encoding: {}", x))?,
             },
             fps: v.get("cadence_ips").and_then(Value::as_f64).filter(|f| f.is_finite() && *f >= 1.0 && *f <= 240.0),
             style: st,
@@ -1096,15 +1098,15 @@ impl SubTrackCfg {
     /// Problemes de reglage (liste vide si tout va bien).
     pub fn problems(&self) -> Vec<String> {
         let mut p = Vec::new();
-        if self.lang.len() != 3 || !self.lang.is_ascii() { p.push("langue : 3 lettres attendues (ex. fra)".to_string()); }
-        if let SubSource::File(f) = &self.source { if f.trim().is_empty() { p.push("fichier de sous-titres non choisi".to_string()); } }
+        if self.lang.len() != 3 || !self.lang.is_ascii() { p.push(tr("language: 3 letters expected (e.g. fra)").to_string()); }
+        if let SubSource::File(f) = &self.source { if f.trim().is_empty() { p.push(tr("subtitle file not chosen").to_string()); } }
         p
     }
 }
 
 fn parse_hex(s: &str) -> Result<[u8; 3], String> {
     let c = s.trim().trim_start_matches('#');
-    let v = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6).ok_or_else(|| format!("couleur invalide : {s}"))?;
+    let v = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6).ok_or_else(|| trf!("invalid color: {}", s))?;
     Ok([(v >> 16) as u8, (v >> 8) as u8, v as u8])
 }
 
@@ -1112,7 +1114,7 @@ fn parse_hex(s: &str) -> Result<[u8; 3], String> {
 pub fn tracks_from_value(v: Option<&Value>) -> Result<Vec<SubTrackCfg>, String> {
     match v {
         None | Some(Value::Null) => Ok(vec![]),
-        Some(a) => a.as_array().ok_or("« soustitres » : liste attendue")?.iter().map(SubTrackCfg::from_value).collect(),
+        Some(a) => a.as_array().ok_or(tr("“soustitres”: list expected"))?.iter().map(SubTrackCfg::from_value).collect(),
     }
 }
 

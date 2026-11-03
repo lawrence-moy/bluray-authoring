@@ -1,5 +1,7 @@
 //! Jaquette (feuille a deplier d'un boitier) : dos, tranche et face, avec fond perdu. Modele, enregistrement dans le projet,
 //! mise en page en pixels (pour le rendu) et export PDF. Le dessin des textes et des images est fait par `bdauthor-render`.
+use crate::i18n::tr;
+use crate::trf;
 use crate::design::Align;
 use crate::json::Value;
 use crate::palette::RgbaImage;
@@ -46,7 +48,7 @@ impl LineStyle {
     pub const ALL: [LineStyle; 5] = [LineStyle::Solid, LineStyle::Dashed, LineStyle::Dotted, LineStyle::DashDot, LineStyle::Double];
     pub fn name(self) -> &'static str { match self { LineStyle::Solid => "plein", LineStyle::Dashed => "tirets", LineStyle::Dotted => "points", LineStyle::DashDot => "tirets_points", LineStyle::Double => "double" } }
     pub fn from_name(s: &str) -> Option<LineStyle> { LineStyle::ALL.into_iter().find(|l| l.name() == s) }
-    pub fn label(self) -> &'static str { match self { LineStyle::Solid => "Trait plein", LineStyle::Dashed => "Tirets", LineStyle::Dotted => "Pointillés", LineStyle::DashDot => "Tirets et points", LineStyle::Double => "Double trait" } }
+    pub fn label(self) -> &'static str { match self { LineStyle::Solid => tr("Solid line"), LineStyle::Dashed => tr("Dashes"), LineStyle::Dotted => tr("Dots"), LineStyle::DashDot => tr("Dashes and dots"), LineStyle::Double => tr("Double line") } }
 }
 
 /// Pointes de fleche d'une ligne : `Start` au bout de gauche (ou du haut si la ligne est verticale), `End` a l'autre.
@@ -57,7 +59,7 @@ impl LineArrow {
     pub const ALL: [LineArrow; 4] = [LineArrow::None, LineArrow::Start, LineArrow::End, LineArrow::Both];
     pub fn name(self) -> &'static str { match self { LineArrow::None => "aucune", LineArrow::Start => "debut", LineArrow::End => "fin", LineArrow::Both => "deux" } }
     pub fn from_name(s: &str) -> Option<LineArrow> { LineArrow::ALL.into_iter().find(|l| l.name() == s) }
-    pub fn label(self) -> &'static str { match self { LineArrow::None => "Aucune", LineArrow::Start => "Au début", LineArrow::End => "À la fin", LineArrow::Both => "Aux deux bouts" } }
+    pub fn label(self) -> &'static str { match self { LineArrow::None => tr("No arrowhead"), LineArrow::Start => tr("At the start"), LineArrow::End => tr("At the end"), LineArrow::Both => tr("At both ends") } }
     pub fn flags(self) -> (bool, bool) { match self { LineArrow::None => (false, false), LineArrow::Start => (true, false), LineArrow::End => (false, true), LineArrow::Both => (true, true) } }
     pub fn from_flags(start: bool, end: bool) -> LineArrow { match (start, end) { (false, false) => LineArrow::None, (true, false) => LineArrow::Start, (false, true) => LineArrow::End, _ => LineArrow::Both } }
 }
@@ -69,7 +71,7 @@ pub enum ShapeKind { Rect, Ellipse, Line }
 impl ShapeKind {
     pub fn name(self) -> &'static str { match self { ShapeKind::Rect => "rectangle", ShapeKind::Ellipse => "ellipse", ShapeKind::Line => "ligne" } }
     pub fn from_name(s: &str) -> Option<ShapeKind> { match s { "rectangle" => Some(ShapeKind::Rect), "ellipse" => Some(ShapeKind::Ellipse), "ligne" => Some(ShapeKind::Line), _ => None } }
-    pub fn label(self) -> &'static str { match self { ShapeKind::Rect => "Rectangle", ShapeKind::Ellipse => "Ellipse", ShapeKind::Line => "Ligne" } }
+    pub fn label(self) -> &'static str { match self { ShapeKind::Rect => tr("Rectangle"), ShapeKind::Ellipse => tr("Ellipse"), ShapeKind::Line => tr("Line") } }
 }
 
 /// Contenu d'un element de jaquette.
@@ -175,10 +177,10 @@ impl Default for Cover {
 
 /// Formats usuels : (nom, largeur du dos et de la face, hauteur, tranche), en mm.
 pub const FORMATS: [(&str, f64, f64, f64); 4] = [
-    ("Blu-ray standard (tranche 14 mm)", 129.0, 148.0, 14.0),
-    ("Blu-ray fin (tranche 11 mm)", 129.0, 148.0, 11.0),
-    ("DVD standard (tranche 14 mm)", 129.0, 183.0, 14.0),
-    ("DVD fin (tranche 7 mm)", 129.0, 183.0, 7.0),
+    ("Blu-ray standard (14 mm spine)", 129.0, 148.0, 14.0),
+    ("Slim Blu-ray (11 mm spine)", 129.0, 148.0, 11.0),
+    ("Standard DVD (14 mm spine)", 129.0, 183.0, 14.0),
+    ("Slim DVD (7 mm spine)", 129.0, 183.0, 7.0),
 ];
 
 /// Resultat de la mise en page en pixels.
@@ -313,7 +315,7 @@ impl Cover {
     pub fn to_pdf_a4(&self, sheet: &RgbaImage, title: &str) -> Result<Vec<u8>, String> {
         let (sw, sh) = self.sheet_mm();
         let (tw, th) = self.trim_mm();
-        let page = a4_page(tw, th, "La jaquette")?;
+        let page = a4_page(tw, th, tr("The cover"))?;
         let (x0, y0) = ((page.0 - tw) / 2.0, (page.1 - th) / 2.0);
         let b = self.bleed_mm;
         Ok(pdf::image_pdf(page, sheet, (x0 - b, y0 - b, sw, sh), &self.cut_lines(x0, y0), title))
@@ -405,12 +407,12 @@ pub fn rotate_quarters(img: &RgbaImage, q: u32) -> RgbaImage {
 // ------------------------------------------------------------------ champs automatiques
 /// Champs remplis depuis le projet : (nom, description).
 pub const FIELDS: [(&str, &str); 6] = [
-    ("titre", "titre du disque"),
-    ("liste_videos", "une ligne par video : numero, titre et duree"),
-    ("nb_videos", "nombre de videos"),
-    ("duree_totale", "duree totale des videos"),
-    ("nb_chapitres", "nombre total de chapitres manuels"),
-    ("annee", "annee en cours"),
+    ("titre", "disc title"),
+    ("liste_videos", "one line per video: number, title and duration"),
+    ("nb_videos", "number of videos"),
+    ("duree_totale", "total duration of the videos"),
+    ("nb_chapitres", "total number of manual chapters"),
+    ("annee", "current year"),
 ];
 
 /// Remplace `{nom}` par sa valeur ; un champ inconnu reste tel quel.
@@ -581,7 +583,7 @@ impl SheetDoc for DiscLabel {
     fn to_pdf_a4(&self, sheet: &RgbaImage, title: &str) -> Result<Vec<u8>, String> {
         let (sw, sh) = self.sheet_mm();
         let d = self.diameter_mm;
-        let page = a4_page(d, d, "L'étiquette")?;
+        let page = a4_page(d, d, tr("The label"))?;
         let (cx, cy) = (page.0 / 2.0, page.1 / 2.0);
         let r = d / 2.0;
         let clip = [(cx, cy, r + self.bleed_mm), (cx, cy, (self.hole_mm / 2.0 - self.bleed_mm).max(0.5))];
@@ -724,8 +726,8 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
             style: e.get("trait").and_then(Value::as_str).and_then(LineStyle::from_name).unwrap_or(LineStyle::Solid),
             arrow: e.get("fleche").and_then(Value::as_str).and_then(LineArrow::from_name).unwrap_or(LineArrow::None),
         },
-        Some("image") => CoverKind::Image { path: e.get("fichier").and_then(Value::as_str).ok_or_else(|| format!("{what}, élément {} : « fichier » manquant", k + 1))?.to_string() },
-        t => return Err(format!("{what}, élément {} : type {:?} inconnu", k + 1, t)),
+        Some("image") => CoverKind::Image { path: e.get("fichier").and_then(Value::as_str).ok_or_else(|| trf!("{}, item {}: “fichier” missing", what, k + 1))?.to_string() },
+        t => return Err(trf!("{}, item {}: unknown type {}", what, k + 1, format!("{:?}", t))),
     };
     let min_side = if matches!(&kind, CoverKind::Shape { shape: ShapeKind::Line, .. }) { 0.0 } else { 1.0 };
     let rot = match f("rotation").round() as i64 { 90 => 90, 270 | -90 => 270, _ => 0 };
@@ -794,7 +796,7 @@ fn a4_page(tw: f64, th: f64, what: &str) -> Result<(f64, f64), String> {
     let (nw, nh) = (tw + 16.0, th + 16.0);
     if nw <= 210.0 && nh <= 297.0 { Ok((210.0, 297.0)) }
     else if nw <= 297.0 && nh <= 210.0 { Ok((297.0, 210.0)) }
-    else { Err(format!("{what} ({tw:.0} × {th:.0} mm, plus 8 mm de marge pour les repères) ne tient pas sur une page A4.")) }
+    else { Err(trf!("{} ({} × {} mm, plus 8 mm of margin for the marks) does not fit on an A4 page.", what, format!("{:.0}", tw), format!("{:.0}", th))) }
 }
 
 /// Marge de securite : le texte important reste a au moins cette distance (mm) des bords.

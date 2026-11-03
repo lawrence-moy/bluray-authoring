@@ -1,4 +1,5 @@
 //! Pistes audio : lecture/ecriture JSON, regle de numerotation par langue.
+mod common;
 use bdauthor_core::audio::*;
 use bdauthor_core::model::*;
 use bdauthor_core::subtitle::Language;
@@ -10,6 +11,7 @@ fn tr(id: u32) -> AudioTrackCfg { AudioTrackCfg { source: AudioSource::Embedded(
 
 #[test]
 fn plan_orders_tracks_by_language() {
+    common::fr();
     let l = langs(&["fra", "eng", "deu"]);
     // aucune piste configuree, ou pas de langues : ancien fonctionnement
     assert_eq!(plan_audio(&l, "fra", &[vec![], vec![]]).unwrap(), None);
@@ -28,6 +30,7 @@ fn plan_orders_tracks_by_language() {
 
 #[test]
 fn plan_rejects_inconsistent_numbers() {
+    common::fr();
     let l = langs(&["fra", "eng"]);
     // l'anglais seul serait la piste 1 ici et la piste 2 ailleurs
     let e = plan_audio(&l, "fra", &[vec![tr(1), tr(2)], vec![tr(2)]]).unwrap_err();
@@ -42,6 +45,7 @@ fn plan_rejects_inconsistent_numbers() {
 
 #[test]
 fn audio_tracks_json_and_validation() {
+    common::fr();
     let t = r#"{"langue":"fra","langues":[{"id":1,"nom":"Francais","code":"fra"},{"id":2,"nom":"Anglais","code":"eng"}],
       "videos":[{"fichier":"a.mp4","pistes_audio":[{"piste":0,"langue":"xxx","langue_id":1,"decalage_ms":-120},{"fichier":"en.wav","langue_id":2}]}]}"#;
     let mut m = ProjectModel::from_json(t).unwrap();

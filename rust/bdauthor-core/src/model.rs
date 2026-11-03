@@ -1,5 +1,7 @@
 //! Modele editable d'un projet (pour l'interface graphique) : lecture/ecriture du JSON de projet et validation.
 //! Les champs inconnus du fichier d'origine sont conserves a l'enregistrement.
+use crate::i18n::tr;
+use crate::trf;
 use crate::design::Designs;
 use crate::json::{self, Value};
 use crate::project::{MAX_CHAPTERS, MAX_VIDEOS};
@@ -142,8 +144,8 @@ impl ProjectModel {
         let mut m = ProjectModel { raw: v.clone(), ..Default::default() };
         m.title = v.get("titre").and_then(Value::as_str).unwrap_or("Menu").into();
         m.lang = v.get("langue").and_then(Value::as_str).unwrap_or("und").into();
-        for x in v.get("videos").and_then(Value::as_array).ok_or("champ « videos » absent")? {
-            let mut e = VideoEntry::new(x.get("fichier").and_then(Value::as_str).ok_or("video sans « fichier »")?);
+        for x in v.get("videos").and_then(Value::as_array).ok_or(tr("“videos” field missing"))? {
+            let mut e = VideoEntry::new(x.get("fichier").and_then(Value::as_str).ok_or(tr("video without “file”"))?);
             e.raw = x.clone();
             e.title = x.get("titre").and_then(Value::as_str).unwrap_or("").into();
             e.thumb_s = x.get("vignette_s").and_then(Value::as_f64);
@@ -152,8 +154,8 @@ impl ProjectModel {
             e.audio = crate::audio::tracks_from_value(x.get("pistes_audio"))?;
             for c in x.get("chapitres").and_then(Value::as_array).unwrap_or(&[]) {
                 e.chapters.push(match c {
-                    Value::Obj(_) => ChapterEntry { id: c.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), t: c.get("t").and_then(Value::as_f64).ok_or("chapitre sans « t »")?, title: c.get("titre").and_then(Value::as_str).unwrap_or("").into() },
-                    _ => ChapterEntry { id: 0, t: c.as_f64().ok_or("chapitre : nombre attendu")?, title: String::new() },
+                    Value::Obj(_) => ChapterEntry { id: c.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), t: c.get("t").and_then(Value::as_f64).ok_or(tr("chapter without “t”"))?, title: c.get("titre").and_then(Value::as_str).unwrap_or("").into() },
+                    _ => ChapterEntry { id: 0, t: c.as_f64().ok_or(tr("chapter: number expected"))?, title: String::new() },
                 });
             }
             e.fix_chapter_ids();
@@ -303,7 +305,7 @@ impl ProjectModel {
 
     /// Nom affiche d'une langue (ou un texte d'avertissement si elle n'existe plus).
     pub fn language_name(&self, id: u32) -> String {
-        self.language(id).map_or_else(|| "(langue supprimée)".to_string(), |l| l.name.clone())
+        self.language(id).map_or_else(|| tr("(language removed)").to_string(), |l| l.name.clone())
     }
 
     /// Ajoute une langue (identifiant neuf) et retourne cet identifiant.
@@ -359,44 +361,44 @@ impl ProjectModel {
     /// Problemes bloquants ou suspects (chemins relatifs resolus depuis `base`, le dossier du fichier de projet).
     pub fn validate(&self, base: &Path) -> Vec<String> {
         let mut p = Vec::new();
-        if self.videos.is_empty() { p.push("Aucune vidéo.".into()); }
-        if self.videos.len() > MAX_VIDEOS { p.push(format!("{} vidéos : {MAX_VIDEOS} au maximum.", self.videos.len())); }
-        if self.lang.len() != 3 || !self.lang.is_ascii() { p.push("La langue doit faire 3 lettres (ex. fra, eng, und).".into()); }
-        if !PRESETS.contains(&self.preset.as_str()) { p.push(format!("Préréglage x264 inconnu : {}.", self.preset)); }
-        if self.crf > 51 { p.push("CRF : 0 à 51.".into()); }
+        if self.videos.is_empty() { p.push(tr("No video.").into()); }
+        if self.videos.len() > MAX_VIDEOS { p.push(trf!("{} videos: {} at most.", self.videos.len(), MAX_VIDEOS)); }
+        if self.lang.len() != 3 || !self.lang.is_ascii() { p.push(tr("The language must be 3 letters (e.g. fra, eng, und).").into()); }
+        if !PRESETS.contains(&self.preset.as_str()) { p.push(trf!("Unknown x264 preset: {}.", self.preset)); }
+        if self.crf > 51 { p.push(tr("CRF: 0 to 51.").into()); }
         let abs = |f: &str| { let q = Path::new(f); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
         for (i, v) in self.videos.iter().enumerate() {
-            if !abs(&v.file).is_file() { p.push(format!("Vidéo {} : fichier introuvable ({}).", i + 1, v.file)); }
-            if v.chapters.len() > MAX_CHAPTERS { p.push(format!("Vidéo {} : {MAX_CHAPTERS} chapitres au maximum.", i + 1)); }
-            if v.chapters.iter().any(|c| c.t < 0.0) { p.push(format!("Vidéo {} : temps de chapitre négatif.", i + 1)); }
-            if v.auto_s.map_or(false, |a| a <= 0.0) { p.push(format!("Vidéo {} : intervalle de chapitres automatiques > 0.", i + 1)); }
-            if v.subs.len() > crate::film::MAX_SUB_TRACKS { p.push(format!("Vidéo {} : {} pistes de sous-titres au maximum.", i + 1, crate::film::MAX_SUB_TRACKS)); }
+            if !abs(&v.file).is_file() { p.push(trf!("Video {}: file not found ({}).", i + 1, v.file)); }
+            if v.chapters.len() > MAX_CHAPTERS { p.push(trf!("Video {}: {} chapters at most.", i + 1, MAX_CHAPTERS)); }
+            if v.chapters.iter().any(|c| c.t < 0.0) { p.push(trf!("Video {}: negative chapter time.", i + 1)); }
+            if v.auto_s.map_or(false, |a| a <= 0.0) { p.push(trf!("Video {}: automatic chapter interval must be > 0.", i + 1)); }
+            if v.subs.len() > crate::film::MAX_SUB_TRACKS { p.push(trf!("Video {}: {} subtitle tracks at most.", i + 1, crate::film::MAX_SUB_TRACKS)); }
             for (k, st) in v.subs.iter().enumerate() {
-                for m in self.synced_track(st).problems() { p.push(format!("Vidéo {}, sous-titres {} : {m}.", i + 1, k + 1)); }
+                for m in self.synced_track(st).problems() { p.push(trf!("Video {}, subtitles {}: {}.", i + 1, k + 1, m)); }
                 if !self.languages.is_empty() {
                     if self.language(st.lang_id).is_none() {
-                        p.push(format!("Vidéo {}, sous-titres {} : langue à choisir dans la liste des langues.", i + 1, k + 1));
+                        p.push(trf!("Video {}, subtitles {}: language to choose from the language list.", i + 1, k + 1));
                     } else if v.subs[..k].iter().any(|o| o.lang_id == st.lang_id) {
-                        p.push(format!("Vidéo {}, sous-titres {} : la langue « {} » est déjà utilisée par une autre piste de cette vidéo.", i + 1, k + 1, self.language_name(st.lang_id)));
+                        p.push(trf!("Video {}, subtitles {}: the language “{}” is already used by another track of this video.", i + 1, k + 1, self.language_name(st.lang_id)));
                     }
                 }
                 if let crate::subtitle::SubSource::File(f) = &st.source {
-                    if !f.trim().is_empty() && !abs(f).is_file() { p.push(format!("Vidéo {}, sous-titres {} : fichier introuvable ({f}).", i + 1, k + 1)); }
+                    if !f.trim().is_empty() && !abs(f).is_file() { p.push(trf!("Video {}, subtitles {}: file not found ({}).", i + 1, k + 1, f)); }
                 }
             }
         }
         for (i, v) in self.videos.iter().enumerate() {
             for (k, t) in v.audio.iter().enumerate() {
-                for m in t.problems() { p.push(format!("Vidéo {}, piste audio {} : {m}.", i + 1, k + 1)); }
+                for m in t.problems() { p.push(trf!("Video {}, audio track {}: {}.", i + 1, k + 1, m)); }
                 if let crate::audio::AudioSource::File(f) = &t.source {
-                    if !f.trim().is_empty() && !abs(f).is_file() { p.push(format!("Vidéo {}, piste audio {} : fichier introuvable ({f}).", i + 1, k + 1)); }
+                    if !f.trim().is_empty() && !abs(f).is_file() { p.push(trf!("Video {}, audio track {}: file not found ({}).", i + 1, k + 1, f)); }
                 }
             }
         }
         {
             let tracks: Vec<Vec<crate::audio::AudioTrackCfg>> = self.videos.iter().map(|v| v.audio.clone()).collect();
             if tracks.iter().any(|t| !t.is_empty()) && self.languages.is_empty() {
-                p.push("Pistes audio configurées mais aucune langue dans la liste des langues du projet.".into());
+                p.push(tr("Audio tracks configured but no language in the project's language list.").into());
             } else if let Err(e) = crate::audio::plan_audio(&self.languages, &self.lang, &tracks) {
                 let mut m = e;
                 if let Some(c) = m.get_mut(0..1) { c.make_ascii_uppercase(); }
@@ -407,7 +409,7 @@ impl ProjectModel {
         let np = self.designs.free.len();
         for (k, d) in self.designs.free.iter().enumerate() {
             for pr in d.validate(k, np, self.videos.len()).into_iter().filter(|x| x.error) {
-                p.push(format!("Page {} : {}", k + 1, pr.msg));
+                p.push(trf!("Page {}: {}", k + 1, pr.msg));
             }
         }
         if !self.videos.is_empty() {
@@ -418,32 +420,32 @@ impl ProjectModel {
                 for it in &pg.items {
                     if let Kind::Nav { action: NavAction::Goto, text, target } = &it.kind {
                         let bad = match target { None => true, Some(Target::Main(q)) => *q >= total, Some(Target::Video(v)) => *v >= self.videos.len(), Some(Target::Stay(e)) => e.map_or(false, |q| q >= total), Some(Target::Audio(id, e)) => self.language(*id).is_none() || e.map_or(false, |q| q >= total) };
-                        if bad { p.push(format!("Bouton « {text} » : destination invalide ou non choisie.")); }
+                        if bad { p.push(trf!("Button “{}”: invalid or unchosen destination.", text)); }
                     }
                     let bad_link = match it.link() { Some(Target::Main(q)) => q >= total, Some(Target::Video(v)) => v >= self.videos.len(), Some(Target::Audio(id, e)) => self.language(id).is_none() || e.map_or(false, |q| q >= total), Some(Target::Stay(e)) => e.map_or(false, |q| q >= total), None => false };
-                    if bad_link { p.push("Élément cliquable : destination invalide.".into()); }
+                    if bad_link { p.push(tr("Clickable item: invalid destination.").into()); }
                     // reglage de la langue audio : au moins une video doit avoir de l'audio dans cette langue
                     let audio_target = match &it.kind { Kind::Nav { action: NavAction::Goto, target, .. } => *target, _ => it.link() };
                     if let Some(Target::Audio(id, _)) = audio_target {
                         if self.language(id).is_some() && self.videos.iter().all(|ve| ve.audio.iter().all(|t| t.lang_id != id)) {
-                            p.push(format!("Élément cliquable : aucune vidéo n'a de piste audio en « {} » (le clic ne changera rien).", self.language_name(id)));
+                            p.push(trf!("Clickable item: no video has an audio track in “{}” (the click will change nothing).", self.language_name(id)));
                         }
                     }
-                    if it.fixed_video().map_or(false, |v| v >= self.videos.len()) { p.push("Vignette : la vidéo choisie n'existe pas.".into()); }
+                    if it.fixed_video().map_or(false, |v| v >= self.videos.len()) { p.push(tr("Thumbnail: the chosen video does not exist.").into()); }
                     // animation de l'etat selectionne : image normale requise, fichiers presents
                     let sk = &it.look.skin;
                     if !sk.sel_frames.is_empty() && it.is_button() && !matches!(it.kind, Kind::Slot { .. }) && !sk.has_normal() {
-                        p.push("Animation d'un élément : choisissez aussi une image « normale » (sinon l'animation est ignorée).".into());
+                        p.push(tr("Item animation: also choose a “normal” image (otherwise the animation is ignored).").into());
                     }
                     if it.is_button() && !matches!(it.kind, Kind::Slot { .. }) {
-                        for f in sk.sel_frames.iter().chain(sk.normal_frames.iter()).filter(|f| !abs(f).is_file()) { p.push(format!("Animation d'un élément : image introuvable ({f}).")); }
+                        for f in sk.sel_frames.iter().chain(sk.normal_frames.iter()).filter(|f| !abs(f).is_file()) { p.push(trf!("Item animation: image not found ({}).", f)); }
                     }
                     match it.sub {
                         crate::design::SubChoice::Lang(id) => {
                             if self.language(id).is_none() {
-                                p.push("Élément cliquable : la langue de sous-titres choisie n'existe plus.".into());
+                                p.push(tr("Clickable item: the chosen subtitle language no longer exists.").into());
                             } else if self.videos.iter().all(|ve| ve.subs.iter().all(|t| t.lang_id != id)) {
-                                p.push(format!("Élément cliquable : aucune vidéo n'a de sous-titres en « {} ».", self.language_name(id)));
+                                p.push(trf!("Clickable item: no video has subtitles in “{}”.", self.language_name(id)));
                             }
                         }
                         _ => {}
@@ -451,12 +453,12 @@ impl ProjectModel {
                 }
             }
         }
-        if self.languages.len() > crate::film::MAX_SUB_TRACKS { p.push(format!("Langues de sous-titres : {} au maximum.", crate::film::MAX_SUB_TRACKS)); }
+        if self.languages.len() > crate::film::MAX_SUB_TRACKS { p.push(trf!("Subtitle languages: {} at most.", crate::film::MAX_SUB_TRACKS)); }
         for (k, l) in self.languages.iter().enumerate() {
-            if l.code.len() != 3 || !l.code.is_ascii() { p.push(format!("Langue « {} » : le code doit faire 3 lettres (ex. fra).", l.name)); }
-            if self.languages[..k].iter().any(|o| o.name == l.name) { p.push(format!("Langue « {} » : nom en double.", l.name)); }
+            if l.code.len() != 3 || !l.code.is_ascii() { p.push(trf!("Language “{}”: the code must be 3 letters (e.g. fra).", l.name)); }
+            if self.languages[..k].iter().any(|o| o.name == l.name) { p.push(trf!("Language “{}”: duplicate name.", l.name)); }
         }
-        if !self.bg.is_empty() && !abs(&self.bg).is_file() { p.push(format!("Image de fond introuvable ({}).", self.bg)); }
+        if !self.bg.is_empty() && !abs(&self.bg).is_file() { p.push(trf!("Background image not found ({}).", self.bg)); }
         // sons des menus (style du projet et styles propres des elements)
         {
             let mut missing: Vec<String> = Vec::new();
@@ -470,25 +472,25 @@ impl ProjectModel {
                     if let Some(s) = &it.look.sounds { check(&s.select); check(&s.activate); }
                 }
             }
-            for f in missing { p.push(format!("Son de menu introuvable ({f}).")); }
+            for f in missing { p.push(trf!("Menu sound not found ({}).", f)); }
         }
-        if !self.intro.is_empty() && !abs(&self.intro).is_file() { p.push(format!("Séquence d'ouverture introuvable ({}).", self.intro)); }
-        if !self.bg_video.is_empty() && !abs(&self.bg_video).is_file() { p.push(format!("Vidéo de fond introuvable ({}).", self.bg_video)); }
-        if !self.music.is_empty() && !abs(&self.music).is_file() { p.push(format!("Musique du menu introuvable ({}).", self.music)); }
+        if !self.intro.is_empty() && !abs(&self.intro).is_file() { p.push(trf!("Opening sequence not found ({}).", self.intro)); }
+        if !self.bg_video.is_empty() && !abs(&self.bg_video).is_file() { p.push(trf!("Background video not found ({}).", self.bg_video)); }
+        if !self.music.is_empty() && !abs(&self.music).is_file() { p.push(trf!("Menu music not found ({}).", self.music)); }
         {
             use crate::design::{PageMusic, PageVisual};
             let d = &self.designs;
             for pg in d.free.iter() {
                 let files = [match &pg.bg.visual { PageVisual::Image(f) | PageVisual::Video(f, _) => Some(f), _ => None }, match &pg.bg.music { PageMusic::File(f) => Some(f), _ => None }];
                 for f in files.into_iter().flatten() {
-                    if !abs(f).is_file() { p.push(format!("Fond d'une page : fichier introuvable ({f}).")); }
+                    if !abs(f).is_file() { p.push(trf!("Page background: file not found ({}).", f)); }
                 }
             }
         }
         if let Some(h) = self.designs.home {
             let total = self.designs.free.len();
             let bad = match h { crate::design::Target::Main(q) => q >= total, crate::design::Target::Video(_) | crate::design::Target::Stay(_) | crate::design::Target::Audio(..) => true };
-            if bad { p.push("Page d'accueil invalide : choisissez une page existante.".into()); }
+            if bad { p.push(tr("Invalid home page: choose an existing page.").into()); }
         }
         p
     }

@@ -1,4 +1,5 @@
 //! Halo anime : style, images de l'animation, ecriture dans le menu (objets consecutifs, boucle, cadence).
+mod common;
 use bdauthor_core::menu::{anim_rate_code, build_menu, MenuButton, MenuOptions};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::style::{ButtonStyle, PULSE_FRAMES};
@@ -10,6 +11,7 @@ fn img(w: u32, h: u32, c: [u8; 4]) -> Arc<RgbaImage> {
 
 #[test]
 fn pulse_style_and_json() {
+    common::fr();
     let st = ButtonStyle { glow: 20, glow_pulse: true, ..ButtonStyle::default() };
     assert_eq!(st.pulse_frames(), PULSE_FRAMES);
     assert_eq!(st.state_count(), 2 + PULSE_FRAMES as u64 - 1);
@@ -27,6 +29,7 @@ fn pulse_style_and_json() {
 
 #[test]
 fn animated_selected_state_in_menu() {
+    common::fr();
     let (n, s, a) = (img(40, 20, [10, 10, 10, 255]), img(40, 20, [200, 30, 30, 255]), img(40, 20, [30, 200, 30, 255]));
     let mut b0 = MenuButton::new("", 1, 100, 100, vec![n.clone(), s.clone(), a.clone()]);
     b0.sel_frames = (1..4).map(|k| img(40, 20, [200, 30 + 40 * k, 30, 255])).collect();
@@ -56,6 +59,7 @@ fn animated_selected_state_in_menu() {
 
 #[test]
 fn custom_animation_json_and_weight() {
+    common::fr();
     use bdauthor_core::style::Skin;
     let sk = Skin { normal: "n.png".into(), sel_frames: vec!["a1.png".into(), "a2.png".into()], sel_once: true, ..Default::default() };
     assert_eq!(Skin::from_value(&sk.to_value()), sk);
@@ -81,6 +85,7 @@ fn custom_animation_json_and_weight() {
 
 #[test]
 fn selected_images_one_or_many() {
+    common::fr();
     use bdauthor_core::style::Skin;
     let mut sk = Skin { normal: "n.png".into(), ..Default::default() };
     sk.set_selected(vec!["s.png".into()]);
@@ -104,6 +109,7 @@ fn selected_images_one_or_many() {
 
 #[test]
 fn animated_normal_state() {
+    common::fr();
     use bdauthor_core::style::Skin;
     // modele : une image = fixe, plusieurs = animation ; relecture
     let mut sk = Skin::default();

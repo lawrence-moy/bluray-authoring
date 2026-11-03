@@ -2,6 +2,7 @@
 //! images d'etats personnalisees ; estimation du poids d'une page de menu.
 //!
 //! Les tailles (epaisseurs, arrondi, halo) sont exprimees sur le plan de reference 1920x1080 et mises a l'echelle du menu.
+use crate::trf;
 use crate::json::Value;
 
 /// Etat d'un bouton.
@@ -147,7 +148,7 @@ impl ButtonStyle {
         let col = |k: &str, d: &mut [u8; 3]| -> Result<(), String> {
             if let Some(x) = v.get(k).and_then(Value::as_str) {
                 let c = x.trim().trim_start_matches('#');
-                let n = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6).ok_or_else(|| format!("style : couleur « {k} » invalide"))?;
+                let n = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6).ok_or_else(|| trf!("style: invalid color “{}”", k))?;
                 *d = [(n >> 16) as u8, (n >> 8) as u8, n as u8];
             }
             Ok(())

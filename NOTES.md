@@ -742,3 +742,11 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - **Reste en français** (cœur) : messages de `check`, journal de construction, noms de langues (`default_language_name`), formats de jaquette, étiquettes d'actions de navigation, libellés d'encodage. Phase 3 éventuelle.
 - Limites : écritures de droite à gauche non gérées par egui ; polices à ajouter pour les écritures non latines.
 - GUI uniquement, à compiler avec recompiler.bat (non compilé dans le conteneur ; `i18n.rs` seul compilé et testé).
+
+## Export 142 — traduction i18n, phase 3 (cœur)
+- Le module `bdauthor_core::i18n` (`tr`, `format_tr`, macro `trf!`, `num`, `set_table`, `set_table_from_json`) porte maintenant la table de traduction ; l'i18n du GUI la remplit (même `lang/fr.json`, une seule table pour le cœur et l'interface).
+- Textes du cœur passés en anglais (clés) : vérificateur `check` (messages, ERROR/warning/ok), validation du modèle et du projet, journal de construction, erreurs ffmpeg, audio, sous-titres (contrôle qualité, JSON), ISO (avertissements, messages, `gb()` avec `num`), éditeur, design (problèmes de page, libellés d'actions), jaquette (traits, flèches, formes, formats, champs automatiques), encodages, noms de langues (`default_language_name`).
+- Constantes `FORMATS` et `FIELDS` de la jaquette : textes anglais, traduits à l'affichage par le GUI (`tr(f.0)`, `tr(desc)`).
+- Restent en français volontairement : textes dessinés sur le disque (« Tout lire », « Retour », « Chapitres : … », « Vidéos »), valeurs par défaut stockées dans le projet (« Mes vidéos », « Menu », « Chapitre N », « Page N », « Calque 1 »), noms de zones de la jaquette (traduits par `zone_label` du GUI), messages techniques de bas niveau (ISO/UDF détaillés, flux, pgs, film, sound), CLI `bdauthor-build`.
+- Sans table chargée (CLI, tests), le cœur écrit en anglais ; les essais chargent `fr.json` avec `tests/common/mod.rs` (`common::fr()`).
+- Core : 151 tests verts. GUI à compiler avec recompiler.bat.

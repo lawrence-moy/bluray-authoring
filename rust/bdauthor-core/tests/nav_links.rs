@@ -1,3 +1,4 @@
+mod common;
 use bdauthor_core::design::*;
 use bdauthor_core::editor::*;
 use bdauthor_core::style::ButtonStyle;
@@ -11,6 +12,7 @@ fn page() -> PageDesign {
 
 #[test]
 fn manual_neighbors_override_automatic_ones() {
+    common::fr();
     let info = PageInfo { r: PageRef(0), page: 0, pages: 2 };
     let st = ButtonStyle::default();
     let mut d = page();
@@ -37,6 +39,7 @@ fn manual_neighbors_override_automatic_ones() {
 
 #[test]
 fn json_roundtrip_and_duplicates() {
+    common::fr();
     let mut d = page();
     let id = d.ensure_id(2);
     d.items[0].nav.set(3, NavLink::Item(id));
@@ -57,6 +60,7 @@ fn json_roundtrip_and_duplicates() {
 
 #[test]
 fn moving_an_item_to_another_page_drops_its_links() {
+    common::fr();
     let mut ds = Designs::default();
     ds.free = vec![page(), page()];
     let id = ds.free[0].ensure_id(1);
@@ -68,6 +72,7 @@ fn moving_an_item_to_another_page_drops_its_links() {
 
 #[test]
 fn item_name_roundtrip() {
+    common::fr();
     let mut d = page();
     d.items[1].name = "Bouton « Film 2 »".into();
     let back = PageDesign::from_value(&d.to_value()).unwrap();
