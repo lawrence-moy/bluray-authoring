@@ -564,7 +564,7 @@ fn timeline(ui: &mut egui::Ui, ed: &mut ChapterEditor) {
     let mut t = (t0 / step).floor() * step;
     while t <= t0 + span {
         let x = x_of(t);
-        p.line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.min.y + 14.0)], egui::Stroke::new(1.0, egui::Color32::from_gray(90)));
+        p.line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.min.y + 14.0)], egui::Stroke::new(1.0_f32, egui::Color32::from_gray(90)));
         let s = t.round() as i64;
         let label = if step < 60.0 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 3600, s / 60 % 60) };
         p.text(egui::pos2(x + 3.0, rect.min.y), egui::Align2::LEFT_TOP, label, egui::FontId::monospace(11.0), egui::Color32::from_gray(160));
@@ -589,7 +589,7 @@ fn timeline(ui: &mut egui::Ui, ed: &mut ChapterEditor) {
         if span < 600.0 {
             for &k in keys.iter().filter(|&&k| k >= t0 && k <= t0 + span) {
                 let x = x_of(k);
-                p.line_segment([egui::pos2(x, strip.max.y - 8.0), egui::pos2(x, strip.max.y)], egui::Stroke::new(1.0, egui::Color32::from_rgb(120, 200, 255)));
+                p.line_segment([egui::pos2(x, strip.max.y - 8.0), egui::pos2(x, strip.max.y)], egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 200, 255)));
             }
         }
     }
@@ -598,7 +598,7 @@ fn timeline(ui: &mut egui::Ui, ed: &mut ChapterEditor) {
         if c.t < t0 - span * 0.05 || c.t > t0 + span { continue; }
         let x = x_of(c.t);
         let sel = ed.sel == Some(c.id);
-        p.line_segment([egui::pos2(x, rect.min.y + 14.0), egui::pos2(x, rect.min.y + 98.0)], egui::Stroke::new(if sel { 3.0 } else { 2.0 }, MARK));
+        p.line_segment([egui::pos2(x, rect.min.y + 14.0), egui::pos2(x, rect.min.y + 98.0)], egui::Stroke::new(if sel { 3.0_f32 } else { 2.0 }, MARK));
         let txt = if c.title.is_empty() { format!("{}", k + 1) } else { format!("{} · {}", k + 1, c.title) };
         let g = p.layout_no_wrap(txt, egui::FontId::proportional(11.0), egui::Color32::from_rgb(240, 215, 122));
         let r = egui::Rect::from_min_size(egui::pos2(x, rect.min.y + 98.0), g.size() + egui::vec2(10.0, 4.0));
@@ -607,7 +607,7 @@ fn timeline(ui: &mut egui::Ui, ed: &mut ChapterEditor) {
     }
     // tete de lecture
     let hx = x_of(head_t);
-    p.line_segment([egui::pos2(hx, rect.min.y + 8.0), egui::pos2(hx, rect.max.y - 4.0)], egui::Stroke::new(2.0, HEAD));
+    p.line_segment([egui::pos2(hx, rect.min.y + 8.0), egui::pos2(hx, rect.max.y - 4.0)], egui::Stroke::new(2.0_f32, HEAD));
     p.rect_filled(egui::Rect::from_center_size(egui::pos2(hx, rect.min.y + 6.0), egui::vec2(12.0, 8.0)), 1.0, HEAD);
     // souris : glisser un repere le deplace ; ailleurs, cliquer ou glisser deplace la tete de lecture
     if let Some(pos) = resp.interact_pointer_pos() {
