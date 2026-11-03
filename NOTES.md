@@ -750,3 +750,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Restent en français volontairement : textes dessinés sur le disque (« Tout lire », « Retour », « Chapitres : … », « Vidéos »), valeurs par défaut stockées dans le projet (« Mes vidéos », « Menu », « Chapitre N », « Page N », « Calque 1 »), noms de zones de la jaquette (traduits par `zone_label` du GUI), messages techniques de bas niveau (ISO/UDF détaillés, flux, pgs, film, sound), CLI `bdauthor-build`.
 - Sans table chargée (CLI, tests), le cœur écrit en anglais ; les essais chargent `fr.json` avec `tests/common/mod.rs` (`common::fr()`).
 - Core : 151 tests verts. GUI à compiler avec recompiler.bat.
+
+## Export 144 — largeur des menus après changement de langue
+- egui garde la taille d'un menu ou d'une liste déroulante depuis sa première ouverture : après un changement de langue, `memory.reset_areas()` l'oublie pour qu'elle s'adapte aux nouveaux textes (les fenêtres internes reprennent aussi leur place par défaut).
+- GUI uniquement (`main.rs`), à compiler avec recompiler.bat.

@@ -655,7 +655,11 @@ impl eframe::App for App {
             ui.separator();
             if ui.checkbox(&mut self.model.cache, tr("Reuse already-encoded videos (cache)")).changed() { self.dirty = true; }
             ui.label(egui::RichText::new(tr("Setting saved with the project.")).weak());
-            if self.cfg.lang != before.lang { crate::i18n::set_language(&self.cfg.lang); }
+            if self.cfg.lang != before.lang {
+                crate::i18n::set_language(&self.cfg.lang);
+                // les menus et listes deroulantes gardent la taille de leur premiere ouverture : oubliee pour s'adapter aux nouveaux textes
+                ui.ctx().memory_mut(|m| m.reset_areas());
+            }
             if self.cfg != before { Tools::set_custom_path(&self.cfg.ffmpeg_path); self.cfg.save(); }
         }); }
         self.show_config = open;
