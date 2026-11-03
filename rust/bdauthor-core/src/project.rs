@@ -81,7 +81,8 @@ pub trait Renderer {
 #[derive(Debug, Clone, PartialEq)]
 pub enum Decor {
     /// `font` : voir `design::Kind::Text` (un chemin relatif au projet est deja converti en chemin complet).
-    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String },
+    /// `deco` : fond et contour, deja a l'echelle du fond.
+    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, deco: crate::design::TextDeco },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
 }
 
@@ -1060,9 +1061,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let to_decor = |it: &Item, k: f64| -> Option<Decor> {
         let (x, y, w, h) = it.scaled(k);
         match &it.kind {
-            Kind::Text { text, size, color, align, font, .. } => {
+            Kind::Text { text, size, color, align, font, deco, .. } => {
                 let font = if font.is_empty() { String::new() } else { let c = p(font); if c.is_file() { c.to_string_lossy().into_owned() } else { font.clone() } };
-                Some(Decor::Text { text: text.clone(), x, y, w, h, size: py_round(*size as f64 * k) as i32, color: *color, align: *align, font })
+                Some(Decor::Text { text: text.clone(), x, y, w, h, size: py_round(*size as f64 * k) as i32, color: *color, align: *align, font, deco: deco.scaled(k) })
             }
             Kind::Image { path, .. } => Some(Decor::Image { path: p(path), x, y, w, h }),
             _ => None,

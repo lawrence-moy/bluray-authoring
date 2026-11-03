@@ -2,7 +2,7 @@
 //! systeme, rectangles arrondis. Ce crate depend de `image` et `ab_glyph` (non compilables dans l'environnement hors ligne
 //! du developpement : valides par `cargo test` sous Windows).
 use ab_glyph::{point, Font, FontVec, PxScale, ScaleFont};
-use bdauthor_core::design::{nav_applicable, Align, Kind, PageDesign};
+use bdauthor_core::design::{nav_applicable, Align, Kind, PageDesign, TextDeco};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::Decor;
 use bdauthor_core::style::{BtnState, ButtonStyle};
@@ -373,6 +373,56 @@ fn wrap_runs(font: &FontVec, lines: &[Vec<bdauthor_core::subtitle::Run>], size: 
 }
 
 /// Rectangle arrondi plein (rayon `radius`), bords lisses (alpha partiel sur 1 px).
+/// Marges (x, y) a laisser autour du cadre d'un texte qui le deborde (texte centre sur le cadre).
+fn text_overflow(font: &FontVec, text: &str, size: f32, w: i32, h: i32) -> (i32, i32) {
+    let lines: Vec<&str> = text.split('\n').collect();
+    let maxw = lines.iter().map(|l| text_extent(font, l, size).0).fold(0.0f32, f32::max);
+    let lh = text_extent(font, "Ag", size).1 * 1.1;
+    let s = size as i32;
+    (((maxw - w as f32).max(0.0) / 2.0).ceil() as i32 + 4 + s / 4, ((lh * lines.len() as f32 - h as f32).max(0.0) / 2.0).ceil() as i32 + 4 + s / 2)
+}
+
+/// Texte d'une page de menu avec son habillage : fond (couleur, opacite, coins arrondis) sur tout le cadre `rect`, puis
+/// contour des lettres, puis le texte.
+#[allow(clippy::too_many_arguments)]
+pub fn draw_deco_text(img: &mut RgbaImage, font: &FontVec, text: &str, size: f32, rgb: [u8; 3], rect: (i32, i32, i32, i32), align: Align, deco: &TextDeco) {
+    let (x, y, w, h) = rect;
+    if deco.bg_opacity > 0 && w > 0 && h > 0 {
+        let r = (deco.bg_radius.max(0) as f32).min(w.min(h) as f32 / 2.0);
+        let bg = rounded_rect(w as u32, h as u32, r, deco.bg_color);
+        blit(img, &bg, x, y, deco.bg_opacity.min(100) as f32 / 100.0);
+    }
+    if deco.outline <= 0 {
+        draw_text_block(img, font, text, size, rgb, rect, align);
+        return;
+    }
+    // contour : le texte dans la couleur du contour, decale tout autour d'un cercle de rayon `outline`, puis le texte
+    let o = deco.outline;
+    let (mx, my) = text_overflow(font, text, size, w, h);
+    let (px, py) = (mx + o, my + o);
+    let (lw, lh) = ((w + 2 * px).clamp(1, 8192) as u32, (h + 2 * py).clamp(1, 8192) as u32);
+    let mut ring = RgbaImage::new(lw, lh);
+    draw_text_block(&mut ring, font, text, size, deco.outline_color, (px, py, w, h), align);
+    let mut body = RgbaImage::new(lw, lh);
+    let rr = o as f32;
+    let n = ((std::f32::consts::TAU * rr).ceil() as usize).clamp(8, 72);
+    for i in 0..n {
+        let a = i as f32 / n as f32 * std::f32::consts::TAU;
+        blit(&mut body, &ring, (a.cos() * rr).round() as i32, (a.sin() * rr).round() as i32, 1.0);
+    }
+    // anneaux interieurs : contour plein meme epais
+    for k in 1..o {
+        let rk = k as f32;
+        let nk = ((std::f32::consts::TAU * rk).ceil() as usize).clamp(8, 72);
+        for i in 0..nk {
+            let a = (i as f32 + 0.5) / nk as f32 * std::f32::consts::TAU;
+            blit(&mut body, &ring, (a.cos() * rk).round() as i32, (a.sin() * rk).round() as i32, 1.0);
+        }
+    }
+    draw_text_block(&mut body, font, text, size, rgb, (px, py, w, h), align);
+    blit(img, &body, x - px, y - py, 1.0);
+}
+
 pub fn rounded_rect(w: u32, h: u32, radius: f32, rgb: [u8; 3]) -> RgbaImage {
     let mut im = RgbaImage::new(w, h);
     let (hw, hh) = (w as f32 / 2.0, h as f32 / 2.0);
@@ -466,9 +516,9 @@ impl FontRenderer {
     pub fn compose_on(&self, mut im: RgbaImage, decor: &[Decor]) -> Result<RgbaImage> {
         for d in decor {
             match d {
-                Decor::Text { text, x, y, w, h, size: sz, color, align, font } => {
+                Decor::Text { text, x, y, w, h, size: sz, color, align, font, deco } => {
                     let custom = self.custom_font(font, Path::new(""));
-                    draw_text_block(&mut im, custom.as_deref().unwrap_or(&self.font), text, *sz as f32, *color, (*x, *y, *w, *h), *align)
+                    draw_deco_text(&mut im, custom.as_deref().unwrap_or(&self.font), text, *sz as f32, *color, (*x, *y, *w, *h), *align, deco)
                 }
                 Decor::Image { path, x, y, w, h } => {
                     let src = self.cached_image(path)?;
@@ -1220,19 +1270,17 @@ impl FontRenderer {
     /// Texte dessine sur fond transparent, dans une image un peu plus grande que son cadre (le texte peut deborder) ;
     /// retourne l'image et la marge (px, py) a retrancher a la position du cadre.
     #[allow(clippy::too_many_arguments)]
-    fn text_sprite(&self, text: &str, size: i32, color: [u8; 3], align: Align, font_name: &str, project_dir: &Path, w: i32, h: i32) -> (Arc<RgbaImage>, i32, i32) {
+    #[allow(clippy::too_many_arguments)]
+    fn text_sprite(&self, text: &str, size: i32, color: [u8; 3], align: Align, font_name: &str, project_dir: &Path, w: i32, h: i32, deco: &TextDeco) -> (Arc<RgbaImage>, i32, i32) {
         let custom = self.custom_font(font_name, project_dir);
         let font: &FontVec = custom.as_deref().unwrap_or(&self.font);
-        let lines: Vec<&str> = text.split('\n').collect();
-        let maxw = lines.iter().map(|l| text_extent(font, l, size as f32).0).fold(0.0f32, f32::max);
-        let lh = text_extent(font, "Ag", size as f32).1 * 1.1;
-        let px = ((maxw - w as f32).max(0.0) / 2.0).ceil() as i32 + 4 + size / 4;
-        let py = ((lh * lines.len() as f32 - h as f32).max(0.0) / 2.0).ceil() as i32 + 4 + size / 2;
+        let (mx, my) = text_overflow(font, text, size as f32, w, h);
+        let (px, py) = (mx + deco.outline.max(0), my + deco.outline.max(0));
         let (cw, ch) = ((w + 2 * px).clamp(1, 8192), (h + 2 * py).clamp(1, 8192));
-        let key = hkey(|hh| ("texte", text, size, color, align.name(), font_name, w, h).hash(hh));
+        let key = hkey(|hh| ("texte", text, size, color, align.name(), font_name, w, h, deco).hash(hh));
         let spr = self.cached_sprite(key, || {
             let mut im = RgbaImage::new(cw as u32, ch as u32);
-            draw_text_block(&mut im, font, text, size as f32, color, (px, py, w, h), align);
+            draw_deco_text(&mut im, font, text, size as f32, color, (px, py, w, h), align, deco);
             im
         });
         (spr, px, py)
@@ -1272,17 +1320,18 @@ impl FontRenderer {
                 Some(self.cached_sprite(key, || states[state].as_ref().clone()))
             };
             match &it.kind {
-                Kind::Text { text, size: sz, color, align, font, link } => {
+                Kind::Text { text, size: sz, color, align, font, link, deco } => {
+                    let deco = deco.scaled(s);
                     if link.is_none() {
-                        let (spr, px, py) = self.text_sprite(text, r(*sz), *color, *align, font, project_dir, w, h);
+                        let (spr, px, py) = self.text_sprite(text, r(*sz), *color, *align, font, project_dir, w, h, &deco);
                         blit(&mut im, &spr, x - px, y - py, 1.0);
                         continue;
                     }
                     let spr = if skinned { skin_state() } else { None }.unwrap_or_else(|| {
-                        let key = hkey(|hh| ("texte cliquable", text, r(*sz), color, align.name(), font, project_dir, w, h, &st, state).hash(hh));
+                        let key = hkey(|hh| ("texte cliquable", text, r(*sz), color, align.name(), font, project_dir, w, h, &st, state, deco).hash(hh));
                         self.cached_sprite(key, || {
                             let f = if font.is_empty() { String::new() } else { let c = abs(font); if c.is_file() { c.to_string_lossy().into_owned() } else { font.clone() } };
-                            let d = Decor::Text { text: text.clone(), x: 0, y: 0, w, h, size: r(*sz), color: *color, align: *align, font: f };
+                            let d = Decor::Text { text: text.clone(), x: 0, y: 0, w, h, size: r(*sz), color: *color, align: *align, font: f, deco };
                             self.decor_button(&d, w as u32, h as u32, &st)[state].as_ref().clone()
                         })
                     });

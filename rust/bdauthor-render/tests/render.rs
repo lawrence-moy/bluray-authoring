@@ -57,7 +57,7 @@ fn compose_and_preview() {
     use bdauthor_core::project::{Decor, Renderer};
     let Ok(r) = FontRenderer::new() else { return };
     let size = (960, 540);
-    let bg = r.compose_background(None, size, &[Decor::Text { text: "Titre\nSous-titre".into(), x: 40, y: 20, w: 880, h: 100, size: 40, color: [255, 200, 0], align: Align::Left, font: String::new() }]).unwrap();
+    let bg = r.compose_background(None, size, &[Decor::Text { text: "Titre\nSous-titre".into(), x: 40, y: 20, w: 880, h: 100, size: 40, color: [255, 200, 0], align: Align::Left, font: String::new(), deco: Default::default() }]).unwrap();
     assert!(bg.data.chunks_exact(4).any(|p| p[0] > 200 && p[1] > 150 && p[2] < 80), "du texte jaune doit etre dessine");
     let mut d = PageDesign::blank_free(0);
     for k in 0..3 { d.items.push(Item::video_slot(100 + 560 * k, 300, 500, 330, 280, 0, Some(60.0 * k as f64), "Intro")); }
@@ -100,7 +100,7 @@ fn button_styles() {
     // texte cliquable souligne, sans fond
     let mut u = ButtonStyle::default();
     u.underline = true; u.backdrop = 0;
-    let d = Decor::Text { text: "Lire".into(), x: 0, y: 0, w: 200, h: 60, size: 40, color: [255, 255, 0], align: bdauthor_core::design::Align::Center, font: String::new() };
+    let d = Decor::Text { text: "Lire".into(), x: 0, y: 0, w: 200, h: 60, size: 40, color: [255, 255, 0], align: bdauthor_core::design::Align::Center, font: String::new(), deco: Default::default() };
     let [dn, ds, _] = r.decor_button(&d, 200, 60, &u);
     assert_eq!(dn.pixel(100, 58)[3], 0, "normal : rien sous le texte");
     assert_eq!(ds.pixel(100, 58), [255, 255, 255, 255], "selectionne : soulignement");

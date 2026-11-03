@@ -1408,7 +1408,7 @@ impl App {
                     });
                     ui.horizontal(|ui| { ui.label(tr("Text:")); changed |= ui.text_edit_singleline(text).changed(); });
                 }
-                Kind::Text { text, size, color, align, font, link } => {
+                Kind::Text { text, size, color, align, font, link, deco } => {
                     link_ui(ui, link, &page_targets, &mut changed);
                     changed |= ui.add(egui::TextEdit::multiline(text).desired_rows(3).desired_width(f32::INFINITY)).changed();
                     ui.horizontal(|ui| {
@@ -1438,6 +1438,22 @@ impl App {
                         for a in [Align::Left, Align::Center, Align::Right] {
                             if ui.selectable_value(align, a, a.name()).changed() { changed = true; }
                         }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Background:"));
+                        // choisir une couleur rend le fond visible s'il etait transparent
+                        if ui.color_edit_button_srgb(&mut deco.bg_color).changed() { if deco.bg_opacity == 0 { deco.bg_opacity = 60; } changed = true; }
+                        ui.label(tr("Opacity:"));
+                        changed |= ui.add(egui::DragValue::new(&mut deco.bg_opacity).range(0..=100).suffix(" %")).changed();
+                        ui.label(tr("Corners:"));
+                        changed |= ui.add(egui::DragValue::new(&mut deco.bg_radius).range(0..=200).suffix(" px")).changed();
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Text outline:"));
+                        changed |= ui.add(egui::DragValue::new(&mut deco.outline).range(0..=30).suffix(" px")).changed();
+                        ui.label(tr("Color:"));
+                        if ui.color_edit_button_srgb(&mut deco.outline_color).changed() { if deco.outline == 0 { deco.outline = 3; } changed = true; }
+                        crate::help(ui, tr("Background: covers the whole frame of the item; opacity 0 % = no background. Outline: thickness of the border drawn around the letters, 0 = none. Sizes given for a 1920 × 1080 menu."));
                     });
                 }
                 Kind::Image { path, link } => {

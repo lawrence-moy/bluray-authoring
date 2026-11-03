@@ -763,3 +763,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Option par vidéo « Image clé exacte sur chaque chapitre » (JSON `chapitres_exacts`, écrit seulement si vrai) : l'encodage reçoit `-force_key_frames` (instants avancés de 0,5 ms) + `-forced-idr 1`, la clé de cache inclut ces instants ; calage des repères avec une tolérance de 45 tics (0,5 ms).
 - Cœur : `ffmpeg::frame_args`, `extract_frame_rgba` (image exacte ou image clé, sur la sortie standard), `FrameStream` (lecture temps réel, arrêtée à la destruction), `list_keyframes` / `parse_keyframes_compact`, `force_keys_args`, `EncodeOpts::force_keys`. Essais : tests/chapter_editor.rs (dont un essai réel ffmpeg : image clé forcée à 1,48 s retrouvée dans l'encodage).
 - Core : 156 tests verts. GUI à compiler avec recompiler.bat (non compilé dans le conteneur).
+
+## Export 147 — menu Fichier, À propos, habillage du widget Texte
+- Fichier : « Nouveau projet », « Ouvrir projet… », « Quitter ». Fermeture (Quitter ou croix de la fenêtre) : confirmation si le projet n'est pas enregistré ou si une construction tourne (Enregistrer et quitter / Quitter sans enregistrer / Annuler, Échap = annuler).
+- Menu « À propos » > « À propos de bdauthor… » : version, description, bibliothèques et licences, emplacement des réglages et du dossier des langues.
+- Widget Texte : fond (couleur, opacité 0-100 %, coins arrondis) sur tout le cadre et contour des lettres (épaisseur, couleur), tailles pour un menu 1920 × 1080, mises à l'échelle du menu. JSON de l'élément : `fond_couleur`, `fond_opacite`, `fond_arrondi`, `contour`, `contour_couleur` (écrits seulement s'ils servent). Choisir une couleur de fond (ou de contour) alors que l'opacité (ou l'épaisseur) vaut 0 la met à 60 % (ou 3 px).
+- Cœur : `design::TextDeco` (champ `deco` de `Kind::Text` et de `project::Decor::Text`). Rendu : `bdauthor_render::draw_deco_text` (fond `rounded_rect` + contour par décalages en cercles), utilisé pour les textes du fond, les textes cliquables (boutons) et l'aperçu de l'éditeur.
+- Essais : tests/text_deco.rs. Core : 160 tests verts. Render/GUI à compiler avec recompiler.bat.

@@ -232,6 +232,10 @@ struct App {
     restore_offer: Option<PathBuf>,
     /// video dont le retrait attend la confirmation de l'utilisateur
     confirm_remove: Option<usize>,
+    /// fenetre « Quitter sans enregistrer ? » ; `quit_ok` : la fermeture est confirmee
+    confirm_quit: bool,
+    quit_ok: bool,
+    show_about: bool,
     recovery_checked: bool,
     /// fenetre d'apercu du rendu d'une piste de sous-titres
     sub_preview: Option<subs_ui::SubPreview>,
@@ -314,7 +318,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, recovery_checked: false, sub_preview: None, chapter_editor: None, chapter_request: None, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, recovery_checked: false, sub_preview: None, chapter_editor: None, chapter_request: None, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -569,6 +573,48 @@ impl eframe::App for App {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
         let busy = self.running();
+        // fermeture de la fenetre (croix ou Fichier > Quitter) : confirmation si le projet n'est pas enregistre ou si une construction tourne
+        if ctx.input(|i| i.viewport().close_requested()) && !self.quit_ok && (self.dirty || busy) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            self.confirm_quit = true;
+        }
+        if self.confirm_quit {
+            let mut choice: Option<u8> = None;
+            egui::Window::new(tr("Quit bdauthor?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO).show(ctx, |ui| {
+                if self.dirty { ui.label(tr("The project has unsaved changes.")); }
+                if busy { ui.label(tr("A disc build is in progress: it will be stopped.")); }
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                    if self.dirty && ui.button(tr("Save and quit")).clicked() { choice = Some(2); }
+                    if ui.button(tr("Quit without saving")).clicked() { choice = Some(1); }
+                    if ui.button(tr("Cancel")).clicked() { choice = Some(0); }
+                });
+            });
+            if ctx.input(|i| i.key_pressed(egui::Key::Escape)) { choice = Some(0); }
+            match choice {
+                Some(2) => { if self.save(false) { self.quit_ok = true; ctx.send_viewport_cmd(egui::ViewportCommand::Close); } self.confirm_quit = false; }
+                Some(1) => { self.cancel.store(true, Ordering::Relaxed); self.quit_ok = true; ctx.send_viewport_cmd(egui::ViewportCommand::Close); self.confirm_quit = false; }
+                Some(_) => self.confirm_quit = false,
+                None => {}
+            }
+        }
+        if self.show_about {
+            let mut open = true;
+            egui::Window::new(tr("About bdauthor")).open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO).show(ctx, |ui| {
+                ui.heading("bdauthor");
+                ui.label(trf!("Version {}", env!("CARGO_PKG_VERSION")));
+                ui.add_space(4.0);
+                ui.label(tr("Blu-ray disc authoring: videos, chapters, interactive menus (HDMV), subtitles, audio tracks, cover and ISO image."));
+                ui.add_space(4.0);
+                ui.label(egui::RichText::new(tr("Uses ffmpeg (LGPL / GPL, run as a separate program), egui / eframe, rfd, image, ab_glyph and resvg (MIT / Apache-2.0 licenses).")).weak());
+                ui.add_space(4.0);
+                if let Some(p) = Config::path() { ui.label(egui::RichText::new(trf!("Settings: {}", p.display())).small().weak()); }
+                if let Some(d) = crate::i18n::user_dir() { ui.label(egui::RichText::new(trf!("Additional languages: {}", d.display())).small().weak()); }
+                ui.add_space(6.0);
+                if ui.button(tr("Close")).clicked() { self.show_about = false; }
+            });
+            if !open { self.show_about = false; }
+        }
         // vignettes liees a un chapitre : elles suivent l'instant du chapitre (et se detachent si le chapitre disparait)
         if self.model.sync_chapters() { self.dirty = true; self.bump(); }
         // durees des videos (affichees dans la liste) : sondees une fois, en tache de fond
@@ -799,13 +845,15 @@ impl eframe::App for App {
             ui.horizontal(|ui| {
                 ui.menu_button(tr("File"), |ui| {
                     ui.add_enabled_ui(!busy, |ui| {
-                        if ui.button(tr("New")).clicked() { self.new_project(); ui.close_menu(); }
-                        if ui.button(tr("Open…")).clicked() { ui.close_menu(); self.open(); }
+                        if ui.button(tr("New project")).clicked() { self.new_project(); ui.close_menu(); }
+                        if ui.button(tr("Open project…")).clicked() { ui.close_menu(); self.open(); }
                         if ui.button(tr("Save")).clicked() { ui.close_menu(); self.save(false); }
                         if ui.button(tr("Save as…")).clicked() { ui.close_menu(); self.save(true); }
                     });
                     ui.separator();
                     if ui.button(tr("Settings…")).clicked() { self.show_config = true; ui.close_menu(); }
+                    ui.separator();
+                    if ui.button(tr("Quit")).clicked() { ui.close_menu(); ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close); }
                 });
                 // annuler / retablir : modifications de la mise en page
                 ui.menu_button(tr("Edit"), |ui| {
@@ -820,6 +868,9 @@ impl eframe::App for App {
                         self.show_project = true;
                         ui.close_menu();
                     }
+                });
+                ui.menu_button(tr("About"), |ui| {
+                    if ui.button(tr("About bdauthor…")).clicked() { self.show_about = true; ui.close_menu(); }
                 });
                 ui.separator();
                 ui.selectable_value(&mut self.mode, Mode::Projet, tr("Videos"));

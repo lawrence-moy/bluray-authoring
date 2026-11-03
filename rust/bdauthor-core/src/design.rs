@@ -152,9 +152,64 @@ pub enum Kind {
     Nav { action: NavAction, text: String, target: Option<Target> },
     /// `font` : vide = police par defaut ; sinon fichier .ttf/.otf (chemin absolu ou relatif au projet) ou nom d'un fichier de police installe.
     /// `link` : si present, le texte devient un bouton qui mene a cette destination.
-    Text { text: String, size: i32, color: [u8; 3], align: Align, font: String, link: Option<Target> },
+    Text { text: String, size: i32, color: [u8; 3], align: Align, font: String, link: Option<Target>, deco: TextDeco },
     /// `link` : si present, l'image devient un bouton qui mene a cette destination.
     Image { path: String, link: Option<Target> },
+}
+
+/// Habillage d'un texte : fond derriere le cadre et contour des lettres (tailles en pixels d'un menu 1920 x 1080).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct TextDeco {
+    pub bg_color: [u8; 3],
+    /// opacite du fond en % (0 : pas de fond)
+    pub bg_opacity: u8,
+    /// rayon des coins du fond
+    pub bg_radius: i32,
+    /// epaisseur du contour des lettres (0 : aucun)
+    pub outline: i32,
+    pub outline_color: [u8; 3],
+}
+
+fn hex(c: [u8; 3]) -> Value { Value::Str(format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2])) }
+
+fn parse_hex(s: &str) -> Option<[u8; 3]> {
+    let c = s.trim().trim_start_matches('#');
+    let v = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6)?;
+    Some([(v >> 16) as u8, (v >> 8) as u8, v as u8])
+}
+
+impl TextDeco {
+    pub fn is_plain(&self) -> bool { self.bg_opacity == 0 && self.outline <= 0 }
+    /// Meme habillage a l'echelle `k` (le facteur applique aux positions et a la taille du texte).
+    pub fn scaled(&self, k: f64) -> TextDeco {
+        let r = |v: i32| if v <= 0 { 0 } else { ((v as f64 * k).round() as i32).max(1) };
+        TextDeco { bg_radius: r(self.bg_radius), outline: r(self.outline), ..*self }
+    }
+    /// Champs JSON de l'element (seulement ceux qui servent).
+    fn put(&self, put: &mut dyn FnMut(&str, Value)) {
+        if self.bg_opacity > 0 {
+            put("fond_couleur", hex(self.bg_color));
+            put("fond_opacite", Value::Num(self.bg_opacity.min(100) as f64));
+            if self.bg_radius > 0 { put("fond_arrondi", Value::Num(self.bg_radius as f64)); }
+        }
+        if self.outline > 0 {
+            put("contour", Value::Num(self.outline as f64));
+            put("contour_couleur", hex(self.outline_color));
+        }
+    }
+    fn from_item(e: &Value) -> Result<TextDeco, String> {
+        let col = |k: &str, d: [u8; 3]| -> Result<[u8; 3], String> {
+            match e.get(k).and_then(Value::as_str) { None => Ok(d), Some(s) => parse_hex(s).ok_or_else(|| trf!("invalid color: {}", s)) }
+        };
+        let int = |k: &str| e.get(k).and_then(Value::as_f64).map_or(0, |x| x.round().max(0.0) as i32);
+        Ok(TextDeco {
+            bg_color: col("fond_couleur", [0, 0, 0])?,
+            bg_opacity: int("fond_opacite").min(100) as u8,
+            bg_radius: int("fond_arrondi").min(540),
+            outline: int("contour").min(60),
+            outline_color: col("contour_couleur", [0, 0, 0])?,
+        })
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -302,7 +357,7 @@ impl Item {
         (r(self.x), r(self.y), r(self.w), r(self.h))
     }
     pub fn text(text: &str, x: i32, y: i32, w: i32, h: i32, size: i32) -> Item {
-        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
+        Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None, deco: TextDeco::default() }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
     }
     pub fn nav(action: NavAction, x: i32, y: i32, w: i32, h: i32) -> Item {
         Item { x, y, w, h, kind: Kind::Nav { action, text: action.default_text().into(), target: if action == NavAction::Goto { Some(Target::Main(0)) } else { None } }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
@@ -580,8 +635,9 @@ impl PageDesign {
                     put("type", Value::Str("navigation".into())); put("action", Value::Str(action.name().into())); put("texte", Value::Str(text.clone()));
                     if let (NavAction::Goto, Some(t)) = (action, target) { put("cible", t.to_value()); }
                 }
-                Kind::Text { text, size, color, align, font, link } => {
+                Kind::Text { text, size, color, align, font, link, deco } => {
                     if let Some(t) = link { put("cible", t.to_value()); }
+                    deco.put(&mut |k, v| put(k, v));
                     if !font.is_empty() { put("police", Value::Str(font.clone())); }
                     put("type", Value::Str("texte".into())); put("texte", Value::Str(text.clone())); put("taille", num(*size));
                     put("couleur", Value::Str(format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]))); put("alignement", Value::Str(align.name().into()));
@@ -647,7 +703,8 @@ impl PageDesign {
                     let c = st("couleur").unwrap_or("#ffffff").trim_start_matches('#');
                     let rgb = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6).ok_or_else(|| trf!("item {}: invalid color", k + 1))?;
                     Kind::Text { text: st("texte").unwrap_or("").to_string(), size: at("taille")?, color: [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8],
-                                 align: st("alignement").and_then(Align::from_name).unwrap_or(Align::Center), font: st("police").unwrap_or("").to_string(), link: link()? }
+                                 align: st("alignement").and_then(Align::from_name).unwrap_or(Align::Center), font: st("police").unwrap_or("").to_string(), link: link()?,
+                                 deco: TextDeco::from_item(e).map_err(|m| trf!("item {}: {}", k + 1, m))? }
                 }
                 "image" => Kind::Image { path: st("fichier").ok_or_else(|| trf!("item {}: “fichier” missing", k + 1))?.to_string(), link: link()? },
                 t => return Err(trf!("item {}: unknown type “{}”", k + 1, t)),
