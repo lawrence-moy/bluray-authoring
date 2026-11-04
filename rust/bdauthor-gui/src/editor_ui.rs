@@ -664,7 +664,6 @@ impl App {
         if custom {
             let mut add: Option<Item> = None;
             let mut pick_image = false;
-        let mut pick_frame = false;
             // palette : glisser une icone sur l'apercu pour placer l'element, ou cliquer pour l'ajouter a sa place par defaut
             let first = (!self.model.videos.is_empty()).then_some(0);
             let palette = palette();
@@ -1294,6 +1293,7 @@ impl App {
             }
         }
         let mut pick_image = false;
+        let mut pick_frame = false;
         let mut changed = false;
         let mut pick_font = false;
         let base_dir = self.base_dir();
