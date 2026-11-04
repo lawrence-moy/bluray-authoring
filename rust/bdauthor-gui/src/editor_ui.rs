@@ -31,6 +31,8 @@ pub(crate) enum Job {
     /// duree d'un fichier audio (musique de menu)
     ProbeAudio { key: String, path: PathBuf },
     Thumb { key: String, path: PathBuf, at: f64, duration: f64 },
+    /// image entiere (640 de large, proportions de la video) pour le widget « Image de la video »
+    Frame { key: String, path: PathBuf, at: f64 },
 }
 
 pub(crate) enum Event {
@@ -39,6 +41,7 @@ pub(crate) enum Event {
     /// (fichier, message) : la video n'a pas pu etre lue (duree inconnue)
     ProbeFailed(String, String),
     Thumb(String, i64, RgbaImage),
+    Frame(String, i64, RgbaImage),
     Error(String),
 }
 
@@ -65,6 +68,16 @@ impl Worker {
                         Ok(d) => Event::Duration(key, d, 0, 0.0),
                         Err(e) => Event::Error(trf!("Cannot read {}: {}", key, e)),
                     },
+                    (Ok(t), Job::Frame { key, path, at }) => {
+                        let r = probe(t, &path).and_then(|i| {
+                            let h = ((640.0 * i.height.max(1) as f64 / i.width.max(1) as f64 / 2.0).round() as u32 * 2).max(2);
+                            bdauthor_core::ffmpeg::extract_frame_rgba(t, &path, at.min((i.duration_s - 0.05).max(0.0)), (640, h), true)
+                        });
+                        match r {
+                            Ok(im) => Event::Frame(key, (at * 1000.0).round() as i64, im),
+                            Err(e) => Event::Error(trf!("Cannot create the thumbnail of {}: {}", key, e)),
+                        }
+                    }
                     (Ok(t), Job::Thumb { key, path, at, duration }) => {
                         match extract_thumbnail_rgba(t, &path, (480, 270), Some(at), duration) {
                             Ok(im) => Event::Thumb(key, (at * 1000.0).round() as i64, im),
@@ -363,7 +376,14 @@ impl App {
             }
         }
         let mut sources = self.slot_sources(info);
-        sources.extend(self.frame_sources(info));
+        for (file, at) in self.frame_sources(info) {
+            let ms = (at * 1000.0).round() as i64;
+            if !self.frames.contains_key(&(file.clone(), ms)) && self.requested.insert(format!("F|{file}|{ms}")) {
+                if let Some(w) = &self.worker {
+                    let _ = w.tx.send(Job::Frame { key: file.clone(), path: abs_path(&base, &file), at });
+                }
+            }
+        }
         if let Some(&d) = self.durations.get(&bgv) {
             sources.push((bgv.clone(), (d / 2.0).min(1.0)));
         }
@@ -451,7 +471,7 @@ impl App {
     fn frame_sources(&self, info: &PageInfo) -> Vec<(String, f64)> {
         let Some(d) = info.design(&self.model.designs) else { return vec![] };
         d.items.iter().filter_map(|it| match it.kind {
-            Kind::Image { frame: Some(bdauthor_core::design::VideoFrame { video: Some(v), at }), .. } => self.model.videos.get(v).map(|x| (x.file.clone(), at)),
+            Kind::Image { frame: Some(bdauthor_core::design::VideoFrame { video: Some(v), at, .. }), .. } => self.model.videos.get(v).map(|x| (x.file.clone(), at)),
             _ => None,
         }).collect()
     }
@@ -500,12 +520,17 @@ impl App {
             path.clear();
             let Some(file) = f.video.and_then(|v| self.model.videos.get(v)).map(|v| v.file.clone()) else { continue };
             let ms = (f.at * 1000.0).round() as i64;
-            let Some(img) = self.thumbs.get(&(file.clone(), ms)) else { continue };
+            let Some(img) = self.frames.get(&(file.clone(), ms)) else { continue };
             use std::hash::{Hash, Hasher};
             let mut h = std::collections::hash_map::DefaultHasher::new();
-            (&file, ms, std::process::id()).hash(&mut h);
+            let crop = f.crop.map(|c| c.map(|v| (v * 1e4).round() as i64));
+            (&file, ms, crop, std::process::id()).hash(&mut h);
             let png = std::env::temp_dir().join(format!("bdauthor_image_video_{:016x}.png", h.finish()));
-            if !png.is_file() { let _ = std::fs::write(&png, bdauthor_core::png::write_png(img)); }
+            if !png.is_file() {
+                let (cx, cy, cw, ch) = f.crop_px(img.width, img.height);
+                let part = bdauthor_core::cover::crop(img, cx as i32, cy as i32, cw as i32, ch as i32);
+                let _ = std::fs::write(&png, bdauthor_core::png::write_png(&part));
+            }
             *path = png.to_string_lossy().into_owned();
         }
         // calques masques (hors simulation) : leurs elements et vignettes sont retires de l'apercu
@@ -639,6 +664,7 @@ impl App {
         if custom {
             let mut add: Option<Item> = None;
             let mut pick_image = false;
+        let mut pick_frame = false;
             // palette : glisser une icone sur l'apercu pour placer l'element, ou cliquer pour l'ajouter a sa place par defaut
             let first = (!self.model.videos.is_empty()).then_some(0);
             let palette = palette();
@@ -1519,7 +1545,11 @@ impl App {
                         ui.label(egui::RichText::new(mmss(f.at)).weak());
                         if max_t < 1.0e6 { ui.label(egui::RichText::new(format!("/ {}", mmss(max_t))).weak()); }
                     });
-                    crate::help(ui, tr("A frame of the video at this time, fitted into the frame without distortion (16:9). To pick the exact image, use the chapter editor of the video (Videos tab) and copy its time."));
+                    ui.horizontal(|ui| {
+                        if ui.add_enabled(f.video.is_some(), egui::Button::new(tr("Choose the image…"))).on_hover_text(tr("Opens a window with the video image by image and a timeline, to choose the exact image and crop it")).clicked() { pick_frame = true; }
+                        ui.label(egui::RichText::new(if f.crop.is_some() { tr("cropped by hand") } else { tr("center of the image in 16:9") }).weak());
+                    });
+                    crate::help(ui, tr("A frame of the video at this time, fitted into the frame without distortion. “Choose the image…” lets you pick it image by image and crop it."));
                 }
                 Kind::Image { path, link, .. } => {
                     link_ui(ui, link, &page_targets, &mut changed);
@@ -1663,6 +1693,7 @@ impl App {
                 changed = true;
             }
         }
+        if pick_frame { self.frame_request = Some((info.r.0, i)); }
         if changed {
             self.bump();
         }
@@ -2151,6 +2182,7 @@ impl App {
             match e {
                 Event::Duration(k, d, h, f) => { self.video_sizes.insert(k.clone(), (h, f)); self.durations.insert(k, d); self.edit_gen += 1; }
                 Event::Thumb(k, ms, im) => { self.thumbs.insert((k, ms), std::sync::Arc::new(im)); self.edit_gen += 1; }
+                Event::Frame(k, ms, im) => { self.frames.insert((k, ms), std::sync::Arc::new(im)); self.edit_gen += 1; }
                 Event::ProbeFailed(k, m) => { self.probe_failed.insert(k); self.notice = m; self.edit_gen += 1; }
                 Event::Error(m) => self.notice = m,
             }

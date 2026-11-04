@@ -10,6 +10,7 @@ mod sim_ui;
 mod iso_ui;
 mod cover_ui;
 mod chapters_ui;
+mod frame_ui;
 
 use crate::i18n::{tr, trf};
 use bdauthor_core::check::Kind;
@@ -242,6 +243,11 @@ struct App {
     /// editeur de chapitres ouvert (une video a la fois) et demande d'ouverture (rang de la video)
     chapter_editor: Option<chapters_ui::ChapterEditor>,
     chapter_request: Option<usize>,
+    /// selecteur d'image d'un widget « Image de la video » : (page, element)
+    frame_picker: Option<frame_ui::FramePicker>,
+    frame_request: Option<(usize, usize)>,
+    /// images entieres des videos (widget « Image de la video »), par (fichier, instant en ms)
+    frames: HashMap<(String, i64), Arc<RgbaImage>>,
     cover_tex: Option<egui::TextureHandle>,
     cover_gen: u64,
     cover_seen: u64,
@@ -320,7 +326,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, recovery_checked: false, sub_preview: None, chapter_editor: None, chapter_request: None, cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, recovery_checked: false, sub_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -653,6 +659,15 @@ impl eframe::App for App {
             if ch { self.dirty = true; self.bump(); }
             if !keep { self.chapter_editor = None; }
         }
+        if let Some((page, item)) = self.frame_request.take() {
+            let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+            self.frame_picker = frame_ui::FramePicker::new(&self.model, page, item, &base);
+        }
+        let res = self.frame_picker.as_mut().map(|fp| frame_ui::window(ctx, fp, &mut self.model));
+        if let Some((ch, keep)) = res {
+            if ch { self.dirty = true; self.bump(); }
+            if !keep { self.frame_picker = None; }
+        }
         let mut open = self.show_config;
         // une fenetre systeme existe tant qu'on l'appelle : seulement quand elle est ouverte
         if open { os_window(ctx, "configuration", tr("Settings"), [640.0, 480.0], &mut open, &mut |ui| {
@@ -978,9 +993,11 @@ impl eframe::App for App {
                 self.sub_probes.remove(&f);
                 self.audio_probes.remove(&f);
                 self.thumbs.retain(|(k, _), _| *k != f);
+                self.frames.retain(|(k, _), _| *k != f);
                 let pp = format!("P|{f}");
                 let tp = format!("T|{f}|");
-                self.requested.retain(|k| *k != pp && !k.starts_with(&tp));
+                let fp = format!("F|{f}|");
+                self.requested.retain(|k| *k != pp && !k.starts_with(&tp) && !k.starts_with(&fp));
                 self.edit_gen += 1;
             }
             // glisser-deposer (meme mecanique que la liste des pages) : une ligne bleue montre la place d'arrivee

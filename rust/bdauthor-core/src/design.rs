@@ -158,11 +158,34 @@ pub enum Kind {
     Image { path: String, link: Option<Target>, frame: Option<VideoFrame> },
 }
 
-/// Image d'une video du projet : `video` (rang, `None` : a choisir), instant `at` en secondes.
+/// Image d'une video du projet : `video` (rang, `None` : a choisir), instant `at` en secondes, recadrage `crop` (x, y, largeur,
+/// hauteur en fractions de l'image entiere ; `None` : centre de l'image en 16/9).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VideoFrame {
     pub video: Option<usize>,
     pub at: f64,
+    pub crop: Option<[f64; 4]>,
+}
+
+impl VideoFrame {
+    /// Zone gardee (x, y, largeur, hauteur en pixels) d'une image de `w` x `h` pixels.
+    pub fn crop_px(&self, w: u32, h: u32) -> (u32, u32, u32, u32) {
+        let (wf, hf) = (w.max(1) as f64, h.max(1) as f64);
+        match self.crop {
+            Some([x, y, cw, ch]) => {
+                let x0 = (x.clamp(0.0, 1.0) * wf).round();
+                let y0 = (y.clamp(0.0, 1.0) * hf).round();
+                let x1 = ((x + cw).clamp(0.0, 1.0) * wf).round().max(x0 + 1.0).min(wf);
+                let y1 = ((y + ch).clamp(0.0, 1.0) * hf).round().max(y0 + 1.0).min(hf);
+                (x0.min(wf - 1.0) as u32, y0.min(hf - 1.0) as u32, (x1 - x0.min(wf - 1.0)).max(1.0) as u32, (y1 - y0.min(hf - 1.0)).max(1.0) as u32)
+            }
+            None => {
+                // comme ffmpeg (force_original_aspect_ratio=increase puis crop) : la plus grande zone 16/9 centree
+                let r = 16.0 / 9.0;
+                if wf / hf > r { let cw = (hf * r).round(); (((wf - cw) / 2.0).round() as u32, 0, cw as u32, h) } else { let ch = (wf / r).round(); (0, ((hf - ch) / 2.0).round() as u32, w, ch as u32) }
+            }
+        }
+    }
 }
 
 /// Habillage d'un texte : fond derriere le cadre et contour des lettres (tailles en pixels d'un menu 1920 x 1080).
@@ -338,7 +361,7 @@ impl Item {
     }
     /// « Image de la video » : image de la video `video` a l'instant `at` (secondes).
     pub fn video_frame(x: i32, y: i32, w: i32, h: i32, video: Option<usize>, at: f64) -> Item {
-        Item { x, y, w, h, kind: Kind::Image { path: String::new(), link: None, frame: Some(VideoFrame { video, at }) }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
+        Item { x, y, w, h, kind: Kind::Image { path: String::new(), link: None, frame: Some(VideoFrame { video, at, crop: None }) }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
     }
     /// Instant de depart d'une vignette de chapitre.
     pub fn chapter_start(&self) -> Option<f64> {
@@ -668,6 +691,7 @@ impl PageDesign {
                         Some(f) => {
                             if let Some(v) = f.video { put("video", num(v as i32 + 1)); }
                             put("instant", Value::Num(f.at));
+                            if let Some(c) = f.crop { put("recadrage", Value::Arr(c.iter().map(|v| Value::Num((v * 1e4).round() / 1e4)).collect())); }
                         }
                         None => put("fichier", Value::Str(path.clone())),
                     }
@@ -735,7 +759,11 @@ impl PageDesign {
                 "image" if e.get("instant").is_some() || e.get("video").is_some() => {
                     let video = e.get("video").and_then(Value::as_f64).filter(|v| *v >= 1.0).map(|v| v as usize - 1);
                     let at = e.get("instant").and_then(Value::as_f64).unwrap_or(0.0).max(0.0);
-                    Kind::Image { path: String::new(), link: link()?, frame: Some(VideoFrame { video, at }) }
+                    let crop = e.get("recadrage").and_then(Value::as_array).filter(|a| a.len() == 4).and_then(|a| {
+                        let v: Vec<f64> = a.iter().filter_map(Value::as_f64).collect();
+                        (v.len() == 4 && v[2] > 0.0 && v[3] > 0.0).then(|| [v[0].clamp(0.0, 1.0), v[1].clamp(0.0, 1.0), v[2].min(1.0), v[3].min(1.0)])
+                    });
+                    Kind::Image { path: String::new(), link: link()?, frame: Some(VideoFrame { video, at, crop }) }
                 }
                 "image" => Kind::Image { path: st("fichier").ok_or_else(|| trf!("item {}: “fichier” missing", k + 1))?.to_string(), link: link()?, frame: None },
                 t => return Err(trf!("item {}: unknown type “{}”", k + 1, t)),

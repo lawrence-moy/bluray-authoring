@@ -622,3 +622,78 @@ pub fn align_items(items: &mut [crate::design::Item], sel: &[usize], op: ItemAli
     }
     idx.iter().zip(&before).any(|(&i, b)| (items[i].x, items[i].y) != *b)
 }
+
+// ------------------------------------------------------------------ recadrage d'une image
+/// Recadrage (x, y, largeur, hauteur en fractions 0..1 de l'image) apres un glissement de la poignee `h` jusqu'au point `p` :
+/// 0 deplacement (depuis `start`), 1..4 angles haut gauche, haut droit, bas gauche, bas droit, 5..8 cotes gauche, droit, haut,
+/// bas, 9 nouveau cadre trace depuis `start`. `ratio` : rapport largeur / hauteur impose, exprime en fractions de l'image.
+pub fn crop_drag(h: u8, orig: [f64; 4], start: (f64, f64), p: (f64, f64), ratio: Option<f64>) -> [f64; 4] {
+    const MIN: f64 = 0.02;
+    let p = (p.0.clamp(0.0, 1.0), p.1.clamp(0.0, 1.0));
+    let [x, y, w, hh] = orig;
+    let (l, t, r, b) = (x, y, x + w, y + hh);
+    // cadre depuis un point fixe (angle oppose, ou depart du trace) vers le point tire
+    let from_anchor = |ax: f64, ay: f64| -> [f64; 4] {
+        let (sx, sy) = (if p.0 >= ax { 1.0 } else { -1.0 }, if p.1 >= ay { 1.0 } else { -1.0 });
+        let (max_w, max_h) = (if sx > 0.0 { 1.0 - ax } else { ax }, if sy > 0.0 { 1.0 - ay } else { ay });
+        let (mut cw, mut ch) = ((p.0 - ax).abs().min(max_w), (p.1 - ay).abs().min(max_h));
+        if let Some(rn) = ratio.filter(|r| *r > 0.0) {
+            cw = cw.max(ch * rn);
+            ch = cw / rn;
+            if cw > max_w { cw = max_w; ch = cw / rn; }
+            if ch > max_h { ch = max_h; cw = ch * rn; }
+        }
+        let (cw, ch) = (cw.max(MIN), ch.max(MIN));
+        let nx = if sx > 0.0 { ax } else { ax - cw };
+        let ny = if sy > 0.0 { ay } else { ay - ch };
+        [nx.clamp(0.0, 1.0 - cw), ny.clamp(0.0, 1.0 - ch), cw.min(1.0), ch.min(1.0)]
+    };
+    match h {
+        0 => {
+            let dx = (p.0 - start.0).clamp(-l, 1.0 - r);
+            let dy = (p.1 - start.1).clamp(-t, 1.0 - b);
+            [x + dx, y + dy, w, hh]
+        }
+        1 => from_anchor(r, b),
+        2 => from_anchor(l, b),
+        3 => from_anchor(r, t),
+        4 => from_anchor(l, t),
+        9 => from_anchor(start.0, start.1),
+        _ => {
+            let (mut l, mut t, mut r, mut b) = (l, t, r, b);
+            match h {
+                5 => l = p.0.min(r - MIN),
+                6 => r = p.0.max(l + MIN),
+                7 => t = p.1.min(b - MIN),
+                _ => b = p.1.max(t + MIN),
+            }
+            let (mut cw, mut ch) = (r - l, b - t);
+            if let Some(rn) = ratio.filter(|r| *r > 0.0) {
+                // l'autre dimension suit, centree sur le cadre d'origine
+                if h <= 6 {
+                    ch = (cw / rn).min(1.0);
+                    cw = ch * rn;
+                    if h == 5 { l = r - cw; }
+                    let cy = (t + b) / 2.0;
+                    t = (cy - ch / 2.0).clamp(0.0, 1.0 - ch);
+                } else {
+                    cw = (ch * rn).min(1.0);
+                    ch = cw / rn;
+                    if h == 7 { t = b - ch; }
+                    let cx = (l + r) / 2.0;
+                    l = (cx - cw / 2.0).clamp(0.0, 1.0 - cw);
+                }
+            }
+            [l.clamp(0.0, 1.0 - cw), t.clamp(0.0, 1.0 - ch), cw, ch]
+        }
+    }
+}
+
+/// Plus grand cadre de rapport `ratio` (fractions) centre dans l'image ; toute l'image sans rapport impose.
+pub fn crop_full(ratio: Option<f64>) -> [f64; 4] {
+    match ratio.filter(|r| *r > 0.0) {
+        Some(rn) if rn >= 1.0 => { let h = 1.0 / rn; [0.0, (1.0 - h) / 2.0, 1.0, h] }
+        Some(rn) => { let w = rn; [(1.0 - w) / 2.0, 0.0, w, 1.0] }
+        None => [0.0, 0.0, 1.0, 1.0],
+    }
+}

@@ -779,3 +779,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - « + Calque » déplie la page dans l'arbre. Liste « Calque » retirée de l'inspecteur (le glisser-déposer de l'arbre suffit).
 - Widget « Image de la vidéo » (palette, icône appareil photo) : `Kind::Image { frame: Some(VideoFrame { video, at }) }`, JSON `{"type":"image","video":n,"instant":s}` ; inspecteur : vidéo + instant ; cliquable comme une image. Aperçu : miniature 480×270 du fil de travail, écrite en PNG temporaire ; construction : image 1920×1080 extraite par ffmpeg dans le dossier temporaire. Vidéos retirées / échangées : renumérotation ; vérification « choisissez la vidéo » / « vidéo inexistante ». Image vide ou pas encore extraite : cadre sombre dans l'aperçu.
 - Essais : tests/editor.rs (côtés, aimantation), tests/video_frame.rs, tests/project.rs (construction avec une image de vidéo et un texte habillé). Core : 164 tests verts. Render/GUI à compiler avec recompiler.bat.
+
+## Export 149 — sélecteur d'image et recadrage du widget « Image de la vidéo »
+- Inspecteur : bouton « Choisir l'image… » (fenêtre `frame_ui.rs`) : image exacte à l'instant choisi, pas image par image (boutons, ← →, Maj 1 s, Ctrl 10 s), barre de temps avec 40 vignettes de la vidéo, tête de lecture, aperçu agrandi au survol, clic ou glisser pour choisir l'instant. Valider / Annuler.
+- Recadrage : case « Recadrer l'image », cadre à glisser (déplacer, angles, côtés, ou nouveau cadre tracé en dehors), proportions libres / celles du widget / 16:9 / 4:3 / 1:1, « Plus grand cadre ». Sans recadrage : centre de l'image en 16/9 (comme avant).
+- Modèle : `VideoFrame::crop` (fractions de l'image entière), JSON `recadrage: [x, y, l, h]` ; `crop_px` ; cœur `editor::crop_drag`, `crop_full`.
+- Construction : image entière (1920 de large, proportions de la vidéo) extraite à l'instant exact, puis zone gardée ; aperçu : image entière 640 de large (`Job::Frame`), recadrée, PNG temporaire.
+- Essais : tests/video_frame.rs (recadrage JSON/pixels, poignées), tests/project.rs (image recadrée). Core : 166 tests verts. GUI à compiler avec recompiler.bat.

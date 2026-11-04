@@ -1056,15 +1056,34 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         Ok(Some((MenuBg { video, video_audio, music, seconds, lang, cache: cache_dir.clone() }, base)))
     };
     // « Image de la video » : chaque image utilisee est extraite une fois (1920 x 1080, recadree en 16/9) dans le dossier temporaire
-    let mut frame_files: BTreeMap<(usize, i64), PathBuf> = BTreeMap::new();
+    // (la cle tient compte du recadrage : une meme image peut servir recadree de plusieurs facons)
+    let frame_key = |f: &crate::design::VideoFrame| -> Option<(usize, i64, [i64; 4])> {
+        let c = f.crop.map_or([-1; 4], |c| c.map(|v| (v * 1e4).round() as i64));
+        Some((f.video?, (f.at * 1000.0).round() as i64, c))
+    };
+    let mut frame_files: BTreeMap<(usize, i64, [i64; 4]), PathBuf> = BTreeMap::new();
+    let mut frame_sizes: BTreeMap<usize, (u32, u32)> = BTreeMap::new();
     for it in pages.iter().flat_map(|d| d.items.iter()) {
-        let Kind::Image { frame: Some(crate::design::VideoFrame { video: Some(v), at }), .. } = it.kind else { continue };
-        let key = (v, (at * 1000.0).round() as i64);
+        let Kind::Image { frame: Some(fr), .. } = &it.kind else { continue };
+        let Some(key) = frame_key(fr) else { continue };
+        let v = key.0;
         if v >= vids.len() || frame_files.contains_key(&key) { continue; }
         let src = p(&vfile(&vids[v])?);
         let dur = durations.get(v).copied().unwrap_or(0.0);
-        let img = ffmpeg::extract_thumbnail_rgba(tools_, &src, (1920, 1080), Some(at.min((dur - 0.05).max(0.0))), dur)?;
-        let f = tmp.0.join(format!("image_video_{}_{}.png", v + 1, key.1));
+        // image entiere de la video (1920 de large, proportions de la video), puis la zone gardee
+        let size = match frame_sizes.get(&v) {
+            Some(s) => *s,
+            None => {
+                let i = ffmpeg::probe(tools_, &src)?;
+                let s = (1920, ((1920.0 * i.height.max(1) as f64 / i.width.max(1) as f64 / 2.0).round() as u32 * 2).max(2));
+                frame_sizes.insert(v, s);
+                s
+            }
+        };
+        let full = ffmpeg::extract_frame_rgba(tools_, &src, fr.at.min((dur - 0.05).max(0.0)), size, true)?;
+        let (cx, cy, cw, ch) = fr.crop_px(full.width, full.height);
+        let img = crate::cover::crop(&full, cx as i32, cy as i32, cw as i32, ch as i32);
+        let f = tmp.0.join(format!("image_video_{}_{}_{}.png", v + 1, key.1, frame_files.len()));
         std::fs::write(&f, crate::png::write_png(&img))?;
         frame_files.insert(key, f);
     }
@@ -1079,7 +1098,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 Some(Decor::Text { text: text.clone(), x, y, w, h, size: py_round(*size as f64 * k) as i32, color: *color, align: *align, font, deco: deco.scaled(k) })
             }
             Kind::Image { frame: Some(f), .. } => {
-                let path = frame_files.get(&(f.video?, (f.at * 1000.0).round() as i64))?.clone();
+                let path = frame_files.get(&frame_key(f)?)?.clone();
                 Some(Decor::Image { path, x, y, w, h })
             }
             Kind::Image { path, .. } => Some(Decor::Image { path: p(path), x, y, w, h }),

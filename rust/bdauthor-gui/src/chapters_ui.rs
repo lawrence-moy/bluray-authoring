@@ -72,12 +72,12 @@ pub struct ChapterEditor {
 }
 
 /// « h:mm:ss.cc »
-fn tc(t: f64) -> String {
+pub(crate) fn tc(t: f64) -> String {
     let cs = (t.max(0.0) * 100.0).round() as i64;
     format!("{}:{:02}:{:02}.{:02}", cs / 360_000, cs / 6000 % 60, cs / 100 % 60, cs % 100)
 }
 
-fn tex_of(ctx: &egui::Context, name: &str, img: &RgbaImage) -> egui::TextureHandle {
+pub(crate) fn tex_of(ctx: &egui::Context, name: &str, img: &RgbaImage) -> egui::TextureHandle {
     let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data);
     ctx.load_texture(name, ci, egui::TextureOptions::LINEAR)
 }
