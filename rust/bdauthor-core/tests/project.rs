@@ -145,7 +145,8 @@ fn custom_layout_project() {
       "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
       "mise_en_page": { "pages": [
         { "elements": [
-          {"type":"texte","texte":"Mon titre","x":100,"y":60,"w":1700,"h":120,"taille":90,"couleur":"#ffcc00","alignement":"gauche"},
+          {"type":"texte","texte":"Mon titre","x":100,"y":60,"w":1700,"h":120,"taille":90,"couleur":"#ffcc00","alignement":"gauche","fond_couleur":"#000000","fond_opacite":50,"fond_arrondi":12,"contour":3,"contour_couleur":"#202020"},
+          {"type":"image","video":2,"instant":1.5,"x":1500,"y":200,"w":320,"h":180},
           {"type":"image","fichier":"b.mp4","x":1500,"y":800,"w":300,"h":200},
           {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2},
           {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1},

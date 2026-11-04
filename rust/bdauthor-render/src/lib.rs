@@ -1337,7 +1337,12 @@ impl FontRenderer {
                     });
                     blit(&mut im, &spr, x - mx, y - my, 1.0);
                 }
-                Kind::Image { path, link } => {
+                Kind::Image { path, link, .. } => {
+                    // image pas encore choisie (ou image de video pas encore extraite) : simple cadre sombre
+                    if path.is_empty() {
+                        if w > 0 && h > 0 { blit(&mut im, &rounded_rect(w as u32, h as u32, 0.0, [44, 46, 54]), x, y, 0.85); }
+                        continue;
+                    }
                     let Ok(src) = self.cached_image(&abs(path)) else { continue };
                     if link.is_none() {
                         let sc = (w as f64 / src.width as f64).min(h as f64 / src.height as f64);

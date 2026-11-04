@@ -48,10 +48,20 @@ pub fn list_pages(m: &ProjectModel) -> Vec<PageInfo> {
 
 // ------------------------------------------------------------------ souris
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Handle { Body, TopLeft, TopRight, BottomLeft, BottomRight }
+pub enum Handle { Body, TopLeft, TopRight, BottomLeft, BottomRight, Left, Right, Top, Bottom }
 
-/// Element (et poignee) sous le point (x, y) du plan 1920x1080. Les poignees d'angle de l'element selectionne sont prioritaires ;
-/// `r` = rayon de saisie des poignees en unites du plan.
+impl Handle {
+    /// Bords que la poignee deplace : (gauche, droite, haut, bas).
+    fn edges(self) -> (bool, bool, bool, bool) {
+        use Handle::*;
+        (matches!(self, TopLeft | BottomLeft | Left), matches!(self, TopRight | BottomRight | Right), matches!(self, TopLeft | TopRight | Top), matches!(self, BottomLeft | BottomRight | Bottom))
+    }
+    /// Poignee d'un cote (redimensionnement dans un seul sens).
+    pub fn is_side(self) -> bool { matches!(self, Handle::Left | Handle::Right | Handle::Top | Handle::Bottom) }
+}
+
+/// Element (et poignee) sous le point (x, y) du plan 1920x1080. Les poignees de l'element selectionne (angles, puis cotes) sont
+/// prioritaires ; `r` = rayon de saisie des poignees en unites du plan.
 pub fn hit_test(items: &[Item], x: f32, y: f32, selected: Option<usize>, r: f32) -> Option<(usize, Handle)> {
     hit_test_where(items, x, y, selected, r, &|_| true)
 }
@@ -64,6 +74,12 @@ pub fn hit_test_where(items: &[Item], x: f32, y: f32, selected: Option<usize>, r
         for (hx, hy, h) in [(l, t, Handle::TopLeft), (rr, t, Handle::TopRight), (l, b, Handle::BottomLeft), (rr, b, Handle::BottomRight)] {
             if (x - hx).abs() <= r && (y - hy).abs() <= r { return Some((i, h)); }
         }
+        // cotes : une bande de part et d'autre du bord, entre les angles
+        let (in_y, in_x) = (y > t && y < b, x > l && x < rr);
+        if in_y && (x - l).abs() <= r * 0.7 { return Some((i, Handle::Left)); }
+        if in_y && (x - rr).abs() <= r * 0.7 { return Some((i, Handle::Right)); }
+        if in_x && (y - t).abs() <= r * 0.7 { return Some((i, Handle::Top)); }
+        if in_x && (y - b).abs() <= r * 0.7 { return Some((i, Handle::Bottom)); }
     }
     items.iter().enumerate().rev().find(|(i, it)| usable(*i) && x >= it.x as f32 && x < (it.x + it.w) as f32 && y >= it.y as f32 && y < (it.y + it.h) as f32).map(|(i, _)| (i, Handle::Body))
 }
@@ -71,31 +87,30 @@ pub fn hit_test_where(items: &[Item], x: f32, y: f32, selected: Option<usize>, r
 fn snap(v: f32, grid: i32) -> i32 { if grid > 1 { ((v / grid as f32).round() as i32) * grid } else { v.round() as i32 } }
 
 /// Nouveau rectangle (x, y, w, h) apres un glissement de (dx, dy) unites du plan depuis `orig`. Taille minimale `min`.
-/// Le deplacement garde l'element dans l'ecran ; `grid` > 1 aimante les bords sur une grille.
+/// Le deplacement garde l'element dans l'ecran ; `grid` > 1 aimante les bords sur une grille. Une poignee de cote ne change
+/// qu'une dimension.
 pub fn dragged_rect(orig: (i32, i32, i32, i32), handle: Handle, dx: f32, dy: f32, grid: i32, min: i32) -> (i32, i32, i32, i32) {
     let (ox, oy, ow, oh) = orig;
-    match handle {
-        Handle::Body => {
-            let x = snap(ox as f32 + dx, grid).clamp(0.min(PLANE.0 - ow), (PLANE.0 - ow).max(0));
-            let y = snap(oy as f32 + dy, grid).clamp(0.min(PLANE.1 - oh), (PLANE.1 - oh).max(0));
-            (x, y, ow, oh)
-        }
-        _ => {
-            let (mut l, mut t, mut r, mut b) = (ox, oy, ox + ow, oy + oh);
-            if matches!(handle, Handle::TopLeft | Handle::BottomLeft) { l = snap(ox as f32 + dx, grid).clamp(0, r - min); }
-            if matches!(handle, Handle::TopRight | Handle::BottomRight) { r = snap((ox + ow) as f32 + dx, grid).clamp(l + min, PLANE.0); }
-            if matches!(handle, Handle::TopLeft | Handle::TopRight) { t = snap(oy as f32 + dy, grid).clamp(0, b - min); }
-            if matches!(handle, Handle::BottomLeft | Handle::BottomRight) { b = snap((oy + oh) as f32 + dy, grid).clamp(t + min, PLANE.1); }
-            (l, t, r - l, b - t)
-        }
+    if handle == Handle::Body {
+        let x = snap(ox as f32 + dx, grid).clamp(0.min(PLANE.0 - ow), (PLANE.0 - ow).max(0));
+        let y = snap(oy as f32 + dy, grid).clamp(0.min(PLANE.1 - oh), (PLANE.1 - oh).max(0));
+        return (x, y, ow, oh);
     }
+    let (ml, mr, mt, mb) = handle.edges();
+    let (mut l, mut t, mut r, mut b) = (ox, oy, ox + ow, oy + oh);
+    if ml { l = snap(ox as f32 + dx, grid).clamp(0, r - min); }
+    if mr { r = snap((ox + ow) as f32 + dx, grid).clamp(l + min, PLANE.0); }
+    if mt { t = snap(oy as f32 + dy, grid).clamp(0, b - min); }
+    if mb { b = snap((oy + oh) as f32 + dy, grid).clamp(t + min, PLANE.1); }
+    (l, t, r - l, b - t)
 }
 
 /// Comme `dragged_rect`, mais un coin garde les proportions d'origine (Maj) : le coin oppose reste fixe, l'echelle suit la
-/// poignee (la plus grande des deux dimensions), bornee par la taille minimale et par le plan. Le deplacement est inchange.
+/// poignee (la plus grande des deux dimensions), bornee par la taille minimale et par le plan. Le deplacement et les cotes
+/// sont inchanges.
 pub fn dragged_rect_ratio(orig: (i32, i32, i32, i32), handle: Handle, dx: f32, dy: f32, grid: i32, min: i32) -> (i32, i32, i32, i32) {
     let (ox, oy, ow, oh) = orig;
-    if handle == Handle::Body || ow <= 0 || oh <= 0 { return dragged_rect(orig, handle, dx, dy, grid, min); }
+    if handle == Handle::Body || handle.is_side() || ow <= 0 || oh <= 0 { return dragged_rect(orig, handle, dx, dy, grid, min); }
     let free = dragged_rect(orig, handle, dx, dy, grid, min);
     let left = matches!(handle, Handle::TopLeft | Handle::BottomLeft);
     let top = matches!(handle, Handle::TopLeft | Handle::TopRight);
@@ -109,6 +124,43 @@ pub fn dragged_rect_ratio(orig: (i32, i32, i32, i32), handle: Handle, dx: f32, d
     let x = if left { ox + ow - w } else { ox };
     let y = if top { oy + oh - h } else { oy };
     (x, y, w, h)
+}
+
+/// Lignes d'aimantation : (abscisses, ordonnees) des bords et du centre de l'ecran et des elements `others`.
+pub fn snap_lines<'a>(others: impl Iterator<Item = &'a Item>) -> (Vec<i32>, Vec<i32>) {
+    let (mut xs, mut ys) = (vec![0, PLANE.0 / 2, PLANE.0], vec![0, PLANE.1 / 2, PLANE.1]);
+    for it in others {
+        xs.extend([it.x, it.x + it.w / 2, it.x + it.w]);
+        ys.extend([it.y, it.y + it.h / 2, it.y + it.h]);
+    }
+    (xs, ys)
+}
+
+/// Aimante un rectangle (x, y, w, h) du plan sur les lignes `xs` / `ys` a moins de `thr` : en deplacement, ses bords et son
+/// centre ; en redimensionnement, les seuls bords que la poignee deplace. Taille minimale `min`. Rend le rectangle et les lignes
+/// (abscisse, ordonnee) sur lesquelles il s'est aimante.
+pub fn snap_item_rect(handle: Handle, r: (i32, i32, i32, i32), xs: &[i32], ys: &[i32], thr: i32, min: i32) -> ((i32, i32, i32, i32), Option<i32>, Option<i32>) {
+    let (mut x, mut y, mut w, mut h) = r;
+    let best = |edges: &[i32], lines: &[i32]| -> Option<(i32, i32)> {
+        let mut b: Option<(i32, i32)> = None;
+        for &e in edges { for &l in lines { let d = l - e; if d.abs() <= thr && b.map_or(true, |(bd, _)| d.abs() < bd.abs()) { b = Some((d, l)); } } }
+        b
+    };
+    let (ml, mr, mt, mb) = handle.edges();
+    let body = handle == Handle::Body;
+    let xe: Vec<i32> = if body { vec![x, x + w / 2, x + w] } else if ml { vec![x] } else if mr { vec![x + w] } else { vec![] };
+    let ye: Vec<i32> = if body { vec![y, y + h / 2, y + h] } else if mt { vec![y] } else if mb { vec![y + h] } else { vec![] };
+    let (mut gx, mut gy) = (None, None);
+    if let Some((d, l)) = best(&xe, xs) {
+        if body { x += d } else if ml { x += d; w -= d } else { w += d }
+        gx = Some(l);
+    }
+    if let Some((d, l)) = best(&ye, ys) {
+        if body { y += d } else if mt { y += d; h -= d } else { h += d }
+        gy = Some(l);
+    }
+    if w < min || h < min { return (r, None, None); }
+    ((x, y, w, h), gx, gy)
 }
 
 /// Applique un rectangle a un element ; pour une vignette, la hauteur du libelle est conservee.
@@ -230,15 +282,9 @@ pub fn copy_decor(src: &PageDesign, target: PageDesign) -> PageDesign {
     d
 }
 
-/// Ajoute une page vierge a la fin du menu et retourne son indice ; la page precedente recoit un bouton « Suivant » s'il manque.
+/// Ajoute une page vierge a la fin du menu et retourne son indice (les autres pages ne changent pas).
 pub fn add_free_page(m: &mut ProjectModel) -> usize {
     let k = m.designs.free.len();
-    if let Some(prev) = m.designs.free.last_mut() {
-        if !prev.items.iter().any(|i| matches!(&i.kind, Kind::Nav { action: NavAction::Next, .. })) {
-            let front = prev.layers.last().map_or(0, |l| l.id);
-            insert_item(prev, Item::nav(NavAction::Next, 1000, 1080 - 60 - 80, 360, 80), front);
-        }
-    }
     let mut d = PageDesign::blank_free(k);
     d.name = format!("Page {}", k + 1);
     m.designs.free.push(d);

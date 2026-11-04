@@ -2,7 +2,7 @@
 use crate::i18n::{tr, trf};
 use crate::App;
 use bdauthor_core::design::{Align, Item, Kind, NavAction, NavLink, PageDesign, SlotReturn, Target};
-use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, video_title, Handle, PageInfo, PageRef};
+use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, snap_item_rect, snap_lines, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -88,7 +88,6 @@ enum SlotShow {
     Missing,
 }
 
-enum Op { ToLayer(u32) }
 
 /// Supprime (`dup` = false) ou duplique l'element `i` ; retourne l'element a selectionner ensuite. La copie se place juste devant
 /// l'original, dans le meme calque, decalee de 30 px.
@@ -129,13 +128,14 @@ fn item_menu(ui: &mut egui::Ui) -> Option<bool> {
 
 /// Element a ajouter depuis la palette (glisser-deposer sur l'apercu).
 #[derive(Clone, Copy, PartialEq)]
-enum NewWidget { Text, Image, VideoSlot, ChapterSlot, Nav(NavAction) }
+enum NewWidget { Text, Image, VideoFrame, VideoSlot, ChapterSlot, Nav(NavAction) }
 
 /// Icones de la palette : (element, icone, nom).
 fn palette() -> Vec<(NewWidget, &'static str, String)> {
     let mut v = vec![
         (NewWidget::Text, "🔤", tr("Text").to_string()),
         (NewWidget::Image, "🖼", tr("Image (PNG, JPEG, SVG…)").to_string()),
+        (NewWidget::VideoFrame, "📷", tr("Video image (a frame of a project video, chosen by its time)").to_string()),
         (NewWidget::VideoSlot, "🎬", tr("Video thumbnail (plays from the start)").to_string()),
         (NewWidget::ChapterSlot, "🎞", tr("Chapter thumbnail (plays from a time)").to_string()),
     ];
@@ -148,7 +148,8 @@ fn palette() -> Vec<(NewWidget, &'static str, String)> {
 fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
     match w {
         NewWidget::Text => Item::text(tr("Text"), 660, 470, 600, 120, 60),
-        NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() },
+        NewWidget::Image => Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: String::new(), link: None, frame: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() },
+        NewWidget::VideoFrame => Item::video_frame(660, 300, 600, 338, first_video, 1.0),
         NewWidget::VideoSlot | NewWidget::ChapterSlot => {
             let mut it = Item::video_slot(100, 300, 400, 250, 200, 0, None, "");
             if let Kind::Slot { video, start, .. } = &mut it.kind {
@@ -261,6 +262,8 @@ fn kind_name(k: &Kind) -> &'static str {
         Kind::Nav { .. } => tr("Navigation button"),
         Kind::Text { link: None, .. } => tr("Text"),
         Kind::Text { .. } => tr("Clickable text"),
+        Kind::Image { frame: Some(_), link: None, .. } => tr("Video image"),
+        Kind::Image { frame: Some(_), .. } => tr("Clickable video image"),
         Kind::Image { link: None, .. } => tr("Image"),
         Kind::Image { .. } => tr("Clickable image"),
     }
@@ -360,6 +363,7 @@ impl App {
             }
         }
         let mut sources = self.slot_sources(info);
+        sources.extend(self.frame_sources(info));
         if let Some(&d) = self.durations.get(&bgv) {
             sources.push((bgv.clone(), (d / 2.0).min(1.0)));
         }
@@ -443,6 +447,15 @@ impl App {
         self.thumbs.get(&(f.clone(), ms)).cloned()
     }
 
+    /// Images de video (widget « Image de la video ») de la page : (fichier, instant).
+    fn frame_sources(&self, info: &PageInfo) -> Vec<(String, f64)> {
+        let Some(d) = info.design(&self.model.designs) else { return vec![] };
+        d.items.iter().filter_map(|it| match it.kind {
+            Kind::Image { frame: Some(bdauthor_core::design::VideoFrame { video: Some(v), at }), .. } => self.model.videos.get(v).map(|x| (x.file.clone(), at)),
+            _ => None,
+        }).collect()
+    }
+
     /// Miniatures utiles a la page : (fichier, instant).
     fn slot_sources(&self, info: &PageInfo) -> Vec<(String, f64)> {
         self.slot_plan(info).into_iter().filter_map(|s| match s {
@@ -479,6 +492,22 @@ impl App {
         let slots = self.preview_slots(info);
         // les PreviewSlot sont dans l'ordre des vignettes de la page
         let Some(mut design) = info.design(&self.model.designs).cloned() else { return };
+        // images de video : la miniature extraite, ecrite une fois en PNG temporaire, remplace l'element pour l'apercu
+        for it in &mut design.items {
+            let Kind::Image { path, frame, .. } = &mut it.kind else { continue };
+            let Some(f) = *frame else { continue };
+            *frame = None;
+            path.clear();
+            let Some(file) = f.video.and_then(|v| self.model.videos.get(v)).map(|v| v.file.clone()) else { continue };
+            let ms = (f.at * 1000.0).round() as i64;
+            let Some(img) = self.thumbs.get(&(file.clone(), ms)) else { continue };
+            use std::hash::{Hash, Hasher};
+            let mut h = std::collections::hash_map::DefaultHasher::new();
+            (&file, ms, std::process::id()).hash(&mut h);
+            let png = std::env::temp_dir().join(format!("bdauthor_image_video_{:016x}.png", h.finish()));
+            if !png.is_file() { let _ = std::fs::write(&png, bdauthor_core::png::write_png(img)); }
+            *path = png.to_string_lossy().into_owned();
+        }
         // calques masques (hors simulation) : leurs elements et vignettes sont retires de l'apercu
         let mut slots = slots;
         let mut sel_shift: Option<usize> = self.sel_item;
@@ -625,11 +654,12 @@ impl App {
                 }
                 ui.separator();
                 ui.checkbox(&mut self.snap, tr("Snap to 10 px"));
+                ui.checkbox(&mut self.guide_snap, tr("Align with the other items")).on_hover_text(tr("While moving or resizing, the edges and centers snap to the edges and center of the screen and of the other visible items (magenta lines). Alt: temporarily off."));
             });
             if pick_image {
                 if let Some(f) = rfd::FileDialog::new().add_filter(tr("Images"), &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file() {
                     let rel = self.relative(&f);
-                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
+                    add = Some(Item { x: 100, y: 100, w: 400, h: 300, kind: Kind::Image { path: rel, link: None, frame: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
                 }
             }
             if let Some(it) = add {
@@ -701,7 +731,16 @@ impl App {
             }
             None => vec![],
         };
-        let reserve = if probs.is_empty() { 6.0 } else { 10.0 + 20.0 * probs.len().min(4) as f32 };
+        // problemes de la page (chevauchements, destinations...) : au-dessus de l'apercu, toujours visibles
+        if !probs.is_empty() {
+            egui::ScrollArea::vertical().id_salt("defil_verifs").max_height(10.0 + 20.0 * probs.len().min(4) as f32).show(ui, |ui| {
+                for p in &probs {
+                    let (c, t) = if p.error { (Color32::from_rgb(230, 100, 90), tr("Error")) } else { (Color32::from_rgb(230, 190, 80), tr("Warning")) };
+                    ui.colored_label(c, format!("{t} : {}", p.msg));
+                }
+            });
+        }
+        let reserve = 6.0;
         // vue : zoom et deplacement de l'apercu (reinitialises a chaque changement de page)
         if self.view_page != Some(info.r) { self.view_page = Some(info.r); self.view_zoom = 1.0; self.view_pan = egui::Vec2::ZERO; }
         ui.horizontal(|ui| {
@@ -770,7 +809,7 @@ impl App {
                         let dropped = if *w == NewWidget::Image {
                             rfd::FileDialog::new().add_filter(tr("Images"), &["png", "jpg", "jpeg", "bmp", "svg", "svgz"]).pick_file().map(|f| {
                                 let mut it = it;
-                                it.kind = Kind::Image { path: self.relative(&f), link: None };
+                                it.kind = Kind::Image { path: self.relative(&f), link: None, frame: None };
                                 it
                             })
                         } else {
@@ -797,6 +836,8 @@ impl App {
             let usable: Vec<bool> = info.design(&self.model.designs).map(|d| (0..d.items.len()).map(|i| !d.item_hidden(i) && !d.item_locked(i)).collect()).unwrap_or_default();
             let can = |i: usize| usable.get(i).copied().unwrap_or(false);
             let grid = if self.snap { 10 } else { 0 };
+            // lignes d'aimantation trouvees pendant ce glissement (dessinees sur l'apercu)
+            let mut guides: (Option<i32>, Option<i32>) = (None, None);
             let (r_started, r_dragged, r_stopped, r_clicked, r_secondary) = if skip_input { (false, false, false, false, false) } else { (resp.drag_started(), resp.dragged(), resp.drag_stopped(), resp.clicked(), resp.secondary_clicked()) };
             if r_started {
                 if let Some(pos) = resp.interact_pointer_pos() {
@@ -832,10 +873,22 @@ impl App {
                     // Maj : redimensionnement proportionnel (le coin oppose reste fixe)
                     let ratio = ctx.input(|i| i.modifiers.shift);
                     let o = (d.orig.x, d.orig.y, d.orig.w, d.orig.h);
-                    let r = if ratio { dragged_rect_ratio(o, d.handle, px - d.start.0, py - d.start.1, grid, 16) } else { dragged_rect(o, d.handle, px - d.start.0, py - d.start.1, grid, 16) };
+                    let mut r = if ratio { dragged_rect_ratio(o, d.handle, px - d.start.0, py - d.start.1, grid, 16) } else { dragged_rect(o, d.handle, px - d.start.0, py - d.start.1, grid, 16) };
                     let orig = d.orig.clone();
                     let idx = d.idx;
                     let group = d.group.clone();
+                    // aimantation aux bords et centres de l'ecran et des autres elements visibles (Alt : desactivee)
+                    if self.guide_snap && !(ratio && !d.handle.is_side() && d.handle != Handle::Body) && !ctx.input(|i| i.modifiers.alt) {
+                        let others = snapshot.iter().enumerate().filter(|(j, _)| *j != idx && !group.iter().any(|g| g.0 == *j) && can(*j)).map(|(_, it)| it);
+                        let (xs, ys) = snap_lines(others);
+                        let (r2, gx, gy) = snap_item_rect(d.handle, r, &xs, &ys, (6.0 / k).round().max(1.0) as i32, 16);
+                        if d.handle == Handle::Body {
+                            r = (r2.0.clamp(0, (1920 - r2.2).max(0)), r2.1.clamp(0, (1080 - r2.3).max(0)), r2.2, r2.3);
+                        } else {
+                            r = r2;
+                        }
+                        guides = (gx, gy);
+                    }
                     let (gdx, gdy) = (r.0 - orig.x, r.1 - orig.y);
                     if let Some(dd) = info.design_mut(&mut self.model.designs) {
                         if let Some(it) = dd.items.get_mut(idx) {
@@ -979,9 +1032,17 @@ impl App {
                         let shown = if it.link().is_some() { format!("{shown} →") } else { shown };
                         painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(14.0), col);
                     }
+                    if let Kind::Image { frame: Some(f), .. } = it.kind {
+                        let shown = match f.video { Some(v) => format!("V{} @{}", v + 1, mmss(f.at)), None => "?".to_string() };
+                        painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(14.0), col);
+                    }
                     if selected && !multi {
                         for c in [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] {
                             painter.rect_filled(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Color32::WHITE);
+                        }
+                        // poignees des cotes (redimensionnement dans un seul sens)
+                        for c in [r.center_top(), r.center_bottom(), r.left_center(), r.right_center()] {
+                            painter.rect_filled(Rect::from_center_size(c, vec2(7.0, 7.0)), 1.0, Color32::from_gray(225));
                         }
                     }
                 }
@@ -1002,6 +1063,11 @@ impl App {
                     }
                 }
             }
+            if self.drag.is_some() {
+                let magenta = Stroke::new(1.0_f32, Color32::from_rgb(255, 80, 200));
+                if let Some(gx) = guides.0 { painter.line_segment([to_screen(gx as f32, 0.0), to_screen(gx as f32, 1080.0)], magenta); }
+                if let Some(gy) = guides.1 { painter.line_segment([to_screen(0.0, gy as f32), to_screen(1920.0, gy as f32)], magenta); }
+            }
             if let Some(pos) = resp.hover_pos() {
                 let (px, py) = to_plane(pos);
                 // en selection multiple : pas de poignees de redimensionnement
@@ -1009,23 +1075,14 @@ impl App {
                 match hit_test_where(&snapshot, px, py, prio, 12.0 / k, &can) {
                     Some((_, Handle::TopLeft)) | Some((_, Handle::BottomRight)) => ctx.set_cursor_icon(egui::CursorIcon::ResizeNwSe),
                     Some((_, Handle::TopRight)) | Some((_, Handle::BottomLeft)) => ctx.set_cursor_icon(egui::CursorIcon::ResizeNeSw),
+                    Some((_, Handle::Left)) | Some((_, Handle::Right)) => ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal),
+                    Some((_, Handle::Top)) | Some((_, Handle::Bottom)) => ctx.set_cursor_icon(egui::CursorIcon::ResizeVertical),
                     Some((_, Handle::Body)) => ctx.set_cursor_icon(egui::CursorIcon::Grab),
                     None => {}
                 }
             }
         }
 
-        // vérifications
-        if custom {
-            if !probs.is_empty() {
-                egui::ScrollArea::vertical().id_salt("defil_verifs").max_height(reserve).show(ui, |ui| {
-                    for p in &probs {
-                        let (c, t) = if p.error { (Color32::from_rgb(230, 100, 90), tr("Error")) } else { (Color32::from_rgb(230, 190, 80), tr("Warning")) };
-                        ui.colored_label(c, format!("{t} : {}", p.msg));
-                    }
-                });
-            }
-        }
     }
 
     pub(crate) fn relative(&self, f: &std::path::Path) -> String {
@@ -1210,7 +1267,6 @@ impl App {
                 }
             }
         }
-        let mut op: Option<Op> = None;
         let mut pick_image = false;
         let mut changed = false;
         let mut pick_font = false;
@@ -1222,6 +1278,7 @@ impl App {
         // langues de sous-titres du projet (le bouton choisit une langue, pas un numero de piste)
         let sub_langs: Vec<(u32, String)> = self.model.languages.iter().map(|l| (l.id, l.name.clone())).collect();
         let video_labels: Vec<String> = (0..self.model.videos.len()).map(|i| video_title(&self.model, i)).collect();
+        let video_durs: Vec<Option<f64>> = self.model.videos.iter().map(|v| self.durations.get(&v.file).copied()).collect();
         let proj_style = self.model.designs.style.clone();
         // chapitres de chaque video (identifiant, instant, titre), par instant croissant ; videos aux chapitres automatiques
         let video_chapters: Vec<Vec<(u32, f64, String)>> = self.model.videos.iter().map(|v| {
@@ -1239,22 +1296,12 @@ impl App {
         let page_fps = if page_fps == 0 { bdauthor_core::design::DEFAULT_ANIM_FPS } else { page_fps };
         {
             let Some(d) = info.design_mut(&mut self.model.designs) else { return };
-            let layers: Vec<(u32, String)> = d.layers.iter().rev().map(|l| (l.id, l.name.clone())).collect();
-            let cur_layer = d.items.get(i).map_or(0, |it| it.layer);
             let Some(it) = d.items.get_mut(i) else { self.sel_item = None; return };
             ui.colored_label(kind_color(&it.kind), kind_name(&it.kind));
             ui.horizontal(|ui| {
                 ui.label(tr("Name"));
                 changed |= ui.add(egui::TextEdit::singleline(&mut it.name).hint_text(tr("(optional: to find your way around)")).desired_width(220.0)).changed();
             });
-            if !layers.is_empty() {
-                let shown = layers.iter().find(|(id, _)| *id == cur_layer).map(|(_, n)| n.clone()).unwrap_or_default();
-                egui::ComboBox::from_label(tr("Layer")).selected_text(shown).show_ui(ui, |ui| {
-                    for (id, name) in &layers {
-                        if ui.selectable_label(*id == cur_layer, name).clicked() && *id != cur_layer { op = Some(Op::ToLayer(*id)); }
-                    }
-                });
-            }
             egui::Grid::new("geometrie").num_columns(4).show(ui, |ui| {
                 ui.label(tr("X")); changed |= ui.add(egui::DragValue::new(&mut it.x).range(0..=1920)).changed();
                 ui.label(tr("Y")); changed |= ui.add(egui::DragValue::new(&mut it.y).range(0..=1080)).changed();
@@ -1456,7 +1503,25 @@ impl App {
                         crate::help(ui, tr("Background: covers the whole frame of the item; opacity 0 % = no background. Outline: thickness of the border drawn around the letters, 0 = none. Sizes given for a 1920 × 1080 menu."));
                     });
                 }
-                Kind::Image { path, link } => {
+                Kind::Image { frame: Some(f), link, .. } => {
+                    link_ui(ui, link, &page_targets, &mut changed);
+                    let vname = |v: usize| trf!("Video {}. {}", v + 1, video_labels.get(v).cloned().unwrap_or_default());
+                    let shown = match f.video { Some(v) => vname(v), None => tr("(no video: to choose)").to_string() };
+                    egui::ComboBox::from_label(tr("Video")).selected_text(shown).show_ui(ui, |ui| {
+                        for v in 0..video_labels.len() {
+                            if ui.selectable_label(f.video == Some(v), vname(v)).clicked() { f.video = Some(v); changed = true; }
+                        }
+                    });
+                    let max_t = f.video.and_then(|v| video_durs.get(v).copied().flatten()).unwrap_or(1.0e6);
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Time:"));
+                        changed |= ui.add(egui::DragValue::new(&mut f.at).speed(0.2).range(0.0..=max_t).suffix(" s")).changed();
+                        ui.label(egui::RichText::new(mmss(f.at)).weak());
+                        if max_t < 1.0e6 { ui.label(egui::RichText::new(format!("/ {}", mmss(max_t))).weak()); }
+                    });
+                    crate::help(ui, tr("A frame of the video at this time, fitted into the frame without distortion (16:9). To pick the exact image, use the chapter editor of the video (Videos tab) and copy its time."));
+                }
+                Kind::Image { path, link, .. } => {
                     link_ui(ui, link, &page_targets, &mut changed);
                     ui.horizontal(|ui| { ui.label(tr("File:")); changed |= ui.text_edit_singleline(path).changed(); });
                     if ui.button(tr("Choose…")).clicked() { pick_image = true; }
@@ -1597,17 +1662,6 @@ impl App {
                 if let Some(Kind::Slot { chapter, .. }) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)).map(|it| &mut it.kind) { *chapter = Some(id); }
                 changed = true;
             }
-        }
-        if let Some(op) = op {
-            if let Some(d) = info.design_mut(&mut self.model.designs) {
-                match op {
-                    Op::ToLayer(id) => {
-                        let end = d.layers.iter().position(|l| l.id == id).map_or(d.items.len(), |p| d.layer_range(p).end);
-                        self.sel_item = Some(move_item(d, i, end, id));
-                    }
-                }
-            }
-            changed = true;
         }
         if changed {
             self.bump();
@@ -1758,7 +1812,8 @@ impl App {
                             let it = &d.items[i];
                             let what = match &it.kind {
                                 Kind::Text { text, link, .. } => trf!("Text “{}”{}", text.lines().next().unwrap_or("").chars().take(24).collect::<String>(), if link.is_some() { tr(" (clickable)") } else { "" }),
-                                Kind::Image { path, link } => trf!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { tr(" (clickable)") } else { "" }),
+                                Kind::Image { frame: Some(f), link, .. } => trf!("Video image {}{}", f.video.map_or("?".to_string(), |v| format!("V{} @{}", v + 1, mmss(f.at))), if link.is_some() { tr(" (clickable)") } else { "" }),
+                                Kind::Image { path, link, .. } => trf!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { tr(" (clickable)") } else { "" }),
                                 Kind::Nav { action, text, .. } => if *action == NavAction::Goto { trf!("Button “{}”", text) } else { trf!("Button {}", action.label()) },
                                 Kind::Slot { video, link, start, .. } => trf!("Thumbnail{}{}{}", match video { Some(v) => trf!(" (video {})", v + 1), None => tr(" (no video)").to_string() }, start.map(|t| trf!(" at {}", mmss(t))).unwrap_or_default(), if link.is_some() { " →" } else { "" }),
                             };
@@ -1908,6 +1963,8 @@ impl App {
         match op {
             LayerOp::Add => {
                 if let Some(dm) = cur_k.and_then(|k| self.model.designs.free.get_mut(k)) { self.active_layer = add_layer(dm); }
+                // la page se deplie pour montrer le nouveau calque
+                if let Some(k) = cur_k { self.tree_pages.insert(k, true); }
             }
             LayerOp::PageRename(k, name) => {
                 if let Some(p) = self.model.designs.free.get_mut(k) { p.name = name; }

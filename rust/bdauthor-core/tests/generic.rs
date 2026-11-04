@@ -74,11 +74,12 @@ fn editing_pages() {
     // le modele (enregistre) reste valide
     let pb: Vec<String> = m.validate(std::path::Path::new("/nonexistent")).into_iter().filter(|p| !p.contains("introuvable")).collect();
     assert!(pb.is_empty(), "{pb:?}");
-    // nouvelle page : ajoutee a la fin, « Suivant » ajoute a la precedente
+    // nouvelle page : ajoutee a la fin, sans toucher aux autres pages
+    let before = m.designs.free[1].items.len();
     let k = add_free_page(&mut m);
     assert_eq!(k, 2);
     assert_eq!(m.designs.free[2].name, "Page 3");
-    assert!(m.designs.free[1].items.iter().any(|i| matches!(i.kind, Kind::Nav { action: NavAction::Next, .. })));
+    assert_eq!(m.designs.free[1].items.len(), before, "pas de bouton « Suivant » ajoute a la page precedente");
     // deplacement : les liens suivent leur page
     m.designs.home = Some(Target::Main(1));
     if let Kind::Slot { ret, .. } = &mut m.designs.free[0].items.iter_mut().find(|i| matches!(i.kind, Kind::Slot { .. })).unwrap().kind { *ret = SlotReturn::Page(1); }

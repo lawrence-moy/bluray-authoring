@@ -1055,6 +1055,19 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
         Ok(Some((MenuBg { video, video_audio, music, seconds, lang, cache: cache_dir.clone() }, base)))
     };
+    // « Image de la video » : chaque image utilisee est extraite une fois (1920 x 1080, recadree en 16/9) dans le dossier temporaire
+    let mut frame_files: BTreeMap<(usize, i64), PathBuf> = BTreeMap::new();
+    for it in pages.iter().flat_map(|d| d.items.iter()) {
+        let Kind::Image { frame: Some(crate::design::VideoFrame { video: Some(v), at }), .. } = it.kind else { continue };
+        let key = (v, (at * 1000.0).round() as i64);
+        if v >= vids.len() || frame_files.contains_key(&key) { continue; }
+        let src = p(&vfile(&vids[v])?);
+        let dur = durations.get(v).copied().unwrap_or(0.0);
+        let img = ffmpeg::extract_thumbnail_rgba(tools_, &src, (1920, 1080), Some(at.min((dur - 0.05).max(0.0))), dur)?;
+        let f = tmp.0.join(format!("image_video_{}_{}.png", v + 1, key.1));
+        std::fs::write(&f, crate::png::write_png(&img))?;
+        frame_files.insert(key, f);
+    }
     let sd = size.0 as f64 / 1920.0; // echelle des textes/images poses sur le fond (qui a la taille de la video)
     // (rang dans l'ordre de superposition, decor) : le rang sert a poser sur les boutons ce qui est au-dessus d'eux
     // dessin d'un texte ou d'une image a l'echelle `k`
@@ -1064,6 +1077,10 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             Kind::Text { text, size, color, align, font, deco, .. } => {
                 let font = if font.is_empty() { String::new() } else { let c = p(font); if c.is_file() { c.to_string_lossy().into_owned() } else { font.clone() } };
                 Some(Decor::Text { text: text.clone(), x, y, w, h, size: py_round(*size as f64 * k) as i32, color: *color, align: *align, font, deco: deco.scaled(k) })
+            }
+            Kind::Image { frame: Some(f), .. } => {
+                let path = frame_files.get(&(f.video?, (f.at * 1000.0).round() as i64))?.clone();
+                Some(Decor::Image { path, x, y, w, h })
             }
             Kind::Image { path, .. } => Some(Decor::Image { path: p(path), x, y, w, h }),
             _ => None,

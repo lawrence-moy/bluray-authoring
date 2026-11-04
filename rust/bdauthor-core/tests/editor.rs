@@ -42,7 +42,7 @@ fn ordering_and_decor_copy() {
     assert_eq!(to_back(&mut d, 4), 0);
     assert!(matches!(d.items[0].kind, Kind::Text { .. }));
     let mut src = page(3, "Titre commun");
-    src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into(), link: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
+    src.items.push(Item { x: 10, y: 10, w: 100, h: 100, kind: Kind::Image { path: "logo.png".into(), link: None, frame: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     let mut target = page(2, "Autre");
     target.items.retain(|i| matches!(i.kind, Kind::Slot { .. }));
     let out = copy_decor(&src, target.clone());
@@ -137,4 +137,45 @@ fn proportional_resize_keeps_ratio_and_anchor() {
     assert!(r.0 + r.2 <= 1920 && r.1 + r.3 <= 1080, "{r:?}");
     // le deplacement n'est pas touche
     assert_eq!(dragged_rect_ratio((100, 100, 300, 200), Handle::Body, 33.0, -17.0, 10, 16), dragged_rect((100, 100, 300, 200), Handle::Body, 33.0, -17.0, 10, 16));
+}
+
+#[test]
+fn side_handles_resize_one_dimension() {
+    use bdauthor_core::editor::{dragged_rect, dragged_rect_ratio, hit_test, Handle};
+    let items = vec![Item::text("T", 100, 100, 400, 200, 40)];
+    // milieu du bord droit / bas, element selectionne : poignees de cote ; non selectionne : corps
+    assert_eq!(hit_test(&items, 500.0, 200.0, Some(0), 10.0), Some((0, Handle::Right)));
+    assert_eq!(hit_test(&items, 100.0, 200.0, Some(0), 10.0), Some((0, Handle::Left)));
+    assert_eq!(hit_test(&items, 300.0, 100.0, Some(0), 10.0), Some((0, Handle::Top)));
+    assert_eq!(hit_test(&items, 300.0, 299.0, Some(0), 10.0), Some((0, Handle::Bottom)));
+    assert_eq!(hit_test(&items, 499.0, 200.0, None, 10.0), Some((0, Handle::Body)));
+    // les angles restent prioritaires
+    assert_eq!(hit_test(&items, 500.0, 300.0, Some(0), 10.0), Some((0, Handle::BottomRight)));
+    let o = (100, 100, 400, 200);
+    assert_eq!(dragged_rect(o, Handle::Right, 50.0, 80.0, 0, 16), (100, 100, 450, 200));
+    assert_eq!(dragged_rect(o, Handle::Left, 50.0, 80.0, 0, 16), (150, 100, 350, 200));
+    assert_eq!(dragged_rect(o, Handle::Top, 50.0, -40.0, 0, 16), (100, 60, 400, 240));
+    assert_eq!(dragged_rect(o, Handle::Bottom, 50.0, 1000.0, 0, 16), (100, 100, 400, 980), "borne au plan");
+    assert_eq!(dragged_rect_ratio(o, Handle::Right, 50.0, 0.0, 0, 16), (100, 100, 450, 200), "Maj sans effet sur un cote");
+}
+
+#[test]
+fn snapping_to_screen_and_items() {
+    use bdauthor_core::editor::{snap_item_rect, snap_lines, Handle};
+    let other = Item::text("A", 600, 300, 200, 100, 30);
+    let (xs, ys) = snap_lines(std::iter::once(&other));
+    // deplacement : le bord gauche (603) s'aimante sur le bord gauche de l'autre element (600)
+    let (r, gx, gy) = snap_item_rect(Handle::Body, (603, 512, 100, 50), &xs, &ys, 6, 16);
+    assert_eq!((r.0, gx), (600, Some(600)));
+    // centre vertical : 512 + 25 = 537 -> 540 (centre de l'ecran)
+    assert_eq!((r.1, gy), (515, Some(540)));
+    // trop loin : rien ne bouge
+    let (r, gx, gy) = snap_item_rect(Handle::Body, (1100, 700, 100, 50), &xs, &ys, 6, 16);
+    assert_eq!((r, gx, gy), ((1100, 700, 100, 50), None, None));
+    // redimensionnement par le cote droit : seul le bord droit s'aimante (797 -> 800), la hauteur ne change pas
+    let (r, gx, gy) = snap_item_rect(Handle::Right, (500, 700, 297, 53), &xs, &ys, 6, 16);
+    assert_eq!((r, gx, gy), ((500, 700, 300, 53), Some(800), None));
+    // coin haut gauche : bords gauche et haut
+    let (r, _, _) = snap_item_rect(Handle::TopLeft, (958, 4, 100, 100), &xs, &ys, 6, 16);
+    assert_eq!(r, (960, 0, 98, 104));
 }

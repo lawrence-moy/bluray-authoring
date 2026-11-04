@@ -154,7 +154,15 @@ pub enum Kind {
     /// `link` : si present, le texte devient un bouton qui mene a cette destination.
     Text { text: String, size: i32, color: [u8; 3], align: Align, font: String, link: Option<Target>, deco: TextDeco },
     /// `link` : si present, l'image devient un bouton qui mene a cette destination.
-    Image { path: String, link: Option<Target> },
+    /// `frame` : image extraite d'une video du projet (« Image de la video ») au lieu du fichier `path` (vide).
+    Image { path: String, link: Option<Target>, frame: Option<VideoFrame> },
+}
+
+/// Image d'une video du projet : `video` (rang, `None` : a choisir), instant `at` en secondes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VideoFrame {
+    pub video: Option<usize>,
+    pub at: f64,
 }
 
 /// Habillage d'un texte : fond derriere le cadre et contour des lettres (tailles en pixels d'un menu 1920 x 1080).
@@ -328,6 +336,10 @@ impl Item {
     pub fn video_slot(x: i32, y: i32, w: i32, h: i32, thumb_h: i32, video: usize, start: Option<f64>, label: &str) -> Item {
         Item { x, y, w, h, kind: Kind::Slot { thumb_h, video: Some(video), link: None, start, chapter: None, label: label.into(), thumb_at: None, ret: SlotReturn::Origin }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
     }
+    /// « Image de la video » : image de la video `video` a l'instant `at` (secondes).
+    pub fn video_frame(x: i32, y: i32, w: i32, h: i32, video: Option<usize>, at: f64) -> Item {
+        Item { x, y, w, h, kind: Kind::Image { path: String::new(), link: None, frame: Some(VideoFrame { video, at }) }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
+    }
     /// Instant de depart d'une vignette de chapitre.
     pub fn chapter_start(&self) -> Option<f64> {
         if let Kind::Slot { start, .. } = self.kind { start } else { None }
@@ -483,6 +495,13 @@ impl PageDesign {
                 match video {
                     None => p.push(warn(trf!("Thumbnail {}: without video, it will not appear on the disc.", slot_no))),
                     Some(v) if v >= n_videos => p.push(err(trf!("Thumbnail {}: video {} does not exist.", slot_no, v + 1))),
+                    _ => {}
+                }
+            }
+            if let Kind::Image { frame: Some(f), .. } = it.kind {
+                match f.video {
+                    None => p.push(warn(trf!("Item {}: choose the video of the image.", k + 1))),
+                    Some(v) if v >= n_videos => p.push(err(trf!("Item {}: video {} does not exist.", k + 1, v + 1))),
                     _ => {}
                 }
             }
@@ -642,9 +661,16 @@ impl PageDesign {
                     put("type", Value::Str("texte".into())); put("texte", Value::Str(text.clone())); put("taille", num(*size));
                     put("couleur", Value::Str(format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]))); put("alignement", Value::Str(align.name().into()));
                 }
-                Kind::Image { path, link } => {
+                Kind::Image { path, link, frame } => {
                     if let Some(t) = link { put("cible", t.to_value()); }
-                    put("type", Value::Str("image".into())); put("fichier", Value::Str(path.clone()));
+                    put("type", Value::Str("image".into()));
+                    match frame {
+                        Some(f) => {
+                            if let Some(v) = f.video { put("video", num(v as i32 + 1)); }
+                            put("instant", Value::Num(f.at));
+                        }
+                        None => put("fichier", Value::Str(path.clone())),
+                    }
                 }
             }
             put("x", num(it.x)); put("y", num(it.y)); put("w", num(it.w)); put("h", num(it.h));
@@ -706,7 +732,12 @@ impl PageDesign {
                                  align: st("alignement").and_then(Align::from_name).unwrap_or(Align::Center), font: st("police").unwrap_or("").to_string(), link: link()?,
                                  deco: TextDeco::from_item(e).map_err(|m| trf!("item {}: {}", k + 1, m))? }
                 }
-                "image" => Kind::Image { path: st("fichier").ok_or_else(|| trf!("item {}: “fichier” missing", k + 1))?.to_string(), link: link()? },
+                "image" if e.get("instant").is_some() || e.get("video").is_some() => {
+                    let video = e.get("video").and_then(Value::as_f64).filter(|v| *v >= 1.0).map(|v| v as usize - 1);
+                    let at = e.get("instant").and_then(Value::as_f64).unwrap_or(0.0).max(0.0);
+                    Kind::Image { path: String::new(), link: link()?, frame: Some(VideoFrame { video, at }) }
+                }
+                "image" => Kind::Image { path: st("fichier").ok_or_else(|| trf!("item {}: “fichier” missing", k + 1))?.to_string(), link: link()?, frame: None },
                 t => return Err(trf!("item {}: unknown type “{}”", k + 1, t)),
             };
             let look = Look {
@@ -829,7 +860,7 @@ impl Designs {
     pub fn swap_videos(&mut self, a: usize, b: usize) {
         for d in &mut self.free {
             for it in &mut d.items {
-                if let Kind::Slot { video: Some(v), .. } = &mut it.kind { *v = if *v == a { b } else if *v == b { a } else { *v }; }
+                if let Kind::Slot { video: Some(v), .. } | Kind::Image { frame: Some(VideoFrame { video: Some(v), .. }), .. } = &mut it.kind { *v = if *v == a { b } else if *v == b { a } else { *v }; }
                 if let Some(Some(t)) = it.targets_mut() { t.swap_videos(a, b); }
             }
         }
@@ -863,7 +894,12 @@ impl Designs {
     pub fn remove_video(&mut self, i: usize) {
         for d in &mut self.free {
             for it in &mut d.items {
-                if let Kind::Slot { video, .. } = &mut it.kind {
+                let video = match &mut it.kind {
+                    Kind::Slot { video, .. } => Some(video),
+                    Kind::Image { frame: Some(f), .. } => Some(&mut f.video),
+                    _ => None,
+                };
+                if let Some(video) = video {
                     *video = match *video { Some(v) if v == i => None, Some(v) if v > i => Some(v - 1), v => v };
                 }
                 if let Some(target) = it.targets_mut() {

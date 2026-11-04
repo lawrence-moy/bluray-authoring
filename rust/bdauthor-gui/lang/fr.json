@@ -1041,5 +1041,14 @@
  "Blu-ray disc authoring: videos, chapters, interactive menus (HDMV), subtitles, audio tracks, cover and ISO image.": "Création de disques Blu-ray : vidéos, chapitres, menus interactifs (HDMV), sous-titres, pistes audio, jaquette et image ISO.",
  "Uses ffmpeg (LGPL / GPL, run as a separate program), egui / eframe, rfd, image, ab_glyph and resvg (MIT / Apache-2.0 licenses).": "Utilise ffmpeg (LGPL / GPL, lancé comme programme séparé), egui / eframe, rfd, image, ab_glyph et resvg (licences MIT / Apache-2.0).",
  "Settings: {}": "Réglages : {}",
- "Additional languages: {}": "Langues supplémentaires : {}"
+ "Additional languages: {}": "Langues supplémentaires : {}",
+ "Video image (a frame of a project video, chosen by its time)": "Image de la vidéo (une image d'une vidéo du projet, choisie par son instant)",
+ "Video image": "Image de la vidéo",
+ "Clickable video image": "Image de la vidéo cliquable",
+ "Video image {}{}": "Image de la vidéo {}{}",
+ "Time:": "Instant :",
+ "A frame of the video at this time, fitted into the frame without distortion (16:9). To pick the exact image, use the chapter editor of the video (Videos tab) and copy its time.": "Une image de la vidéo à cet instant, ajustée au cadre sans déformation (16/9). Pour choisir l'image exacte, utilisez l'éditeur de chapitres de la vidéo (onglet Vidéos) et recopiez son instant.",
+ "Align with the other items": "Aligner sur les autres éléments",
+ "While moving or resizing, the edges and centers snap to the edges and center of the screen and of the other visible items (magenta lines). Alt: temporarily off.": "Pendant un déplacement ou un redimensionnement, les bords et les centres s'aimantent sur les bords et le centre de l'écran et des autres éléments visibles (traits magenta). Alt : désactivé le temps du geste.",
+ "Item {}: choose the video of the image.": "Élément {} : choisissez la vidéo de l'image."
 }
