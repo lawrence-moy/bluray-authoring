@@ -786,3 +786,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Modèle : `VideoFrame::crop` (fractions de l'image entière), JSON `recadrage: [x, y, l, h]` ; `crop_px` ; cœur `editor::crop_drag`, `crop_full`.
 - Construction : image entière (1920 de large, proportions de la vidéo) extraite à l'instant exact, puis zone gardée ; aperçu : image entière 640 de large (`Job::Frame`), recadrée, PNG temporaire.
 - Essais : tests/video_frame.rs (recadrage JSON/pixels, poignées), tests/project.rs (image recadrée). Core : 166 tests verts. GUI à compiler avec recompiler.bat.
+
+## Export 151 — poignées d'un widget plein écran, images de vidéo mutualisées
+- Éditeur de menu : les poignées d'un élément qui touche un bord du plan sont rentrées d'au moins 6 px écran (`editor::handle_edges`, même calcul pour le dessin et la détection) ; un widget plein écran reste redimensionnable.
+- Nouveau module cœur `framesrc.rs`, sans dépendance graphique : `probe_async` (durée, cadence, taille d'affichage), `FrameLoader` (extraction d'images en arrière-plan, une seule à la fois : la plus récente ; mémoire bornée ; échecs retenus ; `Fit::Stretch` image exacte / `Fit::Cover` fond 16/9 rogné), `Strip` (vignettes de la frise). Utilisé par l'éditeur de chapitres (`chapters_ui.rs`), le sélecteur d'image (`frame_ui.rs`) et l'aperçu des sous-titres (`subs_ui.rs`, fond « Image de la vidéo ») : les trois copies du même code de fil de calcul sont supprimées.
+- Essais : tests/framesrc.rs (taille, sondage, mémoire et oubli, échec non redemandé, fond rogné, frise), tests/editor.rs (poignées plein écran). GUI à compiler avec recompiler.bat.

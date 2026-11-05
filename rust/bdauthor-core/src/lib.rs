@@ -14,6 +14,7 @@ pub mod design;
 pub mod disc;
 pub mod editor;
 pub mod film;
+pub mod framesrc;
 pub mod ig;
 pub mod index;
 pub mod iso;

@@ -1,7 +1,8 @@
 //! Panneau « Sous-titres » d'une video : pistes PGS issues de fichiers .srt/.ass ou de pistes texte integrees a la video.
 use crate::i18n::{tr, trf};
-use bdauthor_core::ffmpeg::{extract_subtitle_srt, extract_thumbnail_rgba, list_subtitle_streams, SubStreamInfo, Tools};
+use bdauthor_core::ffmpeg::{extract_subtitle_srt, list_subtitle_streams, SubStreamInfo, Tools};
 use bdauthor_core::film::MAX_SUB_TRACKS;
+use bdauthor_core::framesrc::{Fit, FrameLoader};
 use bdauthor_core::model::{ProjectModel, VideoEntry};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::Renderer;
@@ -331,12 +332,10 @@ pub struct SubPreview {
     safe: bool,
     key: String,
     tex: Option<egui::TextureHandle>,
-    /// fond « image de la video » : fichier video, images deja extraites (instant en ms, hauteur) et extraction en cours
+    /// fond « image de la video » : fichier video, extracteur d'images (cree au premier besoin) et image utilisee (instant en ms, taille)
     video_file: PathBuf,
-    frames: HashMap<(i64, u32), Result<RgbaImage, String>>,
-    frame_pending: Option<(i64, u32)>,
-    frame_rx: Option<std::sync::mpsc::Receiver<((i64, u32), Result<RgbaImage, String>)>>,
-    key_frame: (i64, u32),
+    loader: Option<FrameLoader>,
+    key_frame: (i64, (u32, u32)),
     /// zoom de l'image (1 = largeur de la fenetre)
     zoom: f32,
     /// zone de l'image a l'image precedente (pour savoir si la molette vise l'image)
@@ -346,7 +345,7 @@ pub struct SubPreview {
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path, auto_fps: Option<f64>) -> SubPreview {
-        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), frames: HashMap::new(), frame_pending: None, frame_rx: None, key_frame: (0, 0), zoom: 1.0, img_rect: egui::Rect::NOTHING };
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), loader: None, key_frame: (0, (0, 0)), zoom: 1.0, img_rect: egui::Rect::NOTHING };
         match &t.source {
             SubSource::File(f) => p.raw = Some(load_cues_enc(&abs(base, f), t.fps.or(auto_fps), t.charset, &t.lang)),
             SubSource::Embedded(idx) => {
@@ -522,42 +521,24 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         // fond « image de la video » : l'image reelle a l'apparition de la replique (extraite par ffmpeg en arriere-plan, gardee en memoire)
         let mut frame_note = None;
         if pv.bg == 3 {
-            let fk = (c.start_ms + ((c.end_ms - c.start_ms) / 2).min(300), pv.vh);
-            if let Some(rx) = &pv.frame_rx {
-                if let Ok((k, r)) = rx.try_recv() {
-                    if pv.frames.len() >= 6 { pv.frames.clear(); }
-                    pv.frames.insert(k, r);
-                    pv.frame_pending = None;
-                    pv.frame_rx = None;
-                    pv.key.clear();
-                }
+            let ms = c.start_ms + ((c.end_ms - c.start_ms) / 2).min(300);
+            let size = (pv.vh * 16 / 9, pv.vh);
+            let loader = pv.loader.get_or_insert_with(|| FrameLoader::start(&pv.video_file, Fit::Cover, 6));
+            let arrived = loader.poll();
+            loader.want(ms, ms as f64 / 1000.0, size);
+            if let Some(e) = loader.error(ms, size) {
+                frame_note = Some(trf!("Frame unavailable: {}", e));
+            } else if loader.get(ms, size).is_none() {
+                frame_note = Some(tr("Extracting the video frame…").to_string());
+                ctx.request_repaint_after(std::time::Duration::from_millis(150));
             }
-            match pv.frames.get(&fk) {
-                Some(Err(e)) => frame_note = Some(trf!("Frame unavailable: {}", e)),
-                Some(Ok(_)) => {}
-                None => {
-                    frame_note = Some(tr("Extracting the video frame…").to_string());
-                    if pv.frame_pending.is_none() {
-                        let (tx, rx) = std::sync::mpsc::channel();
-                        let (src, vh) = (pv.video_file.clone(), pv.vh);
-                        std::thread::spawn(move || {
-                            let r = Tools::locate().map_err(|e| e.to_string()).and_then(|tools| {
-                                extract_thumbnail_rgba(&tools, &src, (vh * 16 / 9, vh), Some(fk.0 as f64 / 1000.0), 0.0).map_err(|e| e.to_string())
-                            });
-                            let _ = tx.send((fk, r));
-                        });
-                        pv.frame_pending = Some(fk);
-                        pv.frame_rx = Some(rx);
-                    }
-                    ctx.request_repaint_after(std::time::Duration::from_millis(150));
-                }
-            }
-            pv.key_frame = fk;
+            if arrived { pv.key.clear(); }
+            pv.key_frame = (ms, size);
         }
-        let key = format!("{}|{}|{}|{:?}|{}|{:?}|{}", pv.cue, pv.bg, pv.vh, t.style, c.text, c.pos, pv.frames.contains_key(&pv.key_frame));
+        let shown_frame = if pv.bg == 3 { pv.loader.as_ref().and_then(|l| l.get(pv.key_frame.0, pv.key_frame.1)) } else { None };
+        let key = format!("{}|{}|{}|{:?}|{}|{:?}|{}", pv.cue, pv.bg, pv.vh, t.style, c.text, c.pos, shown_frame.is_some());
         if key != pv.key || pv.tex.is_none() {
-            let frame = if pv.bg == 3 { pv.frames.get(&pv.key_frame).and_then(|r| r.as_ref().ok()) } else { None };
-            let img = render_preview(renderer, &c.text, &t.style, c.pos, base, pv.vh, pv.bg, frame);
+            let img = render_preview(renderer, &c.text, &t.style, c.pos, base, pv.vh, pv.bg, shown_frame.as_deref());
             pv.tex = Some(ctx.load_texture("apercu_sous_titres", img, egui::TextureOptions::LINEAR));
             pv.key = key;
         }

@@ -4,13 +4,11 @@ use crate::chapters_ui::{tc, tex_of};
 use crate::i18n::{tr, trf};
 use bdauthor_core::design::{Kind, VideoFrame};
 use bdauthor_core::editor::{crop_drag, crop_full};
-use bdauthor_core::ffmpeg::{extract_frame_rgba, probe, Tools};
+use bdauthor_core::framesrc::{probe_async, scaled_height, Fit, FrameLoader, Strip, VideoMeta};
 use bdauthor_core::model::ProjectModel;
-use bdauthor_core::palette::RgbaImage;
 use eframe::egui;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::Receiver;
 
 const VIEW_W: u32 = 960;
 const STRIP_N: usize = 40;
@@ -19,8 +17,6 @@ const STRIP_W: u32 = 160;
 /// Rapport impose au cadre de recadrage.
 #[derive(Clone, Copy, PartialEq)]
 enum Ratio { Free, Widget, R16x9, R4x3, Square }
-
-struct Info { duration: f64, fps: f64, size: (u32, u32) }
 
 pub struct FramePicker {
     page: usize,
@@ -36,20 +32,16 @@ pub struct FramePicker {
     crop: Option<[f64; 4]>,
     ratio: Ratio,
     // video
-    info_rx: Option<Receiver<Result<Info, String>>>,
-    info: Option<Info>,
+    info_rx: Option<Receiver<Result<VideoMeta, String>>>,
+    info: Option<VideoMeta>,
     error: Option<String>,
     start_t: f64,
-    req_tx: Option<Sender<i64>>,
-    res_rx: Option<Receiver<(i64, Result<RgbaImage, String>)>>,
-    requested: i64,
-    /// derniere image dont le decodage a echoue (pas redemandee)
-    bad: i64,
-    cache: HashMap<i64, egui::TextureHandle>,
-    order: Vec<i64>,
-    shown: i64,
-    strip_rx: Option<Receiver<(usize, RgbaImage)>>,
-    strip: Vec<Option<egui::TextureHandle>>,
+    /// images exactes (extraction en arriere-plan, gardees en memoire) et image affichee
+    loader: Option<FrameLoader>,
+    tex: Option<egui::TextureHandle>,
+    tex_frame: i64,
+    strip: Option<Strip>,
+    strip_tex: Vec<Option<egui::TextureHandle>>,
     /// glissement du cadre : (poignee, cadre d'origine, point de depart en fractions)
     crop_drag: Option<(u8, [f64; 4], (f64, f64))>,
 }
@@ -63,21 +55,12 @@ impl FramePicker {
         let v = model.videos.get(video)?;
         let file = if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { base.join(&v.file) };
         let title = bdauthor_core::editor::video_title(model, video);
-        let (tx, rx) = channel();
-        let fl = file.clone();
-        std::thread::spawn(move || {
-            let r = Tools::locate().map_err(|e| e.to_string()).and_then(|t| probe(&t, &fl).map_err(|e| e.to_string())).map(|i| {
-                let (w, h) = (i.width.max(1), i.height.max(1));
-                let vh = ((VIEW_W as f64 * h as f64 / w as f64 / 2.0).round() as u32 * 2).max(2);
-                Info { duration: i.duration_s, fps: if i.fps() > 1.0 { i.fps() } else { 25.0 }, size: (VIEW_W, vh) }
-            });
-            let _ = tx.send(r);
-        });
+        let rx = probe_async(&file, VIEW_W);
         Some(FramePicker {
             page, item, video, vfile: v.file.clone(), file, title, widget_ratio: it.w.max(1) as f64 / it.h.max(1) as f64,
             frame: 0, crop: f.crop, ratio: if f.crop.is_some() { Ratio::Free } else { Ratio::Widget },
-            info_rx: Some(rx), info: None, error: None, start_t: f.at, req_tx: None, res_rx: None, requested: -1, bad: -1,
-            cache: HashMap::new(), order: Vec::new(), shown: -1, strip_rx: None, strip: Vec::new(), crop_drag: None,
+            info_rx: Some(rx), info: None, error: None, start_t: f.at, loader: None, tex: None, tex_frame: -1,
+            strip: None, strip_tex: Vec::new(), crop_drag: None,
         })
     }
 
@@ -98,34 +81,9 @@ impl FramePicker {
         let Some(info) = &self.info else { return };
         let (size, fps, dur) = (info.size, info.fps, info.duration);
         self.frame = ((self.start_t * fps).round() as i64).clamp(0, ((dur * fps).floor() as i64 - 1).max(0));
-        let (req_tx, req_rx) = channel::<i64>();
-        let (res_tx, res_rx) = channel();
-        let src = self.file.clone();
-        std::thread::spawn(move || {
-            let tools = Tools::locate();
-            while let Ok(mut n) = req_rx.recv() {
-                while let Ok(m) = req_rx.try_recv() { n = m; }
-                let t = (n as f64 - 0.25).max(0.0) / fps;
-                let r = match &tools { Ok(tl) => extract_frame_rgba(tl, &src, t, size, true).map_err(|e| e.to_string()), Err(e) => Err(e.to_string()) };
-                if res_tx.send((n, r)).is_err() { break; }
-            }
-        });
-        self.req_tx = Some(req_tx);
-        self.res_rx = Some(res_rx);
-        let (stx, srx) = channel();
-        let src = self.file.clone();
-        let sh = ((STRIP_W as f64 * size.1 as f64 / size.0 as f64 / 2.0).round() as u32 * 2).max(2);
-        std::thread::spawn(move || {
-            let Ok(tools) = Tools::locate() else { return };
-            for i in 0..STRIP_N {
-                let t = (i as f64 + 0.5) * dur / STRIP_N as f64;
-                if let Ok(img) = extract_frame_rgba(&tools, &src, t, (STRIP_W, sh), false) {
-                    if stx.send((i, img)).is_err() { return; }
-                }
-            }
-        });
-        self.strip_rx = Some(srx);
-        self.strip = vec![None; STRIP_N];
+        self.loader = Some(FrameLoader::start(&self.file, Fit::Stretch, 30));
+        self.strip = Some(Strip::start(&self.file, dur, STRIP_N, (STRIP_W, scaled_height(size, STRIP_W))));
+        self.strip_tex = vec![None; STRIP_N];
     }
 
     /// Rend vrai s'il faut redessiner bientot.
@@ -138,36 +96,27 @@ impl FramePicker {
                 Err(_) => busy = true,
             }
         }
-        if let Some(rx) = &self.res_rx {
-            while let Ok((n, r)) = rx.try_recv() {
-                match r {
-                    Ok(img) => {
-                        self.cache.insert(n, tex_of(ctx, &format!("image_video_{n}"), &img));
-                        self.order.push(n);
-                        if self.order.len() > 30 { let o = self.order.remove(0); self.cache.remove(&o); }
+        if let Some(st) = &mut self.strip {
+            let (new, more) = st.poll();
+            for (i, img) in new { if let Some(s) = self.strip_tex.get_mut(i) { *s = Some(tex_of(ctx, &format!("barre_image_{i}"), &img)); } }
+            busy |= more;
+        }
+        if let (Some(info), Some(l)) = (&self.info, &mut self.loader) {
+            l.poll();
+            if self.tex_frame != self.frame {
+                // image courante : en memoire, sinon demandee (juste avant l'image n : la recherche exacte ecarte les precedentes)
+                l.want(self.frame, (self.frame as f64 - 0.25).max(0.0) / info.fps, info.size);
+                if let Some(img) = l.get(self.frame, info.size) {
+                    match &mut self.tex {
+                        Some(t) => t.set(egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data), egui::TextureOptions::LINEAR),
+                        None => self.tex = Some(tex_of(ctx, "image_video", &img)),
                     }
-                    Err(_) => self.bad = n,
-                }
-                if n == self.requested { self.requested = -1; }
-            }
-        }
-        if let Some(rx) = &self.strip_rx {
-            loop {
-                match rx.try_recv() {
-                    Ok((i, img)) => { if let Some(s) = self.strip.get_mut(i) { *s = Some(tex_of(ctx, &format!("barre_image_{i}"), &img)); } }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => { busy = true; break; }
-                    Err(_) => { self.strip_rx = None; break; }
+                    self.tex_frame = self.frame;
                 }
             }
+            busy |= l.busy();
         }
-        if self.info.is_some() {
-            if self.cache.contains_key(&self.frame) {
-                self.shown = self.frame;
-            } else if self.requested != self.frame && self.bad != self.frame {
-                if let Some(tx) = &self.req_tx { let _ = tx.send(self.frame); self.requested = self.frame; }
-            }
-        }
-        busy || self.requested >= 0
+        busy
     }
 }
 
@@ -221,10 +170,10 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
     let ir = egui::Rect::from_center_size(outer.center(), egui::vec2(iw, ih));
     let p = ui.painter_at(outer);
     p.rect_filled(ir, 0.0, egui::Color32::from_rgb(11, 15, 20));
-    if let Some(t) = fp.cache.get(&fp.shown) {
+    if let Some(t) = &fp.tex {
         p.image(t.id(), ir, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
     }
-    if fp.shown != fp.frame {
+    if fp.tex_frame != fp.frame {
         p.text(ir.right_bottom() - egui::vec2(8.0, 8.0), egui::Align2::RIGHT_BOTTOM, tr("decoding…"), egui::FontId::proportional(12.0), egui::Color32::from_gray(210));
     }
     // recadrage : zone gardee en clair, le reste assombri ; poignees aux angles et aux cotes
@@ -332,7 +281,7 @@ fn timeline(ui: &mut egui::Ui, fp: &mut FramePicker) {
     let cell = w / STRIP_N as f32;
     for i in 0..STRIP_N {
         let r = egui::Rect::from_min_size(egui::pos2(rect.min.x + i as f32 * cell, rect.min.y + 4.0), egui::vec2(cell - 1.0, 54.0));
-        match fp.strip.get(i).and_then(|s| s.as_ref()) {
+        match fp.strip_tex.get(i).and_then(|s| s.as_ref()) {
             Some(t) => { p.image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE); }
             None => { p.rect_filled(r, 0.0, egui::Color32::from_gray(45)); }
         }
@@ -352,7 +301,7 @@ fn timeline(ui: &mut egui::Ui, fp: &mut FramePicker) {
         let t = t_of_x(q.x);
         let i = ((t / dur * STRIP_N as f64) as usize).min(STRIP_N - 1);
         p.line_segment([egui::pos2(q.x, rect.min.y), egui::pos2(q.x, rect.max.y)], egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(160)));
-        let tex = fp.strip.get(i).and_then(|s| s.clone());
+        let tex = fp.strip_tex.get(i).and_then(|s| s.clone());
         let _ = resp.clone().on_hover_ui_at_pointer(|ui| {
             if let Some(tx) = &tex {
                 let sz = tx.size_vec2();

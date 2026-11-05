@@ -3,13 +3,14 @@
 //! « Valider ».
 use crate::i18n::{tr, trf};
 use bdauthor_core::design::Kind;
-use bdauthor_core::ffmpeg::{extract_frame_rgba, list_keyframes, probe, FrameStream, Tools};
+use bdauthor_core::ffmpeg::{list_keyframes, FrameStream, Tools};
+use bdauthor_core::framesrc::{probe_async, scaled_height, Fit, FrameLoader, Strip, VideoMeta};
 use bdauthor_core::model::{ChapterEntry, ProjectModel};
 use bdauthor_core::palette::RgbaImage;
 use eframe::egui;
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::mpsc::{channel, Receiver};
 
 /// Largeur des images decodees pour l'affichage (la hauteur suit les proportions de la video).
 const VIEW_W: u32 = 960;
@@ -21,12 +22,6 @@ const CACHE_MAX: usize = 40;
 
 const MARK: egui::Color32 = egui::Color32::from_rgb(230, 195, 74);
 const HEAD: egui::Color32 = egui::Color32::from_rgb(255, 140, 58);
-
-struct Info {
-    duration: f64,
-    fps: f64,
-    size: (u32, u32),
-}
 
 pub struct ChapterEditor {
     pub video: usize,
@@ -43,25 +38,19 @@ pub struct ChapterEditor {
     slots: HashMap<u32, (usize, Option<f64>)>,
     slots_changed: bool,
     // video
-    info_rx: Option<Receiver<Result<Info, String>>>,
-    info: Option<Info>,
+    info_rx: Option<Receiver<Result<VideoMeta, String>>>,
+    info: Option<VideoMeta>,
     error: Option<String>,
     frame: i64,
     sel: Option<u32>,
     // images
-    req_tx: Option<Sender<i64>>,
-    res_rx: Option<Receiver<(i64, Result<RgbaImage, String>)>>,
-    pending: bool,
-    requested: i64,
-    cache: HashMap<i64, RgbaImage>,
-    order: VecDeque<i64>,
+    /// images exactes (extraction en arriere-plan, gardees en memoire) et image affichee
+    loader: Option<FrameLoader>,
     tex: Option<egui::TextureHandle>,
     tex_frame: i64,
-    /// echec du decodage d'une image : (image, message)
-    frame_error: Option<(i64, String)>,
     // frise
-    strip_rx: Option<Receiver<(usize, RgbaImage)>>,
-    strip: Vec<Option<egui::TextureHandle>>,
+    strip: Option<Strip>,
+    strip_tex: Vec<Option<egui::TextureHandle>>,
     keys_rx: Option<Receiver<Result<Vec<f64>, String>>>,
     keys: Option<Vec<f64>>,
     zoom: f64,
@@ -99,23 +88,14 @@ impl ChapterEditor {
                 }
             }
         }
-        let (tx, rx) = channel();
-        let f = file.clone();
-        std::thread::spawn(move || {
-            let r = Tools::locate().map_err(|e| e.to_string()).and_then(|t| probe(&t, &f).map_err(|e| e.to_string())).map(|i| {
-                let (w, h) = (i.width.max(1), i.height.max(1));
-                let vh = ((VIEW_W as f64 * h as f64 / w as f64 / 2.0).round() as u32 * 2).max(2);
-                Info { duration: i.duration_s, fps: if i.fps() > 1.0 { i.fps() } else { 25.0 }, size: (VIEW_W, vh) }
-            });
-            let _ = tx.send(r);
-        });
+        let rx = probe_async(&file, VIEW_W);
         let mut chapters = v.chapters.clone();
         chapters.sort_by(|a, b| a.t.partial_cmp(&b.t).unwrap_or(std::cmp::Ordering::Equal));
         Some(ChapterEditor {
             video, vfile: v.file.clone(), file, title, next_id: v.next_chapter_id(), chapters, thumb_s: v.thumb_s, exact: v.exact_chapters, slots, slots_changed: false,
             info_rx: Some(rx), info: None, error: None, frame: 0, sel: None,
-            req_tx: None, res_rx: None, pending: false, requested: -1, cache: HashMap::new(), order: VecDeque::new(), tex: None, tex_frame: -1, frame_error: None,
-            strip_rx: None, strip: Vec::new(), keys_rx: None, keys: None, zoom: 1.0, view_t0: 0.0, drag_ch: None, playing: None,
+            loader: None, tex: None, tex_frame: -1,
+            strip: None, strip_tex: Vec::new(), keys_rx: None, keys: None, zoom: 1.0, view_t0: 0.0, drag_ch: None, playing: None,
         })
     }
 
@@ -135,41 +115,11 @@ impl ChapterEditor {
     /// Lance les fils de calcul une fois la video sondee.
     fn start_workers(&mut self) {
         let Some(info) = &self.info else { return };
-        let (size, fps, dur) = (info.size, info.fps, info.duration);
-        // images exactes : une seule demande a la fois, la plus recente
-        let (req_tx, req_rx) = channel::<i64>();
-        let (res_tx, res_rx) = channel();
-        let src = self.file.clone();
-        std::thread::spawn(move || {
-            let tools = Tools::locate();
-            while let Ok(mut n) = req_rx.recv() {
-                while let Ok(m) = req_rx.try_recv() { n = m; }
-                // juste avant l'image n : la recherche exacte ecarte les images anterieures
-                let t = (n as f64 - 0.25).max(0.0) / fps;
-                let r = match &tools {
-                    Ok(tl) => extract_frame_rgba(tl, &src, t, size, true).map_err(|e| e.to_string()),
-                    Err(e) => Err(e.to_string()),
-                };
-                if res_tx.send((n, r)).is_err() { break; }
-            }
-        });
-        self.req_tx = Some(req_tx);
-        self.res_rx = Some(res_rx);
-        // vignettes de la frise : images cles (rapides), du debut a la fin
-        let (stx, srx) = channel();
-        let src = self.file.clone();
-        let sh = ((STRIP_W as f64 * size.1 as f64 / size.0 as f64 / 2.0).round() as u32 * 2).max(2);
-        std::thread::spawn(move || {
-            let Ok(tools) = Tools::locate() else { return };
-            for i in 0..STRIP_N {
-                let t = (i as f64 + 0.5) * dur / STRIP_N as f64;
-                if let Ok(img) = extract_frame_rgba(&tools, &src, t, (STRIP_W, sh), false) {
-                    if stx.send((i, img)).is_err() { return; }
-                }
-            }
-        });
-        self.strip_rx = Some(srx);
-        self.strip = vec![None; STRIP_N];
+        let (size, dur) = (info.size, info.duration);
+        // images exactes (une seule demande a la fois, la plus recente) et vignettes de la frise (images cles, rapides)
+        self.loader = Some(FrameLoader::start(&self.file, Fit::Stretch, CACHE_MAX));
+        self.strip = Some(Strip::start(&self.file, dur, STRIP_N, (STRIP_W, scaled_height(size, STRIP_W))));
+        self.strip_tex = vec![None; STRIP_N];
         let (ktx, krx) = channel();
         let src = self.file.clone();
         std::thread::spawn(move || {
@@ -189,29 +139,12 @@ impl ChapterEditor {
                 Err(_) => busy = true,
             }
         }
-        if let Some(rx) = &self.res_rx {
-            while let Ok((n, r)) = rx.try_recv() {
-                match r {
-                    Ok(img) => {
-                        self.cache.insert(n, img);
-                        self.order.push_back(n);
-                        while self.order.len() > CACHE_MAX { if let Some(o) = self.order.pop_front() { self.cache.remove(&o); } }
-                        self.frame_error = None;
-                    }
-                    Err(e) => self.frame_error = Some((n, e)),
-                }
-                if n == self.requested { self.pending = false; }
-            }
+        if let Some(st) = &mut self.strip {
+            let (new, more) = st.poll();
+            for (i, img) in new { if let Some(s) = self.strip_tex.get_mut(i) { *s = Some(tex_of(ctx, &format!("frise_{i}"), &img)); } }
+            busy |= more;
         }
-        if let Some(rx) = &self.strip_rx {
-            loop {
-                match rx.try_recv() {
-                    Ok((i, img)) => { if let Some(s) = self.strip.get_mut(i) { *s = Some(tex_of(ctx, &format!("frise_{i}"), &img)); } }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => { busy = true; break; }
-                    Err(_) => { self.strip_rx = None; break; }
-                }
-            }
-        }
+        if let Some(l) = &mut self.loader { l.poll(); }
         if let Some(rx) = &self.keys_rx {
             match rx.try_recv() {
                 Ok(r) => { self.keys = r.ok(); self.keys_rx = None; }
@@ -241,24 +174,20 @@ impl ChapterEditor {
             busy = true;
         }
         if ended { self.playing = None; }
-        // image courante : en memoire, sinon demandee
-        if self.playing.is_none() && self.info.is_some() && self.tex_frame != self.frame {
-            if let Some(img) = self.cache.get(&self.frame) {
-                match &mut self.tex {
-                    Some(t) => t.set(egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data), egui::TextureOptions::LINEAR),
-                    None => self.tex = Some(tex_of(ctx, "chapitres_image", img)),
-                }
-                self.tex_frame = self.frame;
-            } else if let Some(tx) = &self.req_tx {
-                // une demande par image (le fil de calcul ne traite que la plus recente)
-                if self.requested != self.frame {
-                    let _ = tx.send(self.frame);
-                    self.requested = self.frame;
-                    self.pending = true;
+        // image courante : en memoire, sinon demandee (juste avant l'image n : la recherche exacte ecarte les precedentes)
+        if self.playing.is_none() && self.tex_frame != self.frame {
+            if let (Some(info), Some(l)) = (&self.info, &mut self.loader) {
+                l.want(self.frame, (self.frame as f64 - 0.25).max(0.0) / info.fps, info.size);
+                if let Some(img) = l.get(self.frame, info.size) {
+                    match &mut self.tex {
+                        Some(t) => t.set(egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data), egui::TextureOptions::LINEAR),
+                        None => self.tex = Some(tex_of(ctx, "chapitres_image", &img)),
+                    }
+                    self.tex_frame = self.frame;
                 }
             }
         }
-        busy || self.pending
+        busy || self.loader.as_ref().is_some_and(|l| l.busy())
     }
 
     fn toggle_play(&mut self) {
@@ -391,7 +320,7 @@ fn main_area(ui: &mut egui::Ui, ed: &mut ChapterEditor, action: &mut Option<bool
                 p.galley(box_r.min + egui::vec2(6.0, 3.0), g, MARK);
             }
             if ed.tex_frame != ed.frame && ed.playing.is_none() {
-                if ed.frame_error.as_ref().is_some_and(|e| e.0 == ed.frame) {
+                if ed.info.as_ref().zip(ed.loader.as_ref()).is_some_and(|(i, l)| l.error(ed.frame, i.size).is_some()) {
                     p.text(rect.center(), egui::Align2::CENTER_CENTER, tr("Image unavailable"), egui::FontId::proportional(16.0), egui::Color32::from_rgb(230, 100, 90));
                 } else {
                     p.text(rect.right_bottom() - egui::vec2(10.0, 10.0), egui::Align2::RIGHT_BOTTOM, tr("decoding…"), egui::FontId::proportional(12.0), egui::Color32::from_gray(200));
@@ -578,7 +507,7 @@ fn timeline(ui: &mut egui::Ui, ed: &mut ChapterEditor) {
         let cell = egui::Rect::from_min_size(egui::pos2(x, strip.min.y), egui::vec2(cell_w - 2.0, 64.0));
         let tc_ = t_of_x(x + cell_w / 2.0);
         let i = ((tc_ / dur * STRIP_N as f64) as usize).min(STRIP_N - 1);
-        match ed.strip.get(i).and_then(|s| s.as_ref()) {
+        match ed.strip_tex.get(i).and_then(|s| s.as_ref()) {
             Some(tex) => { p.image(tex.id(), cell, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE); }
             None => { p.rect_filled(cell, 0.0, egui::Color32::from_gray(45)); }
         }
