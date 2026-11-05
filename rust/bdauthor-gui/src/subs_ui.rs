@@ -1,8 +1,9 @@
 //! Panneau « Sous-titres » d'une video : pistes PGS issues de fichiers .srt/.ass ou de pistes texte integrees a la video.
 use crate::i18n::{tr, trf};
-use bdauthor_core::ffmpeg::{extract_subtitle_srt, list_subtitle_streams, SubStreamInfo, Tools};
+use bdauthor_core::ffmpeg::{extract_subtitle_srt, list_subtitle_streams, FrameStream, SubStreamInfo, Tools};
 use bdauthor_core::film::MAX_SUB_TRACKS;
-use bdauthor_core::framesrc::{Fit, FrameLoader};
+use bdauthor_core::framesrc::{probe_async, Fit, FrameLoader, VideoMeta};
+use crate::timeline_ui::{Timeline, TimelineCfg};
 use bdauthor_core::model::{ProjectModel, VideoEntry};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_core::project::Renderer;
@@ -12,6 +13,7 @@ use bdauthor_render::FontRenderer;
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 /// Pistes integrees deja recherchees, par fichier video (ou le message d'erreur de la recherche).
 pub type Probes = HashMap<String, Result<Vec<SubStreamInfo>, String>>;
@@ -335,7 +337,20 @@ pub struct SubPreview {
     /// fond « image de la video » : fichier video, extracteur d'images (cree au premier besoin) et image utilisee (instant en ms, taille)
     video_file: PathBuf,
     loader: Option<FrameLoader>,
-    key_frame: (i64, (u32, u32)),
+    /// derniere image de la video affichee (gardee pendant que la suivante est extraite)
+    last_img: Option<Arc<RgbaImage>>,
+    /// video : sondage en cours et resultat (duree, cadence), frise de vignettes
+    meta_rx: Option<std::sync::mpsc::Receiver<Result<VideoMeta, String>>>,
+    meta: Option<VideoMeta>,
+    tl: Timeline,
+    /// lecture : (flux, instant de depart en ms, images recues)
+    playing: Option<(FrameStream, i64, i64)>,
+    /// instant affiche (ms) : libre (frise, lecture) ou lie a la replique choisie ; replique vue a l'image precedente
+    t_ms: i64,
+    free: bool,
+    last_cue: usize,
+    /// dessin de la replique en cours pendant la lecture : (cle, image)
+    sprite: Option<(String, Option<Sprite>)>,
     /// zoom de l'image (1 = largeur de la fenetre)
     zoom: f32,
     /// zone de l'image a l'image precedente (pour savoir si la molette vise l'image)
@@ -345,7 +360,7 @@ pub struct SubPreview {
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path, auto_fps: Option<f64>) -> SubPreview {
-        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), loader: None, key_frame: (0, (0, 0)), zoom: 1.0, img_rect: egui::Rect::NOTHING };
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), loader: None, last_img: None, meta_rx: Some(probe_async(video_file, 960)), meta: None, tl: Timeline::new(48, "frise_sous_titres"), playing: None, t_ms: 0, free: false, last_cue: 0, sprite: None, zoom: 1.0, img_rect: egui::Rect::NOTHING };
         match &t.source {
             SubSource::File(f) => p.raw = Some(load_cues_enc(&abs(base, f), t.fps.or(auto_fps), t.charset, &t.lang)),
             SubSource::Embedded(idx) => {
@@ -369,45 +384,78 @@ impl SubPreview {
     }
 }
 
+impl SubPreview {
+    /// Lecture / pause : la lecture demarre a l'instant affiche (au debut si l'on est a la fin), sur le fond « image de la video ».
+    fn toggle_play(&mut self, vh: u32) {
+        if self.playing.is_some() { self.playing = None; return; }
+        let Some(m) = &self.meta else { return };
+        let start = if self.t_ms as f64 / 1000.0 >= m.duration - 0.2 { 0 } else { self.t_ms.max(0) };
+        if let Ok(tools) = Tools::locate() {
+            if let Ok(fs) = FrameStream::start_fit(&tools, &self.video_file, start as f64 / 1000.0, (vh * 16 / 9, vh), true) {
+                self.playing = Some((fs, start, 0));
+                self.bg = 3;
+                self.free = true;
+                self.last_img = None;
+            }
+        }
+    }
+}
+
 fn clock(ms: i64) -> String {
     let ms = ms.max(0);
     format!("{}:{:02}:{:02}.{:03}", ms / 3_600_000, ms / 60_000 % 60, ms / 1000 % 60, ms % 1000)
 }
 
-/// Une replique sur un fond uni de `vh` lignes (16/9), placee comme dans la piste PGS finale.
-fn render_preview(r: &FontRenderer, text: &str, style: &SubStyle, pos: Option<CuePos>, base: &Path, vh: u32, bg: u8, frame: Option<&RgbaImage>) -> egui::ColorImage {
+/// Dessin d'une replique (image rognee) et sa place sur une video de `vh` lignes.
+struct Sprite { img: RgbaImage, x: u32, y: u32 }
+
+/// La replique dessinee avec le style de la piste, placee comme dans la piste PGS finale (rien si elle est vide).
+fn sub_sprite(r: &FontRenderer, text: &str, style: &SubStyle, pos: Option<CuePos>, base: &Path, vh: u32) -> Option<Sprite> {
     let vw = vh * 16 / 9;
     let mut st = bdauthor_core::pgs::scaled_style(&bdauthor_core::pgs::with_pos(style, pos), vh);
     if !st.font.is_empty() {
         let c = abs(base, &st.font);
         if c.is_file() { st.font = c.to_string_lossy().into_owned(); }
     }
-    let g = [0u8, 110, 225][bg.min(2) as usize];
-    let mut canvas = match frame {
-        Some(f) if f.width == vw && f.height == vh => f.clone(),
-        _ => {
-            let mut c = RgbaImage::new(vw, vh);
-            let g = if bg >= 3 { 70 } else { g };
-            for p in c.data.chunks_exact_mut(4) { p.copy_from_slice(&[g, g, g, 255]); }
-            c
-        }
-    };
-    if let Some(img) = r.subtitle(text, &st, vw) {
-        if let Some((img, _, _)) = bdauthor_core::pgs::crop_visible(&img, 12) {
-            let (w, h) = (img.width.min(vw), img.height.min(vh));
-            let (x0, y0) = bdauthor_core::pgs::place(&st, (vw, vh), w, h);
-            for y in 0..h {
-                for x in 0..w {
-                    let p = img.pixel(x, y);
-                    if p[3] == 0 { continue; }
-                    let a = p[3] as f32 / 255.0;
-                    let mut d = canvas.pixel(x0 + x, y0 + y);
-                    for c in 0..3 { d[c] = (p[c] as f32 * a + d[c] as f32 * (1.0 - a)).round() as u8; }
-                    canvas.set(x0 + x, y0 + y, d);
-                }
-            }
+    let img = r.subtitle(text, &st, vw)?;
+    let (img, _, _) = bdauthor_core::pgs::crop_visible(&img, 12)?;
+    let (w, h) = (img.width.min(vw), img.height.min(vh));
+    let (x, y) = bdauthor_core::pgs::place(&st, (vw, vh), w, h);
+    Some(Sprite { img, x, y })
+}
+
+/// Fond uni (16/9, `vh` lignes) : noir, gris, clair ; sombre derriere une image de video absente.
+fn blank(vh: u32, bg: u8) -> RgbaImage {
+    let vw = vh * 16 / 9;
+    let g = if bg >= 3 { 70 } else { [0u8, 110, 225][bg.min(2) as usize] };
+    let mut c = RgbaImage::new(vw, vh);
+    for p in c.data.chunks_exact_mut(4) { p.copy_from_slice(&[g, g, g, 255]); }
+    c
+}
+
+/// Pose la replique sur l'image.
+fn blend(canvas: &mut RgbaImage, s: &Sprite) {
+    let (w, h) = (s.img.width.min(canvas.width.saturating_sub(s.x)), s.img.height.min(canvas.height.saturating_sub(s.y)));
+    for y in 0..h {
+        for x in 0..w {
+            let p = s.img.pixel(x, y);
+            if p[3] == 0 { continue; }
+            let a = p[3] as f32 / 255.0;
+            let mut d = canvas.pixel(s.x + x, s.y + y);
+            for c in 0..3 { d[c] = (p[c] as f32 * a + d[c] as f32 * (1.0 - a)).round() as u8; }
+            canvas.set(s.x + x, s.y + y, d);
         }
     }
+}
+
+/// Une replique (aucune si `text` est vide) sur un fond uni ou sur une image de la video, de `vh` lignes (16/9).
+fn render_preview(r: &FontRenderer, text: Option<&str>, style: &SubStyle, pos: Option<CuePos>, base: &Path, vh: u32, bg: u8, frame: Option<&RgbaImage>) -> egui::ColorImage {
+    let vw = vh * 16 / 9;
+    let mut canvas = match frame {
+        Some(f) if f.width == vw && f.height == vh => f.clone(),
+        _ => blank(vh, bg),
+    };
+    if let Some(sp) = text.and_then(|t| sub_sprite(r, t, style, pos, base, vh)) { blend(&mut canvas, &sp); }
     egui::ColorImage::from_rgba_unmultiplied([vw as usize, vh as usize], &canvas.data)
 }
 
@@ -420,6 +468,16 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             Err(_) => ctx.request_repaint_after(std::time::Duration::from_millis(150)),
         }
     }
+    if let Some(rx) = &pv.meta_rx {
+        match rx.try_recv() {
+            Ok(r) => {
+                pv.meta_rx = None;
+                if let Ok(m) = r { pv.tl.start(&pv.video_file, m.duration, m.size); pv.meta = Some(m); }
+            }
+            Err(_) => ctx.request_repaint_after(std::time::Duration::from_millis(150)),
+        }
+    }
+    if pv.tl.poll(ctx) { ctx.request_repaint_after(std::time::Duration::from_millis(100)); }
     let Some(t) = v.subs.get_mut(pv.track) else { return (false, false) };
     // encodage ou langue changes : le fichier est relu
     if let SubSource::File(f) = &t.source {
@@ -514,15 +572,87 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             for (i, l) in [tr("Black"), tr("Gray"), tr("Light"), tr("Video frame")].iter().enumerate() { if ui.selectable_label(pv.bg == i as u8, *l).clicked() { pv.bg = i as u8; } }
             ui.separator();
             ui.label(tr("Video:"));
-            for h in [1080u32, 720] { if ui.selectable_label(pv.vh == h, format!("{h}p")).clicked() { pv.vh = h; } }
+            for h in [1080u32, 720] { if ui.selectable_label(pv.vh == h, format!("{h}p")).clicked() { pv.vh = h; pv.playing = None; } }
             ui.separator();
             ui.checkbox(&mut pv.safe, tr("Safe area"));
         });
-        // fond « image de la video » : l'image reelle a l'apparition de la replique (extraite par ffmpeg en arriere-plan, gardee en memoire)
+        // lecture et frise de la video : « Lecture » ou un clic sur la frise passent au fond « image de la video »
+        let play_vh = pv.vh.min(720);
+        if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Space)) { pv.toggle_play(play_vh); }
+        ui.horizontal(|ui| {
+            let label = if pv.playing.is_some() { tr("■ Pause") } else { tr("▶ Play") };
+            let ready = pv.meta.is_some();
+            if ui.add_enabled(ready, egui::Button::new(label).min_size(egui::vec2(70.0, 26.0)).fill(egui::Color32::from_rgb(44, 93, 135))).clicked() { pv.toggle_play(play_vh); }
+            let total = pv.meta.as_ref().map_or(String::new(), |m| format!(" / {}", clock((m.duration * 1000.0) as i64)));
+            ui.label(egui::RichText::new(format!("{}{}", clock(pv.t_ms), total)).monospace());
+            if ready { ui.label(egui::RichText::new(tr("Space: play / pause · playback without sound")).small().weak()); }
+            else if pv.meta_rx.is_some() { ui.spinner(); ui.label(tr("Reading the video…")); }
+        });
+        if let Some(dur) = pv.meta.as_ref().map(|m| m.duration) {
+            let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 8.0, follow: pv.playing.is_some() };
+            let head = pv.t_ms as f64 / 1000.0;
+            let (shown, sel) = (&pv.shown, pv.cue);
+            // les repliques de la piste en reperes sous les vignettes (la replique choisie en orange)
+            let out = pv.tl.show(ui, dur, head, &cfg, |p, g| {
+                let (t0, span) = (g.start(), g.span());
+                let first = shown.partition_point(|c| (c.end_ms as f64 / 1000.0) < t0);
+                for (i, c) in shown.iter().enumerate().skip(first) {
+                    let (s0, e0) = (c.start_ms as f64 / 1000.0, c.end_ms as f64 / 1000.0);
+                    if s0 > t0 + span { break; }
+                    let (x0, x1) = (g.x_of(s0), g.x_of(e0).max(g.x_of(s0) + 1.5));
+                    let r = egui::Rect::from_min_max(egui::pos2(x0, g.strip.max.y - 6.0), egui::pos2(x1, g.strip.max.y));
+                    p.rect_filled(r, 0.0, if i == sel { egui::Color32::from_rgb(255, 170, 60) } else { egui::Color32::from_rgb(120, 200, 255) });
+                }
+            });
+            if let Some((resp, geo)) = out {
+                if let Some(q) = resp.interact_pointer_pos() {
+                    if resp.clicked() || resp.dragged() {
+                        pv.playing = None;
+                        pv.bg = 3;
+                        pv.free = true;
+                        pv.t_ms = (geo.t_at(q.x) * 1000.0).round() as i64;
+                    }
+                }
+            }
+        }
+        // les commandes de replique ci-dessus ramenent a l'instant de la replique choisie
+        if pv.cue != pv.last_cue { pv.free = false; pv.playing = None; pv.last_cue = pv.cue; }
+        // instant lie a la replique choisie : un peu apres son apparition
+        if !pv.free {
+            let m = { let c0 = &pv.shown[pv.cue]; c0.start_ms + ((c0.end_ms - c0.start_ms) / 2).min(300) };
+            pv.t_ms = m;
+        }
+        // lecture : la derniere image recue est affichee, l'instant suit le nombre d'images
+        let mut play_img: Option<RgbaImage> = None;
+        let mut ended = false;
+        if let Some((fs, start, got)) = &mut pv.playing {
+            loop {
+                match fs.rx.try_recv() {
+                    Ok(img) => { *got += 1; play_img = Some(img); }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(_) => { ended = true; break; }
+                }
+            }
+            if play_img.is_some() {
+                let fps = pv.meta.as_ref().map_or(25.0, |m| m.fps);
+                pv.t_ms = *start + ((*got - 1) as f64 * 1000.0 / fps).round() as i64;
+            }
+        }
+        if ended { pv.playing = None; }
+        if pv.playing.is_some() { ctx.request_repaint_after(std::time::Duration::from_millis(8)); }
+        // replique vue a cet instant : en temps libre, celle qui est affichee (aucune entre deux repliques)
+        let at = pv.t_ms;
+        let active = { let i = pv.shown.partition_point(|c| c.end_ms <= at); pv.shown.get(i).filter(|c| c.start_ms <= at).map(|_| i) };
+        if pv.free { if let Some(i) = active { pv.cue = i; pv.last_cue = i; } }
+        let c = pv.shown[pv.cue].clone();
+        let cue_text: Option<(String, Option<CuePos>)> = if pv.free { active.map(|_| (c.text.clone(), c.pos)) } else { Some((c.text.clone(), c.pos)) };
+        // fond « image de la video » : l'image reelle a l'instant affiche (extraite par ffmpeg en arriere-plan, gardee en memoire)
         let mut frame_note = None;
-        if pv.bg == 3 {
-            let ms = c.start_ms + ((c.end_ms - c.start_ms) / 2).min(300);
-            let size = (pv.vh * 16 / 9, pv.vh);
+        let vh_eff = if pv.playing.is_some() { play_vh } else { pv.vh };
+        let size = (vh_eff * 16 / 9, vh_eff);
+        let mut frame_now: Option<Arc<RgbaImage>> = None;
+        if pv.bg == 3 && pv.playing.is_none() {
+            let ms = pv.t_ms;
             let loader = pv.loader.get_or_insert_with(|| FrameLoader::start(&pv.video_file, Fit::Cover, 6));
             let arrived = loader.poll();
             loader.want(ms, ms as f64 / 1000.0, size);
@@ -532,15 +662,32 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
                 frame_note = Some(tr("Extracting the video frame…").to_string());
                 ctx.request_repaint_after(std::time::Duration::from_millis(150));
             }
+            frame_now = loader.get(ms, size);
             if arrived { pv.key.clear(); }
-            pv.key_frame = (ms, size);
+            if let Some(f) = &frame_now { pv.last_img = Some(f.clone()); }
         }
-        let shown_frame = if pv.bg == 3 { pv.loader.as_ref().and_then(|l| l.get(pv.key_frame.0, pv.key_frame.1)) } else { None };
-        let key = format!("{}|{}|{}|{:?}|{}|{:?}|{}", pv.cue, pv.bg, pv.vh, t.style, c.text, c.pos, shown_frame.is_some());
-        if key != pv.key || pv.tex.is_none() {
-            let img = render_preview(renderer, &c.text, &t.style, c.pos, base, pv.vh, pv.bg, shown_frame.as_deref());
-            pv.tex = Some(ctx.load_texture("apercu_sous_titres", img, egui::TextureOptions::LINEAR));
-            pv.key = key;
+        let shown_frame = if pv.bg == 3 { frame_now.clone().or_else(|| pv.last_img.clone().filter(|f| (f.width, f.height) == size)) } else { None };
+        if let Some(img) = play_img {
+            // lecture : l'image recue et la replique en cours, dessinees tout de suite (sans passer par la memoire d'images)
+            let mut canvas = if pv.bg == 3 && (img.width, img.height) == size { img } else { blank(vh_eff, pv.bg) };
+            if let Some((text, pos)) = &cue_text {
+                let skey = format!("{}|{}|{:?}|{}|{:?}", pv.cue, vh_eff, t.style, text, pos);
+                if pv.sprite.as_ref().map_or(true, |s| s.0 != skey) { pv.sprite = Some((skey, sub_sprite(renderer, text, &t.style, *pos, base, vh_eff))); }
+                if let Some((_, Some(sp))) = &pv.sprite { blend(&mut canvas, sp); }
+            }
+            let ci = egui::ColorImage::from_rgba_unmultiplied([canvas.width as usize, canvas.height as usize], &canvas.data);
+            match &mut pv.tex {
+                Some(tx) => tx.set(ci, egui::TextureOptions::LINEAR),
+                None => pv.tex = Some(ctx.load_texture("apercu_sous_titres", ci, egui::TextureOptions::LINEAR)),
+            }
+            pv.key = "lecture".to_string();
+        } else if pv.playing.is_none() {
+            let key = format!("{}|{}|{}|{:?}|{:?}|{}|{}", pv.t_ms, pv.bg, pv.vh, t.style, cue_text, frame_now.is_some(), shown_frame.is_some());
+            if key != pv.key || pv.tex.is_none() {
+                let img = render_preview(renderer, cue_text.as_ref().map(|c| c.0.as_str()), &t.style, cue_text.as_ref().and_then(|c| c.1), base, pv.vh, pv.bg, shown_frame.as_deref());
+                pv.tex = Some(ctx.load_texture("apercu_sous_titres", img, egui::TextureOptions::LINEAR));
+                pv.key = key;
+            }
         }
         if let Some(n) = &frame_note { ui.label(egui::RichText::new(n).weak()); }
         // zoom : boutons, molette (ou Ctrl + molette) sur l'image ; glisser l'image pour la deplacer

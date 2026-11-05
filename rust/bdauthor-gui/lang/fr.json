@@ -1067,5 +1067,6 @@
  "cropped by hand": "recadrée à la main",
  "center of the image in 16:9": "centre de l'image en 16/9",
  "A frame of the video at this time, fitted into the frame without distortion. “Choose the image…” lets you pick it image by image and crop it.": "Une image de la vidéo à cet instant, ajustée au cadre sans déformation. « Choisir l'image… » permet de la choisir image par image et de la recadrer.",
-  "Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time": "Molette : zoom · Maj + molette : défilement · clic ou glisser : choisir l'instant"
+  "Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time": "Molette : zoom · Maj + molette : défilement · clic ou glisser : choisir l'instant",
+  "Space: play / pause · playback without sound": "Espace : lecture / pause · lecture sans le son"
 }

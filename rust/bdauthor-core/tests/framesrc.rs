@@ -13,9 +13,9 @@ fn scaled_height_is_even_and_proportional() {
     assert_eq!(scaled_height((0, 0), 100), 100);
 }
 
-fn source() -> Option<(Tools, PathBuf, PathBuf)> {
+fn source(name: &str) -> Option<(Tools, PathBuf, PathBuf)> {
     let tools = Tools::locate().ok()?;
-    let dir = std::env::temp_dir().join(format!("bdauthor_framesrc_{}", std::process::id()));
+    let dir = std::env::temp_dir().join(format!("bdauthor_framesrc_{name}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let p = dir.join("src.mp4");
     let ok = Command::new(&tools.ffmpeg)
@@ -36,7 +36,7 @@ fn wait<F: FnMut() -> bool>(mut f: F) -> bool {
 
 #[test]
 fn probe_loader_and_strip() {
-    let Some((_tools, src, dir)) = source() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let Some((_tools, src, dir)) = source("loader") else { eprintln!("ffmpeg absent : test ignore"); return };
     let m = probe_async(&src, 160).recv_timeout(Duration::from_secs(20)).unwrap().unwrap();
     assert_eq!((m.size, m.fps.round() as i32), ((160, 90), 25));
     assert!((m.duration - 4.0).abs() < 0.1);
@@ -74,4 +74,16 @@ fn probe_loader_and_strip() {
     assert_eq!(seen, vec![0, 1, 2, 3, 4, 5]);
     let _ = std::fs::remove_dir_all(&dir);
     let _: &Path = &src;
+}
+
+#[test]
+fn stream_cover_fills_requested_size() {
+    use bdauthor_core::ffmpeg::FrameStream;
+    let Some((tools, src, dir)) = source("stream") else { eprintln!("ffmpeg absent : test ignore"); return };
+    // source 16/9 rognee en carre : la taille demandee est respectee
+    let fs = FrameStream::start_fit(&tools, &src, 1.0, (72, 72), true).unwrap();
+    let img = fs.rx.recv_timeout(Duration::from_secs(20)).unwrap();
+    assert_eq!((img.width, img.height, img.data.len()), (72, 72, 72 * 72 * 4));
+    drop(fs);
+    let _ = std::fs::remove_dir_all(&dir);
 }
