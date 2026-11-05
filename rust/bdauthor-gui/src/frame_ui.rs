@@ -5,6 +5,7 @@ use crate::i18n::{tr, trf};
 use crate::timeline_ui::{Timeline, TimelineCfg};
 use bdauthor_core::design::{Kind, VideoFrame};
 use bdauthor_core::editor::{crop_drag, crop_full};
+use bdauthor_core::ffmpeg::{FrameStream, Tools};
 use bdauthor_core::framesrc::{probe_async, Fit, FrameLoader, VideoMeta};
 use bdauthor_core::model::ProjectModel;
 use eframe::egui;
@@ -41,6 +42,8 @@ pub struct FramePicker {
     tex: Option<egui::TextureHandle>,
     tex_frame: i64,
     tl: Timeline,
+    /// lecture (sans le son) : (flux, image de depart, images recues)
+    playing: Option<(FrameStream, i64, i64)>,
     /// glissement du cadre : (poignee, cadre d'origine, point de depart en fractions)
     crop_drag: Option<(u8, [f64; 4], (f64, f64))>,
 }
@@ -59,7 +62,7 @@ impl FramePicker {
             page, item, video, vfile: v.file.clone(), file, title, widget_ratio: it.w.max(1) as f64 / it.h.max(1) as f64,
             frame: 0, crop: f.crop, ratio: if f.crop.is_some() { Ratio::Free } else { Ratio::Widget },
             info_rx: Some(rx), info: None, error: None, start_t: f.at, loader: None, tex: None, tex_frame: -1,
-            tl: Timeline::new(STRIP_N, "barre_image"), crop_drag: None,
+            tl: Timeline::new(STRIP_N, "barre_image"), playing: None, crop_drag: None,
         })
     }
 
@@ -67,7 +70,23 @@ impl FramePicker {
     fn duration(&self) -> f64 { self.info.as_ref().map_or(0.0, |i| i.duration) }
     fn last_frame(&self) -> i64 { ((self.duration() * self.fps()).floor() as i64 - 1).max(0) }
     fn t_of(&self, n: i64) -> f64 { n as f64 / self.fps() }
-    fn seek(&mut self, n: i64) { self.frame = n.clamp(0, self.last_frame()); }
+    fn seek(&mut self, n: i64) {
+        self.playing = None;
+        self.frame = n.clamp(0, self.last_frame());
+    }
+
+    /// Lecture / pause : le flux demarre a l'image suivante (ou au debut si l'on est a la fin).
+    fn toggle_play(&mut self) {
+        if self.playing.is_some() { self.playing = None; return; }
+        let Some(info) = &self.info else { return };
+        let size = info.size;
+        if let Ok(tools) = Tools::locate() {
+            let start = if self.frame >= self.last_frame() { 0 } else { self.frame + 1 };
+            if let Ok(fs) = FrameStream::start(&tools, &self.file, self.t_of(start), size) {
+                self.playing = Some((fs, start, 0));
+            }
+        }
+    }
 
     /// Rapport impose en fractions de l'image (largeur / hauteur des fractions).
     fn ratio_frac(&self) -> Option<f64> {
@@ -95,9 +114,32 @@ impl FramePicker {
             }
         }
         busy |= self.tl.poll(ctx);
+        // lecture : la derniere image recue est affichee
+        let mut ended = false;
+        if let Some((fs, start, got)) = &mut self.playing {
+            let mut last = None;
+            loop {
+                match fs.rx.try_recv() {
+                    Ok(img) => { *got += 1; last = Some(img); }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
+                    Err(_) => { ended = true; break; }
+                }
+            }
+            if let Some(img) = last {
+                let n = *start + *got - 1;
+                self.frame = n;
+                match &mut self.tex {
+                    Some(t) => t.set(egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data), egui::TextureOptions::LINEAR),
+                    None => self.tex = Some(tex_of(ctx, "image_video", &img)),
+                }
+                self.tex_frame = n;
+            }
+            busy = true;
+        }
+        if ended { self.playing = None; }
         if let (Some(info), Some(l)) = (&self.info, &mut self.loader) {
             l.poll();
-            if self.tex_frame != self.frame {
+            if self.playing.is_none() && self.tex_frame != self.frame {
                 // image courante : en memoire, sinon demandee (juste avant l'image n : la recherche exacte ecarte les precedentes)
                 l.want(self.frame, (self.frame as f64 - 0.25).max(0.0) / info.fps, info.size);
                 if let Some(img) = l.get(self.frame, info.size) {
@@ -153,6 +195,7 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
         let step = if m.command { (fp.fps() * 10.0).round() as i64 } else if m.shift { fp.fps().round() as i64 } else { 1 };
         if l { fp.seek(fp.frame - step); }
         if r { fp.seek(fp.frame + step); }
+        if ui.input(|i| i.key_pressed(egui::Key::Space)) { fp.toggle_play(); }
     }
     // image
     let avail = ui.available_size();
@@ -215,6 +258,8 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
         if btn(ui, tr("−10 s")) { fp.seek(fp.frame - 10 * s1); }
         if btn(ui, tr("−1 s")) { fp.seek(fp.frame - s1); }
         if btn(ui, tr("◀ frame")) { fp.seek(fp.frame - 1); }
+        let play = if fp.playing.is_some() { tr("■ Pause") } else { tr("▶ Play") };
+        if ui.add(egui::Button::new(play).min_size(egui::vec2(70.0, 26.0)).fill(egui::Color32::from_rgb(44, 93, 135))).clicked() { fp.toggle_play(); }
         if btn(ui, tr("frame ▶")) { fp.seek(fp.frame + 1); }
         if btn(ui, tr("+1 s")) { fp.seek(fp.frame + s1); }
         if btn(ui, tr("+10 s")) { fp.seek(fp.frame + 10 * s1); }
@@ -225,7 +270,7 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
     });
     ui.add_space(4.0);
     timeline(ui, fp);
-    ui.label(egui::RichText::new(tr("Click or drag on the bar to choose the time (hover: preview) · ← →: one frame · Shift: 1 s · Ctrl: 10 s")).small().weak());
+    ui.label(egui::RichText::new(tr("Click or drag on the bar to choose the time (hover: preview) · Space: play / pause · ← →: one frame · Shift: 1 s · Ctrl: 10 s")).small().weak());
     ui.separator();
     // recadrage
     ui.horizontal_wrapped(|ui| {
@@ -267,7 +312,7 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
 /// Barre de temps commune (vignettes, zoom, survol) ; clic ou glisser = aller a cet instant.
 fn timeline(ui: &mut egui::Ui, fp: &mut FramePicker) {
     let head_t = fp.t_of(fp.frame);
-    let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 4.0, follow: false };
+    let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 4.0, follow: fp.playing.is_some() };
     let dur = fp.duration();
     let Some((resp, geo)) = fp.tl.show(ui, dur, head_t, &cfg, |_, _| {}) else { return };
     if let Some(q) = resp.interact_pointer_pos() {

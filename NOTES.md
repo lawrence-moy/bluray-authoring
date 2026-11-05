@@ -795,3 +795,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 ## Export 152 — barre de temps commune
 - Nouveau `timeline_ui.rs` : `Timeline` (graduations, vignettes calculées en arrière-plan via `framesrc::Strip`, zoom molette, défilement Maj + molette, curseur de défilement, tête de lecture, aperçu agrandi au survol) ; l'appelant dessine ses repères par une fonction `overlay` et gère la souris à partir de `Geo` (`x_of`, `t_at`). Utilisée par l'éditeur de chapitres (repères de chapitre, images clés) et le sélecteur d'image (qui gagne graduations, zoom et défilement).
 - Texte ajouté à fr.json : aide de la barre du sélecteur d'image. GUI à compiler avec recompiler.bat.
+
+## Export 153 — lecture dans le sélecteur d'image
+- `frame_ui.rs` : bouton ▶ Lecture / ■ Pause et touche Espace (flux `FrameStream`, sans le son) ; toute navigation (boutons, flèches, barre de temps) arrête la lecture ; la barre de temps suit la tête de lecture. « Valider » garde l'image affichée à ce moment.

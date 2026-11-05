@@ -1051,7 +1051,7 @@
  "While moving or resizing, the edges and centers snap to the edges and center of the screen and of the other visible items (magenta lines). Alt: temporarily off.": "Pendant un déplacement ou un redimensionnement, les bords et les centres s'aimantent sur les bords et le centre de l'écran et des autres éléments visibles (traits magenta). Alt : désactivé le temps du geste.",
  "Item {}: choose the video of the image.": "Élément {} : choisissez la vidéo de l'image.",
  "Video image — {}": "Image de la vidéo — {}",
- "Click or drag on the bar to choose the time (hover: preview) · ← →: one frame · Shift: 1 s · Ctrl: 10 s": "Cliquez ou glissez sur la barre pour choisir l'instant (survol : aperçu) · ← → : une image · Maj : 1 s · Ctrl : 10 s",
+ "Click or drag on the bar to choose the time (hover: preview) · Space: play / pause · ← →: one frame · Shift: 1 s · Ctrl: 10 s": "Cliquez ou glissez sur la barre pour choisir l'instant (survol : aperçu) · Espace : lecture / pause · ← → : une image · Maj : 1 s · Ctrl : 10 s",
  "Crop the image": "Recadrer l'image",
  "Proportions:": "Proportions :",
  "free": "libres",
