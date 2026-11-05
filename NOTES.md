@@ -803,3 +803,6 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - `subs_ui.rs` : frise commune (`timeline_ui`) sous les réglages de fond, avec les répliques de la piste en repères (la réplique choisie en orange) ; clic ou glisser = instant libre, fond « Image de la vidéo » activé d'office. Bouton ▶ Lecture / ■ Pause et Espace : la vidéo défile (sans le son, 720 lignes au plus) avec la réplique en cours dessinée par-dessus, en 16/9 rogné comme le fond fixe.
 - Deux modes : instant lié à la réplique choisie (curseur, < >, « La plus longue », liste des problèmes : comme avant) ou instant libre (frise, lecture : la réplique affichée est celle qui est active, rien entre deux répliques ; le curseur de réplique suit).
 - Cœur : `FrameStream::start_fit` (option `cover`) ; test `stream_cover_fills_requested_size`. Rendu refactoré en `sub_sprite` / `blank` / `blend` / `render_preview` (réplique dessinée une fois par réplique pendant la lecture).
+
+## Export 155 — frise de l'aperçu des sous-titres sous l'image
+- `subs_ui.rs` : le bouton Lecture, l'instant et la frise passent sous l'image (la zone de l'image réserve leur hauteur) ; la logique de lecture reste avant l'image.
