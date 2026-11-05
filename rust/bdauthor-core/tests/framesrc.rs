@@ -87,3 +87,16 @@ fn stream_cover_fills_requested_size() {
     drop(fs);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn strip_range_covers_only_the_range() {
+    let Some((_tools, src, dir)) = source("range") else { eprintln!("ffmpeg absent : test ignore"); return };
+    // 4 vignettes exactes entre 1 s et 2 s : quatre images differentes, numerotees de 0 a 3
+    let mut st = Strip::start_range(&src, 1.0, 2.0, 4, (64, 36), true);
+    let mut got: Vec<(usize, Vec<u8>)> = Vec::new();
+    assert!(wait(|| { let (n, busy) = st.poll(); got.extend(n.into_iter().map(|(i, im)| (i, im.data))); !busy }));
+    got.sort_by_key(|g| g.0);
+    assert_eq!(got.iter().map(|g| g.0).collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+    for w in got.windows(2) { assert_ne!(w[0].1, w[1].1, "images exactes differentes"); }
+    let _ = std::fs::remove_dir_all(&dir);
+}

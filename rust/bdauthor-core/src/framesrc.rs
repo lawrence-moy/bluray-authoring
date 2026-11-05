@@ -134,15 +134,22 @@ pub struct Strip {
 }
 
 impl Strip {
-    /// `n` vignettes de taille `size`, prises au milieu de `n` tranches egales de `duration`.
+    /// `n` vignettes de taille `size`, prises au milieu de `n` tranches egales de `duration` (images cles, rapide).
     pub fn start(file: &Path, duration: f64, n: usize, size: (u32, u32)) -> Strip {
+        Strip::start_range(file, 0.0, duration, n, size, false)
+    }
+
+    /// `n` vignettes prises au milieu de `n` tranches egales de la plage [`from`, `to`] (secondes). `exact` : images exactes
+    /// (plus lent, pour une echelle ou deux vignettes voisines tombent sur des images cles differentes) ; sinon images cles.
+    /// La frise s'arrete d'elle-meme quand on la laisse tomber.
+    pub fn start_range(file: &Path, from: f64, to: f64, n: usize, size: (u32, u32), exact: bool) -> Strip {
         let (tx, rx) = channel();
         let src = file.to_path_buf();
         std::thread::spawn(move || {
             let Ok(tools) = Tools::locate() else { return };
             for i in 0..n {
-                let t = (i as f64 + 0.5) * duration / n as f64;
-                if let Ok(img) = extract_frame_rgba(&tools, &src, t, size, false) {
+                let t = from + (i as f64 + 0.5) * (to - from) / n as f64;
+                if let Ok(img) = extract_frame_rgba(&tools, &src, t, size, exact) {
                     if tx.send((i, img)).is_err() { return; }
                 }
             }

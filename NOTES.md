@@ -806,3 +806,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Export 155 — frise de l'aperçu des sous-titres sous l'image
 - `subs_ui.rs` : le bouton Lecture, l'instant et la frise passent sous l'image (la zone de l'image réserve leur hauteur) ; la logique de lecture reste avant l'image.
+
+## Export 156 — vignettes de la frise recalculées à l'échelle du zoom
+- Cœur : `Strip::start_range(fichier, de, à, n, taille, exact)` (vignettes d'une plage ; `start` en est le cas particulier « toute la vidéo, images clés »). Test `strip_range_covers_only_the_range`.
+- `timeline_ui.rs` : quand une case de la frise représente nettement moins de temps qu'une des 48 vignettes de la vidéo entière, la vue visible (plus une demi-vue de chaque côté) reçoit ses propres vignettes, une par case, calculées en arrière-plan une fois la vue restée stable 250 ms ; images exactes si une case représente moins de 10 s (sinon image clé la plus proche). Les vignettes de la vidéo entière servent en attendant, et pour les cases hors plage. Un nouveau calcul n'est lancé que si la vue sort de la plage calculée ou si l'échelle change de plus de 20 %. S'applique aux trois fenêtres (chapitres, sélecteur d'image, aperçu des sous-titres).
