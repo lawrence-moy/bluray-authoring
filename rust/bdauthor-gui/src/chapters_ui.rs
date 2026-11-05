@@ -2,9 +2,10 @@
 //! de la video et les reperes de chapitre, choix des images de vignette. Les modifications restent dans la fenetre jusqu'a
 //! « Valider ».
 use crate::i18n::{tr, trf};
+use crate::timeline_ui::{Timeline, TimelineCfg};
 use bdauthor_core::design::Kind;
 use bdauthor_core::ffmpeg::{list_keyframes, FrameStream, Tools};
-use bdauthor_core::framesrc::{probe_async, scaled_height, Fit, FrameLoader, Strip, VideoMeta};
+use bdauthor_core::framesrc::{probe_async, Fit, FrameLoader, VideoMeta};
 use bdauthor_core::model::{ChapterEntry, ProjectModel};
 use bdauthor_core::palette::RgbaImage;
 use eframe::egui;
@@ -16,12 +17,10 @@ use std::sync::mpsc::{channel, Receiver};
 const VIEW_W: u32 = 960;
 /// Vignettes de la frise (toute la video).
 const STRIP_N: usize = 48;
-const STRIP_W: u32 = 160;
 /// Images gardees en memoire (environ 2 Mo chacune).
 const CACHE_MAX: usize = 40;
 
 const MARK: egui::Color32 = egui::Color32::from_rgb(230, 195, 74);
-const HEAD: egui::Color32 = egui::Color32::from_rgb(255, 140, 58);
 
 pub struct ChapterEditor {
     pub video: usize,
@@ -49,12 +48,9 @@ pub struct ChapterEditor {
     tex: Option<egui::TextureHandle>,
     tex_frame: i64,
     // frise
-    strip: Option<Strip>,
-    strip_tex: Vec<Option<egui::TextureHandle>>,
+    tl: Timeline,
     keys_rx: Option<Receiver<Result<Vec<f64>, String>>>,
     keys: Option<Vec<f64>>,
-    zoom: f64,
-    view_t0: f64,
     drag_ch: Option<u32>,
     // lecture : (flux, image de depart, images recues)
     playing: Option<(FrameStream, i64, i64)>,
@@ -95,7 +91,7 @@ impl ChapterEditor {
             video, vfile: v.file.clone(), file, title, next_id: v.next_chapter_id(), chapters, thumb_s: v.thumb_s, exact: v.exact_chapters, slots, slots_changed: false,
             info_rx: Some(rx), info: None, error: None, frame: 0, sel: None,
             loader: None, tex: None, tex_frame: -1,
-            strip: None, strip_tex: Vec::new(), keys_rx: None, keys: None, zoom: 1.0, view_t0: 0.0, drag_ch: None, playing: None,
+            tl: Timeline::new(STRIP_N, "frise"), keys_rx: None, keys: None, drag_ch: None, playing: None,
         })
     }
 
@@ -118,8 +114,7 @@ impl ChapterEditor {
         let (size, dur) = (info.size, info.duration);
         // images exactes (une seule demande a la fois, la plus recente) et vignettes de la frise (images cles, rapides)
         self.loader = Some(FrameLoader::start(&self.file, Fit::Stretch, CACHE_MAX));
-        self.strip = Some(Strip::start(&self.file, dur, STRIP_N, (STRIP_W, scaled_height(size, STRIP_W))));
-        self.strip_tex = vec![None; STRIP_N];
+        self.tl.start(&self.file, dur, size);
         let (ktx, krx) = channel();
         let src = self.file.clone();
         std::thread::spawn(move || {
@@ -139,11 +134,7 @@ impl ChapterEditor {
                 Err(_) => busy = true,
             }
         }
-        if let Some(st) = &mut self.strip {
-            let (new, more) = st.poll();
-            for (i, img) in new { if let Some(s) = self.strip_tex.get_mut(i) { *s = Some(tex_of(ctx, &format!("frise_{i}"), &img)); } }
-            busy |= more;
-        }
+        busy |= self.tl.poll(ctx);
         if let Some(l) = &mut self.loader { l.poll(); }
         if let Some(rx) = &self.keys_rx {
             match rx.try_recv() {
@@ -441,110 +432,44 @@ fn side_panel(ui: &mut egui::Ui, ed: &mut ChapterEditor, action: &mut Option<boo
     });
 }
 
-/// Pas des graduations : le plus petit qui laisse au moins 90 px entre deux graduations.
-fn tick_step(span: f64, width: f32) -> f64 {
-    const STEPS: [f64; 14] = [1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 3600.0, 7200.0];
-    STEPS.iter().copied().find(|s| width as f64 / (span / s) >= 90.0).unwrap_or(7200.0)
-}
-
 fn timeline(ui: &mut egui::Ui, ed: &mut ChapterEditor) {
     let dur = ed.duration();
-    ui.horizontal(|ui| {
-        ui.label(tr("Timeline"));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(egui::RichText::new(tr("Wheel: zoom · Shift + wheel: scroll · drag a mark: move the chapter · click: go to this time")).small().weak());
-            if ui.small_button("+").clicked() { ed.zoom = (ed.zoom * 2.0).min(512.0); }
-            let mut z = ed.zoom.log2() as f32;
-            if ui.add(egui::Slider::new(&mut z, 0.0..=9.0).show_value(false)).changed() { ed.zoom = 2f64.powf(z as f64); }
-            if ui.small_button("−").clicked() { ed.zoom = (ed.zoom / 2.0).max(1.0); }
-            ui.label(tr("Zoom"));
-        });
-    });
-    if dur <= 0.0 { return; }
-    let w = ui.available_width().max(200.0);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 140.0), egui::Sense::click_and_drag());
-    let span = dur / ed.zoom;
-    // la tete de lecture reste visible pendant la lecture
     let head_t = ed.t_of(ed.frame);
-    if ed.playing.is_some() && (head_t < ed.view_t0 || head_t > ed.view_t0 + span) { ed.view_t0 = head_t - span * 0.1; }
-    ed.view_t0 = ed.view_t0.clamp(0.0, (dur - span).max(0.0));
-    let t0 = ed.view_t0;
-    let x_of = |t: f64| rect.min.x + ((t - t0) / span * w as f64) as f32;
-    let t_of_x = |x: f32| (t0 + (x - rect.min.x) as f64 / w as f64 * span).clamp(0.0, dur);
-    // molette : zoom autour du pointeur ; Maj : defilement
-    if resp.hovered() {
-        let (dy, dx, shift) = ui.input(|i| (i.smooth_scroll_delta.y, i.smooth_scroll_delta.x, i.modifiers.shift));
-        if shift || dx.abs() > dy.abs() {
-            let d = if dx.abs() > dy.abs() { dx } else { dy };
-            ed.view_t0 = (ed.view_t0 - d as f64 / w as f64 * span).clamp(0.0, (dur - span).max(0.0));
-        } else if dy != 0.0 {
-            let at = ui.input(|i| i.pointer.hover_pos()).map_or(head_t, |p| t_of_x(p.x));
-            let nz = (ed.zoom * (1.0 + dy as f64 / 200.0).clamp(0.5, 2.0)).clamp(1.0, 512.0);
-            let nspan = dur / nz;
-            let frac = (at - t0) / span;
-            ed.zoom = nz;
-            ed.view_t0 = (at - frac * nspan).clamp(0.0, (dur - nspan).max(0.0));
-        }
-    }
-    let p = ui.painter_at(rect);
-    p.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
-    // graduations
-    let step = tick_step(span, w);
-    let mut t = (t0 / step).floor() * step;
-    while t <= t0 + span {
-        let x = x_of(t);
-        p.line_segment([egui::pos2(x, rect.min.y), egui::pos2(x, rect.min.y + 14.0)], egui::Stroke::new(1.0_f32, egui::Color32::from_gray(90)));
-        let s = t.round() as i64;
-        let label = if step < 60.0 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 3600, s / 60 % 60) };
-        p.text(egui::pos2(x + 3.0, rect.min.y), egui::Align2::LEFT_TOP, label, egui::FontId::monospace(11.0), egui::Color32::from_gray(160));
-        t += step;
-    }
-    // vignettes : cases de taille fixe, chacune montre la vignette la plus proche de son instant
-    let strip = egui::Rect::from_min_size(egui::pos2(rect.min.x, rect.min.y + 18.0), egui::vec2(w, 64.0));
-    let cell_w = 64.0 * 16.0 / 9.0;
-    let mut x = strip.min.x;
-    while x < strip.max.x {
-        let cell = egui::Rect::from_min_size(egui::pos2(x, strip.min.y), egui::vec2(cell_w - 2.0, 64.0));
-        let tc_ = t_of_x(x + cell_w / 2.0);
-        let i = ((tc_ / dur * STRIP_N as f64) as usize).min(STRIP_N - 1);
-        match ed.strip_tex.get(i).and_then(|s| s.as_ref()) {
-            Some(tex) => { p.image(tex.id(), cell, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE); }
-            None => { p.rect_filled(cell, 0.0, egui::Color32::from_gray(45)); }
-        }
-        x += cell_w;
-    }
-    // images cles de la source, quand l'echelle permet de les distinguer
-    if let Some(keys) = &ed.keys {
-        if span < 600.0 {
-            for &k in keys.iter().filter(|&&k| k >= t0 && k <= t0 + span) {
-                let x = x_of(k);
-                p.line_segment([egui::pos2(x, strip.max.y - 8.0), egui::pos2(x, strip.max.y)], egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 200, 255)));
+    let hint = tr("Wheel: zoom · Shift + wheel: scroll · drag a mark: move the chapter · click: go to this time");
+    let cfg = TimelineCfg { hint, below: 58.0, follow: ed.playing.is_some() };
+    let (keys, chapters, sel) = (&ed.keys, &ed.chapters, ed.sel);
+    let Some((resp, geo)) = ed.tl.show(ui, dur, head_t, &cfg, |p, g| {
+        let (t0, span) = (g.start(), g.span());
+        // images cles de la source, quand l'echelle permet de les distinguer
+        if let Some(keys) = keys {
+            if span < 600.0 {
+                for &k in keys.iter().filter(|&&k| k >= t0 && k <= t0 + span) {
+                    let x = g.x_of(k);
+                    p.line_segment([egui::pos2(x, g.strip.max.y - 8.0), egui::pos2(x, g.strip.max.y)], egui::Stroke::new(1.0_f32, egui::Color32::from_rgb(120, 200, 255)));
+                }
             }
         }
-    }
-    // reperes de chapitre
-    for (k, c) in ed.chapters.iter().enumerate() {
-        if c.t < t0 - span * 0.05 || c.t > t0 + span { continue; }
-        let x = x_of(c.t);
-        let sel = ed.sel == Some(c.id);
-        p.line_segment([egui::pos2(x, rect.min.y + 14.0), egui::pos2(x, rect.min.y + 98.0)], egui::Stroke::new(if sel { 3.0_f32 } else { 2.0 }, MARK));
-        let txt = if c.title.is_empty() { format!("{}", k + 1) } else { format!("{} · {}", k + 1, c.title) };
-        let g = p.layout_no_wrap(txt, egui::FontId::proportional(11.0), egui::Color32::from_rgb(240, 215, 122));
-        let r = egui::Rect::from_min_size(egui::pos2(x, rect.min.y + 98.0), g.size() + egui::vec2(10.0, 4.0));
-        p.rect_filled(r, 2.0, if sel { egui::Color32::from_rgb(110, 92, 30) } else { egui::Color32::from_rgb(74, 63, 28) });
-        p.galley(r.min + egui::vec2(5.0, 2.0), g, egui::Color32::from_rgb(240, 215, 122));
-    }
-    // tete de lecture
-    let hx = x_of(head_t);
-    p.line_segment([egui::pos2(hx, rect.min.y + 8.0), egui::pos2(hx, rect.max.y - 4.0)], egui::Stroke::new(2.0_f32, HEAD));
-    p.rect_filled(egui::Rect::from_center_size(egui::pos2(hx, rect.min.y + 6.0), egui::vec2(12.0, 8.0)), 1.0, HEAD);
+        // reperes de chapitre
+        let rect = g.rect;
+        for (k, c) in chapters.iter().enumerate() {
+            if c.t < t0 - span * 0.05 || c.t > t0 + span { continue; }
+            let x = g.x_of(c.t);
+            let sel = sel == Some(c.id);
+            p.line_segment([egui::pos2(x, rect.min.y + 14.0), egui::pos2(x, rect.min.y + 98.0)], egui::Stroke::new(if sel { 3.0_f32 } else { 2.0 }, MARK));
+            let txt = if c.title.is_empty() { format!("{}", k + 1) } else { format!("{} · {}", k + 1, c.title) };
+            let gl = p.layout_no_wrap(txt, egui::FontId::proportional(11.0), egui::Color32::from_rgb(240, 215, 122));
+            let r = egui::Rect::from_min_size(egui::pos2(x, rect.min.y + 98.0), gl.size() + egui::vec2(10.0, 4.0));
+            p.rect_filled(r, 2.0, if sel { egui::Color32::from_rgb(110, 92, 30) } else { egui::Color32::from_rgb(74, 63, 28) });
+            p.galley(r.min + egui::vec2(5.0, 2.0), gl, egui::Color32::from_rgb(240, 215, 122));
+        }
+    }) else { return };
     // souris : glisser un repere le deplace ; ailleurs, cliquer ou glisser deplace la tete de lecture
     if let Some(pos) = resp.interact_pointer_pos() {
         if resp.drag_started() {
-            ed.drag_ch = ed.chapters.iter().filter(|c| (x_of(c.t) - pos.x).abs() <= 6.0).min_by(|a, b| (x_of(a.t) - pos.x).abs().total_cmp(&(x_of(b.t) - pos.x).abs())).map(|c| c.id);
+            ed.drag_ch = ed.chapters.iter().filter(|c| (geo.x_of(c.t) - pos.x).abs() <= 6.0).min_by(|a, b| (geo.x_of(a.t) - pos.x).abs().total_cmp(&(geo.x_of(b.t) - pos.x).abs())).map(|c| c.id);
             if let Some(id) = ed.drag_ch { ed.sel = Some(id); }
         }
-        let n = ed.frame_of(t_of_x(pos.x));
+        let n = ed.frame_of(geo.t_at(pos.x));
         match ed.drag_ch {
             Some(id) if resp.dragged() => {
                 let t = ed.stored_t(n);
@@ -555,12 +480,7 @@ fn timeline(ui: &mut egui::Ui, ed: &mut ChapterEditor) {
         }
     }
     if resp.drag_stopped() { if ed.drag_ch.take().is_some() { ed.sort(); } }
-    if resp.hovered() && ed.chapters.iter().any(|c| ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| (x_of(c.t) - p.x).abs() <= 6.0)) {
+    if resp.hovered() && ed.chapters.iter().any(|c| ui.input(|i| i.pointer.hover_pos()).is_some_and(|p| (geo.x_of(c.t) - p.x).abs() <= 6.0)) {
         ui.ctx().set_cursor_icon(egui::CursorIcon::ResizeHorizontal);
-    }
-    // barre de defilement de la vue zoomee
-    if ed.zoom > 1.0 {
-        let mut f = (ed.view_t0 / (dur - span).max(1e-9)) as f32;
-        if ui.add(egui::Slider::new(&mut f, 0.0..=1.0).show_value(false)).changed() { ed.view_t0 = f as f64 * (dur - span).max(0.0); }
     }
 }

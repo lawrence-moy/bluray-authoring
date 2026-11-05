@@ -2,9 +2,10 @@
 //! video (apercu au survol), pas image par image, et recadrage a la souris. Les reglages ne sont appliques qu'a « Valider ».
 use crate::chapters_ui::{tc, tex_of};
 use crate::i18n::{tr, trf};
+use crate::timeline_ui::{Timeline, TimelineCfg};
 use bdauthor_core::design::{Kind, VideoFrame};
 use bdauthor_core::editor::{crop_drag, crop_full};
-use bdauthor_core::framesrc::{probe_async, scaled_height, Fit, FrameLoader, Strip, VideoMeta};
+use bdauthor_core::framesrc::{probe_async, Fit, FrameLoader, VideoMeta};
 use bdauthor_core::model::ProjectModel;
 use eframe::egui;
 use std::path::{Path, PathBuf};
@@ -12,7 +13,6 @@ use std::sync::mpsc::Receiver;
 
 const VIEW_W: u32 = 960;
 const STRIP_N: usize = 40;
-const STRIP_W: u32 = 160;
 
 /// Rapport impose au cadre de recadrage.
 #[derive(Clone, Copy, PartialEq)]
@@ -40,8 +40,7 @@ pub struct FramePicker {
     loader: Option<FrameLoader>,
     tex: Option<egui::TextureHandle>,
     tex_frame: i64,
-    strip: Option<Strip>,
-    strip_tex: Vec<Option<egui::TextureHandle>>,
+    tl: Timeline,
     /// glissement du cadre : (poignee, cadre d'origine, point de depart en fractions)
     crop_drag: Option<(u8, [f64; 4], (f64, f64))>,
 }
@@ -60,7 +59,7 @@ impl FramePicker {
             page, item, video, vfile: v.file.clone(), file, title, widget_ratio: it.w.max(1) as f64 / it.h.max(1) as f64,
             frame: 0, crop: f.crop, ratio: if f.crop.is_some() { Ratio::Free } else { Ratio::Widget },
             info_rx: Some(rx), info: None, error: None, start_t: f.at, loader: None, tex: None, tex_frame: -1,
-            strip: None, strip_tex: Vec::new(), crop_drag: None,
+            tl: Timeline::new(STRIP_N, "barre_image"), crop_drag: None,
         })
     }
 
@@ -82,8 +81,7 @@ impl FramePicker {
         let (size, fps, dur) = (info.size, info.fps, info.duration);
         self.frame = ((self.start_t * fps).round() as i64).clamp(0, ((dur * fps).floor() as i64 - 1).max(0));
         self.loader = Some(FrameLoader::start(&self.file, Fit::Stretch, 30));
-        self.strip = Some(Strip::start(&self.file, dur, STRIP_N, (STRIP_W, scaled_height(size, STRIP_W))));
-        self.strip_tex = vec![None; STRIP_N];
+        self.tl.start(&self.file, dur, size);
     }
 
     /// Rend vrai s'il faut redessiner bientot.
@@ -96,11 +94,7 @@ impl FramePicker {
                 Err(_) => busy = true,
             }
         }
-        if let Some(st) = &mut self.strip {
-            let (new, more) = st.poll();
-            for (i, img) in new { if let Some(s) = self.strip_tex.get_mut(i) { *s = Some(tex_of(ctx, &format!("barre_image_{i}"), &img)); } }
-            busy |= more;
-        }
+        busy |= self.tl.poll(ctx);
         if let (Some(info), Some(l)) = (&self.info, &mut self.loader) {
             l.poll();
             if self.tex_frame != self.frame {
@@ -270,44 +264,16 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
     });
 }
 
-/// Barre de temps : vignettes de toute la video, tete de lecture ; clic ou glisser = aller a cet instant ; survol = apercu.
+/// Barre de temps commune (vignettes, zoom, survol) ; clic ou glisser = aller a cet instant.
 fn timeline(ui: &mut egui::Ui, fp: &mut FramePicker) {
+    let head_t = fp.t_of(fp.frame);
+    let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 4.0, follow: false };
     let dur = fp.duration();
-    if dur <= 0.0 { return; }
-    let w = ui.available_width().max(200.0);
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(w, 62.0), egui::Sense::click_and_drag());
-    let p = ui.painter_at(rect);
-    p.rect_filled(rect, 0.0, egui::Color32::from_gray(30));
-    let cell = w / STRIP_N as f32;
-    for i in 0..STRIP_N {
-        let r = egui::Rect::from_min_size(egui::pos2(rect.min.x + i as f32 * cell, rect.min.y + 4.0), egui::vec2(cell - 1.0, 54.0));
-        match fp.strip_tex.get(i).and_then(|s| s.as_ref()) {
-            Some(t) => { p.image(t.id(), r, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE); }
-            None => { p.rect_filled(r, 0.0, egui::Color32::from_gray(45)); }
-        }
-    }
-    let x_of = |t: f64| rect.min.x + (t / dur) as f32 * w;
-    let t_of_x = |x: f32| (((x - rect.min.x) / w) as f64 * dur).clamp(0.0, dur);
-    let hx = x_of(fp.t_of(fp.frame));
-    p.line_segment([egui::pos2(hx, rect.min.y), egui::pos2(hx, rect.max.y)], egui::Stroke::new(3.0_f32, egui::Color32::from_rgb(255, 140, 58)));
+    let Some((resp, geo)) = fp.tl.show(ui, dur, head_t, &cfg, |_, _| {}) else { return };
     if let Some(q) = resp.interact_pointer_pos() {
         if resp.clicked() || resp.dragged() {
-            let n = ((t_of_x(q.x) * fp.fps()).round() as i64).clamp(0, fp.last_frame());
+            let n = ((geo.t_at(q.x) * fp.fps()).round() as i64).clamp(0, fp.last_frame());
             fp.seek(n);
         }
-    }
-    // apercu au survol : la vignette la plus proche, en grand, avec son instant
-    if let Some(q) = resp.hover_pos() {
-        let t = t_of_x(q.x);
-        let i = ((t / dur * STRIP_N as f64) as usize).min(STRIP_N - 1);
-        p.line_segment([egui::pos2(q.x, rect.min.y), egui::pos2(q.x, rect.max.y)], egui::Stroke::new(1.0_f32, egui::Color32::from_white_alpha(160)));
-        let tex = fp.strip_tex.get(i).and_then(|s| s.clone());
-        let _ = resp.clone().on_hover_ui_at_pointer(|ui| {
-            if let Some(tx) = &tex {
-                let sz = tx.size_vec2();
-                ui.image((tx.id(), egui::vec2(240.0, 240.0 * sz.y / sz.x.max(1.0))));
-            }
-            ui.label(egui::RichText::new(tc(t)).monospace());
-        });
     }
 }
