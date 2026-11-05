@@ -60,6 +60,13 @@ impl Handle {
     pub fn is_side(self) -> bool { matches!(self, Handle::Left | Handle::Right | Handle::Top | Handle::Bottom) }
 }
 
+/// Bords (gauche, haut, droite, bas) sur lesquels sont placees les poignees d'un element : ceux de l'element, ramenes a au
+/// moins `m` unites a l'interieur du plan, pour qu'un element plein ecran garde des poignees saisissables dans l'apercu.
+pub fn handle_edges(it: &Item, m: f32) -> (f32, f32, f32, f32) {
+    let (l, t, r, b) = (it.x as f32, it.y as f32, (it.x + it.w) as f32, (it.y + it.h) as f32);
+    (l.max(m).min(r), t.max(m).min(b), r.min(PLANE.0 as f32 - m).max(l), b.min(PLANE.1 as f32 - m).max(t))
+}
+
 /// Element (et poignee) sous le point (x, y) du plan 1920x1080. Les poignees de l'element selectionne (angles, puis cotes) sont
 /// prioritaires ; `r` = rayon de saisie des poignees en unites du plan.
 pub fn hit_test(items: &[Item], x: f32, y: f32, selected: Option<usize>, r: f32) -> Option<(usize, Handle)> {
@@ -70,7 +77,7 @@ pub fn hit_test(items: &[Item], x: f32, y: f32, selected: Option<usize>, r: f32)
 pub fn hit_test_where(items: &[Item], x: f32, y: f32, selected: Option<usize>, r: f32, usable: &dyn Fn(usize) -> bool) -> Option<(usize, Handle)> {
     if let Some(s) = selected.filter(|&s| usable(s)).and_then(|s| items.get(s).map(|it| (s, it))) {
         let (i, it) = s;
-        let (l, t, rr, b) = (it.x as f32, it.y as f32, (it.x + it.w) as f32, (it.y + it.h) as f32);
+        let (l, t, rr, b) = handle_edges(it, r * 0.5);
         for (hx, hy, h) in [(l, t, Handle::TopLeft), (rr, t, Handle::TopRight), (l, b, Handle::BottomLeft), (rr, b, Handle::BottomRight)] {
             if (x - hx).abs() <= r && (y - hy).abs() <= r { return Some((i, h)); }
         }

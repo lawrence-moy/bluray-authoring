@@ -179,3 +179,18 @@ fn snapping_to_screen_and_items() {
     let (r, _, _) = snap_item_rect(Handle::TopLeft, (958, 4, 100, 100), &xs, &ys, 6, 16);
     assert_eq!(r, (960, 0, 98, 104));
 }
+
+#[test]
+fn full_screen_item_keeps_grabbable_handles() {
+    // un element plein ecran : poignees rentrees dans le plan, saisissables depuis l'interieur
+    let items = vec![Item::text("Plein", 0, 0, 1920, 1080, 60)];
+    let (l, t, r, b) = handle_edges(&items[0], 6.0);
+    assert_eq!((l, t, r, b), (6.0, 6.0, 1914.0, 1074.0));
+    assert_eq!(hit_test(&items, 6.0, 6.0, Some(0), 12.0), Some((0, Handle::TopLeft)));
+    assert_eq!(hit_test(&items, 1914.0, 1074.0, Some(0), 12.0), Some((0, Handle::BottomRight)));
+    assert_eq!(hit_test(&items, 6.0, 540.0, Some(0), 12.0), Some((0, Handle::Left)));
+    assert_eq!(hit_test(&items, 960.0, 1074.0, Some(0), 12.0), Some((0, Handle::Bottom)));
+    // un element au milieu n'est pas modifie
+    let mid = Item::text("M", 100, 100, 400, 200, 40);
+    assert_eq!(handle_edges(&mid, 6.0), (100.0, 100.0, 500.0, 300.0));
+}

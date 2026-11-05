@@ -2,7 +2,7 @@
 use crate::i18n::{tr, trf};
 use crate::App;
 use bdauthor_core::design::{Align, Item, Kind, NavAction, NavLink, PageDesign, SlotReturn, Target};
-use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, snap_item_rect, snap_lines, video_title, Handle, PageInfo, PageRef};
+use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, handle_edges, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, snap_item_rect, snap_lines, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -1062,11 +1062,15 @@ impl App {
                         painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(14.0), col);
                     }
                     if selected && !multi {
-                        for c in [r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] {
+                        // poignees rentrees dans le plan si l'element touche un bord (meme calcul que la detection)
+                        let (hl, ht, hr, hb) = handle_edges(it, 6.0 / k);
+                        let (a, z) = (to_screen(hl, ht), to_screen(hr, hb));
+                        let hrect = Rect::from_min_max(a, z);
+                        for c in [hrect.left_top(), hrect.right_top(), hrect.left_bottom(), hrect.right_bottom()] {
                             painter.rect_filled(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Color32::WHITE);
                         }
                         // poignees des cotes (redimensionnement dans un seul sens)
-                        for c in [r.center_top(), r.center_bottom(), r.left_center(), r.right_center()] {
+                        for c in [hrect.center_top(), hrect.center_bottom(), hrect.left_center(), hrect.right_center()] {
                             painter.rect_filled(Rect::from_center_size(c, vec2(7.0, 7.0)), 1.0, Color32::from_gray(225));
                         }
                     }
