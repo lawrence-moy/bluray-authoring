@@ -713,7 +713,11 @@ fn several_audio_tracks_per_video() {
       "langues": [ {"id":1,"nom":"Francais","code":"fra"}, {"id":2,"nom":"Anglais","code":"eng"} ],
       "videos": [ {"fichier": "a.mp4", "pistes_audio": [ {"piste":1,"langue":"eng","langue_id":2}, {"piste":0,"langue":"fra","langue_id":1} ]},
                   {"fichier": "b.mp4", "pistes_audio": [ {"fichier":"doub.wav","langue":"fra","langue_id":1} ]},
-                  {"fichier": "a.mp4"} ],
+                  {"fichier": "a.mp4"},
+                  {"fichier": "a.mp4", "pistes_audio": [ {"piste":1,"langue":"eng","langue_id":2} ]} ],
+      "mise_en_page": {"pages": [ {"nom": "P", "elements": [
+          {"type":"texte","texte":"English","x":100,"y":100,"w":400,"h":90,"taille":40,"cible":{"audio_langue":2}},
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1} ] } ] },
       "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2} }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let build = |out: &str| {
@@ -738,6 +742,28 @@ fn several_audio_tracks_per_video() {
     // video b : doublage francais seul, meme numero que dans la video a ; video c (sans reglage) : sa premiere piste, en francais
     assert_eq!(audio(1), vec![(0x1100, "fra".to_string())]);
     assert_eq!(audio(2), vec![(0x1100, "fra".to_string())]);
+    // video d : anglais seul, en piste 1 alors qu'il est en piste 2 dans la video a (chaque video a ses propres langues)
+    assert_eq!(audio(3), vec![(0x1100, "eng".to_string())]);
+    // debut des videos : piste de la langue retenue par le bouton (r2 = identifiant de langue) ; une seule piste : rien a choisir
+    let mo = bdauthor_core::mobj::MovieObjectBdmv::parse(&std::fs::read(root.join("MovieObject.bdmv")).unwrap()).unwrap();
+    let text = |o: usize| mo.objects[o].commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; ");
+    let (s1, s2) = (bdauthor_core::mobj::set_audio_stream(0).text(), bdauthor_core::mobj::set_audio_stream(1).text());
+    assert_eq!(text(1), format!("CMP_EQ r2, 1 ; {s1} ; CMP_EQ r2, 2 ; {s2} ; PLAY_PL 0 ; JUMP_TITLE r1"));
+    assert_eq!(text(4), "PLAY_PL 3 ; JUMP_TITLE r1");
+    // le bouton « English » retient la langue 2 (et ne fixe plus de numero de piste)
+    let mut cmds = Vec::new();
+    for e in std::fs::read_dir(root.join("STREAM")).unwrap() {
+        let path = e.unwrap().path();
+        let Ok(es) = bdauthor_core::m2ts::reassemble(&std::fs::read(&path).unwrap(), 0x1400) else { continue };
+        let mut segs = Vec::new();
+        for e in es { segs.extend(bdauthor_core::m2ts::split_segments(&e.data).unwrap()); }
+        let Some(ics) = segs.iter().find(|s| s.name() == "ICS") else { continue };
+        let ics = bdauthor_core::ig::Ics::parse(&ics.payload).unwrap();
+        for b in ics.pages.iter().flat_map(|p| p.bogs.iter()).flat_map(|g| g.buttons.iter()) {
+            cmds.push(b.commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; "));
+        }
+    }
+    assert!(cmds.iter().any(|c| c.starts_with("MOVE r2, 2") && !c.contains("SET_STREAM")), "{cmds:?}");
     // le francais de a dure 4 s, l'anglais 2 s : l'ordre des flux suit bien les langues
     let count = |clip: &str, pid: u16| -> usize {
         let data = std::fs::read(root.join(format!("STREAM/{clip}.m2ts"))).unwrap();

@@ -129,7 +129,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    crate::help(ui, tr("Each language keeps the same track number in all videos: their audio languages must therefore follow the order of the language list (menu “Edit > Project…”, tab “Subtitle languages”), with no gaps. Tracks are converted to stereo AC-3. The offset corrects an advance or a delay."));
+    crate::help(ui, tr("Each video has its own audio languages, in any order. A menu button “audio language” remembers the chosen language: each video then starts on its track in that language, or on its own track if it has none (“Play all” follows the tracks of the first video). Tracks are converted to stereo AC-3. The offset corrects an advance or a delay."));
     changed
 }
 
@@ -142,7 +142,9 @@ enum Loaded {
 
 /// Fenetre d'ecoute d'une piste audio : forme d'onde sur une frise, bouton lecture / arret, clic ou glisser pour se deplacer.
 pub struct AudioPreview {
+    #[allow(dead_code)]
     pub video: usize,
+    #[allow(dead_code)]
     pub track: usize,
     title: String,
     file: PathBuf,
@@ -264,7 +266,7 @@ impl AudioPreview {
             let mut t = 0.0;
             while t <= dur {
                 let x = x_of(t);
-                painter.line_segment([egui::pos2(x, rect.bottom() - ruler), egui::pos2(x, rect.bottom() - ruler + 5.0)], egui::Stroke::new(1.0, vis.weak_text_color()));
+                painter.line_segment([egui::pos2(x, rect.bottom() - ruler), egui::pos2(x, rect.bottom() - ruler + 5.0)], egui::Stroke::new(1.0_f32, vis.weak_text_color()));
                 painter.text(egui::pos2(x + 3.0, rect.bottom() - 2.0), egui::Align2::LEFT_BOTTOM, clock(t), egui::FontId::proportional(11.0), vis.weak_text_color());
                 t += step;
             }
@@ -282,12 +284,12 @@ impl AudioPreview {
                 let p = self.peaks[i0..i1].iter().cloned().fold(0.0_f32, f32::max) / norm;
                 let half = (p.sqrt() * (wave.height() / 2.0 - 2.0)).max(1.0);
                 let col = if x <= played { vis.selection.bg_fill } else { vis.widgets.inactive.fg_stroke.color.gamma_multiply(0.6) };
-                painter.line_segment([egui::pos2(x, mid - half), egui::pos2(x, mid + half)], egui::Stroke::new(1.5, col));
+                painter.line_segment([egui::pos2(x, mid - half), egui::pos2(x, mid + half)], egui::Stroke::new(1.5_f32, col));
             }
         }
         if dur > 0.0 {
             let x = x_of(cur);
-            painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom() - ruler)], egui::Stroke::new(2.0, vis.selection.stroke.color));
+            painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom() - ruler)], egui::Stroke::new(2.0_f32, vis.selection.stroke.color));
         }
         // clic ou glisser : se deplacer (la lecture repart au relachement)
         let at = |p: egui::Pos2| (((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64) * dur;

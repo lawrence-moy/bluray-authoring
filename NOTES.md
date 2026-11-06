@@ -821,3 +821,11 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Sous-titres et pistes audio : langue, ✏ et 🗑 à droite de chaque piste ; bouton 🔊 sur les pistes audio = fenêtre avec forme d'onde + lecture (ffplay, `ffmpeg::AudioPlayback`, `audio_peaks`).
 - Vignette alternative d'une vidéo : bouton « Choisir l'image… » (même fenêtre que le sélecteur d'image : aperçu + frise).
 - Le GUI et le rendu ne sont pas compilés dans le cloud : compiler avec recompiler.bat. ffplay.exe doit être à côté de ffmpeg.exe pour l'écoute audio.
+
+## Export 158 — langues audio propres à chaque vidéo
+
+- Plus de contrainte « mêmes langues audio dans le même ordre pour toutes les vidéos » : chaque vidéo a ses propres langues (pistes rangées dans l'ordre de la liste des langues).
+- Bouton « langue audio » : retient l'identifiant de langue dans le registre r2 (`R_AUDIO`) au lieu de fixer un numéro de piste.
+- Début de chaque vidéo (titre simple, lecture depuis un repère, « Tout lire » d'après la 1re vidéo) : `CMP_EQ r2, id` + `SET_STREAM` pour chaque piste ; langue absente : le lecteur garde son choix. Une seule piste : aucune commande.
+- Journal de construction : remarque pour chaque vidéo à qui il manque une langue audio du projet.
+- Non vérifié sur lecteur matériel (même réserve que le réglage audio précédent).

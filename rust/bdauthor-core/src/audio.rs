@@ -94,19 +94,22 @@ pub struct VideoAudio {
     pub tracks: Vec<AudioTrackCfg>,
     /// langue de chaque piste du disque, dans l'ordre
     pub langs: Vec<[u8; 3]>,
+    /// langue du projet (`Language::id`) de chaque piste du disque, dans l'ordre
+    pub ids: Vec<u32>,
 }
 
 /// Pistes audio de tout le projet quand les langues sont utilisees.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioPlan {
     pub videos: Vec<VideoAudio>,
-    /// langues ayant de l'audio dans au moins une video, dans l'ordre de la liste du projet : le rang est le numero de piste audio
+    /// langues ayant de l'audio dans au moins une video, dans l'ordre de la liste du projet
     pub slots: Vec<u32>,
 }
 
-/// Range les pistes audio de chaque video. `None` : aucune video n'a de piste audio configuree (ancien fonctionnement).
-/// Une langue garde le meme numero dans toutes les videos : celles-ci doivent donc avoir, dans l'ordre de la liste, les premieres
-/// langues audio du projet (une vidéo peut en avoir moins, mais sans « trou » ni autre ordre).
+/// Range les pistes audio de chaque video dans l'ordre de la liste des langues. `None` : aucune video n'a de piste audio
+/// configuree (ancien fonctionnement). Chaque video a ses propres langues, dans n'importe quel ordre et avec des « trous » : le
+/// numero d'une langue peut donc changer d'une video a l'autre. Les boutons « langue audio » retiennent la langue (et non un
+/// numero) ; chaque video choisit ensuite sa piste de cette langue au demarrage (voir `project`).
 /// Une video sans piste configuree compte pour sa premiere piste audio, dans la langue du projet `project_lang`.
 pub fn plan_audio(languages: &[Language], project_lang: &str, videos: &[Vec<AudioTrackCfg>]) -> Result<Option<AudioPlan>, String> {
     if languages.is_empty() || videos.iter().all(Vec::is_empty) { return Ok(None); }
@@ -132,21 +135,16 @@ pub fn plan_audio(languages: &[Language], project_lang: &str, videos: &[Vec<Audi
     }
     let slots: Vec<u32> = languages.iter().map(|l| l.id).filter(|id| ids.iter().any(|v| v.contains(id))).collect();
     let mut out = Vec::new();
-    for (i, (tracks, v)) in videos.iter().zip(&ids).enumerate() {
-        let mut ranks: Vec<usize> = v.iter().map(|id| slots.iter().position(|s| s == id).unwrap()).collect();
-        ranks.sort_unstable();
-        if ranks != (0..ranks.len()).collect::<Vec<_>>() {
-            let names: Vec<&str> = slots.iter().filter_map(|id| lang_of(*id)).map(|l| l.name.as_str()).collect();
-            return Err(trf!("video {}: its audio languages must be the first ones of the common order ({}) so that each language has the same track number in all videos; reorder the language list or its audio tracks", i + 1, names.join(", ")));
-        }
+    for (tracks, v) in videos.iter().zip(&ids) {
         if tracks.is_empty() {
             let l = lang_of(v[0]).unwrap();
-            out.push(VideoAudio { tracks: vec![], langs: vec![l.code_bytes()] });
+            out.push(VideoAudio { tracks: vec![], langs: vec![l.code_bytes()], ids: vec![l.id] });
         } else {
             let mut sorted: Vec<(usize, AudioTrackCfg)> = tracks.iter().zip(v).map(|(t, id)| (slots.iter().position(|s| s == id).unwrap(), t.clone())).collect();
             sorted.sort_by_key(|x| x.0);
             let langs = sorted.iter().map(|(r, _)| lang_of(slots[*r]).unwrap().code_bytes()).collect();
-            out.push(VideoAudio { tracks: sorted.into_iter().map(|x| x.1).collect(), langs });
+            let ids = sorted.iter().map(|(r, _)| slots[*r]).collect();
+            out.push(VideoAudio { tracks: sorted.into_iter().map(|x| x.1).collect(), langs, ids });
         }
     }
     Ok(Some(AudioPlan { videos: out, slots }))

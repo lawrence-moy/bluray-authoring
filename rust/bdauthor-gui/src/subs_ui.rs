@@ -268,7 +268,7 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
 pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
     let mut changed = false;
     {
-        ui.label(tr("Languages of the audio and subtitle tracks. The rank in the list sets the track number, identical in all videos."));
+        ui.label(tr("Languages of the audio and subtitle tracks. Subtitles: the rank in the list sets the track number, identical in all videos."));
         let mut op: Option<(usize, i32)> = None; // (rang, -1 haut / 1 bas / 0 retirer)
         let n = m.languages.len();
         for (k, l) in m.languages.iter_mut().enumerate() {
@@ -312,7 +312,7 @@ pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
         if m.languages.is_empty() {
             ui.label(egui::RichText::new(tr("No language: add some to choose the language of audio and subtitle tracks, and for the “Set…” buttons.")).weak());
         } else {
-            crate::help(ui, tr("Each audio or subtitle track of a video chooses its language from this list. Subtitles: a video that lacks a language keeps an empty track at that place. Audio: only languages that have audio somewhere count, and each video must have the first ones in list order, with no gaps.\n\nChanging the order changes the track numbers: buttons follow their language."));
+            crate::help(ui, tr("Each audio or subtitle track of a video chooses its language from this list. Subtitles: a video that lacks a language keeps an empty track at that place. Audio: each video has its own languages; its tracks are placed in list order, and an “audio language” button selects, in each video, its track in that language.\n\nChanging the order changes the track numbers: buttons follow their language."));
         }
     }
     changed

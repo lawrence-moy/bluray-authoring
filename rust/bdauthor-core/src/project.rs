@@ -106,6 +106,9 @@ impl Decor {
 
 /// Registre ou une vignette (ou un lien vers une video) range le titre auquel revenir a la fin de la video.
 const R_RETURN: u32 = 1;
+/// Registre ou un bouton « langue audio » range la langue choisie (`Language::id` ; 0 = aucun choix) : chaque video choisit sa
+/// piste de cette langue a son demarrage.
+const R_AUDIO: u32 = 2;
 
 /// « m:ss »
 fn mmss(t: f64) -> String {
@@ -818,6 +821,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         return bad(tr("audio tracks configured but no language in the project's language list (menu Edit > Subtitle languages)"));
     }
     let audio_plan = crate::audio::plan_audio(&languages, lang_s, &all_audio).map_err(Error::Format)?;
+    // langues audio absentes de certaines videos : ces videos gardent leur propre langue quand on choisit celle-ci
+    if let Some(pl) = &audio_plan {
+        for (i, va) in pl.videos.iter().enumerate() {
+            let missing: Vec<&str> = pl.slots.iter().filter(|id| !va.ids.contains(id)).filter_map(|id| languages.iter().find(|l| l.id == *id)).map(|l| l.name.as_str()).collect();
+            if !missing.is_empty() { (env.log)(&trf!("note: video {} has no audio track in {}: when this language is chosen, it plays in its own language", i + 1, missing.join(", "))); }
+        }
+    }
     let mut audio_langs: Vec<Vec<[u8; 3]>> = Vec::new();
 
     // 1. videos
@@ -999,11 +1009,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 Some(q) => { let t = page_title(q.min(np - 1)); (t, vec![Command::new(JUMP_TITLE_INSN, t, 0)]) }
                 None => (0, vec![Command::new(NOP_INSN, 0, 0)]),
             },
-            // langue audio : numero de piste = rang parmi les langues ayant de l'audio (voir `audio::plan_audio`) ;
-            // sans piste correspondante (signale par la validation), le bouton ne change rien
+            // langue audio : la langue est retenue dans R_AUDIO, chaque video choisit sa piste de cette langue a son demarrage
+            // (voir `audio_select`) ; langue sans piste dans aucune video (signale par la validation) : le bouton ne change rien
             Target::Audio(id, e) => {
-                let rank = audio_plan.as_ref().and_then(|pl| pl.slots.iter().position(|s| *s == id));
-                let mut c: Vec<Command> = rank.map(crate::mobj::set_audio_stream).into_iter().collect();
+                let known = audio_plan.as_ref().is_some_and(|pl| pl.slots.contains(&id));
+                let mut c: Vec<Command> = if known { vec![Command::new(MOVE_RI_INSN, R_AUDIO, id)] } else { vec![] };
                 match e {
                     Some(q) => { let t = page_title(q.min(np - 1)); c.push(Command::new(JUMP_TITLE_INSN, t, 0)); (t, c) }
                     None => { c.push(Command::new(NOP_INSN, 0, 0)); (0, c) }
@@ -1291,9 +1301,16 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         (env.log)(&trf!("animated or sound menu backgrounds: {} clip(s), {} MB in total", anim.len(), format!("{:.0}", bytes as f64 / 1e6)));
     }
     let jump_back = Command::new(JUMP_TITLE_REG_INSN, R_RETURN, 0);
+    // debut d'une video : piste audio de la langue retenue par un bouton (R_AUDIO), si cette video en a une ; sinon le lecteur
+    // garde son choix habituel. Chaque video ayant ses propres langues, le numero d'une langue peut differer d'une video a l'autre.
+    let audio_select = |v: usize| -> Vec<Command> {
+        let Some(ids) = audio_plan.as_ref().and_then(|pl| pl.videos.get(v)).map(|va| &va.ids).filter(|ids| ids.len() > 1) else { return vec![] };
+        ids.iter().enumerate().flat_map(|(k, id)| [Command::new(crate::mobj::CMP_EQ_RI_INSN, R_AUDIO, *id), crate::mobj::set_audio_stream(k)]).collect()
+    };
+    let with_audio = |v: usize, cmds: Vec<Command>| -> Vec<Command> { audio_select(v).into_iter().chain(cmds).collect() };
     let mut objs = vec![MovieObject::new(vec![Command::new(JUMP_TITLE_INSN, page_title(home_idx), 0)])]; // 0 : Top Menu -> accueil
     for v in 0..n {
-        objs.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, v as u32, 0), jump_back]));
+        objs.push(MovieObject::new(with_audio(v, vec![Command::new(PLAY_PL_INSN, v as u32, 0), jump_back])));
     }
     for k in 0..np {
         objs.push(MovieObject::new(vec![
@@ -1302,12 +1319,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         ]));
     }
     for &v in pfm.keys() {
-        objs.push(MovieObject::new(vec![
+        objs.push(MovieObject::new(with_audio(v, vec![
             Command::new(MOVE_RR_INSN, 10, 0), Command::new(MOVE_RI_INSN, 0, 0), Command::new(PLAY_PL_PM_INSN, v as u32, 10), jump_back,
-        ]));
+        ])));
     }
     if let Some(pl) = play_all_pl {
-        objs.push(MovieObject::new(vec![Command::new(PLAY_PL_INSN, pl, 0), jump_back]));
+        // « Tout lire » : la langue est choisie d'apres les pistes de la premiere video
+        objs.push(MovieObject::new(with_audio(0, vec![Command::new(PLAY_PL_INSN, pl, 0), jump_back])));
     }
     if objs.len() != total_titles as usize + 1 { return bad(tr("navigation objects: unexpected numbering")); }
     let fp = match intro_pl {

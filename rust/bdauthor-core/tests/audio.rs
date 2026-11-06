@@ -29,13 +29,18 @@ fn plan_orders_tracks_by_language() {
 }
 
 #[test]
-fn plan_rejects_inconsistent_numbers() {
+fn plan_lets_each_video_keep_its_languages() {
     common::fr();
-    let l = langs(&["fra", "eng"]);
-    // l'anglais seul serait la piste 1 ici et la piste 2 ailleurs
-    let e = plan_audio(&l, "fra", &[vec![tr(1), tr(2)], vec![tr(2)]]).unwrap_err();
-    assert!(e.contains("video 2") && e.contains("meme numero"), "{e}");
+    let l = langs(&["deu", "fra", "eng"]);
+    // video 1 : allemand et francais ; video 2 : anglais seul (piste 1 ici, alors que l'anglais est la 3e langue)
+    let p = plan_audio(&l, "fra", &[vec![tr(2), tr(1)], vec![tr(3)]]).unwrap().unwrap();
+    assert_eq!(p.slots, vec![1, 2, 3]);
+    assert_eq!(p.videos[0].ids, vec![1, 2]);
+    assert_eq!(p.videos[0].langs, vec![*b"deu", *b"fra"]);
+    assert_eq!(p.videos[1].ids, vec![3]);
+    assert_eq!(p.videos[1].langs, vec![*b"eng"]);
     // langue en double, langue non choisie, langue du disque absente de la liste
+    let l = langs(&["fra", "eng"]);
     assert!(plan_audio(&l, "fra", &[vec![tr(1), tr(1)]]).unwrap_err().contains("deja utilisee"));
     let mut t = tr(1);
     t.lang_id = 0;
