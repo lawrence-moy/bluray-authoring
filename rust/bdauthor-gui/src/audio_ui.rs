@@ -2,12 +2,14 @@
 use crate::i18n::{tr, trf};
 use crate::subs_ui::language_for_code;
 use bdauthor_core::audio::{AudioSource, AudioTrackCfg, MAX_AUDIO_TRACKS};
-use bdauthor_core::ffmpeg::{list_audio_streams, AudioStreamInfo, Tools};
+use bdauthor_core::ffmpeg::{audio_peaks, list_audio_streams, probe_duration, AudioPlayback, AudioStreamInfo, Tools};
 use bdauthor_core::model::VideoEntry;
 use bdauthor_core::subtitle::Language;
 use eframe::egui;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::mpsc::{channel, Receiver};
+use std::time::Instant;
 
 /// Pistes audio deja recherchees, par fichier video (ou le message d'erreur de la recherche).
 pub type AudioProbes = HashMap<String, Result<Vec<AudioStreamInfo>, String>>;
@@ -23,7 +25,7 @@ fn abs(base: &Path, f: &str) -> PathBuf {
 }
 
 /// Retourne vrai si quelque chose a change. `langs` : langues du projet (le rang d'une langue audio est son numero de piste).
-pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut AudioProbes, base: &Path) -> bool {
+pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut AudioProbes, base: &Path, listen: &mut Option<usize>) -> bool {
     let mut changed = false;
     ui.label(tr("Audio tracks (selectable with the remote control):"));
     if v.audio.is_empty() {
@@ -36,8 +38,27 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 AudioSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
                 AudioSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
             };
-            let lang_label = langs.iter().find(|l| l.id == t.lang_id).map_or_else(|| tr("language to choose").to_string(), |l| l.name.clone());
-            egui::CollapsingHeader::new(format!("{} — {} ({})", k + 1, what, lang_label)).default_open(false).show(ui, |ui| {
+            // ligne de la piste : titre a gauche ; a droite, la langue, les reglages, l'ecoute et le retrait
+            let open_id = ui.id().with("reglages_ouverts");
+            let mut open: bool = ui.data_mut(|d| d.get_persisted(open_id)).unwrap_or(false);
+            ui.horizontal(|ui| {
+                if ui.small_button(if open { "▾" } else { "▸" }).on_hover_text(if open { tr("Hide this track's settings") } else { tr("Show this track's settings") }).clicked() { open = !open; }
+                ui.add(egui::Label::new(format!("{} — {}", k + 1, what)).truncate());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("🗑").on_hover_text(tr("Remove this track")).clicked() { del = Some(k); }
+                    if ui.button("🔊").on_hover_text(tr("Listen to this track: opens a window with a timeline and a play button")).clicked() { *listen = Some(k); }
+                    if ui.button("✏").on_hover_text(tr("Edit this track's settings")).clicked() { open = !open; }
+                    let cur = langs.iter().find(|l| l.id == t.lang_id).map(|l| l.name.clone());
+                    egui::ComboBox::from_id_salt("langue_piste_audio").selected_text(cur.clone().unwrap_or_else(|| tr("(to choose)").to_string())).show_ui(ui, |ui| {
+                        for l in langs.iter() {
+                            if ui.selectable_label(t.lang_id == l.id, &l.name).clicked() { t.lang_id = l.id; t.lang = l.code.clone(); changed = true; }
+                        }
+                    }).response.on_hover_text(tr("Language of this track"));
+                    if cur.is_none() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("to choose")); }
+                });
+            });
+            ui.data_mut(|d| d.insert_persisted(open_id, open));
+            if open { ui.indent("reglages_piste", |ui| {
                 if let AudioSource::File(f) = &mut t.source {
                     ui.horizontal(|ui| {
                         ui.label(tr("File:"));
@@ -54,20 +75,10 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     }
                 }
                 ui.horizontal(|ui| {
-                    let cur = langs.iter().find(|l| l.id == t.lang_id).map(|l| l.name.clone());
-                    egui::ComboBox::from_label(tr("Language")).selected_text(cur.clone().unwrap_or_else(|| tr("(to choose)").to_string())).show_ui(ui, |ui| {
-                        for l in langs.iter() {
-                            if ui.selectable_label(t.lang_id == l.id, &l.name).clicked() { t.lang_id = l.id; t.lang = l.code.clone(); changed = true; }
-                        }
-                    });
-                    if cur.is_none() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("to choose")); }
-                });
-                ui.horizontal(|ui| {
                     ui.label(tr("Offset:"));
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
                 });
-                if ui.button(tr("Remove this track")).clicked() { del = Some(k); }
-            });
+            }); }
         });
     }
     if let Some(k) = del { v.audio.remove(k); changed = true; }
@@ -120,4 +131,177 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
     }
     crate::help(ui, tr("Each language keeps the same track number in all videos: their audio languages must therefore follow the order of the language list (menu “Edit > Project…”, tab “Subtitle languages”), with no gaps. Tracks are converted to stereo AC-3. The offset corrects an advance or a delay."));
     changed
+}
+
+/// Message du fil de lecture de l'enveloppe.
+enum Loaded {
+    Duration(f64),
+    Peaks(Vec<f32>),
+    Failed(String),
+}
+
+/// Fenetre d'ecoute d'une piste audio : forme d'onde sur une frise, bouton lecture / arret, clic ou glisser pour se deplacer.
+pub struct AudioPreview {
+    pub video: usize,
+    pub track: usize,
+    title: String,
+    file: PathBuf,
+    /// numero de la piste audio du fichier (piste integree a la video) ; `None` pour un fichier audio
+    stream: Option<u32>,
+    duration: f64,
+    peaks: Vec<f32>,
+    rx: Option<Receiver<Loaded>>,
+    error: Option<String>,
+    tools: Option<Tools>,
+    /// lecture en cours : processus, instant du depart, position de depart (s)
+    play: Option<(AudioPlayback, Instant, f64)>,
+    /// position quand rien ne joue
+    pos: f64,
+    /// position visee pendant un glisser sur la frise
+    scrub: Option<f64>,
+}
+
+fn clock(t: f64) -> String {
+    let s = t.max(0.0).round() as u64;
+    if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
+}
+
+impl AudioPreview {
+    /// `file` : fichier audio, ou video dont on ecoute la piste audio numero `stream`.
+    pub fn new(video: usize, track: usize, title: String, file: &Path, stream: Option<u32>) -> AudioPreview {
+        let (tx, rx) = channel();
+        let src = file.to_path_buf();
+        std::thread::spawn(move || {
+            let tools = match Tools::locate() { Ok(t) => t, Err(e) => { let _ = tx.send(Loaded::Failed(e.to_string())); return; } };
+            let dur = match probe_duration(&tools, &src) { Ok(d) => d, Err(e) => { let _ = tx.send(Loaded::Failed(e.to_string())); return; } };
+            let _ = tx.send(Loaded::Duration(dur));
+            match audio_peaks(&tools, &src, stream, dur, 2000) {
+                Ok(p) => { let _ = tx.send(Loaded::Peaks(p)); }
+                Err(e) => { let _ = tx.send(Loaded::Failed(e.to_string())); }
+            }
+        });
+        AudioPreview { video, track, title, file: file.to_path_buf(), stream, duration: 0.0, peaks: Vec::new(), rx: Some(rx), error: None, tools: None, play: None, pos: 0.0, scrub: None }
+    }
+
+    fn poll(&mut self) {
+        let Some(rx) = &self.rx else { return };
+        let mut done = false;
+        while let Ok(m) = rx.try_recv() {
+            match m {
+                Loaded::Duration(d) => self.duration = d,
+                Loaded::Peaks(p) => { self.peaks = p; done = true; }
+                Loaded::Failed(e) => { self.error = Some(e); done = true; }
+            }
+        }
+        if done { self.rx = None; }
+    }
+
+    /// Position actuelle (s).
+    fn current(&self) -> f64 {
+        match &self.play {
+            Some((_, t0, from)) => (from + t0.elapsed().as_secs_f64()).min(self.duration),
+            None => self.pos,
+        }
+    }
+
+    fn stop(&mut self) {
+        let cur = self.current();
+        if let Some((mut pb, _, _)) = self.play.take() { pb.stop(); self.pos = cur; }
+    }
+
+    fn start_at(&mut self, t: f64) {
+        self.stop();
+        if self.tools.is_none() {
+            match Tools::locate() { Ok(t) => self.tools = Some(t), Err(e) => { self.error = Some(e.to_string()); return; } }
+        }
+        let Some(tools) = &self.tools else { return };
+        match AudioPlayback::start(tools, &self.file, self.stream, t) {
+            Ok(pb) => { self.play = Some((pb, Instant::now(), t)); self.pos = t; self.error = None; }
+            Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+
+    /// Affiche la fenetre ; rend faux quand on la ferme.
+    pub fn window(&mut self, ctx: &egui::Context) -> bool {
+        let mut open = true;
+        let title = trf!("Listen: {}", self.title);
+        crate::os_window(ctx, "ecoute_piste_audio", &title, [900.0, 280.0], &mut open, &mut |ui| self.ui(ui));
+        if !open { self.stop(); }
+        open
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui) {
+        self.poll();
+        // fin de la piste : retour au debut
+        if self.play.as_mut().map_or(false, |(pb, _, _)| pb.finished()) {
+            self.play = None;
+            self.pos = 0.0;
+        }
+        let dur = self.duration;
+        let playing = self.play.is_some();
+        let cur = self.scrub.unwrap_or_else(|| self.current());
+        let mut toggle = false;
+        ui.horizontal(|ui| {
+            if ui.add_enabled(dur > 0.0, egui::Button::new(if playing { tr("⏹ Stop") } else { tr("▶ Play") })).clicked() { toggle = true; }
+            ui.monospace(format!("{} / {}", clock(cur), clock(dur)));
+            if self.rx.is_some() && self.error.is_none() { ui.spinner(); ui.label(egui::RichText::new(tr("Reading the waveform…")).weak()); }
+        });
+        if let Some(e) = &self.error { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), e); }
+
+        // frise : forme d'onde, zone deja jouee en couleur, regle des temps
+        let h = (ui.available_height() - 4.0).clamp(80.0, 220.0);
+        let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::click_and_drag());
+        let vis = ui.visuals().clone();
+        let painter = ui.painter_at(rect);
+        painter.rect_filled(rect, 3.0, vis.extreme_bg_color);
+        let ruler = 18.0;
+        let wave = egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.bottom() - ruler));
+        let x_of = |t: f64| rect.left() + (t / dur.max(1e-6)) as f32 * rect.width();
+        if dur > 0.0 {
+            // regle : graduation d'au moins 70 px
+            let px_per_s = rect.width() as f64 / dur;
+            let step = [1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 3600.0].into_iter().find(|s| s * px_per_s >= 70.0).unwrap_or(7200.0);
+            let mut t = 0.0;
+            while t <= dur {
+                let x = x_of(t);
+                painter.line_segment([egui::pos2(x, rect.bottom() - ruler), egui::pos2(x, rect.bottom() - ruler + 5.0)], egui::Stroke::new(1.0, vis.weak_text_color()));
+                painter.text(egui::pos2(x + 3.0, rect.bottom() - 2.0), egui::Align2::LEFT_BOTTOM, clock(t), egui::FontId::proportional(11.0), vis.weak_text_color());
+                t += step;
+            }
+        }
+        if !self.peaks.is_empty() {
+            let norm = self.peaks.iter().cloned().fold(0.001_f32, f32::max);
+            let mid = wave.center().y;
+            let played = x_of(cur);
+            let n = self.peaks.len();
+            let cols = (rect.width() / 2.0).max(1.0) as usize;
+            for c in 0..cols {
+                let x = rect.left() + (c as f32 + 0.5) * rect.width() / cols as f32;
+                // plus forte valeur des tranches couvertes par cette colonne
+                let (i0, i1) = (c * n / cols, ((c + 1) * n / cols).max(c * n / cols + 1).min(n));
+                let p = self.peaks[i0..i1].iter().cloned().fold(0.0_f32, f32::max) / norm;
+                let half = (p.sqrt() * (wave.height() / 2.0 - 2.0)).max(1.0);
+                let col = if x <= played { vis.selection.bg_fill } else { vis.widgets.inactive.fg_stroke.color.gamma_multiply(0.6) };
+                painter.line_segment([egui::pos2(x, mid - half), egui::pos2(x, mid + half)], egui::Stroke::new(1.5, col));
+            }
+        }
+        if dur > 0.0 {
+            let x = x_of(cur);
+            painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom() - ruler)], egui::Stroke::new(2.0, vis.selection.stroke.color));
+        }
+        // clic ou glisser : se deplacer (la lecture repart au relachement)
+        let at = |p: egui::Pos2| (((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64) * dur;
+        if dur > 0.0 {
+            if resp.dragged() { if let Some(p) = resp.interact_pointer_pos() { self.scrub = Some(at(p)); } }
+            if resp.drag_stopped() || resp.clicked() {
+                let t = resp.interact_pointer_pos().map(at).or(self.scrub).unwrap_or(self.pos);
+                self.scrub = None;
+                if self.play.is_some() { self.start_at(t); } else { self.pos = t; }
+            }
+        }
+        if toggle {
+            if playing { self.stop(); } else { let from = if self.pos >= dur - 0.1 { 0.0 } else { self.pos }; self.start_at(from); }
+        }
+        if self.play.is_some() || self.rx.is_some() { ui.ctx().request_repaint(); }
+    }
 }

@@ -914,3 +914,81 @@ pub fn list_audio_streams(tools: &Tools, src: &Path) -> Result<Vec<AudioStreamIn
     }
     Ok(parse_audio_streams_flat(&String::from_utf8_lossy(&out.stdout)))
 }
+
+// ---------------------------------------------------------------- ecoute d'une piste audio
+
+/// Enveloppe d'une piste audio : `bins` valeurs entre 0 et 1 (plus forte amplitude de chaque tranche egale de `duration`).
+/// `track` : numero de la piste audio du fichier (0 = la premiere) ; `None` : la meilleure piste (fichier audio).
+pub fn audio_peaks(tools: &Tools, src: &Path, track: Option<u32>, duration: f64, bins: usize) -> Result<Vec<f32>> {
+    const RATE: u32 = 4000;
+    let bins = bins.max(1);
+    let mut c = Command::new(&tools.ffmpeg);
+    c.args(["-v", "error", "-nostdin", "-i"]).arg(src).arg("-vn");
+    if let Some(n) = track { c.args(["-map", &format!("0:a:{n}")]); }
+    c.args(["-ac", "1", "-ar", &RATE.to_string(), "-f", "s16le", "-"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    no_window(&mut c);
+    let mut child = c.spawn()?;
+    let mut out = child.stdout.take().ok_or_else(|| Error::Format("stdout".into()))?;
+    let total = (duration * RATE as f64).max(1.0);
+    let mut peaks = vec![0.0f32; bins];
+    let (mut buf, mut idx, mut odd) = (vec![0u8; 65536], 0u64, None::<u8>);
+    loop {
+        let n = out.read(&mut buf)?;
+        if n == 0 { break; }
+        for &b in &buf[..n] {
+            match odd.take() {
+                None => odd = Some(b),
+                Some(lo) => {
+                    let v = (i16::from_le_bytes([lo, b]) as f32 / 32768.0).abs();
+                    let k = ((idx as f64 / total * bins as f64) as usize).min(bins - 1);
+                    if v > peaks[k] { peaks[k] = v; }
+                    idx += 1;
+                }
+            }
+        }
+    }
+    let status = child.wait()?;
+    if idx == 0 || !status.success() && idx == 0 {
+        return Err(Error::Format(tr("no audio in this track").into()));
+    }
+    Ok(peaks)
+}
+
+impl Tools {
+    /// ffplay (fourni avec ffmpeg) : a cote de ffmpeg, sinon dans le PATH.
+    pub fn ffplay(&self) -> Option<PathBuf> {
+        let next = self.ffmpeg.parent().filter(|p| !p.as_os_str().is_empty()).map(|d| d.join(exe_name("ffplay")));
+        next.filter(|p| works(p)).or_else(|| Some(PathBuf::from(exe_name("ffplay"))).filter(|p| works(p)))
+    }
+}
+
+/// Lecture du son d'une piste, sans fenetre, par ffplay. Arretee a la destruction.
+pub struct AudioPlayback {
+    child: Child,
+}
+
+impl AudioPlayback {
+    /// Joue `src` a partir de `from` secondes. `track` : numero de la piste audio du fichier (0 = la premiere) ; `None` : la
+    /// meilleure piste.
+    pub fn start(tools: &Tools, src: &Path, track: Option<u32>, from: f64) -> Result<AudioPlayback> {
+        let play = tools.ffplay().ok_or_else(|| Error::NotFound(tr("ffplay not found: put ffplay.exe next to ffmpeg.exe (it comes with ffmpeg) to listen to the tracks.").into()))?;
+        let mut c = Command::new(play);
+        c.args(["-nodisp", "-autoexit", "-loglevel", "quiet", "-vn", "-ss", &format!("{:.3}", from.max(0.0))]);
+        if let Some(n) = track { c.args(["-ast", &format!("a:{n}")]); }
+        c.arg("-i").arg(src).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
+        no_window(&mut c);
+        Ok(AudioPlayback { child: c.spawn()? })
+    }
+
+    /// Le son est termine (fin de la piste ou processus arrete).
+    pub fn finished(&mut self) -> bool { !matches!(self.child.try_wait(), Ok(None)) }
+
+    pub fn stop(&mut self) {
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+}
+
+impl Drop for AudioPlayback {
+    fn drop(&mut self) { self.stop(); }
+}

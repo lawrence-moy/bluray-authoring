@@ -2,7 +2,7 @@
 use crate::i18n::{tr, trf};
 use crate::App;
 use bdauthor_core::design::{Align, Item, Kind, NavAction, NavLink, PageDesign, SlotReturn, Target};
-use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, handle_edges, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, snap_item_rect, snap_lines, video_title, Handle, PageInfo, PageRef};
+use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, free_spot, handle_edges, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, snap_item_rect, snap_lines, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -139,9 +139,14 @@ fn item_menu(ui: &mut egui::Ui) -> Option<bool> {
     out
 }
 
+/// Taille des icones des listes de pages / calques / widgets (le texte courant fait 14).
+const ICON: f32 = 17.0;
+
+fn ico(s: &str) -> egui::RichText { egui::RichText::new(s).size(ICON) }
+
 /// Element a ajouter depuis la palette (glisser-deposer sur l'apercu).
 #[derive(Clone, Copy, PartialEq)]
-enum NewWidget { Text, Image, VideoFrame, VideoSlot, ChapterSlot, Nav(NavAction) }
+enum NewWidget { Text, Image, VideoFrame, VideoSlot, ChapterSlot, Nav(NavAction), Rect, Line }
 
 /// Icones de la palette : (element, icone, nom).
 fn palette() -> Vec<(NewWidget, &'static str, String)> {
@@ -151,6 +156,8 @@ fn palette() -> Vec<(NewWidget, &'static str, String)> {
         (NewWidget::VideoFrame, "📷", tr("Video image (a frame of a project video, chosen by its time)").to_string()),
         (NewWidget::VideoSlot, "🎬", tr("Video thumbnail (plays from the start)").to_string()),
         (NewWidget::ChapterSlot, "🎞", tr("Chapter thumbnail (plays from a time)").to_string()),
+        (NewWidget::Rect, "▭", tr("Rectangle (fill, border, rounded corners)").to_string()),
+        (NewWidget::Line, "╱", tr("Line (solid, dashed, arrowheads)").to_string()),
     ];
     // un seul bouton de navigation : son action (Aller a, Precedent, Suivant, Tout lire) se choisit dans l'inspecteur
     v.push((NewWidget::Nav(NavAction::Goto), "🔘", tr("Navigation button (destination chosen in the inspector: page, video, Previous, Next, Play all, subtitles…)").to_string()));
@@ -172,6 +179,8 @@ fn new_widget(w: NewWidget, first_video: Option<usize>) -> Item {
             it
         }
         NewWidget::Nav(a) => Item::nav(a, 760, 940, 360, 80),
+        NewWidget::Rect => Item::shape(bdauthor_core::cover::ShapeKind::Rect, 660, 400, 600, 300),
+        NewWidget::Line => Item::shape(bdauthor_core::cover::ShapeKind::Line, 660, 540, 600, 0),
     }
 }
 
@@ -266,6 +275,7 @@ fn kind_color(k: &Kind) -> Color32 {
         Kind::Nav { .. } => Color32::from_rgb(90, 220, 120),
         Kind::Text { .. } => Color32::from_rgb(255, 210, 60),
         Kind::Image { .. } => Color32::from_rgb(210, 120, 255),
+        Kind::Shape { .. } => Color32::from_rgb(255, 150, 90),
     }
 }
 
@@ -279,6 +289,7 @@ fn kind_name(k: &Kind) -> &'static str {
         Kind::Image { frame: Some(_), .. } => tr("Clickable video image"),
         Kind::Image { link: None, .. } => tr("Image"),
         Kind::Image { .. } => tr("Clickable image"),
+        Kind::Shape { shape, .. } => shape.label(),
     }
 }
 
@@ -750,13 +761,18 @@ impl App {
         let probs: Vec<bdauthor_core::design::Problem> = match info.design(&self.model.designs).filter(|_| custom) {
             Some(d) => {
                 let targets = self.page_targets();
-                let mut probs = d.validate(info.page, info.pages, self.model.videos.len());
+                let mut probs = d.validate_items(info.page, info.pages, self.model.videos.len());
                 probs.extend(d.check_targets(&|t| targets.iter().any(|(x, _)| *x == t.without_exit()) && t.exit().map_or(true, |q| targets.iter().any(|(x, _)| *x == Target::Main(q)))));
                 probs
             }
             None => vec![],
         };
-        // problemes de la page (chevauchements, destinations...) : au-dessus de l'apercu, toujours visibles
+        // elements qui se chevauchent : contours rouges clignotants sur l'apercu (plus de texte d'avertissement)
+        let overlapping: Vec<usize> = match info.design(&self.model.designs).filter(|_| custom) {
+            Some(d) => { let mut v: Vec<usize> = d.overlapping(info.page, info.pages).into_iter().flat_map(|(a, b)| [a, b]).collect(); v.sort_unstable(); v.dedup(); v }
+            None => vec![],
+        };
+        // problemes de la page (destinations...) : au-dessus de l'apercu, toujours visibles
         if !probs.is_empty() {
             egui::ScrollArea::vertical().id_salt("defil_verifs").max_height(10.0 + 20.0 * probs.len().min(4) as f32).show(ui, |ui| {
                 for p in &probs {
@@ -898,7 +914,10 @@ impl App {
                     // Maj : redimensionnement proportionnel (le coin oppose reste fixe)
                     let ratio = ctx.input(|i| i.modifiers.shift);
                     let o = (d.orig.x, d.orig.y, d.orig.w, d.orig.h);
-                    let mut r = if ratio { dragged_rect_ratio(o, d.handle, px - d.start.0, py - d.start.1, grid, 16) } else { dragged_rect(o, d.handle, px - d.start.0, py - d.start.1, grid, 16) };
+                    // une ligne peut etre parfaitement horizontale ou verticale (cote nul) ; pas de mode proportionnel pour elle
+                    let min_side = if matches!(d.orig.kind, Kind::Shape { shape: bdauthor_core::cover::ShapeKind::Line, .. }) { 0 } else { 16 };
+                    let ratio = ratio && min_side > 0;
+                    let mut r = if ratio { dragged_rect_ratio(o, d.handle, px - d.start.0, py - d.start.1, grid, 16) } else { dragged_rect(o, d.handle, px - d.start.0, py - d.start.1, grid, min_side) };
                     let orig = d.orig.clone();
                     let idx = d.idx;
                     let group = d.group.clone();
@@ -906,7 +925,7 @@ impl App {
                     if self.guide_snap && !(ratio && !d.handle.is_side() && d.handle != Handle::Body) && !ctx.input(|i| i.modifiers.alt) {
                         let others = snapshot.iter().enumerate().filter(|(j, _)| *j != idx && !group.iter().any(|g| g.0 == *j) && can(*j)).map(|(_, it)| it);
                         let (xs, ys) = snap_lines(others);
-                        let (r2, gx, gy) = snap_item_rect(d.handle, r, &xs, &ys, (6.0 / k).round().max(1.0) as i32, 16);
+                        let (r2, gx, gy) = snap_item_rect(d.handle, r, &xs, &ys, (6.0 / k).round().max(1.0) as i32, min_side);
                         if d.handle == Handle::Body {
                             r = (r2.0.clamp(0, (1920 - r2.2).max(0)), r2.1.clamp(0, (1080 - r2.3).max(0)), r2.2, r2.3);
                         } else {
@@ -1048,6 +1067,14 @@ impl App {
                         painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
                     } else {
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, col));
+                    }
+                    if overlapping.contains(&i) {
+                        // chevauchement : contour rouge qui clignote (la page se redessine tant qu'il y en a)
+                        if (ctx.input(|inp| inp.time) * 2.5) as i64 % 2 == 0 {
+                            painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(230, 40, 40, 40));
+                            painter.rect_stroke(r.shrink(1.5), 0.0, Stroke::new(3.5_f32, Color32::from_rgb(235, 40, 40)));
+                        }
+                        ctx.request_repaint_after(std::time::Duration::from_millis(200));
                     }
                     if let Kind::Slot { start, .. } = it.kind {
                         let shown = match it.fixed_video() {
@@ -1300,6 +1327,8 @@ impl App {
         let mut pick_frame = false;
         let mut changed = false;
         let mut pick_font = false;
+        // ligne : Some(true) = la rendre horizontale (hauteur 0), Some(false) = verticale (largeur 0)
+        let mut set_h: Option<bool> = None;
         let base_dir = self.base_dir();
         let font_check = self.renderer.as_ref();
         let page_targets = self.page_targets();
@@ -1561,6 +1590,49 @@ impl App {
                     if ui.button(tr("Choose…")).clicked() { pick_image = true; }
                     crate::help(ui, tr("The image is fitted into the frame without distortion."));
                 }
+                Kind::Shape { shape, paint } => {
+                    use bdauthor_core::cover::{LineArrow, LineStyle, ShapeKind};
+                    let is_line = *shape == ShapeKind::Line;
+                    if is_line {
+                        let mut c = paint.line_color().unwrap_or([255, 255, 255]);
+                        ui.horizontal(|ui| {
+                            ui.label(tr("Color:"));
+                            if ui.color_edit_button_srgb(&mut c).changed() { paint.stroke = Some(c); paint.fill = None; changed = true; }
+                            ui.label(tr("Thickness:"));
+                            changed |= ui.add(egui::DragValue::new(&mut paint.stroke_px).range(1..=60).suffix(" px")).changed();
+                        });
+                        egui::ComboBox::from_label(tr("Line style")).selected_text(paint.style.label()).show_ui(ui, |ui| {
+                            for s in LineStyle::ALL { if ui.selectable_label(paint.style == s, s.label()).clicked() { paint.style = s; changed = true; } }
+                        });
+                        egui::ComboBox::from_label(tr("Arrowheads")).selected_text(paint.arrow.label()).show_ui(ui, |ui| {
+                            for a in LineArrow::ALL { if ui.selectable_label(paint.arrow == a, a.label()).clicked() { paint.arrow = a; changed = true; } }
+                        });
+                        changed |= ui.checkbox(&mut paint.flip, tr("Rising line (bottom left to top right)")).changed();
+                        ui.horizontal(|ui| {
+                            if ui.button(tr("Horizontal line")).on_hover_text(tr("Flatten the line: its height becomes 0")).clicked() { set_h = Some(true); }
+                            if ui.button(tr("Vertical line")).on_hover_text(tr("Straighten the line: its width becomes 0")).clicked() { set_h = Some(false); }
+                        });
+                    } else {
+                        let mut on = paint.fill.is_some();
+                        ui.horizontal(|ui| {
+                            if ui.checkbox(&mut on, tr("Fill")).changed() { paint.fill = if on { Some(paint.fill.unwrap_or([255, 255, 255])) } else { None }; changed = true; }
+                            if let Some(c) = &mut paint.fill { changed |= ui.color_edit_button_srgb(c).changed(); }
+                        });
+                        let mut on = paint.stroke.is_some();
+                        ui.horizontal(|ui| {
+                            if ui.checkbox(&mut on, tr("Border")).changed() { paint.stroke = if on { Some(paint.stroke.unwrap_or([0, 0, 0])) } else { None }; changed = true; }
+                            if let Some(c) = &mut paint.stroke { changed |= ui.color_edit_button_srgb(c).changed(); }
+                            if paint.stroke.is_some() { changed |= ui.add(egui::DragValue::new(&mut paint.stroke_px).range(1..=60).suffix(" px")).changed(); }
+                        });
+                        if *shape == ShapeKind::Rect {
+                            ui.horizontal(|ui| {
+                                ui.label(tr("Rounded corners:"));
+                                changed |= ui.add(egui::DragValue::new(&mut paint.radius).range(0..=500).suffix(" px")).changed();
+                            });
+                        }
+                    }
+                    crate::help(ui, tr("Same drawing as in the cover editor. Sizes given for a 1920 × 1080 menu."));
+                }
             }
             // actions « Regler les sous-titres » / « Regler la langue audio » : destination de reglage + langue, puis page de
             // sortie (ou rester sur la page) ; aucune autre destination ne touche aux sous-titres ni a l'audio
@@ -1698,6 +1770,12 @@ impl App {
             }
         }
         if pick_frame { self.frame_request = Some((info.r.0, i)); }
+        if let Some(horizontal) = set_h {
+            if let Some(it) = info.design_mut(&mut self.model.designs).and_then(|d| d.items.get_mut(i)) {
+                if horizontal { it.h = 0; if it.w < 16 { it.w = 600; } } else { it.w = 0; if it.h < 16 { it.h = 300; } }
+                changed = true;
+            }
+        }
         if changed {
             self.bump();
         }
@@ -1776,9 +1854,9 @@ impl App {
                     // ---- ligne de page
                     let shown = cur_k == Some(k);
                     let r = ui.horizontal(|ui| {
-                        let _ = ui.dnd_drag_source(egui::Id::new(("page", k)), DragRow::Page(k), |ui| ui.label(egui::RichText::new("☰").strong()))
+                        let _ = ui.dnd_drag_source(egui::Id::new(("page", k)), DragRow::Page(k), |ui| ui.label(egui::RichText::new("☰").strong().size(ICON)))
                             .response.on_hover_text(tr("Drag to change the order of the pages"));
-                        if ui.small_button(pm(opened[k])).on_hover_text(if opened[k] { tr("Collapse the page") } else { tr("Expand the page") }).clicked() { toggle_page = Some(k); }
+                        if ui.small_button(ico(pm(opened[k]))).on_hover_text(if opened[k] { tr("Collapse the page") } else { tr("Expand the page") }).clicked() { toggle_page = Some(k); }
                         let editing = matches!(&self.page_edit, Some((e, _)) if *e == k);
                         if editing {
                             if let Some((_, text)) = &mut self.page_edit {
@@ -1792,8 +1870,8 @@ impl App {
                             let resp = ui.selectable_label(shown, label).on_hover_text(tr("Show the page (+ to expand its content). Double-click: rename. 🏠: home page"));
                             if resp.clicked() { pick_page = Some(k); }
                             if resp.double_clicked() { self.page_edit = Some((k, all[k].name.clone())); }
-                            if ui.small_button("✏").on_hover_text(tr("Rename the page")).clicked() { self.page_edit = Some((k, all[k].name.clone())); }
-                            let _ = ui.menu_button("🗑", |ui| {
+                            if ui.small_button(ico("✏")).on_hover_text(tr("Rename the page")).clicked() { self.page_edit = Some((k, all[k].name.clone())); }
+                            let _ = ui.menu_button(ico("🗑"), |ui| {
                                 ui.label(tr("Links that led to this page will have to be chosen again."));
                                 if ui.button(tr("Delete the page")).clicked() { op = Some(LayerOp::PageDelete(k)); ui.close_menu(); }
                             }).response.on_hover_text(tr("Delete the page"));
@@ -1815,11 +1893,11 @@ impl App {
                             layer_open = !self.tree_layers_closed.contains(&(k, l.id));
                             let r = ui.horizontal(|ui| {
                                 ui.add_space(18.0);
-                                let _ = ui.dnd_drag_source(egui::Id::new(("calque", k, l.id)), DragRow::Layer(k, pos), |ui| ui.label(egui::RichText::new("☰").strong()))
+                                let _ = ui.dnd_drag_source(egui::Id::new(("calque", k, l.id)), DragRow::Layer(k, pos), |ui| ui.label(egui::RichText::new("☰").strong().size(ICON)))
                                     .response.on_hover_text(tr("Drag to move the layer (with its items), or drop it on another page"));
-                                if ui.small_button(pm(layer_open)).on_hover_text(if layer_open { tr("Collapse the layer") } else { tr("Expand the layer") }).clicked() { toggle_layer = Some((k, l.id)); }
-                                if ui.small_button(if l.hidden { "◌" } else { "👁" }).on_hover_text(if l.hidden { tr("Layer hidden in the preview (it stays on the disc): show") } else { tr("Hide in the preview (the layer stays on the disc)") }).clicked() { op = Some(LayerOp::Hidden(k, l.id)); }
-                                if ui.small_button(if l.locked { "🔒" } else { "🔓" }).on_hover_text(if l.locked { tr("Locked: its items can no longer be selected in the preview; unlock") } else { tr("Lock (no more selection or moving in the preview)") }).clicked() { op = Some(LayerOp::Locked(k, l.id)); }
+                                if ui.small_button(ico(pm(layer_open))).on_hover_text(if layer_open { tr("Collapse the layer") } else { tr("Expand the layer") }).clicked() { toggle_layer = Some((k, l.id)); }
+                                if ui.small_button(if l.hidden { ico("👁").strikethrough().weak() } else { ico("👁") }).on_hover_text(if l.hidden { tr("Layer hidden in the preview (it stays on the disc): show") } else { tr("Hide in the preview (the layer stays on the disc)") }).clicked() { op = Some(LayerOp::Hidden(k, l.id)); }
+                                if ui.small_button(ico(if l.locked { "🔒" } else { "🔓" })).on_hover_text(if l.locked { tr("Locked: its items can no longer be selected in the preview; unlock") } else { tr("Lock (no more selection or moving in the preview)") }).clicked() { op = Some(LayerOp::Locked(k, l.id)); }
                                 let editing = matches!(&self.layer_edit, Some((ep, eid, _)) if *ep == k && *eid == l.id);
                                 if editing {
                                     if let Some((_, _, text)) = &mut self.layer_edit {
@@ -1832,8 +1910,8 @@ impl App {
                                     let resp = ui.selectable_label(shown && active == l.id, egui::RichText::new(format!("{}  ({n})", l.name))).on_hover_text(tr("Active layer: receives new items. Double-click: rename"));
                                     if resp.clicked() { activate = Some((k, l.id)); }
                                     if resp.double_clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
-                                    if ui.small_button("✏").on_hover_text(tr("Rename the layer")).clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
-                                    let _ = ui.menu_button("🗑", |ui| {
+                                    if ui.small_button(ico("✏")).on_hover_text(tr("Rename the layer")).clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
+                                    let _ = ui.menu_button(ico("🗑"), |ui| {
                                         if ui.button(tr("Delete the layer (its items go to the neighboring layer)")).clicked() { op = Some(LayerOp::Remove(k, l.id, true)); ui.close_menu(); }
                                         if ui.button(tr("Delete the layer and its items")).clicked() { op = Some(LayerOp::Remove(k, l.id, false)); ui.close_menu(); }
                                     }).response.on_hover_text(tr("Delete the layer"));
@@ -1850,6 +1928,7 @@ impl App {
                                 Kind::Image { frame: Some(f), link, .. } => trf!("Video image {}{}", f.video.map_or("?".to_string(), |v| format!("V{} @{}", v + 1, mmss(f.at))), if link.is_some() { tr(" (clickable)") } else { "" }),
                                 Kind::Image { path, link, .. } => trf!("Image {}{}", std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), if link.is_some() { tr(" (clickable)") } else { "" }),
                                 Kind::Nav { action, text, .. } => if *action == NavAction::Goto { trf!("Button “{}”", text) } else { trf!("Button {}", action.label()) },
+                                Kind::Shape { shape, .. } => shape.label().to_string(),
                                 Kind::Slot { video, link, start, .. } => trf!("Thumbnail{}{}{}", match video { Some(v) => trf!(" (video {})", v + 1), None => tr(" (no video)").to_string() }, start.map(|t| trf!(" at {}", mmss(t))).unwrap_or_default(), if link.is_some() { " →" } else { "" }),
                             };
                             let what = if it.name.is_empty() { what } else { format!("{} ({what})", it.name) };
@@ -1857,7 +1936,7 @@ impl App {
                             if d.item_hidden(i) { col = col.gamma_multiply(0.45); }
                             let r = ui.horizontal(|ui| {
                                 ui.add_space(indent);
-                                let _ = ui.dnd_drag_source(egui::Id::new(("element", k, i)), DragRow::Item(k, i), |ui| ui.label(egui::RichText::new("☰").weak()))
+                                let _ = ui.dnd_drag_source(egui::Id::new(("element", k, i)), DragRow::Item(k, i), |ui| ui.label(egui::RichText::new("☰").weak().size(ICON)))
                                     .response.on_hover_text(tr("Drag to change the order or the layer, or drop on another page"));
                                 let lr = ui.selectable_label(shown && self.sel_item == Some(i), egui::RichText::new(what).color(col));
                                 if lr.clicked() || lr.secondary_clicked() { pick = Some((k, i)); }
@@ -1875,6 +1954,19 @@ impl App {
             // ---- glisser-deposer
             let area = list.response.rect;
             let (Some(drag), Some(pos)) = (egui::DragAndDrop::payload::<DragRow>(ui.ctx()), ui.ctx().pointer_hover_pos()) else { return };
+            // defilement automatique de la liste quand on approche du haut ou du bas pendant un deplacement
+            {
+                let view = ui.clip_rect();
+                let edge = 36.0_f32;
+                if pos.x >= view.left() - 8.0 && pos.x <= view.right() + 8.0 {
+                    let up = (edge - (pos.y - view.top())).clamp(0.0, 2.0 * edge);
+                    let down = (edge - (view.bottom() - pos.y)).clamp(0.0, 2.0 * edge);
+                    if up > 0.0 || down > 0.0 {
+                        ui.scroll_with_delta(egui::vec2(0.0, (up - down) * 0.35));
+                        ui.ctx().request_repaint();
+                    }
+                }
+            }
             if !area.expand(8.0).contains(pos) || rows.is_empty() { return; }
             let released = ui.input(|i| i.pointer.any_released());
             let copy = ui.input(|i| i.modifiers.command);
@@ -2137,12 +2229,18 @@ impl App {
         let items = self.clipboard.clone();
         let Some(d) = info.design_mut(&mut self.model.designs) else { return };
         let mut added = Vec::new();
+        // zone vide la plus proche pour l'ensemble des widgets colles ; a defaut, decalage progressif
+        let (bx0, by0) = (items.iter().map(|i| i.x).min().unwrap_or(0), items.iter().map(|i| i.y).min().unwrap_or(0));
+        let (bx1, by1) = (items.iter().map(|i| i.x + i.w).max().unwrap_or(0), items.iter().map(|i| i.y + i.h).max().unwrap_or(0));
+        let rects: Vec<(i32, i32, i32, i32)> = d.items.iter().map(|i| (i.x, i.y, i.w, i.h)).collect();
+        let spot = free_spot(&rects, (bx0, by0, bx1 - bx0, by1 - by0), 20);
+        let (sdx, sdy) = spot.map_or((off, off), |(sx, sy)| (sx - bx0, sy - by0));
         for mut it in items {
             it.id = 0;
             it.nav = Default::default();
             if !self.clip_cut { it.name = copy_name(d, &it); }
-            it.x = (it.x + off).clamp(0, (1920 - it.w).max(0));
-            it.y = (it.y + off).clamp(0, (1080 - it.h).max(0));
+            it.x = (it.x + sdx).clamp(0, (1920 - it.w).max(0));
+            it.y = (it.y + sdy).clamp(0, (1080 - it.h).max(0));
             added.push(insert_item(d, it, layer));
         }
         // insert_item range chaque widget a la fin de son calque : les rangs precedents peuvent avoir bouge si le calque est le meme

@@ -2,6 +2,7 @@
 //!
 //! Toutes les coordonnees sont exprimees sur un plan de reference 1920x1080 ; le constructeur les met a l'echelle de la taille du menu.
 //! Sans mise en page personnalisee, une page garde la grille automatique (`default_main` / `default_chapter`), identique a celle de Python.
+use crate::cover::{LineArrow, LineStyle, ShapeKind};
 use crate::i18n::tr;
 use crate::trf;
 use crate::ig::py_round;
@@ -156,6 +157,63 @@ pub enum Kind {
     /// `link` : si present, l'image devient un bouton qui mene a cette destination.
     /// `frame` : image extraite d'une video du projet (« Image de la video ») au lieu du fichier `path` (vide).
     Image { path: String, link: Option<Target>, frame: Option<VideoFrame> },
+    /// Rectangle (ou ellipse) et ligne dessines comme dans l'editeur de jaquette ; jamais cliquables.
+    Shape { shape: ShapeKind, paint: Paint },
+}
+
+/// Trait et remplissage d'une forme (tailles en pixels d'un menu 1920 x 1080), comme `cover::CoverKind::Shape`.
+/// `fill` / `stroke` : couleurs, `None` = absent ; la bordure est a l'interieur du cadre. Une ligne va d'un coin du cadre a
+/// l'opposé (`flip` : du bas gauche au haut droit) ; `style` et `arrow` ne servent qu'aux lignes.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Paint {
+    pub fill: Option<[u8; 3]>,
+    pub stroke: Option<[u8; 3]>,
+    pub stroke_px: i32,
+    pub radius: i32,
+    pub flip: bool,
+    pub style: LineStyle,
+    pub arrow: LineArrow,
+}
+
+impl Paint {
+    /// Rectangle plein blanc ; ligne blanche de 4 px.
+    pub fn new(shape: ShapeKind) -> Paint {
+        let white = Some([255, 255, 255]);
+        let line = shape == ShapeKind::Line;
+        Paint { fill: if line { None } else { white }, stroke: if line { white } else { None }, stroke_px: 4, radius: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None }
+    }
+    /// Meme dessin a l'echelle `k` (epaisseur de trait d'au moins 1 px).
+    pub fn scaled(&self, k: f64) -> Paint {
+        let r = |v: i32| if v <= 0 { 0 } else { ((v as f64 * k).round() as i32).max(1) };
+        Paint { stroke_px: r(self.stroke_px).max(1), radius: r(self.radius), ..*self }
+    }
+    /// Couleur d'une ligne : celle du trait, a defaut celle du remplissage.
+    pub fn line_color(&self) -> Option<[u8; 3]> { self.stroke.or(self.fill) }
+    fn put(&self, shape: ShapeKind, put: &mut dyn FnMut(&str, Value)) {
+        if let Some(c) = self.fill { put("remplissage", hex(c)); }
+        if let Some(c) = self.stroke { put("bordure", hex(c)); put("epaisseur", Value::Num(self.stroke_px as f64)); }
+        if self.radius > 0 && shape == ShapeKind::Rect { put("arrondi", Value::Num(self.radius as f64)); }
+        if shape == ShapeKind::Line {
+            if self.flip { put("retourne", Value::Bool(true)); }
+            if self.style != LineStyle::Solid { put("trait", Value::Str(self.style.name().into())); }
+            if self.arrow != LineArrow::None { put("fleche", Value::Str(self.arrow.name().into())); }
+        }
+    }
+    fn from_item(e: &Value) -> Result<Paint, String> {
+        let col = |k: &str| -> Result<Option<[u8; 3]>, String> {
+            match e.get(k).and_then(Value::as_str) { None => Ok(None), Some(s) => parse_hex(s).map(Some).ok_or_else(|| trf!("invalid color: {}", s)) }
+        };
+        let int = |k: &str, d: i32| e.get(k).and_then(Value::as_f64).map_or(d, |x| x.round().max(0.0) as i32);
+        Ok(Paint {
+            fill: col("remplissage")?,
+            stroke: col("bordure")?,
+            stroke_px: int("epaisseur", 4).clamp(1, 200),
+            radius: int("arrondi", 0).min(540),
+            flip: e.get("retourne").and_then(Value::as_bool).unwrap_or(false),
+            style: e.get("trait").and_then(Value::as_str).and_then(LineStyle::from_name).unwrap_or(LineStyle::Solid),
+            arrow: e.get("fleche").and_then(Value::as_str).and_then(LineArrow::from_name).unwrap_or(LineArrow::None),
+        })
+    }
 }
 
 /// Image d'une video du projet : `video` (rang, `None` : a choisir), instant `at` en secondes, recadrage `crop` (x, y, largeur,
@@ -391,6 +449,10 @@ impl Item {
         let r = |v: i32| py_round(v as f64 * s) as i32;
         (r(self.x), r(self.y), r(self.w), r(self.h))
     }
+    /// Rectangle ou ligne (voir `Paint::new`) ; une ligne est tracee de son coin haut gauche au coin bas droit du cadre.
+    pub fn shape(shape: ShapeKind, x: i32, y: i32, w: i32, h: i32) -> Item {
+        Item { x, y, w, h, kind: Kind::Shape { shape, paint: Paint::new(shape) }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
+    }
     pub fn text(text: &str, x: i32, y: i32, w: i32, h: i32, size: i32) -> Item {
         Item { x, y, w, h, kind: Kind::Text { text: text.into(), size, color: [255, 255, 255], align: Align::Center, font: String::new(), link: None, deco: TextDeco::default() }, look: Look::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() }
     }
@@ -501,6 +563,29 @@ impl PageDesign {
 
     /// Verifie la page `page` (0-based) sur `pages` ; `n_videos` videos dans le projet.
     pub fn validate(&self, page: usize, pages: usize, n_videos: usize) -> Vec<Problem> {
+        let mut p = self.validate_items(page, pages, n_videos);
+        for (a, b) in self.overlapping(page, pages) { p.push(Problem { error: false, msg: trf!("Items {} and {} overlap.", a + 1, b + 1) }); }
+        p
+    }
+
+    /// Paires d'elements (indices) qui se chevauchent parmi ceux qu'on peut activer a la telecommande : boutons, vignettes, liens.
+    pub fn overlapping(&self, page: usize, pages: usize) -> Vec<(usize, usize)> {
+        let active: Vec<(usize, &Item)> = self.items.iter().enumerate().filter(|(_, i)| match &i.kind {
+            Kind::Slot { .. } => true,
+            Kind::Nav { action, .. } => nav_applicable(*action, page, pages),
+            _ => i.link().is_some(),
+        }).collect();
+        let mut out = Vec::new();
+        for (ai, (a, ia)) in active.iter().enumerate() {
+            for (b, ib) in &active[ai + 1..] {
+                if ia.x < ib.x + ib.w && ib.x < ia.x + ia.w && ia.y < ib.y + ib.h && ib.y < ia.y + ia.h { out.push((*a, *b)); }
+            }
+        }
+        out
+    }
+
+    /// Comme `validate`, sans les chevauchements (l'editeur les montre par des contours sur l'apercu : voir `overlapping`).
+    pub fn validate_items(&self, page: usize, pages: usize, n_videos: usize) -> Vec<Problem> {
         let mut p = Vec::new();
         let (err, warn) = (|m: String| Problem { error: true, msg: m }, |m: String| Problem { error: false, msg: m });
         let all = self.slot_count();
@@ -543,18 +628,6 @@ impl PageDesign {
             }
             if let Kind::Nav { action, .. } = it.kind {
                 if !nav_applicable(action, page, pages) { p.push(warn(trf!("“{}” will not appear on this page.", action.label()))); }
-            }
-        }
-        let active: Vec<(usize, &Item)> = self.items.iter().enumerate().filter(|(_, i)| match &i.kind {
-            Kind::Slot { .. } => true,
-            Kind::Nav { action, .. } => nav_applicable(*action, page, pages),
-            _ => i.link().is_some(),
-        }).collect();
-        for (ai, (a, ia)) in active.iter().enumerate() {
-            for (b, ib) in &active[ai + 1..] {
-                if ia.x < ib.x + ib.w && ib.x < ia.x + ia.w && ia.y < ib.y + ib.h && ib.y < ia.y + ia.h {
-                    p.push(warn(trf!("Items {} and {} overlap.", a + 1, b + 1)));
-                }
             }
         }
         // impasse : aucun bouton ni lien ne mene a une autre page (la touche Menu ramene toujours a l'accueil)
@@ -684,6 +757,10 @@ impl PageDesign {
                     put("type", Value::Str("texte".into())); put("texte", Value::Str(text.clone())); put("taille", num(*size));
                     put("couleur", Value::Str(format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]))); put("alignement", Value::Str(align.name().into()));
                 }
+                Kind::Shape { shape, paint } => {
+                    put("type", Value::Str("forme".into())); put("forme", Value::Str(shape.name().into()));
+                    paint.put(*shape, &mut |k, v| put(k, v));
+                }
                 Kind::Image { path, link, frame } => {
                     if let Some(t) = link { put("cible", t.to_value()); }
                     put("type", Value::Str("image".into()));
@@ -765,6 +842,10 @@ impl PageDesign {
                     });
                     Kind::Image { path: String::new(), link: link()?, frame: Some(VideoFrame { video, at, crop }) }
                 }
+                "forme" => Kind::Shape {
+                    shape: st("forme").and_then(ShapeKind::from_name).unwrap_or(ShapeKind::Rect),
+                    paint: Paint::from_item(e).map_err(|m| trf!("item {}: {}", k + 1, m))?,
+                },
                 "image" => Kind::Image { path: st("fichier").ok_or_else(|| trf!("item {}: “fichier” missing", k + 1))?.to_string(), link: link()?, frame: None },
                 t => return Err(trf!("item {}: unknown type “{}”", k + 1, t)),
             };

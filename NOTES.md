@@ -810,3 +810,14 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 ## Export 156 — vignettes de la frise recalculées à l'échelle du zoom
 - Cœur : `Strip::start_range(fichier, de, à, n, taille, exact)` (vignettes d'une plage ; `start` en est le cas particulier « toute la vidéo, images clés »). Test `strip_range_covers_only_the_range`.
 - `timeline_ui.rs` : quand une case de la frise représente nettement moins de temps qu'une des 48 vignettes de la vidéo entière, la vue visible (plus une demi-vue de chaque côté) reçoit ses propres vignettes, une par case, calculées en arrière-plan une fois la vue restée stable 250 ms ; images exactes si une case représente moins de 10 s (sinon image clé la plus proche). Les vignettes de la vidéo entière servent en attendant, et pour les cases hors plage. Un nouveau calcul n'est lancé que si la vue sort de la plage calculée ou si l'échelle change de plus de 20 %. S'applique aux trois fenêtres (chapitres, sélecteur d'image, aperçu des sous-titres).
+
+## Export 157 — éditeur de menu, fenêtres d'aperçu
+
+- Chevauchement de widgets : plus de texte d'avertissement, contours rouges clignotants dans l'aperçu.
+- Nouveaux widgets Rectangle et Ligne (code de l'éditeur de jaquette : `Kind::Shape`, `Paint`, `Decor::Shape`, rendu dans `bdauthor-render`). Ligne : taille 0 possible (horizontale/verticale), style, flèches, retournement.
+- Collage dans l'éditeur de menu : placé dans la zone vide la plus proche (`editor::free_spot`).
+- Liste calques/widgets : défilement automatique pendant le glisser-déposer, icônes agrandies (17 pt), icône « calque caché » corrigée (œil barré).
+- Menu Édition > « Générer le disque » : fenêtre dédiée (bouton, progression, résultat, journal) à la place du panneau du bas.
+- Sous-titres et pistes audio : langue, ✏ et 🗑 à droite de chaque piste ; bouton 🔊 sur les pistes audio = fenêtre avec forme d'onde + lecture (ffplay, `ffmpeg::AudioPlayback`, `audio_peaks`).
+- Vignette alternative d'une vidéo : bouton « Choisir l'image… » (même fenêtre que le sélecteur d'image : aperçu + frise).
+- Le GUI et le rendu ne sont pas compilés dans le cloud : compiler avec recompiler.bat. ffplay.exe doit être à côté de ffmpeg.exe pour l'écoute audio.

@@ -88,7 +88,11 @@ pub fn hit_test_where(items: &[Item], x: f32, y: f32, selected: Option<usize>, r
         if in_x && (y - t).abs() <= r * 0.7 { return Some((i, Handle::Top)); }
         if in_x && (y - b).abs() <= r * 0.7 { return Some((i, Handle::Bottom)); }
     }
-    items.iter().enumerate().rev().find(|(i, it)| usable(*i) && x >= it.x as f32 && x < (it.x + it.w) as f32 && y >= it.y as f32 && y < (it.y + it.h) as f32).map(|(i, _)| (i, Handle::Body))
+    // un element tres fin (ligne horizontale ou verticale) reste attrapable : zone elargie a 12 unites au moins
+    items.iter().enumerate().rev().find(|(i, it)| {
+        let (px, py) = (((12 - it.w).max(0) as f32) / 2.0, ((12 - it.h).max(0) as f32) / 2.0);
+        usable(*i) && x >= it.x as f32 - px && x < (it.x + it.w) as f32 + px && y >= it.y as f32 - py && y < (it.y + it.h) as f32 + py
+    }).map(|(i, _)| (i, Handle::Body))
 }
 
 fn snap(v: f32, grid: i32) -> i32 { if grid > 1 { ((v / grid as f32).round() as i32) * grid } else { v.round() as i32 } }
@@ -131,6 +135,30 @@ pub fn dragged_rect_ratio(orig: (i32, i32, i32, i32), handle: Handle, dx: f32, d
     let x = if left { ox + ow - w } else { ox };
     let y = if top { oy + oh - h } else { oy };
     (x, y, w, h)
+}
+
+/// Emplacement libre pour un groupe d'elements colles : rectangle `group` (x, y, l, h) deplace a la position la plus proche de
+/// la sienne ou il ne recouvre aucun des rectangles `existing` (grille de pas `step`, dans le plan). `None` si le plan est trop
+/// encombre ou si le groupe est plus grand que le plan.
+pub fn free_spot(existing: &[(i32, i32, i32, i32)], group: (i32, i32, i32, i32), step: i32) -> Option<(i32, i32)> {
+    let (gx, gy, gw, gh) = group;
+    if gw > PLANE.0 || gh > PLANE.1 { return None; }
+    let step = step.max(1);
+    let hit = |x: i32, y: i32| existing.iter().any(|&(ex, ey, ew, eh)| ew > 0 && eh > 0 && x < ex + ew && ex < x + gw && y < ey + eh && ey < y + gh);
+    // la position d'origine elle-meme (hors grille) si elle est libre
+    if gx >= 0 && gy >= 0 && gx + gw <= PLANE.0 && gy + gh <= PLANE.1 && !hit(gx, gy) { return Some((gx, gy)); }
+    let mut best: Option<(i64, i32, i32)> = None;
+    let mut x = 0;
+    while x <= PLANE.0 - gw {
+        let mut y = 0;
+        while y <= PLANE.1 - gh {
+            let d = ((x - gx) as i64).pow(2) + ((y - gy) as i64).pow(2);
+            if best.map_or(true, |(bd, _, _)| d < bd) && !hit(x, y) { best = Some((d, x, y)); }
+            y += step;
+        }
+        x += step;
+    }
+    best.map(|(_, x, y)| (x, y))
 }
 
 /// Lignes d'aimantation : (abscisses, ordonnees) des bords et du centre de l'ecran et des elements `others`.

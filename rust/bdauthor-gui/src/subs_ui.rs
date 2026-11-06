@@ -47,8 +47,27 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 SubSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
                 SubSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
             };
-            let lang_label = langs.iter().find(|l| l.id == t.lang_id).map_or_else(|| if langs.is_empty() { t.lang.clone() } else { tr("language to choose").to_string() }, |l| l.name.clone());
-            egui::CollapsingHeader::new(format!("{} — {} ({})", k + 1, what, lang_label)).default_open(false).show(ui, |ui| {
+            // ligne de la piste : titre a gauche ; a droite, la langue, le bouton de reglages et le retrait
+            let open_id = ui.id().with("reglages_ouverts");
+            let mut open: bool = ui.data_mut(|d| d.get_persisted(open_id)).unwrap_or(false);
+            ui.horizontal(|ui| {
+                if ui.small_button(if open { "▾" } else { "▸" }).on_hover_text(if open { tr("Hide this track's settings") } else { tr("Show this track's settings") }).clicked() { open = !open; }
+                ui.add(egui::Label::new(format!("{} — {}", k + 1, what)).truncate());
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("🗑").on_hover_text(tr("Remove this track")).clicked() { del = Some(k); }
+                    if ui.button("✏").on_hover_text(tr("Edit this track's settings")).clicked() { open = !open; }
+                    let cur = langs.iter().find(|l| l.id == t.lang_id).map(|l| l.name.clone());
+                    let shown = cur.clone().unwrap_or_else(|| if langs.is_empty() { t.lang.clone() } else { tr("(to choose)").to_string() });
+                    egui::ComboBox::from_id_salt("langue_piste_sous_titres").selected_text(shown).show_ui(ui, |ui| {
+                        for l in langs.iter() {
+                            if ui.selectable_label(t.lang_id == l.id, &l.name).clicked() { t.lang_id = l.id; t.lang = l.code.clone(); changed = true; }
+                        }
+                    }).response.on_hover_text(tr("Language of this track"));
+                    if cur.is_none() && !langs.is_empty() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("to choose")); }
+                });
+            });
+            ui.data_mut(|d| d.insert_persisted(open_id, open));
+            if open { ui.indent("reglages_piste", |ui| {
                 if let SubSource::File(f) = &mut t.source {
                     ui.horizontal(|ui| {
                         ui.label(tr("File:"));
@@ -64,16 +83,6 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                         ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("File not found."));
                     }
                 }
-                ui.horizontal(|ui| {
-                    let cur = langs.iter().find(|l| l.id == t.lang_id).map(|l| l.name.clone());
-                    let shown = cur.clone().unwrap_or_else(|| tr("(to choose)").to_string());
-                    egui::ComboBox::from_label(tr("Language")).selected_text(shown).show_ui(ui, |ui| {
-                        for l in langs.iter() {
-                            if ui.selectable_label(t.lang_id == l.id, &l.name).clicked() { t.lang_id = l.id; t.lang = l.code.clone(); changed = true; }
-                        }
-                    });
-                    if cur.is_none() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("to choose")); }
-                });
                 if let SubSource::File(_) = &t.source {
                     let auto_cs = Charset::for_language(&t.lang);
                     ui.horizontal(|ui| {
@@ -118,11 +127,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 changed |= ui.checkbox(&mut t.file_positions, tr("Respect the positions in the file (ASS: \\an1 to \\an9)"))
                     .on_hover_text(tr("Some files place cues at the top, on the left, etc. (for example so as not to hide text burned into the picture). Unchecked: all cues take the position set below. Simultaneous cues are displayed together, at the position of the first one that asks for one.")).changed();
                 style_ui(ui, &mut t.style, &mut changed);
-                ui.horizontal(|ui| {
-                    if ui.button(tr("Rendering preview…")).on_hover_text(tr("See this track's cues drawn with its style")).clicked() { *preview = Some(k); }
-                    if ui.button(tr("Remove this track")).clicked() { del = Some(k); }
-                });
-            });
+                if ui.button(tr("Rendering preview…")).on_hover_text(tr("See this track's cues drawn with its style")).clicked() { *preview = Some(k); }
+            }); }
         });
     }
     if let Some(k) = del { v.subs.remove(k); changed = true; }

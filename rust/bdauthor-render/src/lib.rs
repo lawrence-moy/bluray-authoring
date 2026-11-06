@@ -520,6 +520,7 @@ impl FontRenderer {
                     let custom = self.custom_font(font, Path::new(""));
                     draw_deco_text(&mut im, custom.as_deref().unwrap_or(&self.font), text, *sz as f32, *color, (*x, *y, *w, *h), *align, deco)
                 }
+                Decor::Shape { shape, x, y, w, h, paint } => draw_paint(&mut im, *shape, (*x, *y, *w, *h), paint),
                 Decor::Image { path, x, y, w, h } => {
                     let src = self.cached_image(path)?;
                     let sc = (*w as f64 / src.width as f64).min(*h as f64 / src.height as f64);
@@ -676,6 +677,15 @@ fn sd_triangle(p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f3
     ];
     let d = cand.iter().fold((f32::MAX, f32::MAX), |m, c| (m.0.min(c.0), m.1.min(c.1)));
     -d.0.sqrt() * if d.1 >= 0.0 { 1.0 } else { -1.0 }
+}
+
+/// Rectangle, ellipse ou ligne d'un menu : meme dessin que les formes de l'editeur de jaquette (`paint` deja a l'echelle de `im`).
+fn draw_paint(im: &mut RgbaImage, shape: bdauthor_core::cover::ShapeKind, rect: (i32, i32, i32, i32), paint: &bdauthor_core::design::Paint) {
+    if shape == bdauthor_core::cover::ShapeKind::Line {
+        if let Some(c) = paint.line_color() { draw_segment(im, rect, paint.flip, c, paint.stroke_px, paint.style, paint.arrow); }
+        return;
+    }
+    draw_shape(im, shape, rect, paint.fill, paint.stroke, if paint.stroke.is_some() { paint.stroke_px } else { 0 }, paint.radius);
 }
 
 /// Segment d'epaisseur `stroke_px` entre deux coins opposes du cadre `rect` (`flip` : bas gauche -> haut droit), avec son type de trait
@@ -1360,6 +1370,7 @@ impl FontRenderer {
                     });
                     blit(&mut im, &spr, x - mx, y - my, 1.0);
                 }
+                Kind::Shape { shape, paint } => draw_paint(&mut im, *shape, (x, y, w, h), &paint.scaled(s)),
                 Kind::Slot { thumb_h, .. } => {
                     let th = r(*thumb_h).clamp(1, h);
                     let rank = k;

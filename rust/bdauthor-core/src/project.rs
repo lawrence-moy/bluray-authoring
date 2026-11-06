@@ -84,16 +84,18 @@ pub enum Decor {
     /// `deco` : fond et contour, deja a l'echelle du fond.
     Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, deco: crate::design::TextDeco },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
+    /// Rectangle, ellipse ou ligne (`paint` deja a l'echelle du fond).
+    Shape { shape: crate::cover::ShapeKind, x: i32, y: i32, w: i32, h: i32, paint: crate::design::Paint },
 }
 
 impl Decor {
     /// Rectangle (x, y, largeur, hauteur) du cadre.
     pub fn rect(&self) -> (i32, i32, i32, i32) {
-        match self { Decor::Text { x, y, w, h, .. } | Decor::Image { x, y, w, h, .. } => (*x, *y, *w, *h) }
+        match self { Decor::Text { x, y, w, h, .. } | Decor::Image { x, y, w, h, .. } | Decor::Shape { x, y, w, h, .. } => (*x, *y, *w, *h) }
     }
     pub fn shifted(&self, dx: i32, dy: i32) -> Decor {
         let mut d = self.clone();
-        match &mut d { Decor::Text { x, y, .. } | Decor::Image { x, y, .. } => { *x += dx; *y += dy; } }
+        match &mut d { Decor::Text { x, y, .. } | Decor::Image { x, y, .. } | Decor::Shape { x, y, .. } => { *x += dx; *y += dy; } }
         d
     }
     pub fn intersects(&self, r: (i32, i32, i32, i32)) -> bool {
@@ -1102,6 +1104,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 Some(Decor::Image { path, x, y, w, h })
             }
             Kind::Image { path, .. } => Some(Decor::Image { path: p(path), x, y, w, h }),
+            Kind::Shape { shape, paint } => Some(Decor::Shape { shape: *shape, x, y, w, h, paint: paint.scaled(k) }),
             _ => None,
         }
     };

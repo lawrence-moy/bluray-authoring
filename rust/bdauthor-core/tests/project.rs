@@ -54,7 +54,7 @@ impl Renderer for Flat {
         let mut im = (*fill(size.0, size.1, [40, 20, 80])).clone();
         // un carre blanc par element pose, pour que le fond change reellement
         for (k, d) in decor.iter().enumerate() {
-            let (x, y, w, h) = match d { Decor::Text { x, y, w, h, .. } | Decor::Image { x, y, w, h, .. } => (*x, *y, *w, *h) };
+            let (x, y, w, h) = match d { Decor::Text { x, y, w, h, .. } | Decor::Image { x, y, w, h, .. } | Decor::Shape { x, y, w, h, .. } => (*x, *y, *w, *h) };
             for yy in y.max(0)..(y + h).min(size.1 as i32) { for xx in x.max(0)..(x + w).min(size.0 as i32) { im.set(xx as u32, yy as u32, [255, 255, 255, 255]); } }
             let _ = k;
         }

@@ -22,6 +22,8 @@ enum Ratio { Free, Widget, R16x9, R4x3, Square }
 pub struct FramePicker {
     page: usize,
     item: usize,
+    /// vignette alternative de cette video (au lieu d'une « Image de la video » : ni recadrage, ni proportions du widget)
+    thumb_of: Option<usize>,
     video: usize,
     vfile: String,
     file: PathBuf,
@@ -59,9 +61,23 @@ impl FramePicker {
         let title = bdauthor_core::editor::video_title(model, video);
         let rx = probe_async(&file, VIEW_W);
         Some(FramePicker {
-            page, item, video, vfile: v.file.clone(), file, title, widget_ratio: it.w.max(1) as f64 / it.h.max(1) as f64,
+            page, item, thumb_of: None, video, vfile: v.file.clone(), file, title, widget_ratio: it.w.max(1) as f64 / it.h.max(1) as f64,
             frame: 0, crop: f.crop, ratio: if f.crop.is_some() { Ratio::Free } else { Ratio::Widget },
             info_rx: Some(rx), info: None, error: None, start_t: f.at, loader: None, tex: None, tex_frame: -1,
+            tl: Timeline::new(STRIP_N, "barre_image"), playing: None, crop_drag: None,
+        })
+    }
+
+    /// Selecteur de l'instant de la vignette alternative de la video `video`.
+    pub fn new_thumb(model: &ProjectModel, video: usize, base: &Path) -> Option<FramePicker> {
+        let v = model.videos.get(video)?;
+        let file = if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { base.join(&v.file) };
+        let title = bdauthor_core::editor::video_title(model, video);
+        let rx = probe_async(&file, VIEW_W);
+        Some(FramePicker {
+            page: 0, item: 0, thumb_of: Some(video), video, vfile: v.file.clone(), file, title, widget_ratio: 16.0 / 9.0,
+            frame: 0, crop: None, ratio: Ratio::Widget,
+            info_rx: Some(rx), info: None, error: None, start_t: v.thumb_s.unwrap_or(1.0), loader: None, tex: None, tex_frame: -1,
             tl: Timeline::new(STRIP_N, "barre_image"), playing: None, crop_drag: None,
         })
     }
@@ -161,13 +177,15 @@ pub fn window(ctx: &egui::Context, fp: &mut FramePicker, model: &mut ProjectMode
     if fp.poll(ctx) { ctx.request_repaint_after(std::time::Duration::from_millis(20)); }
     let mut open = true;
     let mut action: Option<bool> = None;
-    let title = trf!("Video image — {}", fp.title);
+    let title = if fp.thumb_of.is_some() { trf!("Alternative thumbnail — {}", fp.title) } else { trf!("Video image — {}", fp.title) };
     crate::os_window(ctx, "selecteur_image_video", &title, [1100.0, 860.0], &mut open, &mut |ui| picker_ui(ui, fp, &mut action));
     let mut changed = false;
     if action == Some(true) {
         let t = (fp.t_of(fp.frame) * 1e4).round() / 1e4;
         let ok_video = model.videos.get(fp.video).is_some_and(|v| v.file == fp.vfile);
-        if let Some(Kind::Image { frame: Some(f), .. }) = model.designs.free.get_mut(fp.page).and_then(|d| d.items.get_mut(fp.item)).map(|it| &mut it.kind) {
+        if let Some(vi) = fp.thumb_of {
+            if let Some(v) = model.videos.get_mut(vi).filter(|_| ok_video) { v.thumb_s = Some(t); changed = true; }
+        } else if let Some(Kind::Image { frame: Some(f), .. }) = model.designs.free.get_mut(fp.page).and_then(|d| d.items.get_mut(fp.item)).map(|it| &mut it.kind) {
             if ok_video && f.video == Some(fp.video) {
                 *f = VideoFrame { video: Some(fp.video), at: t, crop: fp.crop };
                 changed = true;
@@ -272,8 +290,8 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
     timeline(ui, fp);
     ui.label(egui::RichText::new(tr("Click or drag on the bar to choose the time (hover: preview) · Space: play / pause · ← →: one frame · Shift: 1 s · Ctrl: 10 s")).small().weak());
     ui.separator();
-    // recadrage
-    ui.horizontal_wrapped(|ui| {
+    // recadrage (pas pour une vignette)
+    if fp.thumb_of.is_none() { ui.horizontal_wrapped(|ui| {
         let mut on = fp.crop.is_some();
         if ui.checkbox(&mut on, tr("Crop the image")).changed() {
             fp.crop = if on { Some(crop_full(fp.ratio_frac())) } else { None };
@@ -298,7 +316,7 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
         } else {
             ui.label(egui::RichText::new(tr("Without cropping: the center of the image in 16:9.")).weak());
         }
-    });
+    }); }
     if fp.crop.is_some() {
         ui.label(egui::RichText::new(tr("Drag the frame to move it, its corners or sides to resize it, or draw a new frame outside it.")).small().weak());
     }

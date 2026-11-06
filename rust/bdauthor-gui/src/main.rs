@@ -238,15 +238,21 @@ struct App {
     confirm_quit: bool,
     quit_ok: bool,
     show_about: bool,
+    /// fenetre « Generer le disque » (journal de construction)
+    show_build: bool,
     recovery_checked: bool,
     /// fenetre d'apercu du rendu d'une piste de sous-titres
     sub_preview: Option<subs_ui::SubPreview>,
+    /// fenetre d'ecoute d'une piste audio
+    audio_preview: Option<audio_ui::AudioPreview>,
     /// editeur de chapitres ouvert (une video a la fois) et demande d'ouverture (rang de la video)
     chapter_editor: Option<chapters_ui::ChapterEditor>,
     chapter_request: Option<usize>,
     /// selecteur d'image d'un widget « Image de la video » : (page, element)
     frame_picker: Option<frame_ui::FramePicker>,
     frame_request: Option<(usize, usize)>,
+    /// video dont on choisit la vignette alternative (meme fenetre que le selecteur d'image)
+    thumb_request: Option<usize>,
     /// images entieres des videos (widget « Image de la video »), par (fichier, instant en ms)
     frames: HashMap<(String, i64), Arc<RgbaImage>>,
     cover_tex: Option<egui::TextureHandle>,
@@ -327,7 +333,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, recovery_checked: false, sub_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -456,6 +462,7 @@ impl App {
             return;
         }
         self.result = None;
+        self.show_build = true;
         if !self.save(false) {
             return;
         }
@@ -651,6 +658,9 @@ impl eframe::App for App {
             if ch { self.dirty = true; }
             if !keep { self.sub_preview = None; }
         }
+        if let Some(pv) = self.audio_preview.as_mut() {
+            if !pv.window(ctx) { self.audio_preview = None; }
+        }
         if let Some(vi) = self.chapter_request.take() {
             let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
             self.chapter_editor = chapters_ui::ChapterEditor::new(&self.model, vi, &base);
@@ -663,6 +673,10 @@ impl eframe::App for App {
         if let Some((page, item)) = self.frame_request.take() {
             let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
             self.frame_picker = frame_ui::FramePicker::new(&self.model, page, item, &base);
+        }
+        if let Some(vi) = self.thumb_request.take() {
+            let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+            self.frame_picker = frame_ui::FramePicker::new_thumb(&self.model, vi, &base);
         }
         let res = self.frame_picker.as_mut().map(|fp| frame_ui::window(ctx, fp, &mut self.model));
         if let Some((ch, keep)) = res {
@@ -886,6 +900,10 @@ impl eframe::App for App {
                         self.show_project = true;
                         ui.close_menu();
                     }
+                    if ui.button(tr("Build the disc")).on_hover_text(tr("Opens the window that builds the disc and shows its log")).clicked() {
+                        self.show_build = true;
+                        ui.close_menu();
+                    }
                 });
                 ui.menu_button(tr("About"), |ui| {
                     if ui.button(tr("About bdauthor…")).clicked() { self.show_about = true; ui.close_menu(); }
@@ -906,26 +924,36 @@ impl eframe::App for App {
             }
         });
 
-        // zone de construction : masquee dans l'onglet Jaquette (sauf pendant une construction, pour garder la progression et « Annuler »)
-        if self.mode != Mode::Jaquette || busy { egui::TopBottomPanel::bottom("construction").default_height(160.0).min_height(60.0).resizable(true).show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                if busy {
-                    if ui.button(tr("Cancel")).clicked() { self.cancel.store(true, Ordering::Relaxed); }
-                    ui.add(egui::ProgressBar::new(self.progress).show_percentage().desired_width(300.0));
-                } else if ui.add_enabled(!self.model.videos.is_empty(), egui::Button::new(tr("Build the disc…"))).clicked() {
-                    self.start_build(ctx);
-                }
-            });
-            if let Some((ok, text)) = &self.result {
-                let col = if *ok { egui::Color32::from_rgb(90, 200, 120) } else { egui::Color32::from_rgb(230, 100, 90) };
-                ui.colored_label(col, text);
+        // fenetre « Generer le disque » : bouton de generation, progression, resultat et journal de la construction
+        if self.show_build {
+            let mut open = true;
+            let (mut start, mut cancel_req) = (false, false);
+            let can_build = !self.model.videos.is_empty();
+            {
+                let (progress, result, log) = (self.progress, &self.result, &self.log);
+                os_window(ctx, "generation_disque", tr("Build the disc"), [760.0, 520.0], &mut open, &mut |ui| {
+                    ui.horizontal(|ui| {
+                        if busy {
+                            if ui.button(tr("Cancel")).clicked() { cancel_req = true; }
+                            ui.add(egui::ProgressBar::new(progress).show_percentage().desired_width(300.0));
+                        } else if ui.add_enabled(can_build, egui::Button::new(tr("Build the disc…"))).clicked() {
+                            start = true;
+                        }
+                    });
+                    if let Some((ok, text)) = result {
+                        let col = if *ok { egui::Color32::from_rgb(90, 200, 120) } else { egui::Color32::from_rgb(230, 100, 90) };
+                        ui.colored_label(col, text);
+                    }
+                    ui.separator();
+                    egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
+                        for l in log { ui.monospace(l); }
+                    });
+                });
             }
-            egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
-                for l in &self.log {
-                    ui.monospace(l);
-                }
-            });
-        }); }
+            self.show_build = open;
+            if cancel_req { self.cancel.store(true, Ordering::Relaxed); }
+            if start { self.start_build(ctx); }
+        }
 
         if self.mode == Mode::Jaquette {
             self.cover_screen(ctx, busy);
@@ -1081,16 +1109,12 @@ impl eframe::App for App {
                         });
                         ui.horizontal(|ui| {
                             let mut on = v.thumb_s.is_some();
-                            if ui.checkbox(&mut on, tr("Alternative thumbnail at time:")).on_hover_text(tr("Unchecked: image taken automatically. Checked (or by changing the value): image taken at this moment of the video.")).changed() {
+                            if ui.checkbox(&mut on, tr("Alternative thumbnail")).on_hover_text(tr("Unchecked: image taken automatically. Checked: image taken at the chosen moment of the video.")).changed() {
                                 v.thumb_s = if on { Some(v.thumb_s.unwrap_or(1.0)) } else { None };
                                 changed = true;
                             }
-                            // la zone de saisie est toujours visible ; la modifier active l'option
-                            let mut t = v.thumb_s.unwrap_or(1.0);
-                            if ui.add(egui::DragValue::new(&mut t).speed(0.5).range(0.0..=max_t).suffix(" s")).changed() {
-                                v.thumb_s = Some(t);
-                                changed = true;
-                            }
+                            if let Some(t) = v.thumb_s { ui.label(egui::RichText::new(format!("{} ({:.1} s)", duration_text(t), t)).weak()); }
+                            if ui.button(tr("Choose the image…")).on_hover_text(tr("Opens a window with the video, playback and a timeline, to choose the moment of the thumbnail")).clicked() { self.thumb_request = self.sel; }
                         });
                         ui.separator();
                         ui.label(tr("Chapter marks (next / previous keys of the remote control, chapter thumbnails, start pages):"));
@@ -1124,7 +1148,18 @@ impl eframe::App for App {
                         }
                         if ui.button(tr("Chapter editor…")).on_hover_text(tr("Opens a window with the video image by image, playback and a timeline, to place the chapters and choose the thumbnail images.")).clicked() { self.chapter_request = self.sel; }
                         ui.separator();
-                        changed |= audio_ui::panel(ui, v, &mut self.model.languages, &mut self.audio_probes, &sub_base);
+                        let mut want_listen = None;
+                        changed |= audio_ui::panel(ui, v, &mut self.model.languages, &mut self.audio_probes, &sub_base, &mut want_listen);
+                        if let (Some(k), Some(vi)) = (want_listen, self.sel) {
+                            let abs_of = |f: &str| if Path::new(f).is_absolute() { PathBuf::from(f) } else { sub_base.join(f) };
+                            if let Some(t) = v.audio.get(k) {
+                                let (file, stream, what) = match &t.source {
+                                    bdauthor_core::audio::AudioSource::File(f) => (abs_of(f), None, Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone())),
+                                    bdauthor_core::audio::AudioSource::Embedded(n) => (abs_of(&v.file), Some(*n), trf!("embedded track no. {}", n + 1)),
+                                };
+                                self.audio_preview = Some(audio_ui::AudioPreview::new(vi, k, format!("{} — {}", k + 1, what), &file, stream));
+                            }
+                        }
                         ui.separator();
                         let mut want_preview = None;
                         // cadence de la video (sondee) : sert de cadence par defaut aux sous-titres a temps en images

@@ -100,3 +100,26 @@ fn strip_range_covers_only_the_range() {
     for w in got.windows(2) { assert_ne!(w[0].1, w[1].1, "images exactes differentes"); }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn audio_peaks_follow_the_loudness_and_playback_starts() {
+    use bdauthor_core::ffmpeg::{audio_peaks, AudioPlayback};
+    let Ok(tools) = Tools::locate() else { return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_audio_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("a.wav");
+    // 2 s de sinus fort puis 2 s de sinus faible
+    let ok = Command::new(&tools.ffmpeg)
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=2", "-f", "lavfi", "-i", "sine=frequency=440:duration=2,volume=0.1", "-filter_complex", "[0][1]concat=n=2:v=0:a=1"])
+        .arg(&p).status().unwrap().success();
+    assert!(ok);
+    let peaks = audio_peaks(&tools, &p, None, 4.0, 8).unwrap();
+    assert_eq!(peaks.len(), 8);
+    assert!(peaks[1] > 0.1 && peaks[6] < 0.03 && peaks[6] > 0.005, "{peaks:?}");
+    if tools.ffplay().is_some() {
+        let mut pb = AudioPlayback::start(&tools, &p, None, 1.0).unwrap();
+        pb.stop();
+        assert!(pb.finished());
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

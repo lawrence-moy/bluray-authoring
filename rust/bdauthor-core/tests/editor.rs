@@ -194,3 +194,18 @@ fn full_screen_item_keeps_grabbable_handles() {
     let mid = Item::text("M", 100, 100, 400, 200, 40);
     assert_eq!(handle_edges(&mid, 6.0), (100.0, 100.0, 500.0, 300.0));
 }
+
+#[test]
+fn paste_goes_to_free_spot() {
+    // origine libre : on ne bouge pas
+    assert_eq!(free_spot(&[(0, 0, 100, 100)], (500, 500, 200, 100), 20), Some((500, 500)));
+    // origine occupee : l'emplacement trouve ne recouvre rien et reste dans le plan
+    let existing = [(400, 400, 600, 400)];
+    let (x, y) = free_spot(&existing, (500, 500, 200, 100), 20).unwrap();
+    assert!(x + 200 <= existing[0].0 || x >= existing[0].0 + existing[0].2 || y + 100 <= existing[0].1 || y >= existing[0].1 + existing[0].3);
+    assert!(x >= 0 && y >= 0 && x + 200 <= 1920 && y + 100 <= 1080);
+    // plan plein : aucun emplacement
+    assert_eq!(free_spot(&[(0, 0, 1920, 1080)], (10, 10, 100, 100), 20), None);
+    // un element sans surface (ligne) ne gene pas
+    assert_eq!(free_spot(&[(0, 500, 1920, 0)], (100, 500, 100, 100), 20), Some((100, 500)));
+}
