@@ -16,11 +16,11 @@ fn plan_orders_tracks_by_language() {
     // aucune piste configuree, ou pas de langues : ancien fonctionnement
     assert_eq!(plan_audio(&l, "fra", &[vec![], vec![]]).unwrap(), None);
     assert_eq!(plan_audio(&[], "fra", &[vec![tr(1)]]).unwrap(), None);
-    // video 1 : anglais puis francais -> rangees fra, eng ; video 2 : francais seul ; video 3 sans reglage : francais par defaut
+    // video 1 : anglais puis francais (ordre garde) ; video 2 : francais seul ; video 3 sans reglage : francais par defaut
     let p = plan_audio(&l, "fra", &[vec![tr(2), tr(1)], vec![tr(1)], vec![]]).unwrap().unwrap();
     assert_eq!(p.slots, vec![1, 2]);
-    assert_eq!(p.videos[0].langs, vec![*b"fra", *b"eng"]);
-    assert_eq!(p.videos[0].tracks.iter().map(|t| t.lang_id).collect::<Vec<_>>(), vec![1, 2]);
+    assert_eq!(p.videos[0].langs, vec![*b"eng", *b"fra"]);
+    assert_eq!(p.videos[0].tracks.iter().map(|t| t.lang_id).collect::<Vec<_>>(), vec![2, 1]);
     assert_eq!(p.videos[1].langs, vec![*b"fra"]);
     assert!(p.videos[2].tracks.is_empty() && p.videos[2].langs == vec![*b"fra"]);
     // une langue reservee aux sous-titres (deu) n'occupe pas de numero audio ; l'allemand audio le ferait
@@ -35,8 +35,8 @@ fn plan_lets_each_video_keep_its_languages() {
     // video 1 : allemand et francais ; video 2 : anglais seul (piste 1 ici, alors que l'anglais est la 3e langue)
     let p = plan_audio(&l, "fra", &[vec![tr(2), tr(1)], vec![tr(3)]]).unwrap().unwrap();
     assert_eq!(p.slots, vec![1, 2, 3]);
-    assert_eq!(p.videos[0].ids, vec![1, 2]);
-    assert_eq!(p.videos[0].langs, vec![*b"deu", *b"fra"]);
+    assert_eq!(p.videos[0].ids, vec![2, 1]);
+    assert_eq!(p.videos[0].langs, vec![*b"fra", *b"deu"]);
     assert_eq!(p.videos[1].ids, vec![3]);
     assert_eq!(p.videos[1].langs, vec![*b"eng"]);
     // langue en double, langue non choisie, langue du disque absente de la liste

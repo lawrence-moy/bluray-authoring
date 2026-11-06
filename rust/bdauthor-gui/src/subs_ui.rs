@@ -312,7 +312,7 @@ pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
         if m.languages.is_empty() {
             ui.label(egui::RichText::new(tr("No language: add some to choose the language of audio and subtitle tracks, and for the “Set…” buttons.")).weak());
         } else {
-            crate::help(ui, tr("Each audio or subtitle track of a video chooses its language from this list. Subtitles: a video that lacks a language keeps an empty track at that place. Audio: each video has its own languages; its tracks are placed in list order, and an “audio language” button selects, in each video, its track in that language.\n\nChanging the order changes the track numbers: buttons follow their language."));
+            crate::help(ui, tr("Each audio or subtitle track of a video chooses its language from this list. Subtitles: a video that lacks a language keeps an empty track at that place. Audio: each video has its own languages, in the order of its own track list, and an “audio language” button selects, in each video, its track in that language.\n\nChanging the order changes the track numbers: buttons follow their language."));
         }
     }
     changed

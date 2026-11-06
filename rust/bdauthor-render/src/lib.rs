@@ -682,16 +682,23 @@ fn sd_triangle(p: (f32, f32), a: (f32, f32), b: (f32, f32), c: (f32, f32)) -> f3
 /// Rectangle, ellipse ou ligne d'un menu : meme dessin que les formes de l'editeur de jaquette (`paint` deja a l'echelle de `im`).
 fn draw_paint(im: &mut RgbaImage, shape: bdauthor_core::cover::ShapeKind, rect: (i32, i32, i32, i32), paint: &bdauthor_core::design::Paint) {
     if shape == bdauthor_core::cover::ShapeKind::Line {
-        if let Some(c) = paint.line_color() { draw_segment(im, rect, paint.flip, c, paint.stroke_px, paint.style, paint.arrow); }
+        if let Some(c) = paint.line_color() { draw_segment_a(im, rect, paint.flip, c, paint.stroke_px, paint.style, paint.arrow, paint.alpha()); }
         return;
     }
-    draw_shape(im, shape, rect, paint.fill, paint.stroke, if paint.stroke.is_some() { paint.stroke_px } else { 0 }, paint.radius);
+    draw_shape_a(im, shape, rect, paint.fill, paint.stroke, if paint.stroke.is_some() { paint.stroke_px } else { 0 }, paint.radius, paint.alpha());
 }
 
 /// Segment d'epaisseur `stroke_px` entre deux coins opposes du cadre `rect` (`flip` : bas gauche -> haut droit), avec son type de trait
 /// (plein a bouts arrondis, tirets, pointilles, tirets et points, double) et d'eventuelles pointes de fleche.
 fn draw_segment(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb: [u8; 3], stroke_px: i32,
                 style: bdauthor_core::cover::LineStyle, arrow: bdauthor_core::cover::LineArrow) {
+    draw_segment_a(im, rect, flip, rgb, stroke_px, style, arrow, 1.0);
+}
+
+/// Comme `draw_segment`, avec une opacite `alpha` (0..1).
+#[allow(clippy::too_many_arguments)]
+fn draw_segment_a(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb: [u8; 3], stroke_px: i32,
+                  style: bdauthor_core::cover::LineStyle, arrow: bdauthor_core::cover::LineArrow, alpha: f32) {
     use bdauthor_core::cover::LineStyle as S;
     let (x, y, w, h) = rect;
     let (x0, x1) = (x as f32, (x + w) as f32);
@@ -746,13 +753,19 @@ fn draw_segment(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb:
             };
             if arrow_a { cov = cov.max((0.5 - sd_triangle((qx, qy), tip_a, (base_a.0 + nx * head_half, base_a.1 + ny * head_half), (base_a.0 - nx * head_half, base_a.1 - ny * head_half))).clamp(0.0, 1.0)); }
             if arrow_b { cov = cov.max((0.5 - sd_triangle((qx, qy), tip_b, (base_b.0 + nx * head_half, base_b.1 + ny * head_half), (base_b.0 - nx * head_half, base_b.1 - ny * head_half))).clamp(0.0, 1.0)); }
-            over_pixel(im, px, py, rgb, cov);
+            over_pixel(im, px, py, rgb, cov * alpha);
         }
     }
 }
 
 /// Rectangle (arrondi), ellipse ou trait horizontal, avec remplissage et bordure interieure, bords lisses.
 fn draw_shape(im: &mut RgbaImage, shape: bdauthor_core::cover::ShapeKind, rect: (i32, i32, i32, i32), fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32) {
+    draw_shape_a(im, shape, rect, fill, stroke, stroke_px, radius_px, 1.0);
+}
+
+/// Comme `draw_shape`, avec une opacite `alpha` (0..1) pour le remplissage et la bordure.
+#[allow(clippy::too_many_arguments)]
+fn draw_shape_a(im: &mut RgbaImage, shape: bdauthor_core::cover::ShapeKind, rect: (i32, i32, i32, i32), fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, alpha: f32) {
     use bdauthor_core::cover::ShapeKind;
     let (x, y, w, h) = rect;
     if w <= 0 || h <= 0 { return; }
@@ -771,14 +784,13 @@ fn draw_shape(im: &mut RgbaImage, shape: bdauthor_core::cover::ShapeKind, rect: 
             let co = cover(d);
             if co <= 0.0 { continue; }
             if shape == ShapeKind::Line {
-                if let Some(c) = stroke.or(fill) { over_pixel(im, px, py, c, co); }
+                if let Some(c) = stroke.or(fill) { over_pixel(im, px, py, c, co * alpha); }
                 continue;
             }
-            if let Some(c) = fill { over_pixel(im, px, py, c, co); }
-            if let (Some(c), true) = (stroke, sw > 0.0) {
-                let a = (co - cover(d + sw)).max(0.0);
-                over_pixel(im, px, py, c, a);
-            }
+            // remplissage sous la bordure seulement la ou elle ne couvre pas : l'opacite reste uniforme
+            let edge = if let (Some(_), true) = (stroke, sw > 0.0) { (co - cover(d + sw)).max(0.0) } else { 0.0 };
+            if let Some(c) = fill { over_pixel(im, px, py, c, (co - if alpha < 1.0 { edge } else { 0.0 }).max(0.0) * alpha); }
+            if let (Some(c), true) = (stroke, sw > 0.0) { over_pixel(im, px, py, c, edge * alpha); }
         }
     }
 }

@@ -829,3 +829,11 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Début de chaque vidéo (titre simple, lecture depuis un repère, « Tout lire » d'après la 1re vidéo) : `CMP_EQ r2, id` + `SET_STREAM` pour chaque piste ; langue absente : le lecteur garde son choix. Une seule piste : aucune commande.
 - Journal de construction : remarque pour chaque vidéo à qui il manque une langue audio du projet.
 - Non vérifié sur lecteur matériel (même réserve que le réglage audio précédent).
+
+## Export 159 — formes, pistes audio, progression
+
+- Texte non cliquable posé sur un bouton : contour orange clignotant (`PageDesign::covered_texts`) ; les boutons qui se chevauchent restent en rouge.
+- Ligne : plus d'erreur « trop petit » pour une ligne horizontale/verticale ; manipulation par ses 2 extrémités (`editor::line_ends`, `line_handles`, `move_line_end`), aimantation sur l'autre bout, Maj = pas de 45°, sélection près du trait.
+- Formes : opacité réglable (`Paint::opacity`, JSON « opacite »), icônes dessinées dans la palette.
+- Pistes audio : ☰ + 🎵 à gauche, réordonnables par glisser-déposer ; l'ordre de la vidéo est gardé sur le disque (piste 1 = celle du haut).
+- Progression : part de chaque vidéo selon sa durée, image ISO dans les derniers 8 % ; fenêtre « Générer le disque » : %, étape, temps écoulé et fin estimée, détail ffmpeg (position, images/s, vitesse, reste) via `ffmpeg::set_progress_detail`.

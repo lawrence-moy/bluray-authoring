@@ -24,6 +24,10 @@ fn abs(base: &Path, f: &str) -> PathBuf {
     if q.is_absolute() { q.to_path_buf() } else { base.join(q) }
 }
 
+/// Piste audio deplacee par glisser-deposer (rang dans la liste de la video).
+#[derive(Clone, Copy)]
+struct AudioRow(usize);
+
 /// Retourne vrai si quelque chose a change. `langs` : langues du projet (le rang d'une langue audio est son numero de piste).
 pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut AudioProbes, base: &Path, listen: &mut Option<usize>) -> bool {
     let mut changed = false;
@@ -32,6 +36,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         ui.label(egui::RichText::new(tr("No track chosen: the video's first audio track is used, in the default audio language (Edit > Project…).")).weak());
     }
     let mut del = None;
+    let mut rows: Vec<egui::Rect> = Vec::new();
     for (k, t) in v.audio.iter_mut().enumerate() {
         ui.push_id(("audio", k), |ui| {
             let what = match &t.source {
@@ -41,7 +46,10 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
             // ligne de la piste : titre a gauche ; a droite, la langue, les reglages, l'ecoute et le retrait
             let open_id = ui.id().with("reglages_ouverts");
             let mut open: bool = ui.data_mut(|d| d.get_persisted(open_id)).unwrap_or(false);
-            ui.horizontal(|ui| {
+            let row = ui.horizontal(|ui| {
+                let _ = ui.dnd_drag_source(egui::Id::new(("piste_audio", k)), AudioRow(k), |ui| ui.label(egui::RichText::new("☰").strong()))
+                    .response.on_hover_text(tr("Drag to change the order of the audio tracks (track 1 is the one at the top)"));
+                ui.label("🎵");
                 if ui.small_button(if open { "▾" } else { "▸" }).on_hover_text(if open { tr("Hide this track's settings") } else { tr("Show this track's settings") }).clicked() { open = !open; }
                 ui.add(egui::Label::new(format!("{} — {}", k + 1, what)).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -57,6 +65,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     if cur.is_none() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("to choose")); }
                 });
             });
+            rows.push(row.response.rect);
             ui.data_mut(|d| d.insert_persisted(open_id, open));
             if open { ui.indent("reglages_piste", |ui| {
                 if let AudioSource::File(f) = &mut t.source {
@@ -80,6 +89,20 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 });
             }); }
         });
+    }
+    // glisser-deposer : la piste se range a l'endroit indique par le trait bleu
+    if let (Some(from), Some(pos), Some(first), Some(last)) = (egui::DragAndDrop::payload::<AudioRow>(ui.ctx()), ui.ctx().pointer_hover_pos(), rows.first(), rows.last()) {
+        let from = from.0;
+        let area = first.union(*last).expand(8.0);
+        if area.contains(pos) && from < v.audio.len() {
+            let to = rows.iter().filter(|r| r.center().y < pos.y).count();
+            let y = if to < rows.len() { rows[to].top() - 1.0 } else { last.bottom() + 1.0 };
+            ui.painter().hline(area.x_range(), y, egui::Stroke::new(2.5_f32, egui::Color32::from_rgb(90, 170, 255)));
+            if ui.input(|i| i.pointer.any_released()) {
+                let to = if to > from { to - 1 } else { to };
+                if to != from { let t = v.audio.remove(from); v.audio.insert(to, t); changed = true; }
+            }
+        }
     }
     if let Some(k) = del { v.audio.remove(k); changed = true; }
 
@@ -129,7 +152,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    crate::help(ui, tr("Each video has its own audio languages, in any order. A menu button “audio language” remembers the chosen language: each video then starts on its track in that language, or on its own track if it has none (“Play all” follows the tracks of the first video). Tracks are converted to stereo AC-3. The offset corrects an advance or a delay."));
+    crate::help(ui, tr("Each video has its own audio languages, in the order of this list (drag ☰ to change it: track 1 is at the top). A menu button “audio language” remembers the chosen language: each video then starts on its track in that language, or on its own track if it has none (“Play all” follows the tracks of the first video). Tracks are converted to stereo AC-3. The offset corrects an advance or a delay."));
     changed
 }
 

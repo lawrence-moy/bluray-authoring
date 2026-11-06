@@ -340,6 +340,50 @@ fn x264_args_scan(crf: u32, maxrate: u32, keyint: u32, preset: &str, scan: Scan)
 // ---------------------------------------------------------------- execution
 
 /// Lance ffmpeg avec `-progress pipe:1`, rapporte la progression (0.0..=1.0 d'apres `duration_s`) et gere l'annulation.
+/// Avancement detaille d'un encodage ffmpeg en cours (voir `set_progress_detail`).
+#[derive(Clone, Copy, Debug, PartialEq, Default)]
+pub struct FfmpegProgress {
+    /// position atteinte dans la source (s)
+    pub time_s: f64,
+    /// duree a traiter (s) ; 0 si inconnue
+    pub duration_s: f64,
+    /// images par seconde encodees
+    pub fps: f64,
+    /// vitesse par rapport au temps reel (2.0 : deux fois plus vite)
+    pub speed: f64,
+}
+
+impl FfmpegProgress {
+    /// Temps restant estime (s) d'apres la vitesse.
+    pub fn remaining_s(&self) -> Option<f64> {
+        (self.speed > 0.0 && self.duration_s > 0.0).then(|| (self.duration_s - self.time_s).max(0.0) / self.speed)
+    }
+}
+
+thread_local! {
+    static DETAIL: std::cell::RefCell<Option<Box<dyn FnMut(FfmpegProgress)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Recoit, dans le fil qui appelle ffmpeg, l'avancement detaille de chaque encodage (environ deux fois par seconde) ; `None`
+/// pour arreter. Propre au fil appelant : les autres fils (apercus, vignettes) ne sont pas concernes.
+pub fn set_progress_detail(f: Option<Box<dyn FnMut(FfmpegProgress)>>) {
+    DETAIL.with(|d| *d.borrow_mut() = f);
+}
+
+/// Analyse une ligne de `-progress` ; rend vrai a la fin d'un bloc (ligne `progress=`).
+fn parse_progress_line(line: &str, cur: &mut FfmpegProgress) -> bool {
+    let Some((k, v)) = line.split_once('=') else { return false };
+    let v = v.trim();
+    match k {
+        "out_time_us" | "out_time_ms" => { if let Ok(us) = v.parse::<i64>() { cur.time_s = us.max(0) as f64 / 1e6; } }
+        "fps" => { if let Ok(f) = v.parse::<f64>() { cur.fps = f; } }
+        "speed" => { if let Ok(x) = v.trim_end_matches('x').trim().parse::<f64>() { cur.speed = x; } }
+        "progress" => return true,
+        _ => {}
+    }
+    false
+}
+
 fn run_ffmpeg(
     tools: &Tools,
     args: &[String],
@@ -359,6 +403,7 @@ fn run_ffmpeg(
         s
     });
     let stdout = child.stdout.take().expect("stdout");
+    let mut cur = FfmpegProgress { duration_s: duration_s.max(0.0), ..Default::default() };
     for line in BufReader::new(stdout).lines() {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
@@ -367,10 +412,11 @@ fn run_ffmpeg(
             return Err(Error::Cancelled);
         }
         let Ok(line) = line else { break };
-        if let Some(us) = line.strip_prefix("out_time_us=") {
-            if let (Ok(us), true) = (us.trim().parse::<i64>(), duration_s > 0.0) {
-                progress((us.max(0) as f64 / 1e6 / duration_s).min(1.0));
-            }
+        if line.starts_with("out_time_us=") && duration_s > 0.0 {
+            if let Ok(us) = line["out_time_us=".len()..].trim().parse::<i64>() { progress((us.max(0) as f64 / 1e6 / duration_s).min(1.0)); }
+        }
+        if parse_progress_line(&line, &mut cur) {
+            DETAIL.with(|d| if let Some(f) = d.borrow_mut().as_mut() { f(cur) });
         }
     }
     let status = child.wait()?;

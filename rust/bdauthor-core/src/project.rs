@@ -830,7 +830,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     }
     let mut audio_langs: Vec<Vec<[u8; 3]>> = Vec::new();
 
-    // 1. videos
+    // 1. videos ; part de chaque video dans la progression : selon sa duree (une longue video avance moins vite qu'une courte)
+    let weights: Vec<f64> = vids.iter().map(|v| vfile(v).ok().and_then(|f| ffmpeg::probe(env.tools, &p(&f)).ok()).map_or(1.0, |i| i.duration_s.max(1.0))).collect();
+    let total_w: f64 = weights.iter().sum::<f64>().max(1e-6);
     for (i, v) in vids.iter().enumerate() {
         let name = vfile(v)?;
         let src = p(&name);
@@ -869,7 +871,8 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let m2ts = match cached {
             Some((b, _)) => { (env.log)(tr("   (already encoded: cache)")); b }
             None => {
-                let (lo, hi) = (i as f64 / n as f64 * 0.85, (i + 1) as f64 / n as f64 * 0.85);
+                let before: f64 = weights[..i].iter().sum();
+                let (lo, hi) = (before / total_w * 0.85, (before + weights[i]) / total_w * 0.85);
                 let progress = &mut *env.progress;
                 let (m, st) = crate::film::make_film_m2ts_tracks(env.tools, &src, &a_langs, &a_tracks, &eopts, None, &mut |f| progress(lo + (hi - lo) * f), env.cancel)?;
                 (env.log)(&trf!("   {}: {} frames, {} audio frames", st.cible, st.images, st.trames_audio));

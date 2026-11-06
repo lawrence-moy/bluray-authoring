@@ -106,8 +106,8 @@ pub struct AudioPlan {
     pub slots: Vec<u32>,
 }
 
-/// Range les pistes audio de chaque video dans l'ordre de la liste des langues. `None` : aucune video n'a de piste audio
-/// configuree (ancien fonctionnement). Chaque video a ses propres langues, dans n'importe quel ordre et avec des « trous » : le
+/// Pistes audio de chaque video, dans l'ordre de sa liste. `None` : aucune video n'a de piste audio
+/// configuree (ancien fonctionnement). Chaque video a ses propres langues, dans l'ordre qu'on lui donne : le
 /// numero d'une langue peut donc changer d'une video a l'autre. Les boutons « langue audio » retiennent la langue (et non un
 /// numero) ; chaque video choisit ensuite sa piste de cette langue au demarrage (voir `project`).
 /// Une video sans piste configuree compte pour sa premiere piste audio, dans la langue du projet `project_lang`.
@@ -140,11 +140,9 @@ pub fn plan_audio(languages: &[Language], project_lang: &str, videos: &[Vec<Audi
             let l = lang_of(v[0]).unwrap();
             out.push(VideoAudio { tracks: vec![], langs: vec![l.code_bytes()], ids: vec![l.id] });
         } else {
-            let mut sorted: Vec<(usize, AudioTrackCfg)> = tracks.iter().zip(v).map(|(t, id)| (slots.iter().position(|s| s == id).unwrap(), t.clone())).collect();
-            sorted.sort_by_key(|x| x.0);
-            let langs = sorted.iter().map(|(r, _)| lang_of(slots[*r]).unwrap().code_bytes()).collect();
-            let ids = sorted.iter().map(|(r, _)| slots[*r]).collect();
-            out.push(VideoAudio { tracks: sorted.into_iter().map(|x| x.1).collect(), langs, ids });
+            // l'ordre choisi dans la video est garde (piste 1 = la premiere de sa liste)
+            let langs = v.iter().map(|id| lang_of(*id).unwrap().code_bytes()).collect();
+            out.push(VideoAudio { tracks: tracks.clone(), langs, ids: v.clone() });
         }
     }
     Ok(Some(AudioPlan { videos: out, slots }))

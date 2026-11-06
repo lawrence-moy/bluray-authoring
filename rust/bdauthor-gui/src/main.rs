@@ -32,6 +32,8 @@ use std::sync::Arc;
 enum Msg {
     Log(String),
     Progress(f64),
+    /// avancement de l'encodage ffmpeg en cours
+    Detail(bdauthor_core::ffmpeg::FfmpegProgress),
     /// (succes, resume)
     Done(Result<(bool, String), String>),
 }
@@ -240,6 +242,9 @@ struct App {
     show_about: bool,
     /// fenetre « Generer le disque » (journal de construction)
     show_build: bool,
+    /// construction : avancement detaille de ffmpeg et heure de depart (temps ecoule, fin estimee)
+    ffmpeg_detail: Option<bdauthor_core::ffmpeg::FfmpegProgress>,
+    build_t0: Option<std::time::Instant>,
     recovery_checked: bool,
     /// fenetre d'apercu du rendu d'une piste de sous-titres
     sub_preview: Option<subs_ui::SubPreview>,
@@ -333,7 +338,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -498,20 +503,27 @@ impl App {
         };
         self.log.clear();
         self.progress = 0.0;
+        self.ffmpeg_detail = None;
+        self.build_t0 = Some(std::time::Instant::now());
         self.cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
         self.rx = Some(rx);
         let (cancel, ctx) = (self.cancel.clone(), ctx.clone());
         std::thread::spawn(move || {
+            // avancement detaille de chaque encodage ffmpeg de ce fil
+            let (tx2, ctx2) = (tx.clone(), ctx.clone());
+            bdauthor_core::ffmpeg::set_progress_detail(Some(Box::new(move |d| { let _ = tx2.send(Msg::Detail(d)); ctx2.request_repaint(); })));
             let send = |m: Msg| {
                 let _ = tx.send(m);
                 ctx.request_repaint();
             };
+            // une seule barre pour tout : disque puis image ISO (l'image et sa verification : les derniers 8 %)
+            let stage = std::cell::Cell::new((0.0_f64, if iso_path.is_some() { 0.92 } else { 1.0 }));
             let run = || -> Result<(bool, String), String> {
                 let tools = Tools::locate().map_err(|e| e.to_string())?;
                 let renderer = FontRenderer::new()?;
                 let mut log = |m: &str| send(Msg::Log(m.to_string()));
-                let mut prog = |f: f64| send(Msg::Progress(f));
+                let mut prog = |f: f64| { let (a, b) = stage.get(); send(Msg::Progress(a + b * f)) };
                 let mut env = BuildEnv { tools: &tools, renderer: &renderer, cancel: &cancel, log: &mut log, progress: &mut prog };
                 let built = build_project(&project, &out, &mut env).map_err(|e| e.to_string());
                 // image seule : le dossier de construction temporaire ne doit pas rester apres un echec
@@ -520,6 +532,7 @@ impl App {
                 let mut s = trf!("{} video(s), {} menu page(s), format {}x{} at {} fps, {} MB of stream.\n", info.videos, info.main_pages, info.format.0, info.format.1, info.format.2, format!("{:.1}", info.total_stream_bytes as f64 / 1e6));
                 if iso_cfg.keep != IsoKeep::Iso { s += &trf!("Disc written to {}\n", out.display()); }
                 if let Some(iso) = &iso_path {
+                    stage.set((0.92, 0.08));
                     let r = finish_build(&out, iso, &iso_cfg, &title, &cancel, env.log, env.progress).map_err(|e| e.to_string());
                     if r.is_err() && iso_cfg.keep == IsoKeep::Iso { let _ = std::fs::remove_dir_all(&out); }
                     s += &r.map_err(|e| trf!("ISO image: {}", e))?;
@@ -535,7 +548,9 @@ impl App {
                 s += if info.report.ok() { tr("Verification: no errors.") } else { tr("Verification: ERRORS detected.") };
                 Ok((info.report.ok(), s))
             };
-            send(Msg::Done(run()));
+            let r = run();
+            bdauthor_core::ffmpeg::set_progress_detail(None);
+            send(Msg::Done(r));
         });
     }
 
@@ -546,7 +561,9 @@ impl App {
                 match m {
                     Msg::Log(l) => self.log.push(l),
                     Msg::Progress(p) => self.progress = p as f32,
+                    Msg::Detail(d) => self.ffmpeg_detail = Some(d),
                     Msg::Done(r) => {
+                        self.ffmpeg_detail = None;
                         self.result = Some(match r {
                             Ok(x) => x,
                             Err(e) => (false, if e.contains("annulee") { tr("Build cancelled.").to_string() } else { trf!("Failed: {}", e) }),
@@ -931,15 +948,33 @@ impl eframe::App for App {
             let can_build = !self.model.videos.is_empty();
             {
                 let (progress, result, log) = (self.progress, &self.result, &self.log);
+                let (detail, t0) = (self.ffmpeg_detail, self.build_t0);
                 os_window(ctx, "generation_disque", tr("Build the disc"), [760.0, 520.0], &mut open, &mut |ui| {
                     ui.horizontal(|ui| {
                         if busy {
                             if ui.button(tr("Cancel")).clicked() { cancel_req = true; }
-                            ui.add(egui::ProgressBar::new(progress).show_percentage().desired_width(300.0));
+                            ui.add(egui::ProgressBar::new(progress).text(format!("{:.1} %", progress * 100.0)).desired_width(360.0));
                         } else if ui.add_enabled(can_build, egui::Button::new(tr("Build the disc…"))).clicked() {
                             start = true;
                         }
                     });
+                    if busy {
+                        // etape en cours (derniere ligne du journal), temps ecoule et fin estimee
+                        if let Some(step) = log.iter().rev().find(|l| !l.trim().is_empty()) { ui.label(egui::RichText::new(step.trim()).strong()); }
+                        if let Some(t0) = t0 {
+                            let el = t0.elapsed().as_secs_f64();
+                            let p = progress as f64;
+                            let eta = if p > 0.01 { trf!(" · end in about {}", duration_text(el * (1.0 - p) / p)) } else { String::new() };
+                            ui.label(trf!("Elapsed: {}{}", duration_text(el), eta));
+                        }
+                        // ffmpeg : position dans la video, images par seconde, vitesse, reste de cet encodage
+                        if let Some(d) = detail.filter(|d| d.duration_s > 0.0) {
+                            let left = d.remaining_s().map(|r| trf!(" · this encoding: about {} left", duration_text(r))).unwrap_or_default();
+                            ui.label(egui::RichText::new(trf!("ffmpeg: {} / {} · {} frames/s · speed ×{}{}", duration_text(d.time_s), duration_text(d.duration_s), format!("{:.0}", d.fps), format!("{:.2}", d.speed), left)).monospace());
+                            ui.add(egui::ProgressBar::new((d.time_s / d.duration_s).clamp(0.0, 1.0) as f32).desired_width(360.0).desired_height(6.0));
+                        }
+                        ui.ctx().request_repaint_after(std::time::Duration::from_millis(500));
+                    }
                     if let Some((ok, text)) = result {
                         let col = if *ok { egui::Color32::from_rgb(90, 200, 120) } else { egui::Color32::from_rgb(230, 100, 90) };
                         ui.colored_label(col, text);

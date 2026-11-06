@@ -173,6 +173,8 @@ pub struct Paint {
     pub flip: bool,
     pub style: LineStyle,
     pub arrow: LineArrow,
+    /// opacite en pourcentage (100 : opaque, 0 : invisible), pour le remplissage et le trait
+    pub opacity: u8,
 }
 
 impl Paint {
@@ -180,8 +182,10 @@ impl Paint {
     pub fn new(shape: ShapeKind) -> Paint {
         let white = Some([255, 255, 255]);
         let line = shape == ShapeKind::Line;
-        Paint { fill: if line { None } else { white }, stroke: if line { white } else { None }, stroke_px: 4, radius: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None }
+        Paint { fill: if line { None } else { white }, stroke: if line { white } else { None }, stroke_px: 4, radius: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None, opacity: 100 }
     }
+    /// Opacite entre 0 et 1.
+    pub fn alpha(&self) -> f32 { self.opacity.min(100) as f32 / 100.0 }
     /// Meme dessin a l'echelle `k` (epaisseur de trait d'au moins 1 px).
     pub fn scaled(&self, k: f64) -> Paint {
         let r = |v: i32| if v <= 0 { 0 } else { ((v as f64 * k).round() as i32).max(1) };
@@ -193,6 +197,7 @@ impl Paint {
         if let Some(c) = self.fill { put("remplissage", hex(c)); }
         if let Some(c) = self.stroke { put("bordure", hex(c)); put("epaisseur", Value::Num(self.stroke_px as f64)); }
         if self.radius > 0 && shape == ShapeKind::Rect { put("arrondi", Value::Num(self.radius as f64)); }
+        if self.opacity < 100 { put("opacite", Value::Num(self.opacity as f64)); }
         if shape == ShapeKind::Line {
             if self.flip { put("retourne", Value::Bool(true)); }
             if self.style != LineStyle::Solid { put("trait", Value::Str(self.style.name().into())); }
@@ -212,6 +217,7 @@ impl Paint {
             flip: e.get("retourne").and_then(Value::as_bool).unwrap_or(false),
             style: e.get("trait").and_then(Value::as_str).and_then(LineStyle::from_name).unwrap_or(LineStyle::Solid),
             arrow: e.get("fleche").and_then(Value::as_str).and_then(LineArrow::from_name).unwrap_or(LineArrow::None),
+            opacity: e.get("opacite").and_then(Value::as_f64).map_or(100, |x| x.round().clamp(0.0, 100.0) as u8),
         })
     }
 }
@@ -584,6 +590,24 @@ impl PageDesign {
         out
     }
 
+    /// Textes non cliquables poses sur un bouton : (texte, bouton). Pas une erreur (le texte fait partie du fond), mais l'image du
+    /// bouton est dessinee par-dessus et peut le cacher ; l'editeur les signale en orange.
+    pub fn covered_texts(&self, page: usize, pages: usize) -> Vec<(usize, usize)> {
+        let button = |i: &Item| match &i.kind {
+            Kind::Slot { .. } => true,
+            Kind::Nav { action, .. } => nav_applicable(*action, page, pages),
+            _ => i.link().is_some(),
+        };
+        let mut out = Vec::new();
+        for (a, ia) in self.items.iter().enumerate() {
+            if !matches!(ia.kind, Kind::Text { .. }) || button(ia) { continue; }
+            for (b, ib) in self.items.iter().enumerate() {
+                if a != b && button(ib) && ia.x < ib.x + ib.w && ib.x < ia.x + ia.w && ia.y < ib.y + ib.h && ib.y < ia.y + ia.h { out.push((a, b)); }
+            }
+        }
+        out
+    }
+
     /// Comme `validate`, sans les chevauchements (l'editeur les montre par des contours sur l'apercu : voir `overlapping`).
     pub fn validate_items(&self, page: usize, pages: usize, n_videos: usize) -> Vec<Problem> {
         let mut p = Vec::new();
@@ -592,7 +616,9 @@ impl PageDesign {
         if all > MAX_PER_PAGE { p.push(err(trf!("{} thumbnails: {} at most per page.", all, MAX_PER_PAGE))); }
         let mut slot_no = 0;
         for (k, it) in self.items.iter().enumerate() {
-            if it.w < 8 || it.h < 8 { p.push(err(trf!("Item {} too small.", k + 1))); }
+            // une ligne peut etre parfaitement horizontale ou verticale (un cote nul)
+            let line = matches!(it.kind, Kind::Shape { shape: ShapeKind::Line, .. });
+            if if line { it.w.max(it.h) < 8 || it.w < 0 || it.h < 0 } else { it.w < 8 || it.h < 8 } { p.push(err(trf!("Item {} too small.", k + 1))); }
             if it.x < 0 || it.y < 0 || it.x + it.w > PLANE.0 || it.y + it.h > PLANE.1 {
                 let m = trf!("Item {} extends beyond the screen.", k + 1);
                 p.push(if it.is_button() { err(m) } else { warn(m) });

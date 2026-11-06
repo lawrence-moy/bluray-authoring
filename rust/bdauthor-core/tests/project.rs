@@ -737,8 +737,8 @@ fn several_audio_tracks_per_video() {
         let clpi = bdauthor_core::clpi::Clpi::parse(&std::fs::read(root.join(format!("CLIPINF/{v:05}.clpi"))).unwrap()).unwrap();
         clpi.program.programs[0].streams.iter().filter(|s| s.coding_type == 0x81).map(|s| (s.pid, String::from_utf8_lossy(&s.attrs[1..4]).into_owned())).collect()
     };
-    // video a : francais d'abord (piste 1), anglais ensuite (piste 2), malgre l'ordre du projet
-    assert_eq!(audio(0), vec![(0x1100, "fra".to_string()), (0x1101, "eng".to_string())]);
+    // video a : l'ordre choisi dans la video est garde : anglais (piste 1) puis francais (piste 2)
+    assert_eq!(audio(0), vec![(0x1100, "eng".to_string()), (0x1101, "fra".to_string())]);
     // video b : doublage francais seul, meme numero que dans la video a ; video c (sans reglage) : sa premiere piste, en francais
     assert_eq!(audio(1), vec![(0x1100, "fra".to_string())]);
     assert_eq!(audio(2), vec![(0x1100, "fra".to_string())]);
@@ -748,7 +748,7 @@ fn several_audio_tracks_per_video() {
     let mo = bdauthor_core::mobj::MovieObjectBdmv::parse(&std::fs::read(root.join("MovieObject.bdmv")).unwrap()).unwrap();
     let text = |o: usize| mo.objects[o].commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; ");
     let (s1, s2) = (bdauthor_core::mobj::set_audio_stream(0).text(), bdauthor_core::mobj::set_audio_stream(1).text());
-    assert_eq!(text(1), format!("CMP_EQ r2, 1 ; {s1} ; CMP_EQ r2, 2 ; {s2} ; PLAY_PL 0 ; JUMP_TITLE r1"));
+    assert_eq!(text(1), format!("CMP_EQ r2, 2 ; {s1} ; CMP_EQ r2, 1 ; {s2} ; PLAY_PL 0 ; JUMP_TITLE r1"));
     assert_eq!(text(4), "PLAY_PL 3 ; JUMP_TITLE r1");
     // le bouton « English » retient la langue 2 (et ne fixe plus de numero de piste)
     let mut cmds = Vec::new();
@@ -769,14 +769,14 @@ fn several_audio_tracks_per_video() {
         let data = std::fs::read(root.join(format!("STREAM/{clip}.m2ts"))).unwrap();
         bdauthor_core::m2ts::reassemble(&data, pid).map(|v| v.len()).unwrap_or(0)
     };
-    assert!(count("00000", 0x1100) > count("00000", 0x1101) && count("00000", 0x1101) > 0, "{} {}", count("00000", 0x1100), count("00000", 0x1101));
+    assert!(count("00000", 0x1101) > count("00000", 0x1100) && count("00000", 0x1100) > 0, "{} {}", count("00000", 0x1100), count("00000", 0x1101));
     assert_eq!(count("00001", 0x1101), 0);
-    // playlist de a : deux entrees audio (fra puis eng)
+    // playlist de a : deux entrees audio (eng puis fra)
     let mpls = std::fs::read(root.join("PLAYLIST/00000.mpls")).unwrap();
     let entry = |pid: u8, l: &[u8; 3]| { let mut n = vec![9u8, 1, 0x11, pid, 0, 0, 0, 0, 0, 0, 5, 0x81]; n.push(0); n.extend_from_slice(l); n };
     let find = |pid: u8, l: &[u8; 3]| { let n = entry(pid, l); mpls.windows(n.len()).position(|w| w[..12] == n[..12] && w[13..] == n[13..]) };
-    let (fr, en) = (find(0x00, b"fra"), find(0x01, b"eng"));
-    assert!(fr.is_some() && en.is_some() && fr < en, "{fr:?} {en:?}");
+    let (en, fr) = (find(0x00, b"eng"), find(0x01, b"fra"));
+    assert!(fr.is_some() && en.is_some() && en < fr, "{fr:?} {en:?}");
     // ffprobe voit 2 flux audio dans le clip de a
     let pr = Command::new(&tools.ffprobe).args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name,id", "-of", "csv=p=0"]).arg(root.join("STREAM/00000.m2ts")).output().unwrap();
     let ids: std::collections::BTreeSet<String> = String::from_utf8_lossy(&pr.stdout).lines().filter(|l| l.contains("ac3")).map(String::from).collect();

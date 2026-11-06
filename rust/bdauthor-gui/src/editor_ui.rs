@@ -2,7 +2,7 @@
 use crate::i18n::{tr, trf};
 use crate::App;
 use bdauthor_core::design::{Align, Item, Kind, NavAction, NavLink, PageDesign, SlotReturn, Target};
-use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, free_spot, handle_edges, hit_test_where, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, snap_item_rect, snap_lines, video_title, Handle, PageInfo, PageRef};
+use bdauthor_core::editor::{sim_buttons, align_items, add_layer, ItemAlign, dragged_rect, dragged_rect_ratio, free_spot, handle_edges, hit_test_where, line_ends, line_handles, move_line_end, insert_item, list_pages, move_item, move_layer, remove_layer, set_rect, snap_item_rect, snap_lines, video_title, Handle, PageInfo, PageRef};
 use bdauthor_core::ffmpeg::{extract_thumbnail_rgba, probe, Tools};
 use bdauthor_core::palette::RgbaImage;
 use bdauthor_render::{cover_resize, PreviewSlot};
@@ -156,8 +156,8 @@ fn palette() -> Vec<(NewWidget, &'static str, String)> {
         (NewWidget::VideoFrame, "📷", tr("Video image (a frame of a project video, chosen by its time)").to_string()),
         (NewWidget::VideoSlot, "🎬", tr("Video thumbnail (plays from the start)").to_string()),
         (NewWidget::ChapterSlot, "🎞", tr("Chapter thumbnail (plays from a time)").to_string()),
-        (NewWidget::Rect, "▭", tr("Rectangle (fill, border, rounded corners)").to_string()),
-        (NewWidget::Line, "╱", tr("Line (solid, dashed, arrowheads)").to_string()),
+        (NewWidget::Rect, "", tr("Rectangle (fill, border, rounded corners)").to_string()),
+        (NewWidget::Line, "", tr("Line (solid, dashed, arrowheads)").to_string()),
     ];
     // un seul bouton de navigation : son action (Aller a, Precedent, Suivant, Tout lire) se choisit dans l'inspecteur
     v.push((NewWidget::Nav(NavAction::Goto), "🔘", tr("Navigation button (destination chosen in the inspector: page, video, Previous, Next, Play all, subtitles…)").to_string()));
@@ -682,6 +682,18 @@ impl App {
                 for (w, icon, name) in &palette {
                     let b = ui.add(egui::Button::new(egui::RichText::new(*icon).size(27.0)).min_size(vec2(48.0, 48.0)).sense(Sense::click_and_drag()))
                         .on_hover_text(trf!("{}\nDrag onto the page to place it, or click to add it", name));
+                    // rectangle et ligne : icones dessinees (aucun caractere sur de les afficher dans toutes les polices)
+                    if matches!(w, NewWidget::Rect | NewWidget::Line) {
+                        let ink = ui.visuals().widgets.style(&b).fg_stroke.color;
+                        let ir = b.rect.shrink(12.0);
+                        if *w == NewWidget::Rect {
+                            let rr = Rect::from_center_size(ir.center(), vec2(ir.width(), ir.height() * 0.72));
+                            ui.painter().rect_filled(rr, 3.0, ink.gamma_multiply(0.35));
+                            ui.painter().rect_stroke(rr, 3.0, Stroke::new(2.0_f32, ink));
+                        } else {
+                            ui.painter().line_segment([ir.left_bottom(), ir.right_top()], Stroke::new(3.0_f32, ink));
+                        }
+                    }
                     if b.drag_started() { egui::DragAndDrop::set_payload(ui.ctx(), *w); }
                     if b.dragged() { ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing); }
                     if b.clicked() {
@@ -770,6 +782,11 @@ impl App {
         // elements qui se chevauchent : contours rouges clignotants sur l'apercu (plus de texte d'avertissement)
         let overlapping: Vec<usize> = match info.design(&self.model.designs).filter(|_| custom) {
             Some(d) => { let mut v: Vec<usize> = d.overlapping(info.page, info.pages).into_iter().flat_map(|(a, b)| [a, b]).collect(); v.sort_unstable(); v.dedup(); v }
+            None => vec![],
+        };
+        // texte pose sur un bouton : contours orange clignotants (l'image du bouton peut cacher le texte)
+        let covered: Vec<usize> = match info.design(&self.model.designs).filter(|_| custom) {
+            Some(d) => { let mut v: Vec<usize> = d.covered_texts(info.page, info.pages).into_iter().flat_map(|(a, b)| [a, b]).filter(|i| !overlapping.contains(i)).collect(); v.sort_unstable(); v.dedup(); v }
             None => vec![],
         };
         // problemes de la page (destinations...) : au-dessus de l'apercu, toujours visibles
@@ -933,9 +950,23 @@ impl App {
                         }
                         guides = (gx, gy);
                     }
+                    // ligne : une extremite tiree, l'autre fixe (aimantee sur les reperes et sur l'autre bout ; Maj : pas de 45 degres)
+                    let line_end = line_handles(&orig).filter(|_| d.handle != Handle::Body).map(|_| {
+                        let others = snapshot.iter().enumerate().filter(|(j, _)| *j != idx && can(*j)).map(|(_, it)| it);
+                        let (xs, ys) = snap_lines(others);
+                        let lines = (self.guide_snap && !ctx.input(|i| i.modifiers.alt)).then_some((&xs[..], &ys[..], (6.0 / k).round().max(1.0) as i32));
+                        let (m, gx, gy) = move_line_end(&orig, d.handle, px - d.start.0, py - d.start.1, grid, lines, ctx.input(|i| i.modifiers.shift));
+                        guides = (gx, gy);
+                        m
+                    });
                     let (gdx, gdy) = (r.0 - orig.x, r.1 - orig.y);
                     if let Some(dd) = info.design_mut(&mut self.model.designs) {
-                        if let Some(it) = dd.items.get_mut(idx) {
+                        if let (Some(it), Some(m)) = (dd.items.get_mut(idx), &line_end) {
+                            (it.x, it.y, it.w, it.h) = (m.x, m.y, m.w, m.h);
+                            it.kind = m.kind.clone();
+                            self.dirty = true;
+                            self.edit_gen += 1;
+                        } else if let Some(it) = dd.items.get_mut(idx) {
                             set_rect(it, &orig, r);
                             self.dirty = true;
                             self.edit_gen += 1;
@@ -1062,6 +1093,11 @@ impl App {
                     } else if selected && self.preview_pulse > 0 {
                         // animation en cours dans l'apercu : ni voile ni cadre epais (ils la cacheraient), un contour fin seulement
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, Color32::from_white_alpha(140)));
+                    } else if let (true, Some((a, z))) = (selected, line_ends(it)) {
+                        // ligne selectionnee : son trait en surbrillance (pas de cadre)
+                        let (a, z) = (to_screen(a.0 as f32, a.1 as f32), to_screen(z.0 as f32, z.1 as f32));
+                        painter.line_segment([a, z], Stroke::new(4.0_f32, Color32::from_black_alpha(150)));
+                        painter.line_segment([a, z], Stroke::new(1.5_f32, Color32::WHITE));
                     } else if selected {
                         painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 28));
                         painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
@@ -1073,6 +1109,12 @@ impl App {
                         if (ctx.input(|inp| inp.time) * 2.5) as i64 % 2 == 0 {
                             painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(230, 40, 40, 40));
                             painter.rect_stroke(r.shrink(1.5), 0.0, Stroke::new(3.5_f32, Color32::from_rgb(235, 40, 40)));
+                        }
+                        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+                    } else if covered.contains(&i) {
+                        // texte sous / sur un bouton : contour orange qui clignote
+                        if (ctx.input(|inp| inp.time) * 2.5) as i64 % 2 == 0 {
+                            painter.rect_stroke(r.shrink(1.5), 0.0, Stroke::new(3.0_f32, Color32::from_rgb(245, 160, 40)));
                         }
                         ctx.request_repaint_after(std::time::Duration::from_millis(200));
                     }
@@ -1088,7 +1130,14 @@ impl App {
                         let shown = match f.video { Some(v) => format!("V{} @{}", v + 1, mmss(f.at)), None => "?".to_string() };
                         painter.text(r.min + vec2(3.0, 2.0), egui::Align2::LEFT_TOP, shown, egui::FontId::proportional(14.0), col);
                     }
-                    if selected && !multi {
+                    if let (true, false, Some((a, z))) = (selected, multi, line_ends(it)) {
+                        // ligne : deux poignees, une a chaque extremite (comme dans l'editeur de jaquette)
+                        for p in [a, z] {
+                            let c = to_screen(p.0 as f32, p.1 as f32);
+                            painter.rect_filled(Rect::from_center_size(c, vec2(10.0, 10.0)), 1.0, Color32::WHITE);
+                            painter.rect_stroke(Rect::from_center_size(c, vec2(10.0, 10.0)), 1.0, Stroke::new(1.0_f32, Color32::BLACK));
+                        }
+                    } else if selected && !multi {
                         // poignees rentrees dans le plan si l'element touche un bord (meme calcul que la detection)
                         let (hl, ht, hr, hb) = handle_edges(it, 6.0 / k);
                         let (a, z) = (to_screen(hl, ht), to_screen(hr, hb));
@@ -1128,7 +1177,9 @@ impl App {
                 let (px, py) = to_plane(pos);
                 // en selection multiple : pas de poignees de redimensionnement
                 let prio = if self.extra_sel.is_empty() { self.sel_item } else { None };
+                let line_sel = prio.and_then(|i| snapshot.get(i)).and_then(line_handles).is_some();
                 match hit_test_where(&snapshot, px, py, prio, 12.0 / k, &can) {
+                    Some((i, h)) if h != Handle::Body && line_sel && Some(i) == prio => ctx.set_cursor_icon(egui::CursorIcon::Crosshair),
                     Some((_, Handle::TopLeft)) | Some((_, Handle::BottomRight)) => ctx.set_cursor_icon(egui::CursorIcon::ResizeNwSe),
                     Some((_, Handle::TopRight)) | Some((_, Handle::BottomLeft)) => ctx.set_cursor_icon(egui::CursorIcon::ResizeNeSw),
                     Some((_, Handle::Left)) | Some((_, Handle::Right)) => ctx.set_cursor_icon(egui::CursorIcon::ResizeHorizontal),
@@ -1631,6 +1682,10 @@ impl App {
                             });
                         }
                     }
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Opacity:"));
+                        changed |= ui.add(egui::Slider::new(&mut paint.opacity, 0..=100).suffix(" %")).on_hover_text(tr("100 %: opaque; lower values let the background show through")).changed();
+                    });
                     crate::help(ui, tr("Same drawing as in the cover editor. Sizes given for a 1920 × 1080 menu."));
                 }
             }

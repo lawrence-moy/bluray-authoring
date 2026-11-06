@@ -77,6 +77,12 @@ pub fn hit_test(items: &[Item], x: f32, y: f32, selected: Option<usize>, r: f32)
 pub fn hit_test_where(items: &[Item], x: f32, y: f32, selected: Option<usize>, r: f32, usable: &dyn Fn(usize) -> bool) -> Option<(usize, Handle)> {
     if let Some(s) = selected.filter(|&s| usable(s)).and_then(|s| items.get(s).map(|it| (s, it))) {
         let (i, it) = s;
+        // ligne : seulement ses deux extremites, comme dans l'editeur de jaquette
+        if let (Some((a, z)), Some((ha, hz))) = (line_ends(it), line_handles(it)) {
+            for (p, h) in [(a, ha), (z, hz)] {
+                if (x - p.0 as f32).abs() <= r && (y - p.1 as f32).abs() <= r { return Some((i, h)); }
+            }
+        } else {
         let (l, t, rr, b) = handle_edges(it, r * 0.5);
         for (hx, hy, h) in [(l, t, Handle::TopLeft), (rr, t, Handle::TopRight), (l, b, Handle::BottomLeft), (rr, b, Handle::BottomRight)] {
             if (x - hx).abs() <= r && (y - hy).abs() <= r { return Some((i, h)); }
@@ -87,12 +93,83 @@ pub fn hit_test_where(items: &[Item], x: f32, y: f32, selected: Option<usize>, r
         if in_y && (x - rr).abs() <= r * 0.7 { return Some((i, Handle::Right)); }
         if in_x && (y - t).abs() <= r * 0.7 { return Some((i, Handle::Top)); }
         if in_x && (y - b).abs() <= r * 0.7 { return Some((i, Handle::Bottom)); }
+        }
     }
-    // un element tres fin (ligne horizontale ou verticale) reste attrapable : zone elargie a 12 unites au moins
+    // une ligne s'attrape pres de son trait ; un element tres fin reste attrapable : zone elargie a 12 unites au moins
     items.iter().enumerate().rev().find(|(i, it)| {
+        if let (Some((a, z)), Kind::Shape { paint, .. }) = (line_ends(it), &it.kind) {
+            return usable(*i) && seg_dist((x, y), a, z) <= (paint.stroke_px as f32 / 2.0 + 6.0).max(r * 0.7);
+        }
         let (px, py) = (((12 - it.w).max(0) as f32) / 2.0, ((12 - it.h).max(0) as f32) / 2.0);
         usable(*i) && x >= it.x as f32 - px && x < (it.x + it.w) as f32 + px && y >= it.y as f32 - py && y < (it.y + it.h) as f32 + py
     }).map(|(i, _)| (i, Handle::Body))
+}
+
+/// Distance du point `p` au segment [a, z].
+fn seg_dist(p: (f32, f32), a: (i32, i32), z: (i32, i32)) -> f32 {
+    let (ax, ay, zx, zy) = (a.0 as f32, a.1 as f32, z.0 as f32, z.1 as f32);
+    let (dx, dy) = (zx - ax, zy - ay);
+    let l2 = dx * dx + dy * dy;
+    let t = if l2 > 0.0 { (((p.0 - ax) * dx + (p.1 - ay) * dy) / l2).clamp(0.0, 1.0) } else { 0.0 };
+    (p.0 - ax - t * dx).hypot(p.1 - ay - t * dy)
+}
+
+/// Extremites (debut, fin) d'une ligne, comme au rendu : le debut est en haut a gauche du cadre, ou en bas a gauche si elle est
+/// retournee. `None` pour tout autre element.
+pub fn line_ends(it: &Item) -> Option<((i32, i32), (i32, i32))> {
+    let Kind::Shape { shape: crate::cover::ShapeKind::Line, paint } = &it.kind else { return None };
+    Some(if paint.flip { ((it.x, it.y + it.h), (it.x + it.w, it.y)) } else { ((it.x, it.y), (it.x + it.w, it.y + it.h)) })
+}
+
+/// Poignees (coins du cadre) des deux extremites d'une ligne : (debut, fin).
+pub fn line_handles(it: &Item) -> Option<(Handle, Handle)> {
+    let Kind::Shape { shape: crate::cover::ShapeKind::Line, paint } = &it.kind else { return None };
+    Some(if paint.flip { (Handle::BottomLeft, Handle::TopRight) } else { (Handle::TopLeft, Handle::BottomRight) })
+}
+
+/// Deplace d'une ligne l'extremite tenue par `handle` (voir `line_handles`) de (dx, dy) depuis `orig` ; l'autre reste fixe.
+/// Les extremites peuvent se croiser : le cadre, le sens (`flip`) et les pointes de fleche suivent. `lines` : abscisses et
+/// ordonnees d'aimantation avec leur seuil (celles de l'autre extremite s'y ajoutent : ligne horizontale ou verticale exacte) ;
+/// `angle45` : direction par pas de 45 degres autour de l'extremite fixe. Rend la ligne et les lignes d'aimantation retenues.
+pub fn move_line_end(orig: &Item, handle: Handle, dx: f32, dy: f32, grid: i32, lines: Option<(&[i32], &[i32], i32)>, angle45: bool) -> (Item, Option<i32>, Option<i32>) {
+    let (Some((st, en)), Some((hs, he))) = (line_ends(orig), line_handles(orig)) else { return (orig.clone(), None, None) };
+    if handle != hs && handle != he { return (orig.clone(), None, None); }
+    let moving_start = handle == hs;
+    let (mv, fixed) = if moving_start { (st, en) } else { (en, st) };
+    let (mut tx, mut ty) = (mv.0 as f32 + dx, mv.1 as f32 + dy);
+    let (mut gx, mut gy) = (None, None);
+    let (nx, ny) = if angle45 {
+        let (ddx, ddy) = (tx - fixed.0 as f32, ty - fixed.1 as f32);
+        let step = std::f32::consts::FRAC_PI_4;
+        let ang = (ddy.atan2(ddx) / step).round() * step;
+        let len = ddx.hypot(ddy);
+        tx = fixed.0 as f32 + len * ang.cos();
+        ty = fixed.1 as f32 + len * ang.sin();
+        (tx.round() as i32, ty.round() as i32)
+    } else {
+        let (mut nx, mut ny) = (snap(tx, grid), snap(ty, grid));
+        if let Some((xs, ys, thr)) = lines {
+            let near = |v: i32, l: &mut dyn Iterator<Item = i32>| l.filter(|g| (g - v).abs() <= thr).min_by_key(|g| (g - v).abs());
+            if let Some(g) = near(tx.round() as i32, &mut xs.iter().copied().chain(std::iter::once(fixed.0))) { nx = g; gx = Some(g); }
+            if let Some(g) = near(ty.round() as i32, &mut ys.iter().copied().chain(std::iter::once(fixed.1))) { ny = g; gy = Some(g); }
+        }
+        (nx, ny)
+    };
+    let (nx, ny) = (nx.clamp(0, PLANE.0), ny.clamp(0, PLANE.1));
+    let mut it = orig.clone();
+    it.x = nx.min(fixed.0);
+    it.y = ny.min(fixed.1);
+    it.w = (nx - fixed.0).abs();
+    it.h = (ny - fixed.1).abs();
+    if let Kind::Shape { paint, .. } = &mut it.kind {
+        paint.flip = (nx - fixed.0) * (ny - fixed.1) < 0;
+        // la pointe de fleche reste a son extremite : le debut est le bout le plus a gauche (a abscisse egale, le plus haut)
+        let (fs, fe) = paint.arrow.flags();
+        let (m, f) = if moving_start { (fs, fe) } else { (fe, fs) };
+        let to_is_start = nx < fixed.0 || (nx == fixed.0 && ny <= fixed.1);
+        paint.arrow = if to_is_start { crate::cover::LineArrow::from_flags(m, f) } else { crate::cover::LineArrow::from_flags(f, m) };
+    }
+    (it, gx, gy)
 }
 
 fn snap(v: f32, grid: i32) -> i32 { if grid > 1 { ((v / grid as f32).round() as i32) * grid } else { v.round() as i32 } }

@@ -123,3 +123,24 @@ fn audio_peaks_follow_the_loudness_and_playback_starts() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn ffmpeg_reports_detailed_progress() {
+    use bdauthor_core::ffmpeg::{make_still_ts, set_progress_detail, EncodeOpts, FfmpegProgress};
+    let Some((tools, _src, dir)) = source("detail") else { return };
+    let img = dir.join("i.png");
+    assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=320x180:d=1", "-frames:v", "1"]).arg(&img).status().unwrap().success());
+    let got = std::sync::Arc::new(std::sync::Mutex::new(Vec::<FfmpegProgress>::new()));
+    let g = got.clone();
+    set_progress_detail(Some(Box::new(move |d| g.lock().unwrap().push(d))));
+    let opts = EncodeOpts { preset: "ultrafast".into(), ..Default::default() };
+    make_still_ts(&tools, &img, &dir.join("o.ts"), 3.0, (1920, 1080), "25", &opts, &std::sync::atomic::AtomicBool::new(false)).unwrap();
+    set_progress_detail(None);
+    let v = got.lock().unwrap().clone();
+    assert!(!v.is_empty());
+    let last = v.last().unwrap();
+    assert!((last.duration_s - 3.0).abs() < 1e-9 && last.time_s > 2.0, "{last:?}");
+    // un autre fil n'est pas concerne
+    std::thread::spawn(move || make_still_ts(&tools, &img, &dir.join("p.ts"), 1.0, (320, 180), "25", &EncodeOpts { preset: "ultrafast".into(), ..Default::default() }, &std::sync::atomic::AtomicBool::new(false)).unwrap()).join().unwrap();
+    assert_eq!(got.lock().unwrap().len(), v.len());
+}
