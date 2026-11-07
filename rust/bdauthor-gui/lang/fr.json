@@ -1114,6 +1114,6 @@
   "Wheel: zoom · wheel click, right button held (or Space + drag): pan the view": "Molette : zoom · clic molette, clic droit maintenu (ou Espace + glisser) : déplacer la vue",
   "Track style — {}": "Style de la piste — {}",
   "Dock in the preview": "Rattacher à l'aperçu",
-  "Puts these settings back at the bottom of the preview window": "Remet ces réglages en bas de la fenêtre d'aperçu",
-  "Color around the sheet in the editor (not printed)": "Couleur autour de la feuille dans l'éditeur (non imprimée)"
+  "Color around the sheet in the editor (not printed)": "Couleur autour de la feuille dans l'éditeur (non imprimée)",
+  "Puts these settings back on the right of the preview window": "Remet ces réglages à droite de la fenêtre d'aperçu"
 }

@@ -38,8 +38,9 @@ enum Msg {
     Done(Result<(bool, String), String>),
 }
 
-/// Couleurs par defaut de l'editeur de jaquette : fond tres sombre, reperes blancs semi-transparents.
-const COVER_BG: [u8; 4] = [18, 18, 18, 255];
+/// Couleurs par defaut de l'editeur de jaquette : fond gris moyen (la feuille, souvent sombre, s'en detache), reperes blancs
+/// semi-transparents.
+const COVER_BG: [u8; 4] = [96, 96, 96, 255];
 const COVER_GUIDE: [u8; 4] = [255, 255, 255, 120];
 
 /// Reglages de l'application, enregistres dans un petit fichier texte (cle=valeur) du dossier de configuration de l'utilisateur.
@@ -100,6 +101,19 @@ pub(crate) fn os_window(ctx: &egui::Context, id: &str, title: &str, size: [f32; 
 /// Comme `os_window`, avec en plus une zone du bas dont la hauteur se regle en glissant son bord (`bottom` : hauteur initiale ; `add` est
 /// alors appele deux fois, d'abord pour la zone du bas (`true`), puis pour le contenu principal (`false`), qui n'a pas de defilement propre).
 pub(crate) fn os_window_panels(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2], open: &mut bool, bottom: Option<f32>, add: &mut dyn FnMut(&mut egui::Ui, bool)) {
+    os_window_docked(ctx, id, title, size, open, bottom.map(Dock::Bottom), add)
+}
+
+/// Place d'une zone annexe d'une fenetre : en bas (hauteur) ou a droite (largeur), ajustable en glissant son bord.
+#[derive(Clone, Copy)]
+pub(crate) enum Dock {
+    Bottom(f32),
+    Right(f32),
+}
+
+/// Comme `os_window_panels`, avec la zone annexe (`add(ui, true)`) en bas ou a droite.
+pub(crate) fn os_window_docked(ctx: &egui::Context, id: &str, title: &str, size: [f32; 2], open: &mut bool, dock: Option<Dock>, add: &mut dyn FnMut(&mut egui::Ui, bool)) {
+    let bottom = dock;
     let builder = egui::ViewportBuilder::default().with_title(title).with_inner_size(size).with_min_inner_size([320.0, 200.0]);
     ctx.show_viewport_immediate(egui::ViewportId::from_hash_of(id), builder, |ctx, class| {
         if class == egui::ViewportClass::Embedded {
@@ -111,8 +125,14 @@ pub(crate) fn os_window_panels(ctx: &egui::Context, id: &str, title: &str, size:
             if !still { *open = false; }
         } else {
             match bottom {
-                Some(h) => {
+                Some(Dock::Bottom(h)) => {
                     egui::TopBottomPanel::bottom(egui::Id::new((id, "bas"))).resizable(true).default_height(h).height_range(60.0..=900.0).show(ctx, |ui| {
+                        egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| add(ui, true));
+                    });
+                    egui::CentralPanel::default().show(ctx, |ui| add(ui, false));
+                }
+                Some(Dock::Right(w)) => {
+                    egui::SidePanel::right(egui::Id::new((id, "droite"))).resizable(true).default_width(w).width_range(220.0..=900.0).show(ctx, |ui| {
                         egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| add(ui, true));
                     });
                     egui::CentralPanel::default().show(ctx, |ui| add(ui, false));
@@ -168,7 +188,8 @@ impl Config {
                     Some(("autosave", v)) => c.autosave = v.trim() != "false",
                     Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
                     Some(("lang", v)) => c.lang = v.trim().to_string(),
-                    Some(("cover_bg", v)) => c.cover_bg = parse_rgba(v).unwrap_or(COVER_BG),
+                    // l'ancien fond par defaut (noir, ecrit lors d'un enregistrement des reglages) laisse place au nouveau (gris)
+                    Some(("cover_bg", v)) => c.cover_bg = parse_rgba(v).filter(|c| *c != [18, 18, 18, 255]).unwrap_or(COVER_BG),
                     Some(("cover_guide", v)) => c.cover_guide = parse_rgba(v).unwrap_or(COVER_GUIDE),
                     _ => {}
                 }

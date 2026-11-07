@@ -513,14 +513,14 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         SubSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
     };
     let mut open = true;
-    // style de la piste : en bas de l'apercu (zone ajustable en glissant son bord superieur) ou dans sa propre fenetre
+    // style de la piste : a droite de l'apercu ou dans sa propre fenetre
     let mut detach = pv.style_detached;
     if detach {
         let mut keep = true;
         crate::os_window(ctx, "style_piste_sous_titres", &trf!("Track style — {}", name), [520.0, 560.0], &mut keep, &mut |ui| {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(tr("Track style")).strong());
-                if ui.button(tr("Dock in the preview")).on_hover_text(tr("Puts these settings back at the bottom of the preview window")).clicked() { detach = false; }
+                if ui.button(tr("Dock in the preview")).on_hover_text(tr("Puts these settings back on the right of the preview window")).clicked() { detach = false; }
             });
             ui.separator();
             style_ui(ui, &mut t.style, &mut changed);
@@ -528,7 +528,8 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         if !keep { detach = false; }
     }
     let docked = !detach;
-    crate::os_window_panels(ctx, "apercu_sous_titres", tr("Subtitle preview"), [840.0, 760.0], &mut open, docked.then_some(170.0), &mut |ui, is_bottom| {
+    // par defaut, le style est a droite de l'apercu (ajustable en glissant son bord gauche)
+    crate::os_window_docked(ctx, "apercu_sous_titres", tr("Subtitle preview"), [1240.0, 760.0], &mut open, docked.then_some(crate::Dock::Right(380.0)), &mut |ui, is_bottom| {
         if is_bottom {
             ui.horizontal(|ui| {
                 ui.label(egui::RichText::new(tr("Track style")).strong());
