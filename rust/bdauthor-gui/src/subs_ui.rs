@@ -355,8 +355,10 @@ pub struct SubPreview {
     sprite: Option<(String, Option<Sprite>)>,
     /// zoom de l'image (1 = largeur de la fenetre)
     zoom: f32,
-    /// style de la piste dans une fenetre a part (sinon en bas de l'apercu)
+    /// style de la piste dans une fenetre a part (sinon a droite de l'apercu)
     style_detached: bool,
+    /// hauteur de la zone lecture + frise (mesuree a l'image precedente) : l'image prend le reste, la frise reste en bas
+    bottom_h: f32,
     /// zone de l'image a l'image precedente (pour savoir si la molette vise l'image)
     img_rect: egui::Rect,
 }
@@ -364,7 +366,7 @@ pub struct SubPreview {
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path, auto_fps: Option<f64>) -> SubPreview {
-        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), loader: None, last_img: None, meta_rx: Some(probe_async(video_file, 960)), meta: None, tl: Timeline::new(48, "frise_sous_titres"), playing: None, t_ms: 0, free: false, last_cue: 0, sprite: None, zoom: 1.0, img_rect: egui::Rect::NOTHING, style_detached: false };
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), loader: None, last_img: None, meta_rx: Some(probe_async(video_file, 960)), meta: None, tl: Timeline::new(48, "frise_sous_titres"), playing: None, t_ms: 0, free: false, last_cue: 0, sprite: None, zoom: 1.0, img_rect: egui::Rect::NOTHING, style_detached: false, bottom_h: 200.0 };
         match &t.source {
             SubSource::File(f) => p.raw = Some(load_cues_enc(&abs(base, f), t.fps.or(auto_fps), t.charset, &t.lang)),
             SubSource::Embedded(idx) => {
@@ -704,7 +706,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         if let Some(tex) = &pv.tex {
             let size = egui::vec2(fit_w * pv.zoom, fit_w * pv.zoom * 9.0 / 16.0);
             // l'image occupe toute la hauteur laissee par la zone du bas (que l'on regle en glissant son bord)
-            let max_h = (ui.available_height() - 28.0 - if pv.meta.is_some() { 200.0 } else { 40.0 }).max(80.0);
+            let max_h = (ui.available_height() - pv.bottom_h - ui.spacing().item_spacing.y * 2.0).max(80.0);
             let out = egui::ScrollArea::both().id_salt("apercu_zoom").max_height(max_h).auto_shrink([false, false]).show(ui, |ui| {
                 let resp = ui.image((tex.id(), size));
                 if pv.safe {
@@ -717,46 +719,50 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             });
             pv.img_rect = out.inner_rect;
         }
-        // lecture et frise de la video, sous l'image : « Lecture » ou un clic sur la frise passent au fond « image de la video »
-        if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Space)) { pv.toggle_play(play_vh); }
-        ui.horizontal(|ui| {
-            let label = if pv.playing.is_some() { tr("■ Pause") } else { tr("▶ Play") };
-            let ready = pv.meta.is_some();
-            if ui.add_enabled(ready, egui::Button::new(label).min_size(egui::vec2(70.0, 26.0)).fill(egui::Color32::from_rgb(44, 93, 135))).clicked() { pv.toggle_play(play_vh); }
-            let total = pv.meta.as_ref().map_or(String::new(), |m| format!(" / {}", clock((m.duration * 1000.0) as i64)));
-            ui.label(egui::RichText::new(format!("{}{}", clock(pv.t_ms), total)).monospace());
-            if ready { ui.label(egui::RichText::new(tr("Space: play / pause · playback without sound")).small().weak()); }
-            else if pv.meta_rx.is_some() { ui.spinner(); ui.label(tr("Reading the video…")); }
-        });
-        if let Some(dur) = pv.meta.as_ref().map(|m| m.duration) {
-            let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 8.0, follow: pv.playing.is_some() };
-            let head = pv.t_ms as f64 / 1000.0;
-            let (shown, sel) = (&pv.shown, pv.cue);
-            // les repliques de la piste en reperes sous les vignettes (la replique choisie en orange)
-            let out = pv.tl.show(ui, dur, head, &cfg, |p, g| {
-                let (t0, span) = (g.start(), g.span());
-                let first = shown.partition_point(|c| (c.end_ms as f64 / 1000.0) < t0);
-                for (i, c) in shown.iter().enumerate().skip(first) {
-                    let (s0, e0) = (c.start_ms as f64 / 1000.0, c.end_ms as f64 / 1000.0);
-                    if s0 > t0 + span { break; }
-                    let (x0, x1) = (g.x_of(s0), g.x_of(e0).max(g.x_of(s0) + 1.5));
-                    let r = egui::Rect::from_min_max(egui::pos2(x0, g.strip.max.y - 6.0), egui::pos2(x1, g.strip.max.y));
-                    p.rect_filled(r, 0.0, if i == sel { egui::Color32::from_rgb(255, 170, 60) } else { egui::Color32::from_rgb(120, 200, 255) });
-                }
+        // lecture et frise de la video, en bas de la fenetre (l'image au-dessus prend toute la place restante)
+        let blk = ui.scope(|ui| {
+            // lecture et frise de la video, sous l'image : « Lecture » ou un clic sur la frise passent au fond « image de la video »
+            if !ctx.wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Space)) { pv.toggle_play(play_vh); }
+            ui.horizontal(|ui| {
+                let label = if pv.playing.is_some() { tr("■ Pause") } else { tr("▶ Play") };
+                let ready = pv.meta.is_some();
+                if ui.add_enabled(ready, egui::Button::new(label).min_size(egui::vec2(70.0, 26.0)).fill(egui::Color32::from_rgb(44, 93, 135))).clicked() { pv.toggle_play(play_vh); }
+                let total = pv.meta.as_ref().map_or(String::new(), |m| format!(" / {}", clock((m.duration * 1000.0) as i64)));
+                ui.label(egui::RichText::new(format!("{}{}", clock(pv.t_ms), total)).monospace());
+                if ready { ui.label(egui::RichText::new(tr("Space: play / pause · playback without sound")).small().weak()); }
+                else if pv.meta_rx.is_some() { ui.spinner(); ui.label(tr("Reading the video…")); }
             });
-            if let Some((resp, geo)) = out {
-                if let Some(q) = resp.interact_pointer_pos() {
-                    if resp.clicked() || resp.dragged() {
-                        pv.playing = None;
-                        pv.bg = 3;
-                        pv.free = true;
-                        pv.t_ms = (geo.t_at(q.x) * 1000.0).round() as i64;
-                        ctx.request_repaint();
+            if let Some(dur) = pv.meta.as_ref().map(|m| m.duration) {
+                let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 8.0, follow: pv.playing.is_some() };
+                let head = pv.t_ms as f64 / 1000.0;
+                let (shown, sel) = (&pv.shown, pv.cue);
+                // les repliques de la piste en reperes sous les vignettes (la replique choisie en orange)
+                let out = pv.tl.show(ui, dur, head, &cfg, |p, g| {
+                    let (t0, span) = (g.start(), g.span());
+                    let first = shown.partition_point(|c| (c.end_ms as f64 / 1000.0) < t0);
+                    for (i, c) in shown.iter().enumerate().skip(first) {
+                        let (s0, e0) = (c.start_ms as f64 / 1000.0, c.end_ms as f64 / 1000.0);
+                        if s0 > t0 + span { break; }
+                        let (x0, x1) = (g.x_of(s0), g.x_of(e0).max(g.x_of(s0) + 1.5));
+                        let r = egui::Rect::from_min_max(egui::pos2(x0, g.strip.max.y - 6.0), egui::pos2(x1, g.strip.max.y));
+                        p.rect_filled(r, 0.0, if i == sel { egui::Color32::from_rgb(255, 170, 60) } else { egui::Color32::from_rgb(120, 200, 255) });
+                    }
+                });
+                if let Some((resp, geo)) = out {
+                    if let Some(q) = resp.interact_pointer_pos() {
+                        if resp.clicked() || resp.dragged() {
+                            pv.playing = None;
+                            pv.bg = 3;
+                            pv.free = true;
+                            pv.t_ms = (geo.t_at(q.x) * 1000.0).round() as i64;
+                            ctx.request_repaint();
+                        }
                     }
                 }
             }
-        }
-        crate::help(ui, tr("Preview with the track's font and style (offset applied, simultaneous cues merged); the player will show the same drawing."));
+            crate::help(ui, tr("Preview with the track's font and style (offset applied, simultaneous cues merged); the player will show the same drawing."));
+        }).response.rect;
+        if (blk.height() - pv.bottom_h).abs() > 0.5 { pv.bottom_h = blk.height(); ctx.request_repaint(); }
     });
     pv.style_detached = detach;
     if src_key(t) != src_before {
