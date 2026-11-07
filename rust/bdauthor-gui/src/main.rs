@@ -38,12 +38,12 @@ enum Msg {
     Done(Result<(bool, String), String>),
 }
 
-/// Reglages de l'application, enregistres dans un petit fichier texte (cle=valeur) du dossier de configuration de l'utilisateur.
-#[derive(Clone, PartialEq)]
 /// Couleurs par defaut de l'editeur de jaquette : fond tres sombre, reperes blancs semi-transparents.
 const COVER_BG: [u8; 4] = [18, 18, 18, 255];
 const COVER_GUIDE: [u8; 4] = [255, 255, 255, 120];
 
+/// Reglages de l'application, enregistres dans un petit fichier texte (cle=valeur) du dossier de configuration de l'utilisateur.
+#[derive(Clone, PartialEq)]
 struct Config {
     /// Dossier de ffmpeg/ffprobe (ou chemin de ffmpeg) ; vide = recherche automatique.
     ffmpeg_path: String,
