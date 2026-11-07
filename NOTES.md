@@ -837,3 +837,11 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Formes : opacité réglable (`Paint::opacity`, JSON « opacite »), icônes dessinées dans la palette.
 - Pistes audio : ☰ + 🎵 à gauche, réordonnables par glisser-déposer ; l'ordre de la vidéo est gardé sur le disque (piste 1 = celle du haut).
 - Progression : part de chaque vidéo selon sa durée, image ISO dans les derniers 8 % ; fenêtre « Générer le disque » : %, étape, temps écoulé et fin estimée, détail ffmpeg (position, images/s, vitesse, reste) via `ffmpeg::set_progress_detail`.
+
+## Export 160 — retouches de l'interface
+
+- Ligne : le champ Largeur/Hauteur de l'inspecteur ramenait la ligne à 16 (DragValue borne à 16..) : minimum 0 pour une ligne ; l'autre extrémité attire toujours (horizontale/verticale exacte), même sans aimantation.
+- Pistes audio / sous-titres : bouton ▸ (glyphe absent de la police) retiré, ✏ ouvre les réglages ; icônes à 17 pt.
+- Sous-titres : style du texte retiré des réglages de la piste (il est dans l'aperçu du rendu) ; zone « Style de la piste » de l'aperçu détachable dans sa propre fenêtre.
+- Widget Texte : « Police : » et « Alignement : » à gauche de leur menu.
+- Jaquette : déplacement de la vue au clic droit maintenu ; couleurs du fond et des repères réglables (gardées dans config.txt : cover_bg, cover_guide) ; boutons annuler/rétablir retirés.

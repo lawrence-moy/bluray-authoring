@@ -290,18 +290,12 @@ impl App {
 
     fn cover_panel(&mut self, ui: &mut egui::Ui) {
         let mut changed = false;
-        let (can_undo, can_redo) = self.cover_hist.as_ref().map(|h| (h.can_undo(), h.can_redo())).unwrap_or((false, false));
+        // annuler / retablir : Ctrl+Z / Ctrl+Y et menu Edition (pas de boutons en double ici)
         let mut page = self.cover_page;
-        let (mut undo, mut redo) = (false, false);
         ui.horizontal(|ui| {
-            undo = ui.add_enabled(can_undo, egui::Button::new("↶")).on_hover_text(tr("Undo (Ctrl+Z)")).clicked();
-            redo = ui.add_enabled(can_redo, egui::Button::new("↷")).on_hover_text(tr("Redo (Ctrl+Y)")).clicked();
-            ui.separator();
             ui.selectable_value(&mut page, 0, tr("Cover"));
             ui.selectable_value(&mut page, 1, tr("Disc label"));
         });
-        if undo { self.cover_undo_redo(false); }
-        if redo { self.cover_undo_redo(true); }
         if page != self.cover_page {
             self.cover_page = page;
             self.cover_closed.clear();
@@ -851,14 +845,23 @@ impl App {
             ui.separator();
             ui.selectable_value(&mut self.cover_inch, false, "mm");
             ui.selectable_value(&mut self.cover_inch, true, "pouces");
-            crate::help(ui, tr("Wheel: zoom · wheel click (or Space + drag): pan the view"));
+            ui.separator();
+            // couleurs de l'editeur (gardees dans la configuration) : fond autour de la feuille, reperes des bords et des plis
+            let mut cfg_changed = false;
+            ui.label(tr("Background:"));
+            cfg_changed |= ui.color_edit_button_srgba_unmultiplied(&mut self.cfg.cover_bg).on_hover_text(tr("Color around the sheet in the editor (not printed)")).changed();
+            ui.label(tr("Guides:"));
+            cfg_changed |= ui.color_edit_button_srgba_unmultiplied(&mut self.cfg.cover_guide).on_hover_text(tr("Color of the trim and fold lines between back, spine and front (not printed)")).changed();
+            if ui.small_button(tr("Default colors")).clicked() { self.cfg.cover_bg = crate::COVER_BG; self.cfg.cover_guide = crate::COVER_GUIDE; cfg_changed = true; }
+            if cfg_changed { self.cfg.save(); }
+            crate::help(ui, tr("Wheel: zoom · wheel click, right button held (or Space + drag): pan the view"));
         });
         let (resp, full_painter) = ui.allocate_painter(area, Sense::click_and_drag());
         let full = resp.rect;
         let viewport = Rect::from_min_max(full.min + vec2(RULER_W, RULER_H), full.max);
-        // deplacement (clic molette ou Espace + bouton gauche) et zoom a la molette, centre sur le curseur
+        // deplacement (clic molette, clic droit maintenu ou Espace + bouton gauche) et zoom a la molette, centre sur le curseur
         let panning = (resp.hovered() || self.cover_panning) && !ctx.wants_keyboard_input()
-            && ctx.input(|i| i.pointer.middle_down() || (i.key_down(Key::Space) && i.pointer.primary_down()));
+            && ctx.input(|i| i.pointer.middle_down() || i.pointer.secondary_down() || (i.key_down(Key::Space) && i.pointer.primary_down()));
         let skip_input = panning || self.cover_panning;
         self.cover_panning = panning;
         if panning {
@@ -900,7 +903,8 @@ impl App {
             self.cover_tex_dpi = want_dpi;
         }
         let painter = full_painter.with_clip_rect(viewport);
-        painter.rect_filled(viewport, 0.0, Color32::from_gray(18));
+        let bg = self.cfg.cover_bg;
+        painter.rect_filled(viewport, 0.0, Color32::from_rgba_unmultiplied(bg[0], bg[1], bg[2], bg[3]));
         match &self.cover_tex {
             Some(t) => painter.image(t.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE),
             None => painter.rect_filled(rect, 0.0, Color32::from_gray(30)),
@@ -909,7 +913,8 @@ impl App {
         let to_screen = |x: f64, y: f64| pos2(origin.x + (x as f32 + bleed) * k, origin.y + (y as f32 + bleed) * k);
         let to_mm = |p: egui::Pos2| (((p.x - origin.x) / k - bleed) as f64, ((p.y - origin.y) / k - bleed) as f64);
         // reperes : feuille rognee, pliages, cercles
-        let guide = Stroke::new(1.0_f32, Color32::from_white_alpha(120));
+        let gc = self.cfg.cover_guide;
+        let guide = Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(gc[0], gc[1], gc[2], gc[3]));
         let (rects, lines, circles) = doc.guides();
         for (x, y, w, h) in rects { painter.rect_stroke(Rect::from_min_max(to_screen(x, y), to_screen(x + w, y + h)), 0.0, guide); }
         for (x1, y1, x2, y2) in lines { painter.line_segment([to_screen(x1, y1), to_screen(x2, y2)], guide); }

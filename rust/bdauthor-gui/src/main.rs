@@ -40,6 +40,10 @@ enum Msg {
 
 /// Reglages de l'application, enregistres dans un petit fichier texte (cle=valeur) du dossier de configuration de l'utilisateur.
 #[derive(Clone, PartialEq)]
+/// Couleurs par defaut de l'editeur de jaquette : fond tres sombre, reperes blancs semi-transparents.
+const COVER_BG: [u8; 4] = [18, 18, 18, 255];
+const COVER_GUIDE: [u8; 4] = [255, 255, 255, 120];
+
 struct Config {
     /// Dossier de ffmpeg/ffprobe (ou chemin de ffmpeg) ; vide = recherche automatique.
     ffmpeg_path: String,
@@ -50,6 +54,15 @@ struct Config {
     autosave_min: u32,
     /// langue de l'interface (code : en, fr, ou un fichier du dossier `langues`)
     lang: String,
+    /// editeur de jaquette : couleur du fond autour de la feuille, et des reperes (bords, plis du dos / tranche / face), RGBA
+    cover_bg: [u8; 4],
+    cover_guide: [u8; 4],
+}
+
+fn rgba_text(c: [u8; 4]) -> String { format!("{},{},{},{}", c[0], c[1], c[2], c[3]) }
+fn parse_rgba(v: &str) -> Option<[u8; 4]> {
+    let n: Vec<u8> = v.split(',').filter_map(|x| x.trim().parse().ok()).collect();
+    (n.len() == 4).then(|| [n[0], n[1], n[2], n[3]])
 }
 
 /// Ecrit `text` dans un fichier temporaire voisin puis le renomme : un plantage ou un disque plein en cours d'ecriture ne laisse jamais un fichier tronque.
@@ -146,7 +159,7 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string() };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
@@ -155,6 +168,8 @@ impl Config {
                     Some(("autosave", v)) => c.autosave = v.trim() != "false",
                     Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
                     Some(("lang", v)) => c.lang = v.trim().to_string(),
+                    Some(("cover_bg", v)) => c.cover_bg = parse_rgba(v).unwrap_or(COVER_BG),
+                    Some(("cover_guide", v)) => c.cover_guide = parse_rgba(v).unwrap_or(COVER_GUIDE),
                     _ => {}
                 }
             }
@@ -168,7 +183,7 @@ impl Config {
             if let Some(d) = p.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
-            let _ = std::fs::write(p, format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang));
+            let _ = std::fs::write(p, format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\ncover_bg={}\ncover_guide={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang, rgba_text(self.cover_bg), rgba_text(self.cover_guide)));
         }
     }
 }

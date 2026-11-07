@@ -954,7 +954,10 @@ impl App {
                     let line_end = line_handles(&orig).filter(|_| d.handle != Handle::Body).map(|_| {
                         let others = snapshot.iter().enumerate().filter(|(j, _)| *j != idx && can(*j)).map(|(_, it)| it);
                         let (xs, ys) = snap_lines(others);
-                        let lines = (self.guide_snap && !ctx.input(|i| i.modifiers.alt)).then_some((&xs[..], &ys[..], (6.0 / k).round().max(1.0) as i32));
+                        // reperes des autres elements si l'aimantation est active ; l'autre extremite de la ligne attire toujours
+                        // (horizontale / verticale exacte), sauf avec Alt
+                        let (xs, ys) = if self.guide_snap { (xs, ys) } else { (Vec::new(), Vec::new()) };
+                        let lines = (!ctx.input(|i| i.modifiers.alt)).then_some((&xs[..], &ys[..], (8.0 / k).round().max(1.0) as i32));
                         let (m, gx, gy) = move_line_end(&orig, d.handle, px - d.start.0, py - d.start.1, grid, lines, ctx.input(|i| i.modifiers.shift));
                         guides = (gx, gy);
                         m
@@ -1412,12 +1415,14 @@ impl App {
                 ui.label(tr("Name"));
                 changed |= ui.add(egui::TextEdit::singleline(&mut it.name).hint_text(tr("(optional: to find your way around)")).desired_width(220.0)).changed();
             });
+            // une ligne peut avoir une largeur ou une hauteur nulle (verticale / horizontale) : le champ ne doit pas la ramener a 16
+            let min_side = if matches!(it.kind, Kind::Shape { shape: bdauthor_core::cover::ShapeKind::Line, .. }) { 0 } else { 16 };
             egui::Grid::new("geometrie").num_columns(4).show(ui, |ui| {
                 ui.label(tr("X")); changed |= ui.add(egui::DragValue::new(&mut it.x).range(0..=1920)).changed();
                 ui.label(tr("Y")); changed |= ui.add(egui::DragValue::new(&mut it.y).range(0..=1080)).changed();
                 ui.end_row();
-                ui.label(tr("Width")); changed |= ui.add(egui::DragValue::new(&mut it.w).range(16..=1920)).changed();
-                ui.label(tr("Height")); changed |= ui.add(egui::DragValue::new(&mut it.h).range(16..=1080)).changed();
+                ui.label(tr("Width")); changed |= ui.add(egui::DragValue::new(&mut it.w).range(min_side..=1920)).changed();
+                ui.label(tr("Height")); changed |= ui.add(egui::DragValue::new(&mut it.h).range(min_side..=1080)).changed();
                 ui.end_row();
             });
             let h = it.h;
@@ -1577,12 +1582,15 @@ impl App {
                     let shown = if font.is_empty() { tr("Default font").to_string() } else {
                         bdauthor_render::common_fonts().into_iter().find(|(_, f)| f == font).map(|(l, _)| l.to_string()).unwrap_or_else(|| font.clone())
                     };
-                    egui::ComboBox::from_label(tr("Font")).selected_text(shown).show_ui(ui, |ui| {
-                        if ui.selectable_label(font.is_empty(), tr("Default font")).clicked() { font.clear(); changed = true; }
-                        for (label, file) in bdauthor_render::common_fonts() {
-                            if ui.selectable_label(font == file, label).clicked() { *font = file.to_string(); changed = true; }
-                        }
-                        if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Font:"));
+                        egui::ComboBox::from_id_salt("police_texte").selected_text(shown).show_ui(ui, |ui| {
+                            if ui.selectable_label(font.is_empty(), tr("Default font")).clicked() { font.clear(); changed = true; }
+                            for (label, file) in bdauthor_render::common_fonts() {
+                                if ui.selectable_label(font == file, label).clicked() { *font = file.to_string(); changed = true; }
+                            }
+                            if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
+                        });
                     });
                     if !font.is_empty() {
                         if let Ok(r) = font_check {
@@ -1591,10 +1599,13 @@ impl App {
                             }
                         }
                     }
-                    egui::ComboBox::from_label(tr("Alignment")).selected_text(align.name()).show_ui(ui, |ui| {
-                        for a in [Align::Left, Align::Center, Align::Right] {
-                            if ui.selectable_value(align, a, a.name()).changed() { changed = true; }
-                        }
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Alignment:"));
+                        egui::ComboBox::from_id_salt("alignement_texte").selected_text(align.name()).show_ui(ui, |ui| {
+                            for a in [Align::Left, Align::Center, Align::Right] {
+                                if ui.selectable_value(align, a, a.name()).changed() { changed = true; }
+                            }
+                        });
                     });
                     ui.horizontal(|ui| {
                         ui.label(tr("Background:"));

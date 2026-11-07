@@ -1103,5 +1103,17 @@
   "Elapsed: {}{}": "Écoulé : {}{}",
   " · end in about {}": " · fin dans environ {}",
   " · this encoding: about {} left": " · cet encodage : encore environ {}",
-  "ffmpeg: {} / {} · {} frames/s · speed ×{}{}": "ffmpeg : {} / {} · {} images/s · vitesse ×{}{}"
+  "ffmpeg: {} / {} · {} frames/s · speed ×{}{}": "ffmpeg : {} / {} · {} images/s · vitesse ×{}{}",
+  "Font:": "Police :",
+  "Guides:": "Repères :",
+  "Shows these settings in their own window, which you can place where you like": "Affiche ces réglages dans leur propre fenêtre, à placer où vous voulez",
+  "Undock": "Détacher",
+  "Color of the trim and fold lines between back, spine and front (not printed)": "Couleur des lignes de coupe et de pli entre dos, tranche et face (non imprimées)",
+  "Default colors": "Couleurs par défaut",
+  "See this track's cues drawn with its style, and set the text style (font, colors, position…)": "Voir les répliques de cette piste dessinées avec son style, et régler le style du texte (police, couleurs, position…)",
+  "Wheel: zoom · wheel click, right button held (or Space + drag): pan the view": "Molette : zoom · clic molette, clic droit maintenu (ou Espace + glisser) : déplacer la vue",
+  "Track style — {}": "Style de la piste — {}",
+  "Dock in the preview": "Rattacher à l'aperçu",
+  "Puts these settings back at the bottom of the preview window": "Remet ces réglages en bas de la fenêtre d'aperçu",
+  "Color around the sheet in the editor (not printed)": "Couleur autour de la feuille dans l'éditeur (non imprimée)"
 }

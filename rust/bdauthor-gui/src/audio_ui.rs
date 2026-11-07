@@ -47,15 +47,14 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
             let open_id = ui.id().with("reglages_ouverts");
             let mut open: bool = ui.data_mut(|d| d.get_persisted(open_id)).unwrap_or(false);
             let row = ui.horizontal(|ui| {
-                let _ = ui.dnd_drag_source(egui::Id::new(("piste_audio", k)), AudioRow(k), |ui| ui.label(egui::RichText::new("☰").strong()))
+                let _ = ui.dnd_drag_source(egui::Id::new(("piste_audio", k)), AudioRow(k), |ui| ui.label(egui::RichText::new("☰").strong().size(17.0)))
                     .response.on_hover_text(tr("Drag to change the order of the audio tracks (track 1 is the one at the top)"));
-                ui.label("🎵");
-                if ui.small_button(if open { "▾" } else { "▸" }).on_hover_text(if open { tr("Hide this track's settings") } else { tr("Show this track's settings") }).clicked() { open = !open; }
+                ui.label(egui::RichText::new("🎵").size(17.0));
                 ui.add(egui::Label::new(format!("{} — {}", k + 1, what)).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("🗑").on_hover_text(tr("Remove this track")).clicked() { del = Some(k); }
-                    if ui.button("🔊").on_hover_text(tr("Listen to this track: opens a window with a timeline and a play button")).clicked() { *listen = Some(k); }
-                    if ui.button("✏").on_hover_text(tr("Edit this track's settings")).clicked() { open = !open; }
+                    if ui.button(egui::RichText::new("🗑").size(17.0)).on_hover_text(tr("Remove this track")).clicked() { del = Some(k); }
+                    if ui.button(egui::RichText::new("🔊").size(17.0)).on_hover_text(tr("Listen to this track: opens a window with a timeline and a play button")).clicked() { *listen = Some(k); }
+                    if ui.button(egui::RichText::new("✏").size(17.0)).on_hover_text(tr("Edit this track's settings")).clicked() { open = !open; }
                     let cur = langs.iter().find(|l| l.id == t.lang_id).map(|l| l.name.clone());
                     egui::ComboBox::from_id_salt("langue_piste_audio").selected_text(cur.clone().unwrap_or_else(|| tr("(to choose)").to_string())).show_ui(ui, |ui| {
                         for l in langs.iter() {

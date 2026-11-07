@@ -51,11 +51,10 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
             let open_id = ui.id().with("reglages_ouverts");
             let mut open: bool = ui.data_mut(|d| d.get_persisted(open_id)).unwrap_or(false);
             ui.horizontal(|ui| {
-                if ui.small_button(if open { "▾" } else { "▸" }).on_hover_text(if open { tr("Hide this track's settings") } else { tr("Show this track's settings") }).clicked() { open = !open; }
                 ui.add(egui::Label::new(format!("{} — {}", k + 1, what)).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui.button("🗑").on_hover_text(tr("Remove this track")).clicked() { del = Some(k); }
-                    if ui.button("✏").on_hover_text(tr("Edit this track's settings")).clicked() { open = !open; }
+                    if ui.button(egui::RichText::new("🗑").size(17.0)).on_hover_text(tr("Remove this track")).clicked() { del = Some(k); }
+                    if ui.button(egui::RichText::new("✏").size(17.0)).on_hover_text(tr("Edit this track's settings")).clicked() { open = !open; }
                     let cur = langs.iter().find(|l| l.id == t.lang_id).map(|l| l.name.clone());
                     let shown = cur.clone().unwrap_or_else(|| if langs.is_empty() { t.lang.clone() } else { tr("(to choose)").to_string() });
                     egui::ComboBox::from_id_salt("langue_piste_sous_titres").selected_text(shown).show_ui(ui, |ui| {
@@ -126,8 +125,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     .on_hover_text(tr("The tags <i>, <b>, <u>, <font color> (SRT, WebVTT, SAMI) and {\\i1}, {\\b1}, {\\c&H…&} (ASS) are drawn. Unchecked: all the text takes the track's style. The text color set below is used for text with no color of its own.")).changed();
                 changed |= ui.checkbox(&mut t.file_positions, tr("Respect the positions in the file (ASS: \\an1 to \\an9)"))
                     .on_hover_text(tr("Some files place cues at the top, on the left, etc. (for example so as not to hide text burned into the picture). Unchecked: all cues take the position set below. Simultaneous cues are displayed together, at the position of the first one that asks for one.")).changed();
-                style_ui(ui, &mut t.style, &mut changed);
-                if ui.button(tr("Rendering preview…")).on_hover_text(tr("See this track's cues drawn with its style")).clicked() { *preview = Some(k); }
+                // le style du texte (police, couleurs, position...) se regle dans la fenetre d'apercu du rendu, image a l'appui
+                if ui.button(tr("Rendering preview…")).on_hover_text(tr("See this track's cues drawn with its style, and set the text style (font, colors, position…)")).clicked() { *preview = Some(k); }
             }); }
         });
     }
@@ -359,6 +358,8 @@ pub struct SubPreview {
     sprite: Option<(String, Option<Sprite>)>,
     /// zoom de l'image (1 = largeur de la fenetre)
     zoom: f32,
+    /// style de la piste dans une fenetre a part (sinon en bas de l'apercu)
+    style_detached: bool,
     /// zone de l'image a l'image precedente (pour savoir si la molette vise l'image)
     img_rect: egui::Rect,
 }
@@ -366,7 +367,7 @@ pub struct SubPreview {
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path, auto_fps: Option<f64>) -> SubPreview {
-        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), loader: None, last_img: None, meta_rx: Some(probe_async(video_file, 960)), meta: None, tl: Timeline::new(48, "frise_sous_titres"), playing: None, t_ms: 0, free: false, last_cue: 0, sprite: None, zoom: 1.0, img_rect: egui::Rect::NOTHING };
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), loader: None, last_img: None, meta_rx: Some(probe_async(video_file, 960)), meta: None, tl: Timeline::new(48, "frise_sous_titres"), playing: None, t_ms: 0, free: false, last_cue: 0, sprite: None, zoom: 1.0, img_rect: egui::Rect::NOTHING, style_detached: false };
         match &t.source {
             SubSource::File(f) => p.raw = Some(load_cues_enc(&abs(base, f), t.fps.or(auto_fps), t.charset, &t.lang)),
             SubSource::Embedded(idx) => {
@@ -512,10 +513,27 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         SubSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
     };
     let mut open = true;
-    crate::os_window_panels(ctx, "apercu_sous_titres", tr("Subtitle preview"), [840.0, 760.0], &mut open, Some(170.0), &mut |ui, is_bottom| {
+    // style de la piste : en bas de l'apercu (zone ajustable en glissant son bord superieur) ou dans sa propre fenetre
+    let mut detach = pv.style_detached;
+    if detach {
+        let mut keep = true;
+        crate::os_window(ctx, "style_piste_sous_titres", &trf!("Track style — {}", name), [520.0, 560.0], &mut keep, &mut |ui| {
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(tr("Track style")).strong());
+                if ui.button(tr("Dock in the preview")).on_hover_text(tr("Puts these settings back at the bottom of the preview window")).clicked() { detach = false; }
+            });
+            ui.separator();
+            style_ui(ui, &mut t.style, &mut changed);
+        });
+        if !keep { detach = false; }
+    }
+    let docked = !detach;
+    crate::os_window_panels(ctx, "apercu_sous_titres", tr("Subtitle preview"), [840.0, 760.0], &mut open, docked.then_some(170.0), &mut |ui, is_bottom| {
         if is_bottom {
-            // zone du bas, ajustable en glissant son bord superieur : le style de la piste
-            ui.label(egui::RichText::new(tr("Track style")).strong());
+            ui.horizontal(|ui| {
+                ui.label(egui::RichText::new(tr("Track style")).strong());
+                if ui.button(tr("Undock")).on_hover_text(tr("Shows these settings in their own window, which you can place where you like")).clicked() { detach = true; }
+            });
             style_ui(ui, &mut t.style, &mut changed);
             return;
         }
@@ -736,5 +754,6 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         }
         crate::help(ui, tr("Preview with the track's font and style (offset applied, simultaneous cues merged); the player will show the same drawing."));
     });
+    pv.style_detached = detach;
     (changed, open)
 }
