@@ -1115,5 +1115,8 @@
   "Track style — {}": "Style de la piste — {}",
   "Dock in the preview": "Rattacher à l'aperçu",
   "Color around the sheet in the editor (not printed)": "Couleur autour de la feuille dans l'éditeur (non imprimée)",
-  "Puts these settings back on the right of the preview window": "Remet ces réglages à droite de la fenêtre d'aperçu"
+  "Puts these settings back on the right of the preview window": "Remet ces réglages à droite de la fenêtre d'aperçu",
+  "Track settings — {}": "Réglages de la piste — {}",
+  "Track settings": "Réglages de la piste",
+  "Edit this track: opens the preview window with its settings and its text style": "Modifier cette piste : ouvre la fenêtre d'aperçu avec ses réglages et le style de son texte"
 }

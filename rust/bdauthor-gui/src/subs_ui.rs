@@ -36,8 +36,70 @@ pub(crate) fn language_for_code(langs: &mut Vec<Language>, code: &str) -> u32 {
     id
 }
 
+/// Reglages d'une piste (fichier, encodage, cadence, decalage, annotations, mise en forme du fichier) : dans la fenetre d'apercu.
+fn track_settings_ui(ui: &mut egui::Ui, t: &mut SubTrackCfg, base: &Path, auto_fps: Option<f64>, changed: &mut bool) {
+            if let SubSource::File(f) = &mut t.source {
+                ui.horizontal(|ui| {
+                    ui.label(tr("File:"));
+                    *changed |= ui.text_edit_singleline(f).changed();
+                    if ui.button(tr("Choose…")).clicked() {
+                        if let Some(p) = rfd::FileDialog::new().add_filter(tr("Subtitles"), &["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv", "ttml", "dfxp", "xml", "lrc", "stl"]).pick_file() {
+                            *f = clean(&p);
+                            *changed = true;
+                        }
+                    }
+                });
+                if !f.trim().is_empty() && !abs(base, f).is_file() {
+                    ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("File not found."));
+                }
+            }
+            if let SubSource::File(_) = &t.source {
+                let auto_cs = Charset::for_language(&t.lang);
+                ui.horizontal(|ui| {
+                    ui.label(tr("File encoding:"));
+                    let shown = if t.charset == Charset::Auto { trf!("Automatic ({})", auto_cs.label()) } else { t.charset.label().to_string() };
+                    egui::ComboBox::from_id_salt("encodage_sous_titres").selected_text(shown).show_ui(ui, |ui| {
+                        for c in Charset::ALL {
+                            let l = if c == Charset::Auto { trf!("Automatic (UTF-8, otherwise {})", auto_cs.label()) } else { c.label().to_string() };
+                            if ui.selectable_label(t.charset == c, l).clicked() { t.charset = c; *changed = true; }
+                        }
+                    });
+                }).response.on_hover_text(tr("Recent files are in UTF-8. Older ones use a code page specific to the language (Windows-1251 for Russian, Shift-JIS for Japanese…): “Automatic” guesses it from the track's language. If accents or letters display wrongly, choose the encoding by hand."));
+            }
+            // cadence : seulement pour les fichiers dont les temps sont en images (MicroDVD : .sub, .txt)
+            if let SubSource::File(f) = &t.source {
+                let ext = Path::new(f).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+                if ext == "sub" || ext == "txt" {
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Frame rate (if the file is frame-based):"));
+                        let auto = auto_fps.map_or(tr("Automatic (23.976 fps)").to_string(), |v| trf!("Automatic ({} fps, from the video)", format!("{:.3}", v)));
+                        let shown = t.fps.map_or(auto.clone(), |v| trf!("{} fps", v));
+                        egui::ComboBox::from_id_salt("cadence_sous_titres").selected_text(shown).show_ui(ui, |ui| {
+                            if ui.selectable_label(t.fps.is_none(), auto.as_str()).clicked() { t.fps = None; *changed = true; }
+                            for v in [23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94] {
+                                if ui.selectable_label(t.fps == Some(v), trf!("{} fps", v)).clicked() { t.fps = Some(v); *changed = true; }
+                            }
+                        });
+                        if let Some(v) = &mut t.fps {
+                            *changed |= ui.add(egui::DragValue::new(v).speed(0.01).range(1.0..=240.0).suffix(tr(" fps"))).changed();
+                        }
+                    }).response.on_hover_text(tr("MicroDVD files count in frames, not seconds: choose the frame rate of the original video (a first line {1}{1}25 in the file already sets it). A wrong choice stretches or compresses the timing."));
+                }
+            }
+            ui.horizontal(|ui| {
+                ui.label(tr("Offset:"));
+                *changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
+            });
+            *changed |= ui.checkbox(&mut t.strip_notes, tr("Remove [bracketed] and (parenthesized) annotations"))
+                .on_hover_text(tr("For subtitles meant for the deaf and hard of hearing: [Music], (laughs), (sighs)… are removed; a cue that contains only that disappears.")).changed();
+            *changed |= ui.checkbox(&mut t.keep_format, tr("Keep the file's italics, bold and colors"))
+                .on_hover_text(tr("The tags <i>, <b>, <u>, <font color> (SRT, WebVTT, SAMI) and {\\i1}, {\\b1}, {\\c&H…&} (ASS) are drawn. Unchecked: all the text takes the track's style. The text color set below is used for text with no color of its own.")).changed();
+            *changed |= ui.checkbox(&mut t.file_positions, tr("Respect the positions in the file (ASS: \\an1 to \\an9)"))
+                .on_hover_text(tr("Some files place cues at the top, on the left, etc. (for example so as not to hide text burned into the picture). Unchecked: all cues take the position set below. Simultaneous cues are displayed together, at the position of the first one that asks for one.")).changed();
+}
+
 /// Retourne vrai si quelque chose a change. `langs` : langues de sous-titres du projet (le rang d'une langue est son numero de piste).
-pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path, preview: &mut Option<usize>, auto_fps: Option<f64>) -> bool {
+pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path, preview: &mut Option<usize>, _auto_fps: Option<f64>) -> bool {
     let mut changed = false;
     ui.label(tr("Subtitles (displayed by the player, selectable with the remote control):"));
     let mut del = None;
@@ -47,14 +109,12 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 SubSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
                 SubSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
             };
-            // ligne de la piste : titre a gauche ; a droite, la langue, le bouton de reglages et le retrait
-            let open_id = ui.id().with("reglages_ouverts");
-            let mut open: bool = ui.data_mut(|d| d.get_persisted(open_id)).unwrap_or(false);
+            // ligne de la piste : titre a gauche ; a droite, la langue, les reglages (fenetre d'apercu) et le retrait
             ui.horizontal(|ui| {
                 ui.add(egui::Label::new(format!("{} — {}", k + 1, what)).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(egui::RichText::new("🗑").size(17.0)).on_hover_text(tr("Remove this track")).clicked() { del = Some(k); }
-                    if ui.button(egui::RichText::new("✏").size(17.0)).on_hover_text(tr("Edit this track's settings")).clicked() { open = !open; }
+                    if ui.button(egui::RichText::new("✏").size(17.0)).on_hover_text(tr("Edit this track: opens the preview window with its settings and its text style")).clicked() { *preview = Some(k); }
                     let cur = langs.iter().find(|l| l.id == t.lang_id).map(|l| l.name.clone());
                     let shown = cur.clone().unwrap_or_else(|| if langs.is_empty() { t.lang.clone() } else { tr("(to choose)").to_string() });
                     egui::ComboBox::from_id_salt("langue_piste_sous_titres").selected_text(shown).show_ui(ui, |ui| {
@@ -65,69 +125,6 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     if cur.is_none() && !langs.is_empty() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("to choose")); }
                 });
             });
-            ui.data_mut(|d| d.insert_persisted(open_id, open));
-            if open { ui.indent("reglages_piste", |ui| {
-                if let SubSource::File(f) = &mut t.source {
-                    ui.horizontal(|ui| {
-                        ui.label(tr("File:"));
-                        changed |= ui.text_edit_singleline(f).changed();
-                        if ui.button(tr("Choose…")).clicked() {
-                            if let Some(p) = rfd::FileDialog::new().add_filter(tr("Subtitles"), &["srt", "ass", "ssa", "vtt", "smi", "sami", "sub", "txt", "sbv", "ttml", "dfxp", "xml", "lrc", "stl"]).pick_file() {
-                                *f = clean(&p);
-                                changed = true;
-                            }
-                        }
-                    });
-                    if !f.trim().is_empty() && !abs(base, f).is_file() {
-                        ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("File not found."));
-                    }
-                }
-                if let SubSource::File(_) = &t.source {
-                    let auto_cs = Charset::for_language(&t.lang);
-                    ui.horizontal(|ui| {
-                        ui.label(tr("File encoding:"));
-                        let shown = if t.charset == Charset::Auto { trf!("Automatic ({})", auto_cs.label()) } else { t.charset.label().to_string() };
-                        egui::ComboBox::from_id_salt("encodage_sous_titres").selected_text(shown).show_ui(ui, |ui| {
-                            for c in Charset::ALL {
-                                let l = if c == Charset::Auto { trf!("Automatic (UTF-8, otherwise {})", auto_cs.label()) } else { c.label().to_string() };
-                                if ui.selectable_label(t.charset == c, l).clicked() { t.charset = c; changed = true; }
-                            }
-                        });
-                    }).response.on_hover_text(tr("Recent files are in UTF-8. Older ones use a code page specific to the language (Windows-1251 for Russian, Shift-JIS for Japanese…): “Automatic” guesses it from the track's language. If accents or letters display wrongly, choose the encoding by hand."));
-                }
-                // cadence : seulement pour les fichiers dont les temps sont en images (MicroDVD : .sub, .txt)
-                if let SubSource::File(f) = &t.source {
-                    let ext = Path::new(f).extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
-                    if ext == "sub" || ext == "txt" {
-                        ui.horizontal(|ui| {
-                            ui.label(tr("Frame rate (if the file is frame-based):"));
-                            let auto = auto_fps.map_or(tr("Automatic (23.976 fps)").to_string(), |v| trf!("Automatic ({} fps, from the video)", format!("{:.3}", v)));
-                            let shown = t.fps.map_or(auto.clone(), |v| trf!("{} fps", v));
-                            egui::ComboBox::from_id_salt("cadence_sous_titres").selected_text(shown).show_ui(ui, |ui| {
-                                if ui.selectable_label(t.fps.is_none(), auto.as_str()).clicked() { t.fps = None; changed = true; }
-                                for v in [23.976, 24.0, 25.0, 29.97, 30.0, 50.0, 59.94] {
-                                    if ui.selectable_label(t.fps == Some(v), trf!("{} fps", v)).clicked() { t.fps = Some(v); changed = true; }
-                                }
-                            });
-                            if let Some(v) = &mut t.fps {
-                                changed |= ui.add(egui::DragValue::new(v).speed(0.01).range(1.0..=240.0).suffix(tr(" fps"))).changed();
-                            }
-                        }).response.on_hover_text(tr("MicroDVD files count in frames, not seconds: choose the frame rate of the original video (a first line {1}{1}25 in the file already sets it). A wrong choice stretches or compresses the timing."));
-                    }
-                }
-                ui.horizontal(|ui| {
-                    ui.label(tr("Offset:"));
-                    changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
-                });
-                changed |= ui.checkbox(&mut t.strip_notes, tr("Remove [bracketed] and (parenthesized) annotations"))
-                    .on_hover_text(tr("For subtitles meant for the deaf and hard of hearing: [Music], (laughs), (sighs)… are removed; a cue that contains only that disappears.")).changed();
-                changed |= ui.checkbox(&mut t.keep_format, tr("Keep the file's italics, bold and colors"))
-                    .on_hover_text(tr("The tags <i>, <b>, <u>, <font color> (SRT, WebVTT, SAMI) and {\\i1}, {\\b1}, {\\c&H…&} (ASS) are drawn. Unchecked: all the text takes the track's style. The text color set below is used for text with no color of its own.")).changed();
-                changed |= ui.checkbox(&mut t.file_positions, tr("Respect the positions in the file (ASS: \\an1 to \\an9)"))
-                    .on_hover_text(tr("Some files place cues at the top, on the left, etc. (for example so as not to hide text burned into the picture). Unchecked: all cues take the position set below. Simultaneous cues are displayed together, at the position of the first one that asks for one.")).changed();
-                // le style du texte (police, couleurs, position...) se regle dans la fenetre d'apercu du rendu, image a l'appui
-                if ui.button(tr("Rendering preview…")).on_hover_text(tr("See this track's cues drawn with its style, and set the text style (font, colors, position…)")).clicked() { *preview = Some(k); }
-            }); }
         });
     }
     if let Some(k) = del { v.subs.remove(k); changed = true; }
@@ -513,17 +510,25 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         SubSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
     };
     let mut open = true;
-    // style de la piste : a droite de l'apercu ou dans sa propre fenetre
+    // fichier ou cadence changes dans les reglages : les repliques sont relues
+    let src_key = |t: &SubTrackCfg| (match &t.source { SubSource::File(f) => Some(f.clone()), SubSource::Embedded(_) => None }, t.fps);
+    let src_before = src_key(t);
+    let auto_fps = pv.auto_fps;
+    // reglages et style de la piste : a droite de l'apercu ou dans leur propre fenetre
+    let settings = |ui: &mut egui::Ui, t: &mut SubTrackCfg, changed: &mut bool| {
+        ui.label(egui::RichText::new(tr("Track settings")).strong());
+        track_settings_ui(ui, t, base, auto_fps, changed);
+        ui.separator();
+        ui.label(egui::RichText::new(tr("Track style")).strong());
+        style_ui(ui, &mut t.style, changed);
+    };
     let mut detach = pv.style_detached;
     if detach {
         let mut keep = true;
-        crate::os_window(ctx, "style_piste_sous_titres", &trf!("Track style — {}", name), [520.0, 560.0], &mut keep, &mut |ui| {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(tr("Track style")).strong());
-                if ui.button(tr("Dock in the preview")).on_hover_text(tr("Puts these settings back on the right of the preview window")).clicked() { detach = false; }
-            });
+        crate::os_window(ctx, "style_piste_sous_titres", &trf!("Track settings — {}", name), [560.0, 720.0], &mut keep, &mut |ui| {
+            if ui.button(tr("Dock in the preview")).on_hover_text(tr("Puts these settings back on the right of the preview window")).clicked() { detach = false; }
             ui.separator();
-            style_ui(ui, &mut t.style, &mut changed);
+            settings(ui, &mut *t, &mut changed);
         });
         if !keep { detach = false; }
     }
@@ -531,11 +536,9 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
     // par defaut, le style est a droite de l'apercu (ajustable en glissant son bord gauche)
     crate::os_window_docked(ctx, "apercu_sous_titres", tr("Subtitle preview"), [1240.0, 760.0], &mut open, docked.then_some(crate::Dock::Right(380.0)), &mut |ui, is_bottom| {
         if is_bottom {
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(tr("Track style")).strong());
-                if ui.button(tr("Undock")).on_hover_text(tr("Shows these settings in their own window, which you can place where you like")).clicked() { detach = true; }
-            });
-            style_ui(ui, &mut t.style, &mut changed);
+            if ui.button(tr("Undock")).on_hover_text(tr("Shows these settings in their own window, which you can place where you like")).clicked() { detach = true; }
+            ui.separator();
+            settings(ui, &mut *t, &mut changed);
             return;
         }
         ui.label(egui::RichText::new(name.as_str()).strong());
@@ -756,5 +759,9 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         crate::help(ui, tr("Preview with the track's font and style (offset applied, simultaneous cues merged); the player will show the same drawing."));
     });
     pv.style_detached = detach;
+    if src_key(t) != src_before {
+        if let SubSource::File(f) = &t.source { pv.raw = Some(load_cues_enc(&abs(base, f), t.fps.or(pv.auto_fps), t.charset, &t.lang)); }
+        pv.shown_offset = None;
+    }
     (changed, open)
 }
