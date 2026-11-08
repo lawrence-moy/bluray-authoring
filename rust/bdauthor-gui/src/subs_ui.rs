@@ -98,11 +98,16 @@ fn track_settings_ui(ui: &mut egui::Ui, t: &mut SubTrackCfg, base: &Path, auto_f
                 .on_hover_text(tr("Some files place cues at the top, on the left, etc. (for example so as not to hide text burned into the picture). Unchecked: all cues take the position set below. Simultaneous cues are displayed together, at the position of the first one that asks for one.")).changed();
 }
 
+/// Piste de sous-titres deplacee par glisser-deposer (rang dans la liste de la video).
+#[derive(Clone, Copy)]
+struct SubRow(usize);
+
 /// Retourne vrai si quelque chose a change. `langs` : langues de sous-titres du projet (le rang d'une langue est son numero de piste).
 pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path, preview: &mut Option<usize>, _auto_fps: Option<f64>) -> bool {
     let mut changed = false;
     ui.label(tr("Subtitles (displayed by the player, selectable with the remote control):"));
     let mut del = None;
+    let mut rows: Vec<egui::Rect> = Vec::new();
     for (k, t) in v.subs.iter_mut().enumerate() {
         ui.push_id(k, |ui| {
             let what = match &t.source {
@@ -110,7 +115,9 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 SubSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
             };
             // ligne de la piste : titre a gauche ; a droite, la langue, les reglages (fenetre d'apercu) et le retrait
-            ui.horizontal(|ui| {
+            let row = ui.horizontal(|ui| {
+                let _ = ui.dnd_drag_source(egui::Id::new(("piste_sous_titres", k)), SubRow(k), |ui| ui.label(egui::RichText::new("☰").strong().size(17.0)))
+                    .response.on_hover_text(tr("Drag to change the order of the subtitle tracks (track 1 is the one at the top)"));
                 ui.add(egui::Label::new(format!("{} — {}", k + 1, what)).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(egui::RichText::new("🗑").size(17.0)).on_hover_text(tr("Remove this track")).clicked() { del = Some(k); }
@@ -125,7 +132,22 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     if cur.is_none() && !langs.is_empty() { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), tr("to choose")); }
                 });
             });
+            rows.push(row.response.rect);
         });
+    }
+    // glisser-deposer : la piste se range a l'endroit indique par le trait bleu
+    if let (Some(from), Some(pos), Some(first), Some(last)) = (egui::DragAndDrop::payload::<SubRow>(ui.ctx()), ui.ctx().pointer_hover_pos(), rows.first(), rows.last()) {
+        let from = from.0;
+        let area = first.union(*last).expand(8.0);
+        if area.contains(pos) && from < v.subs.len() {
+            let to = rows.iter().filter(|r| r.center().y < pos.y).count();
+            let y = if to < rows.len() { rows[to].top() - 1.0 } else { last.bottom() + 1.0 };
+            ui.painter().hline(area.x_range(), y, egui::Stroke::new(2.5_f32, egui::Color32::from_rgb(90, 170, 255)));
+            if ui.input(|i| i.pointer.any_released()) {
+                let to = if to > from { to - 1 } else { to };
+                if to != from { let t = v.subs.remove(from); v.subs.insert(to, t); changed = true; }
+            }
+        }
     }
     if let Some(k) = del { v.subs.remove(k); changed = true; }
 

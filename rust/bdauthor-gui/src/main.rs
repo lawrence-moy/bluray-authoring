@@ -1235,7 +1235,12 @@ impl eframe::App for App {
                         let mut want_preview = None;
                         // cadence de la video (sondee) : sert de cadence par defaut aux sous-titres a temps en images
                         let auto_fps = self.video_sizes.get(&v.file).and_then(|x| bdauthor_core::subtitle::plausible_fps(x.1));
+                        let subs_before: Vec<_> = v.subs.iter().map(|t| t.source.clone()).collect();
                         changed |= subs_ui::panel(ui, v, &mut self.model.languages, &mut self.sub_probes, &sub_base, &mut want_preview, auto_fps);
+                        // une piste retiree ou deplacee change les rangs : la fenetre d'apercu (ouverte sur un rang) est fermee
+                        if !v.subs.iter().map(|t| &t.source).zip(&subs_before).all(|(a, b)| a == b) || v.subs.len() < subs_before.len() {
+                            if self.sub_preview.as_ref().map_or(false, |p| Some(p.video) == self.sel) { self.sub_preview = None; }
+                        }
                         if let (Some(k), Some(vi)) = (want_preview, self.sel) {
                             let file = if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { sub_base.join(&v.file) };
                             if let Some(t) = v.subs.get(k) { self.sub_preview = Some(subs_ui::SubPreview::new(vi, k, t, &file, &sub_base, auto_fps)); }

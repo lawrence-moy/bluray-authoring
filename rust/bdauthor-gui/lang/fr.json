@@ -1118,5 +1118,6 @@
   "Puts these settings back on the right of the preview window": "Remet ces réglages à droite de la fenêtre d'aperçu",
   "Track settings — {}": "Réglages de la piste — {}",
   "Track settings": "Réglages de la piste",
-  "Edit this track: opens the preview window with its settings and its text style": "Modifier cette piste : ouvre la fenêtre d'aperçu avec ses réglages et le style de son texte"
+  "Edit this track: opens the preview window with its settings and its text style": "Modifier cette piste : ouvre la fenêtre d'aperçu avec ses réglages et le style de son texte",
+  "Drag to change the order of the subtitle tracks (track 1 is the one at the top)": "Glisser pour changer l'ordre des pistes de sous-titres (la piste 1 est celle du haut)"
 }
