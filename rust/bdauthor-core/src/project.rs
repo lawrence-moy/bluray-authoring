@@ -1095,7 +1095,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
     }
     let size = (first.width, first.height);
-    let menu_size = if menu_cfg.get("taille").and_then(Value::as_str) == Some("1080") { (1920, 1080) } else { size };
+    let menu_size = if menu_cfg.get("taille").and_then(Value::as_str) != Some("video") { (1920, 1080) } else { size };
     let sc_ = menu_size.0 as f64 / 1920.0;
 
     let still_opts = EncodeOpts { crf: eopts.crf, preset: eopts.preset.clone(), ..Default::default() };

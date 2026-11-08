@@ -287,7 +287,7 @@ fn styled_buttons_project() {
     }
     // halo + agrandissement + etat active ; une vignette collee au bord gauche (son halo doit etre rogne) ; un bouton dessine
     let proj = r##"{ "titre": "Style", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2, "taille": "video"},
       "mise_en_page": { "style_boutons": {"halo": 24, "agrandir": 10, "etat_active": true, "halo_anime": true, "son_selection": "clic.wav"},
         "pages": [ { "elements": [
           {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356,"video":1},

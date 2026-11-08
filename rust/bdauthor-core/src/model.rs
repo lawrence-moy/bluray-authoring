@@ -126,7 +126,7 @@ impl Default for ProjectModel {
     fn default() -> Self {
         ProjectModel {
             title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), fill_disc: false, copy_conform: false, bg: String::new(), intro: String::new(), bg_video: String::new(), bg_video_audio: false, music: String::new(), bg_seconds: 5.0,
-            menu_1080: false, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], iso: Default::default(), cover: Default::default(), label: Default::default(), raw: Value::Obj(vec![]),
+            menu_1080: true, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], iso: Default::default(), cover: Default::default(), label: Default::default(), raw: Value::Obj(vec![]),
         }
     }
 }
@@ -181,7 +181,7 @@ impl ProjectModel {
             m.bg_video_audio = menu.get("son_fond_video").and_then(Value::as_bool).unwrap_or(false);
             m.music = menu.get("musique").and_then(Value::as_str).unwrap_or("").into();
             m.bg_seconds = menu.get("fond_secondes").and_then(Value::as_f64).unwrap_or(5.0);
-            m.menu_1080 = menu.get("taille").and_then(Value::as_str) == Some("1080");
+            m.menu_1080 = menu.get("taille").and_then(Value::as_str) != Some("video");
             m.loop_menu = menu.get("boucle").and_then(Value::as_bool).unwrap_or(false);
             m.cache = menu.get("cache").and_then(Value::as_bool).unwrap_or(true);
         }
@@ -237,7 +237,7 @@ impl ProjectModel {
         set(&mut menu, "son_fond_video", if self.bg_video_audio { Some(Value::Bool(true)) } else { None });
         set(&mut menu, "musique", if self.music.is_empty() { None } else { Some(s(&self.music)) });
         set(&mut menu, "fond_secondes", Some(n(self.bg_seconds)));
-        set(&mut menu, "taille", if self.menu_1080 { Some(s("1080")) } else { None });
+        set(&mut menu, "taille", Some(s(if self.menu_1080 { "1080" } else { "video" })));
         set(&mut menu, "boucle", Some(Value::Bool(self.loop_menu)));
         // anciens reglages des menus automatiques : retires du fichier
         set(&mut menu, "retour", None);
