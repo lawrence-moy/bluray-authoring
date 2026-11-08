@@ -33,6 +33,7 @@ bdauthor prend vos fichiers vidéo, vos pistes audio et vos sous-titres, vous la
 - Génération d'un dossier **`BDMV`** complet ou d'une **image ISO**.
 - **Vérificateur intégré** (`bdcheck`) qui contrôle la cohérence du disque produit (index, playlists, clips, menus).
 - Fenêtre « Générer le disque » avec journal en direct.
+- Disques **sans zone et sans protection** : ni AACS, ni BD+, ni code de région (A/B/C), donc lisibles sur tout lecteur. Le verrouillage par zone et la protection anti-copie exigent des licences commerciales et ne sont pas gérés.
 
 ### Confort
 - Interface **bilingue** (français / anglais), projets enregistrés en **JSON lisible**.

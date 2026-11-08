@@ -33,6 +33,7 @@ bdauthor takes your video files, audio tracks and subtitles, lets you design the
 - Complete **`BDMV`** folder or **ISO image**.
 - **Built-in verifier** (`bdcheck`) that checks the consistency of the generated disc (index, playlists, clips, menus).
 - "Generate the disc" window with a live log.
+- Discs are **region-free and unprotected**: no AACS, BD+ or region code (A/B/C), so they play on any player. Region locking and copy protection require commercial licences and are not supported.
 
 ### Convenience
 - **Bilingual interface** (French / English); projects saved as **human-readable JSON**.
