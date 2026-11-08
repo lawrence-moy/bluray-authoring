@@ -157,6 +157,16 @@ pub(crate) fn help(ui: &mut egui::Ui, text: &str) {
 }
 
 /// Petit bouton « supprimer » dessine (une croix) : le glyphe ✕ n'est pas dans la police par defaut.
+/// Bouton carre de la meme taille que `delete_button`, avec un symbole (ex. rechargement).
+pub(crate) fn symbol_button(ui: &mut egui::Ui, symbol: &str, tip: &str) -> bool {
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
+    let vis = *ui.style().interact(&resp);
+    let p = ui.painter();
+    p.rect(rect, 3.0, vis.bg_fill, vis.bg_stroke);
+    p.text(rect.center(), egui::Align2::CENTER_CENTER, symbol, egui::FontId::proportional(16.0), vis.fg_stroke.color);
+    resp.on_hover_text(tip).clicked()
+}
+
 pub(crate) fn delete_button(ui: &mut egui::Ui, tip: &str) -> bool {
     let (rect, resp) = ui.allocate_exact_size(egui::vec2(20.0, 20.0), egui::Sense::click());
     let vis = *ui.style().interact(&resp);
@@ -265,6 +275,9 @@ struct App {
     cover_paste_n: usize,
     /// aimantation et zone de securite
     cover_snap: bool,
+    /// grille d'aimantation de la jaquette (pas en mm)
+    cover_grid: bool,
+    cover_grid_mm: f64,
     cover_safe: bool,
     /// sauvegarde automatique : dernier essai, derniere reussite, sauvegarde proposee a la restauration
     autosave_t: std::time::Instant,
@@ -342,6 +355,8 @@ struct App {
     page_edit: Option<(usize, String)>,
     drag: Option<editor_ui::DragState>,
     snap: bool,
+    /// pas de l'aimantation a la grille, en pixels
+    snap_px: i32,
     /// aimantation aux bords et centres de l'ecran et des autres elements (Alt : desactivee le temps du geste)
     guide_snap: bool,
     edit_gen: u64,
@@ -374,7 +389,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_grid: false, cover_grid_mm: 5.0, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, snap_px: 10, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -636,6 +651,8 @@ impl eframe::App for App {
         }
         self.poll_worker();
         self.history_step(ctx);
+        // Ctrl+S : enregistrer le projet
+        if ctx.input_mut(|i| i.consume_key(egui::Modifiers::COMMAND, egui::Key::S)) { self.save(false); }
         if !self.recovery_checked { self.recovery_checked = true; self.check_recovery(); }
         self.autosave_tick(ctx);
         if self.running() {
@@ -932,7 +949,7 @@ impl eframe::App for App {
                     ui.add_enabled_ui(!busy, |ui| {
                         if ui.button(tr("New project")).clicked() { self.new_project(); ui.close_menu(); }
                         if ui.button(tr("Open project…")).clicked() { ui.close_menu(); self.open(); }
-                        if ui.button(tr("Save")).clicked() { ui.close_menu(); self.save(false); }
+                        if ui.add(egui::Button::new(tr("Save")).shortcut_text("Ctrl+S")).clicked() { ui.close_menu(); self.save(false); }
                         if ui.button(tr("Save as…")).clicked() { ui.close_menu(); self.save(true); }
                     });
                     ui.separator();
@@ -1069,7 +1086,7 @@ impl eframe::App for App {
                                 .response.on_hover_text(tr("Drag to change the order of the videos"));
                         }
                         // les boutons gardent leur place : le nom est raccourci pour tenir dans la largeur du panneau
-                        let max_chars = ((ui.available_width() - 62.0).max(60.0) / 7.0) as usize;
+                        let max_chars = ((ui.available_width() - 66.0).max(60.0) / 7.0) as usize;
                         let full = match self.durations.get(&v.file) {
                             Some(d) => format!("{:>2}. {} ({})", i + 1, label, duration_text(*d)),
                             None if self.probe_failed.contains(&v.file) => trf!("{}. {} (unknown)", format!("{:>2}", i + 1), label),
@@ -1077,9 +1094,12 @@ impl eframe::App for App {
                         };
                         let shown = if full.chars().count() > max_chars { format!("{}…", full.chars().take(max_chars.saturating_sub(1)).collect::<String>()) } else { full.clone() };
                         if ui.selectable_label(self.sel == Some(i), shown).on_hover_text(format!("{full}\n{}", v.file)).clicked() { self.sel = Some(i); }
-                        ui.add_enabled_ui(!busy, |ui| {
-                            if delete_button(ui, tr("Remove this video")) { ask = Some(i); }
-                            if ui.small_button("↻").on_hover_text(tr("Reload this video (re-read the duration, tracks and thumbnails)")).clicked() { reload = Some(v.file.clone()); }
+                        // boutons alignes a droite, de meme taille : retrait a l'extremite, rechargement a sa gauche
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.add_enabled_ui(!busy, |ui| {
+                                if delete_button(ui, tr("Remove this video")) { ask = Some(i); }
+                                if symbol_button(ui, "↻", tr("Reload this video (re-read the duration, tracks and thumbnails)")) { reload = Some(v.file.clone()); }
+                            });
                         });
                     }).response;
                     rows.push(r.rect);

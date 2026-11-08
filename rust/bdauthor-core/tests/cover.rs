@@ -26,10 +26,10 @@ fn deflate_roundtrip() {
 #[test]
 fn layout_and_geometry() {
     let c = Cover::default();
-    assert_eq!(c.trim_mm(), (272.0, 148.0));
-    assert_eq!(c.sheet_mm(), (278.0, 154.0));
+    assert_eq!(c.trim_mm(), (269.0, 148.0));
+    assert_eq!(c.sheet_mm(), (275.0, 154.0));
     let l = c.layout(300, Path::new("."));
-    assert_eq!(l.size, (3283, 1819));
+    assert_eq!(l.size, (3248, 1819));
     // les trois zones couvrent toute la feuille sans trou
     let bg = l.background();
     assert!((0..bg.height).all(|y| (0..bg.width).all(|x| bg.pixel(x, y)[3] == 255)));
@@ -103,7 +103,7 @@ fn pdf_structure() {
     let pdf = c.to_pdf(&sheet, "Mon (film)");
     let text = String::from_utf8_lossy(&pdf).into_owned();
     assert!(text.starts_with("%PDF-1.4"));
-    assert!(text.contains("/MediaBox [0 0 788.031 436.535]"), "{}", &text[..300.min(text.len())]);
+    assert!(text.contains("/MediaBox [0 0 779.528 436.535]"), "{}", &text[..300.min(text.len())]);
     assert!(text.contains("/Title (Mon film)"));
     // table des references : chaque decalage pointe sur « n 0 obj » (calcule sur les octets : le flux d'image est binaire)
     let at = |hay: &[u8], pat: &[u8]| hay.windows(pat.len()).rposition(|w| w == pat).unwrap();
@@ -127,7 +127,7 @@ fn pdf_structure() {
     // traits de coupe : page agrandie et lignes dessinees
     c.marks = true;
     let with = String::from_utf8_lossy(&c.to_pdf(&sheet, "t")).into_owned();
-    assert!(with.contains("/MediaBox [0 0 844.724 493.228]") && with.contains(" l S"));
+    assert!(with.contains("/MediaBox [0 0 836.220 493.228]") && with.contains(" l S"));
 }
 
 #[test]
@@ -204,7 +204,7 @@ fn layers_order_visibility_json() {
 
 #[test]
 fn a4_and_png_outputs() {
-    // jaquette Blu-ray standard : 272 x 148 mm finis -> A4 paysage
+    // jaquette Blu-ray standard : 269 x 148 mm finis -> A4 paysage
     let c = Cover::default();
     let sheet = c.layout(72, Path::new(".")).background();
     let pdf = c.to_pdf_a4(&sheet, "A4").unwrap();
@@ -234,7 +234,7 @@ fn shapes_and_text_fx_json_layout() {
     let mut c = Cover::default();
     let mut t = CoverItem::text("Titre", 10.0, 10.0, 100.0, 30.0, 30.0);
     if let CoverKind::Text { fx, .. } = &mut t.kind {
-        fx.outline_mm = 0.4; fx.outline_color = [255, 0, 0]; fx.shadow_mm = 0.6; fx.spacing = 1.3; fx.valign = VAlign::Bottom; fx.autofit = true;
+        fx.outline_mm = 0.4; fx.outline_color = [255, 0, 0]; fx.shadow_mm = 0.6; fx.spacing = 1.3; fx.valign = VAlign::Bottom; fx.autofit = true; fx.bold = true; fx.italic = true;
     }
     c.items.push(t);
     let mut r = CoverItem::shape(ShapeKind::Rect, 0.0, 0.0, 50.0, 20.0);
@@ -246,7 +246,7 @@ fn shapes_and_text_fx_json_layout() {
     assert_eq!(back, c);
     let l = c.layout(300, Path::new("."));
     assert_eq!(l.items.len(), 4);
-    match &l.items[0].0 { CoverDecor::Text { outline, shadow, spacing, valign, autofit, .. } => { assert_eq!((*outline, *shadow, *autofit, *valign), (5, 7, true, VAlign::Bottom)); assert!((*spacing - 1.3).abs() < 1e-6); } _ => panic!() };
+    match &l.items[0].0 { CoverDecor::Text { outline, shadow, spacing, valign, autofit, bold, italic, .. } => { assert_eq!((*outline, *shadow, *autofit, *valign, *bold, *italic), (5, 7, true, VAlign::Bottom, true, true)); assert!((*spacing - 1.3).abs() < 1e-6); } _ => panic!() };
     match &l.items[1].0 { CoverDecor::Shape { stroke_px, radius_px, fill, .. } => assert_eq!((*stroke_px, *radius_px, *fill), (12, 35, Some([255, 255, 255]))), _ => panic!() }
     // un texte simple n'ecrit aucun effet
     let plain = CoverItem::text("x", 0.0, 0.0, 10.0, 10.0, 12.0);

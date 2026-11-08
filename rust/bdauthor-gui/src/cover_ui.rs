@@ -14,6 +14,9 @@ use std::sync::mpsc::{channel, TryRecvError};
 const PREVIEW_DPI: u32 = 96;
 /// Taille minimale d'un element (mm) et rayon (pixels) de saisie d'une poignee.
 const MIN_MM: f64 = 2.0;
+/// taille des icones des listes (comme l'editeur de menu)
+const ICON: f32 = 17.0;
+fn ico(s: &str) -> egui::RichText { egui::RichText::new(s).size(ICON) }
 const HANDLE_PX: f32 = 9.0;
 /// Epaisseur des regles (pixels) : largeur de celle de gauche, hauteur de celle du haut.
 const RULER_W: f32 = 30.0;
@@ -375,13 +378,13 @@ impl App {
                     let open = !self.cover_closed.contains(&l);
                     let count = (0..n).filter(|&i| doc.items()[i].layer == l).count();
                     let r = ui.horizontal(|ui| {
-                        let _ = ui.dnd_drag_source(egui::Id::new(("cal", l)), CoverRow::Layer(l), |ui| ui.label(egui::RichText::new("☰").strong()))
+                        let _ = ui.dnd_drag_source(egui::Id::new(("cal", l)), CoverRow::Layer(l), |ui| ui.label(egui::RichText::new("☰").strong().size(ICON)))
                             .response.on_hover_text(tr("Drag to move the layer (with its items)"));
-                        if ui.small_button(pm(open)).on_hover_text(if open { tr("Collapse the layer") } else { tr("Expand the layer") }).clicked() { toggle = Some(l); }
+                        if ui.small_button(ico(pm(open))).on_hover_text(if open { tr("Collapse the layer") } else { tr("Expand the layer") }).clicked() { toggle = Some(l); }
                         let vis = layers[l].visible;
-                        if ui.small_button(if vis { "👁" } else { "◌" }).on_hover_text(if vis { tr("Hide (a hidden layer is neither displayed nor exported)") } else { tr("Hidden layer: show") }).clicked() { layers[l].visible = !vis; }
+                        if ui.small_button(if vis { ico("👁") } else { ico("👁").strikethrough().weak() }).on_hover_text(if vis { tr("Hide (a hidden layer is neither displayed nor exported)") } else { tr("Hidden layer: show") }).clicked() { layers[l].visible = !vis; }
                         let locked = layers[l].locked;
-                        if ui.small_button(if locked { "🔒" } else { "🔓" }).on_hover_text(if locked { tr("Locked: its items can no longer be selected with the mouse; unlock") } else { tr("Lock (no more selection or moving with the mouse)") }).clicked() { layers[l].locked = !locked; }
+                        if ui.small_button(ico(if locked { "🔒" } else { "🔓" })).on_hover_text(if locked { tr("Locked: its items can no longer be selected with the mouse; unlock") } else { tr("Lock (no more selection or moving with the mouse)") }).clicked() { layers[l].locked = !locked; }
                         let editing = matches!(&self.cover_layer_edit, Some((e, _)) if *e == l);
                         if editing {
                             if let Some((_, text)) = &mut self.cover_layer_edit {
@@ -393,9 +396,9 @@ impl App {
                             let resp = ui.selectable_label(active == l, egui::RichText::new(format!("{}  ({count})", layers[l].name))).on_hover_text(tr("Active layer: receives new items. Double-click: rename"));
                             if resp.clicked() { activate = Some(l); }
                             if resp.double_clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
-                            if ui.small_button("✏").on_hover_text(tr("Rename the layer")).clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
+                            if ui.small_button(ico("✏")).on_hover_text(tr("Rename the layer")).clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
                             if nl > 1 {
-                                let _ = ui.menu_button("🗑", |ui| {
+                                let _ = ui.menu_button(ico("🗑"), |ui| {
                                     if ui.button(tr("Delete the layer (its items go to the neighboring layer)")).clicked() { op = Some(CoverOp::Remove(l, true)); ui.close_menu(); }
                                     if ui.button(tr("Delete the layer and its items")).clicked() { op = Some(CoverOp::Remove(l, false)); ui.close_menu(); }
                                 }).response.on_hover_text(tr("Delete the layer"));
@@ -409,7 +412,7 @@ impl App {
                         if !layers[l].visible { text = text.weak(); }
                         let r = ui.horizontal(|ui| {
                             ui.add_space(40.0);
-                            let _ = ui.dnd_drag_source(egui::Id::new(("cel", i)), CoverRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak()))
+                            let _ = ui.dnd_drag_source(egui::Id::new(("cel", i)), CoverRow::Item(i), |ui| ui.label(egui::RichText::new("☰").weak().size(ICON)))
                                 .response.on_hover_text(tr("Drag to change the order or the layer"));
                             if ui.selectable_label(selected.contains(&i), text).clicked() { pick = Some(i); }
                         }).response;
@@ -558,22 +561,6 @@ impl App {
         ui.horizontal_wrapped(|ui| {
             if !sel.is_empty() {
                 if ui.button(tr("Duplicate")).clicked() { changed |= self.cover_duplicate(doc); }
-                if ui.button(tr("Delete")).clicked() { changed |= self.cover_delete(doc); }
-                if ui.button(tr("Copy")).on_hover_text("Ctrl+C").clicked() { self.cover_copy(&*doc); }
-                if ui.button(tr("Cut")).on_hover_text("Ctrl+X").clicked() { if self.cover_copy(&*doc) { changed |= self.cover_delete(doc); } }
-            }
-            if ui.add_enabled(!self.cover_clip.is_empty(), egui::Button::new(tr("Paste"))).on_hover_text(tr("Ctrl+V — also works from one sheet to the other (cover ↔ label)")).clicked() {
-                changed |= self.cover_paste(doc);
-            }
-            if sel.len() == 1 {
-                let i = sel[0];
-                let l = doc.items()[i].layer;
-                if let Some(j) = (0..i).rev().find(|&j| doc.items()[j].layer == l) {
-                    if ui.button("▼").on_hover_text(tr("Move back in the layer")).clicked() { doc.items_mut().swap(i, j); self.cover_select_only(Some(j)); changed = true; }
-                }
-                if let Some(j) = (i + 1..n).find(|&j| doc.items()[j].layer == l) {
-                    if ui.button("▲").on_hover_text(tr("Move forward in the layer")).clicked() { doc.items_mut().swap(i, j); self.cover_select_only(Some(j)); changed = true; }
-                }
             }
         });
         // alignement : sur le cadre commun de la selection, ou sur la feuille pour un element seul
@@ -658,7 +645,11 @@ impl App {
                     ui.label(tr("Line spacing"));
                     changed |= ui.add(egui::DragValue::new(&mut fx.spacing).range(0.5..=3.0).speed(0.02)).changed();
                 });
-                changed |= ui.checkbox(&mut fx.autofit, tr("Fit to frame")).on_hover_text(tr("Reduces the text size if it overflows the frame")).changed();
+                ui.horizontal(|ui| {
+                    changed |= ui.checkbox(&mut fx.autofit, tr("Fit to frame")).on_hover_text(tr("Reduces the text size if it overflows the frame")).changed();
+                    changed |= ui.toggle_value(&mut fx.bold, egui::RichText::new("G").strong()).on_hover_text(tr("Bold")).changed();
+                    changed |= ui.toggle_value(&mut fx.italic, egui::RichText::new("I").italics()).on_hover_text(tr("Italic")).changed();
+                });
                 ui.horizontal(|ui| {
                     ui.label(tr("Outline"));
                     changed |= ui.add(egui::DragValue::new(&mut fx.outline_mm).range(0.0..=5.0).speed(0.05).suffix(" mm")).changed();
@@ -845,6 +836,15 @@ impl App {
             ui.separator();
             ui.selectable_value(&mut self.cover_inch, false, "mm");
             ui.selectable_value(&mut self.cover_inch, true, "pouces");
+            ui.separator();
+            ui.checkbox(&mut self.cover_snap, tr("Snap")).on_hover_text(tr("While moving or resizing, the edges and centers snap to the guides of the sheet and to the other visible items (magenta lines). Alt: temporarily off."));
+            ui.checkbox(&mut self.cover_grid, tr("Grid")).on_hover_text(tr("Moved and resized edges snap to a grid of this step (Alt: temporarily off)"));
+            if self.cover_grid {
+                let (mut v, unit, spd) = if self.cover_inch { (self.cover_grid_mm / 25.4, " in", 0.005) } else { (self.cover_grid_mm, " mm", 0.1) };
+                if ui.add(egui::DragValue::new(&mut v).range(0.02..=100.0).speed(spd).suffix(unit)).on_hover_text(tr("Grid step")).changed() {
+                    self.cover_grid_mm = (if self.cover_inch { v * 25.4 } else { v }).clamp(0.5, 100.0);
+                }
+            }
             ui.separator();
             // couleurs de l'editeur (gardees dans la configuration) : fond autour de la feuille, reperes des bords et des plis
             let mut cfg_changed = false;
@@ -1099,6 +1099,18 @@ impl App {
                         (nx, ny, nw, nh) = r2;
                         snapped = (gx, gy);
                     }
+                    // grille : les bords deplaces s'alignent sur le pas (sauf sur un axe deja aimante a un repere ; Alt : desactivee)
+                    if self.cover_grid && !proportional && !ctx.input(|i| i.modifiers.alt) {
+                        let st = self.cover_grid_mm.max(0.1);
+                        let g = |v: f64| (v / st).round() * st;
+                        let (left, right, top, bottom) = (nx, nx + nw, ny, ny + nh);
+                        if snapped.0.is_none() {
+                            match d.handle { 0 => nx = g(nx), 1 | 3 => { nx = g(left); nw = (right - nx).max(MIN_MM); } _ => { nw = (g(right) - nx).max(MIN_MM); } }
+                        }
+                        if snapped.1.is_none() {
+                            match d.handle { 0 => ny = g(ny), 1 | 2 => { ny = g(top); nh = (bottom - ny).max(MIN_MM); } _ => { nh = (g(bottom) - ny).max(MIN_MM); } }
+                        }
+                    }
                     let r = |v: f64| (v * 100.0).round() / 100.0;
                     let items = doc.items_mut();
                     let moved = (items[d.item].x, items[d.item].y, items[d.item].w, items[d.item].h) != (r(nx), r(ny), r(nw), r(nh));
@@ -1141,6 +1153,11 @@ impl App {
                         if let Some(g) = near(mx, &xs) { mx = g; snapped.0 = Some(g); }
                         if let Some(g) = near(my, &ys) { my = g; snapped.1 = Some(g); }
                     }
+                    if self.cover_grid && !ctx.input(|i| i.modifiers.alt) && !ctx.input(|i| i.modifiers.shift) {
+                        let st = self.cover_grid_mm.max(0.1);
+                        if snapped.0.is_none() { mx = (mx / st).round() * st; }
+                        if snapped.1.is_none() { my = (my / st).round() * st; }
+                    }
                     let before = doc.items()[d.item].line_ends();
                     doc.items_mut()[d.item].move_line_end(d.handle == 5, (fx, fy), (mx, my));
                     if doc.items()[d.item].line_ends() != before { self.cover_changed(); }
@@ -1161,6 +1178,15 @@ impl App {
                 painter.rect_filled(rc, 0.0, Color32::from_rgba_unmultiplied(120, 190, 255, 30));
                 painter.rect_stroke(rc, 0.0, Stroke::new(1.0_f32, Color32::from_rgb(120, 190, 255)));
             }
+        }
+        // grille (discrete, seulement si elle reste lisible a cette echelle)
+        if self.cover_grid && self.cover_grid_mm * k as f64 >= 5.0 {
+            let st = self.cover_grid_mm;
+            let col = Color32::from_rgba_unmultiplied(255, 255, 255, 28);
+            let (mut gx, mut n) = (0.0_f64, 0);
+            while gx <= sw - 2.0 * bleed as f64 && n < 2000 { painter.line_segment([to_screen(gx, 0.0), to_screen(gx, sh - 2.0 * bleed as f64)], Stroke::new(1.0_f32, col)); gx += st; n += 1; }
+            let (mut gy, mut n) = (0.0_f64, 0);
+            while gy <= sh - 2.0 * bleed as f64 && n < 2000 { painter.line_segment([to_screen(0.0, gy), to_screen(sw - 2.0 * bleed as f64, gy)], Stroke::new(1.0_f32, col)); gy += st; n += 1; }
         }
         // traits d'aimantation
         if let (Some(g), true) = (snapped.0, self.cover_drag.is_some()) {

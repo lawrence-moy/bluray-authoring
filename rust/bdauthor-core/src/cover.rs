@@ -32,11 +32,14 @@ pub struct TextFx {
     pub valign: VAlign,
     /// reduit la taille du texte pour qu'il tienne dans le cadre (la taille indiquee est un maximum)
     pub autofit: bool,
+    /// gras et italique (synthetiques, comme pour les sous-titres)
+    pub bold: bool,
+    pub italic: bool,
 }
 
 impl Default for TextFx {
     fn default() -> TextFx {
-        TextFx { outline_mm: 0.0, outline_color: [0, 0, 0], shadow_mm: 0.0, shadow_color: [0, 0, 0], spacing: 1.0, valign: VAlign::Middle, autofit: false }
+        TextFx { outline_mm: 0.0, outline_color: [0, 0, 0], shadow_mm: 0.0, shadow_color: [0, 0, 0], spacing: 1.0, valign: VAlign::Middle, autofit: false, bold: false, italic: false }
     }
 }
 
@@ -171,16 +174,17 @@ pub struct Cover {
 
 impl Default for Cover {
     fn default() -> Cover {
-        Cover { face_mm: 129.0, height_mm: 148.0, spine_mm: 14.0, bleed_mm: 3.0, colors: [[24, 28, 40], [40, 60, 110], [24, 28, 40]], bg_image: String::new(), marks: false, dpi: 300, items: vec![], layers: vec![] }
+        Cover { face_mm: 129.0, height_mm: 148.0, spine_mm: 11.0, bleed_mm: 3.0, colors: [[24, 28, 40], [40, 60, 110], [24, 28, 40]], bg_image: String::new(), marks: false, dpi: 300, items: vec![], layers: vec![] }
     }
 }
 
 /// Formats usuels : (nom, largeur du dos et de la face, hauteur, tranche), en mm.
-pub const FORMATS: [(&str, f64, f64, f64); 4] = [
-    ("Blu-ray standard (14 mm spine)", 129.0, 148.0, 14.0),
-    ("Slim Blu-ray (11 mm spine)", 129.0, 148.0, 11.0),
+pub const FORMATS: [(&str, f64, f64, f64); 5] = [
+    ("Blu-ray standard (11 mm spine)", 129.0, 148.0, 11.0),
+    ("Thick Blu-ray (14 mm spine)", 129.0, 148.0, 14.0),
     ("Standard DVD (14 mm spine)", 129.0, 183.0, 14.0),
     ("Slim DVD (7 mm spine)", 129.0, 183.0, 7.0),
+    ("Slim Blu-ray (7 mm spine)", 129.0, 148.0, 7.0),
 ];
 
 /// Resultat de la mise en page en pixels.
@@ -198,7 +202,7 @@ pub struct CoverLayout {
 /// Element pose, en pixels (cadre et contenu).
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoverDecor {
-    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool },
+    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool, bold: bool, italic: bool },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
     Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, flip: bool, style: LineStyle, arrow: LineArrow },
 }
@@ -274,7 +278,7 @@ impl Cover {
                     let font = if font.is_empty() || Path::new(font).is_absolute() { font.clone() } else if base.join(font).is_file() { base.join(font).to_string_lossy().into_owned() } else { font.clone() };
                     CoverDecor::Text { text, x, y, w: iw, h: ih, size: ((size_pt / 72.0 * dpi as f64).round() as i32).max(1), color: *color, align: *align, font, valign: fx.valign,
                         spacing: fx.spacing as f32, outline: if fx.outline_mm > 0.0 { mm_px(fx.outline_mm, dpi).max(1) } else { 0 }, outline_color: fx.outline_color,
-                        shadow: if fx.shadow_mm > 0.0 { mm_px(fx.shadow_mm, dpi).max(1) } else { 0 }, shadow_color: fx.shadow_color, autofit: fx.autofit }
+                        shadow: if fx.shadow_mm > 0.0 { mm_px(fx.shadow_mm, dpi).max(1) } else { 0 }, shadow_color: fx.shadow_color, autofit: fx.autofit, bold: fx.bold, italic: fx.italic }
                 }
                 CoverKind::Image { path } => {
                     if path.is_empty() { return None; }
@@ -669,6 +673,8 @@ fn item_to_value(it: &CoverItem) -> Value {
             if fx.spacing != d.spacing { e.push(("interligne".into(), n(fx.spacing))); }
             if fx.valign != d.valign { e.push(("alignement_v".into(), Value::Str(fx.valign.name().into()))); }
             if fx.autofit { e.push(("ajuster".into(), Value::Bool(true))); }
+            if fx.bold { e.push(("gras".into(), Value::Bool(true))); }
+            if fx.italic { e.push(("italique".into(), Value::Bool(true))); }
         }
         CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
             if *style != LineStyle::Solid { e.push(("trait".into(), Value::Str(style.name().into()))); }
@@ -713,6 +719,8 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
                     spacing: g("interligne", d.spacing).clamp(0.3, 5.0),
                     valign: e.get("alignement_v").and_then(Value::as_str).and_then(VAlign::from_name).unwrap_or(d.valign),
                     autofit: e.get("ajuster").and_then(Value::as_bool).unwrap_or(false),
+                    bold: e.get("gras").and_then(Value::as_bool).unwrap_or(false),
+                    italic: e.get("italique").and_then(Value::as_bool).unwrap_or(false),
                 }
             },
         },

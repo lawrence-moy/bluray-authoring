@@ -115,6 +115,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 SubSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
             };
             // ligne de la piste : titre a gauche ; a droite, la langue, les reglages (fenetre d'apercu) et le retrait
+            let hl = ui.painter().add(egui::Shape::Noop);
             let row = ui.horizontal(|ui| {
                 let _ = ui.dnd_drag_source(egui::Id::new(("piste_sous_titres", k)), SubRow(k), |ui| ui.label(egui::RichText::new("☰").strong().size(17.0)))
                     .response.on_hover_text(tr("Drag to change the order of the subtitle tracks (track 1 is the one at the top)"));
@@ -133,6 +134,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 });
             });
             rows.push(row.response.rect);
+            // ligne survolee : fond en surbrillance (dessine sous les boutons)
+            if ui.rect_contains_pointer(row.response.rect) { ui.painter().set(hl, egui::Shape::rect_filled(row.response.rect.expand2(egui::vec2(3.0, 2.0)), 4.0, ui.visuals().widgets.hovered.weak_bg_fill)); }
         });
     }
     // glisser-deposer : la piste se range a l'endroit indique par le trait bleu

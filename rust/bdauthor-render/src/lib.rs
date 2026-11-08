@@ -224,6 +224,19 @@ fn plot(img: &mut RgbaImage, px: i64, py: i64, rgb: [u8; 3], cv: f32) {
     }
 }
 
+/// Une ligne de texte avec gras et/ou italique synthetiques (meme dessin que les sous-titres), placee dans `rect` selon `align`.
+fn draw_line_styled(img: &mut RgbaImage, font: &FontVec, text: &str, size: f32, rgb: [u8; 3], rect: (f32, f32, f32, f32), align: Align, bold: bool, italic: bool) {
+    if text.is_empty() || size < 1.0 {
+        return;
+    }
+    let run = bdauthor_core::subtitle::Run { text: text.to_string(), bold, italic, underline: false, color: None };
+    let sf = font.as_scaled(PxScale::from(size));
+    let (tw, th) = (run_width(font, &run, size), text_extent(font, text, size).1);
+    let mut x = rect.0 + match align { Align::Left => 0.0, Align::Center => (rect.2 - tw) / 2.0, Align::Right => rect.2 - tw };
+    let base = rect.1 + (rect.3 - th) / 2.0 + sf.ascent();
+    draw_run(img, font, &run, size, &mut x, base, rgb);
+}
+
 /// Dessine un morceau de texte a partir de `*x` (ligne de base `base`), puis avance `*x`.
 fn draw_run(img: &mut RgbaImage, font: &FontVec, r: &bdauthor_core::subtitle::Run, size: f32, x: &mut f32, base: f32, rgb: [u8; 3]) {
     if r.text.is_empty() || size < 1.0 {
@@ -589,14 +602,14 @@ impl FontRenderer {
     /// Texte de jaquette : interligne, alignement vertical, ajustement a la taille du cadre, contour et ombre.
     fn draw_cover_text(&self, im: &mut RgbaImage, d: &bdauthor_core::cover::CoverDecor) {
         use bdauthor_core::cover::{CoverDecor as D, VAlign};
-        let D::Text { text, x, y, w, h, size, color, align, font, valign, spacing, outline, outline_color, shadow, shadow_color, autofit } = d else { return };
+        let D::Text { text, x, y, w, h, size, color, align, font, valign, spacing, outline, outline_color, shadow, shadow_color, autofit, bold, italic } = d else { return };
         let custom = self.custom_font(font, Path::new(""));
         let f: &FontVec = custom.as_deref().unwrap_or(&self.font);
         let lines: Vec<&str> = text.split('\n').collect();
         let mut sz = *size as f32;
         let line_h = |s: f32| text_extent(f, "Ag", s).1 * 1.1 * *spacing;
         if *autofit {
-            let widest = |s: f32| lines.iter().map(|l| text_extent(f, l, s).0).fold(0.0f32, f32::max);
+            let widest = |s: f32| lines.iter().map(|l| text_extent(f, l, s).0 + if *bold { bold_off(s) } else { 0.0 }).fold(0.0f32, f32::max);
             for _ in 0..3 {
                 let (tw, th) = (widest(sz), line_h(sz) * lines.len() as f32);
                 let k = (*w as f32 / tw.max(1.0)).min(*h as f32 / th.max(1.0));
@@ -609,7 +622,8 @@ impl FontRenderer {
         let top = match valign { VAlign::Top => 0.0, VAlign::Middle => (*h as f32 - total) / 2.0, VAlign::Bottom => *h as f32 - total };
         let paint = |img: &mut RgbaImage, ox: f32, oy: f32, col: [u8; 3]| {
             for (k, l) in lines.iter().enumerate() {
-                draw_line_f(img, f, l, sz, col, (ox, oy + top + lh * k as f32, *w as f32, lh), *align);
+                let rect = (ox, oy + top + lh * k as f32, *w as f32, lh);
+                if *bold || *italic { draw_line_styled(img, f, l, sz, col, rect, *align, *bold, *italic); } else { draw_line_f(img, f, l, sz, col, rect, *align); }
             }
         };
         if *outline == 0 && *shadow == 0 {

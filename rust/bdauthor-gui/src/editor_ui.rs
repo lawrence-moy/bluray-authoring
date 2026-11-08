@@ -701,7 +701,10 @@ impl App {
                     }
                 }
                 ui.separator();
-                ui.checkbox(&mut self.snap, tr("Snap to 10 px"));
+                ui.horizontal(|ui| {
+                    ui.checkbox(&mut self.snap, tr("Snap to a grid of"));
+                    ui.add_enabled(self.snap, egui::DragValue::new(&mut self.snap_px).range(1..=200).speed(0.2).suffix(" px")).on_hover_text(tr("Grid step, in pixels of the 1920 × 1080 screen"));
+                });
                 ui.checkbox(&mut self.guide_snap, tr("Align with the other items")).on_hover_text(tr("While moving or resizing, the edges and centers snap to the edges and center of the screen and of the other visible items (magenta lines). Alt: temporarily off."));
             });
             if pick_image {
@@ -855,7 +858,8 @@ impl App {
                 if let Some(pos) = ctx.pointer_hover_pos().filter(|p| rect.contains(*p)) {
                     let mut it = new_widget(*w, (!self.model.videos.is_empty()).then_some(0));
                     let (px, py) = to_plane(pos);
-                    let g = |v: i32| if self.snap { (v + 5).div_euclid(10) * 10 } else { v };
+                    let step = self.snap_px.max(1);
+                    let g = |v: i32| if self.snap { (v + step / 2).div_euclid(step) * step } else { v };
                     it.x = g(px.round() as i32 - it.w / 2).clamp(0, 1920 - it.w);
                     it.y = g(py.round() as i32 - it.h / 2).clamp(0, 1080 - it.h);
                     let r = Rect::from_min_max(to_screen(it.x as f32, it.y as f32), to_screen((it.x + it.w) as f32, (it.y + it.h) as f32));
@@ -893,7 +897,7 @@ impl App {
             // elements des calques masques ou verrouilles : ni selection ni deplacement a la souris
             let usable: Vec<bool> = info.design(&self.model.designs).map(|d| (0..d.items.len()).map(|i| !d.item_hidden(i) && !d.item_locked(i)).collect()).unwrap_or_default();
             let can = |i: usize| usable.get(i).copied().unwrap_or(false);
-            let grid = if self.snap { 10 } else { 0 };
+            let grid = if self.snap { self.snap_px.max(1) } else { 0 };
             // lignes d'aimantation trouvees pendant ce glissement (dessinees sur l'apercu)
             let mut guides: (Option<i32>, Option<i32>) = (None, None);
             let (r_started, r_dragged, r_stopped, r_clicked, r_secondary) = if skip_input { (false, false, false, false, false) } else { (resp.drag_started(), resp.dragged(), resp.drag_stopped(), resp.clicked(), resp.secondary_clicked()) };
