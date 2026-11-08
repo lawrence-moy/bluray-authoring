@@ -1220,6 +1220,14 @@ impl App {
             let music = match &bg.music { PageMusic::File(f) => f.clone(), PageMusic::Project => self.model.music.clone(), PageMusic::Silent => String::new() };
             if bg.is_default() { None } else { self.bg_note(&video, &music) }
         };
+        // boutons de la page, proposes pour le lancement automatique : (rang de l'element, libelle)
+        let cands: Vec<(usize, String)> = info.design(&self.model.designs).map(|d| {
+            sim_buttons(info, d, &self.model.designs.style, self.model.videos.len()).iter().map(|b| {
+                let it = &d.items[b.item];
+                let name = if !it.name.is_empty() { it.name.clone() } else { format!("{}. {}", b.item + 1, kind_name(&it.kind)) };
+                (b.item, name)
+            }).collect()
+        }).unwrap_or_default();
         let Some(d) = info.design_mut(&mut self.model.designs) else { return };
         egui::CollapsingHeader::new(tr("Background and animations of this page")).id_salt("reglages_page").default_open(true).show(ui, |ui| {
             changed |= page_bg_ui(ui, &mut d.bg, &mut pick);
@@ -1234,6 +1242,27 @@ impl App {
                 }
             });
             crate::help(ui, tr("A single frame rate per page (Blu-ray standard), for the animated glow and image animations. Rounded to a fraction of the menu video's frame rate."));
+            ui.separator();
+            ui.strong(tr("Automatic launch"));
+            let mut on = d.idle.is_some();
+            if ui.add_enabled(!cands.is_empty(), egui::Checkbox::new(&mut on, tr("Start an item if nothing is pressed"))).on_hover_text(tr("When the page has been shown for this long with no button pressed, the chosen item is activated (for example a thumbnail starts its video). The delay is counted in whole passes of the page's background, so it can run up to one pass longer: use a short background duration for a precise delay. Pressing any button leaves the page and cancels the countdown.")).changed() {
+                d.idle = if on { cands.first().map(|(k, _)| bdauthor_core::design::Idle { seconds: 30, item: d.ensure_id(*k) }) } else { None };
+                changed = true;
+            }
+            if let Some(mut idl) = d.idle {
+                let before = idl;
+                ui.horizontal(|ui| {
+                    ui.label(tr("after"));
+                    ui.add(egui::DragValue::new(&mut idl.seconds).range(5..=bdauthor_core::design::MAX_IDLE_SECONDS).suffix(" s"));
+                });
+                let cur = d.item_by_id(idl.item).and_then(|k| cands.iter().find(|(c, _)| *c == k)).map(|(_, n)| n.clone()).unwrap_or_else(|| tr("(deleted)").to_string());
+                egui::ComboBox::from_label(tr("item to start")).selected_text(cur).show_ui(ui, |ui| {
+                    for (k, name) in &cands {
+                        if ui.selectable_label(d.items.get(*k).map_or(false, |it| it.id == idl.item), name).clicked() { idl.item = d.ensure_id(*k); }
+                    }
+                });
+                if idl != before { d.idle = Some(idl); changed = true; }
+            }
         });
         if let Some(k) = pick {
             let (name, exts): (&str, &[&str]) = match k {

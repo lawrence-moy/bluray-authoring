@@ -544,7 +544,21 @@ pub struct PageDesign {
     pub bg: PageBg,
     /// Cadence des animations de boutons de la page (images par seconde, une seule par page selon la norme) ; 0 = 8 par defaut.
     pub anim_fps: u32,
+    /// Lancement automatique : au bout de `seconds` secondes passees sur la page sans clic, l'element `item` est active.
+    pub idle: Option<Idle>,
 }
+
+/// Lancement automatique d'un element de la page apres un delai (voir `PageDesign::idle`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Idle {
+    /// delai en secondes (1 a `MAX_IDLE_SECONDS`)
+    pub seconds: u32,
+    /// identifiant (`Item::id`) de l'element active
+    pub item: u32,
+}
+
+/// Plus long delai de lancement automatique.
+pub const MAX_IDLE_SECONDS: u32 = 3600;
 
 /// Cadence des animations de boutons quand la page n'en precise pas.
 pub const DEFAULT_ANIM_FPS: u32 = 8;
@@ -612,6 +626,12 @@ impl PageDesign {
     pub fn validate_items(&self, page: usize, pages: usize, n_videos: usize) -> Vec<Problem> {
         let mut p = Vec::new();
         let (err, warn) = (|m: String| Problem { error: true, msg: m }, |m: String| Problem { error: false, msg: m });
+        if let Some(i) = self.idle {
+            // l'element doit etre un bouton de la page
+            if !self.items.iter().any(|it| it.id == i.item && it.id != 0 && it.is_button()) {
+                p.push(err(tr("Automatic launch: choose an item of the page that is a button.").to_string()));
+            }
+        }
         let all = self.slot_count();
         if all > MAX_PER_PAGE { p.push(err(trf!("{} thumbnails: {} at most per page.", all, MAX_PER_PAGE))); }
         let mut slot_no = 0;
@@ -823,6 +843,7 @@ impl PageDesign {
         }
         if !self.name.is_empty() { o.push(("nom".into(), Value::Str(self.name.clone()))); }
         if self.anim_fps != 0 { o.push(("animation_ips".into(), Value::Num(self.anim_fps as f64))); }
+        if let Some(i) = self.idle { o.push(("lancement_auto".into(), Value::Obj(vec![("secondes".into(), Value::Num(i.seconds as f64)), ("element".into(), Value::Num(i.item as f64))]))); }
         if !self.bg.is_default() { o.push(("fond_page".into(), self.bg.to_value())); }
         Value::Obj(o)
     }
@@ -890,7 +911,11 @@ impl PageDesign {
             locked: l.get("verrouille").and_then(Value::as_bool).unwrap_or(false),
         }).collect()).unwrap_or_default();
         let mut d = PageDesign { items, layers, name: v.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default(),
-            anim_fps: v.get("animation_ips").and_then(Value::as_f64).map_or(0, |x| x.round().clamp(0.0, 60.0) as u32) };
+            anim_fps: v.get("animation_ips").and_then(Value::as_f64).map_or(0, |x| x.round().clamp(0.0, 60.0) as u32),
+            idle: v.get("lancement_auto").and_then(|a| Some(Idle {
+                seconds: a.get("secondes").and_then(Value::as_f64)?.round().clamp(1.0, MAX_IDLE_SECONDS as f64) as u32,
+                item: a.get("element").and_then(Value::as_f64)?.max(0.0) as u32,
+            })) };
         d.normalize_layers();
         d.normalize_ids();
         Ok(d)

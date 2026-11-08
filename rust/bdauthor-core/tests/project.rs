@@ -857,3 +857,45 @@ fn target_bitrate_encoding_follows_the_plan() {
     let (_, logs2) = build_in(&tools, &dir, "out2");
     assert!(!logs2.iter().any(|l| l.contains("debit video vise")), "{logs2:?}");
 }
+
+#[test]
+fn page_launches_an_item_after_a_delay() {
+    common::fr();
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_idle_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for f in ["a", "b"] {
+        assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i", "sine=duration=3",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-c:a", "aac", "-shortest"]).arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
+    }
+    // page 1 : vignette de la video 1 (id 7) lancee seule apres 6 s ; page 2 sans delai
+    let proj = r##"{ "titre": "Delai", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
+      "mise_en_page": { "pages": [
+        { "nom": "Auto", "lancement_auto": {"secondes": 6, "element": 7}, "elements": [
+          {"type":"vignette","id":7,"vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","id":8,"vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2},
+          {"type":"navigation","action":"suivant","texte":"Suite","x":800,"y":900,"w":300,"h":90} ] },
+        { "nom": "Calme", "elements": [
+          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2},
+          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let (info, logs) = build_in(&tools, &dir, "out");
+    assert!(info.report.ok(), "{}", info.report.render());
+    assert_eq!(logs.iter().filter(|l| l.contains("lancement automatique")).count(), 1, "{logs:?}");
+    let root = dir.join("out/BDMV");
+    let mo = bdauthor_core::mobj::MovieObjectBdmv::parse(&std::fs::read(root.join("MovieObject.bdmv")).unwrap()).unwrap();
+    let text = |o: usize| mo.objects[o].commands.iter().map(|c| c.text()).collect::<Vec<_>>().join(" ; ");
+    // objets : 0 Top Menu, 1-2 videos, 3 page 1, 4 page 2
+    eprintln!("page 1 : {}", text(3));
+    let t = text(3);
+    assert!(t.starts_with("MOVE r3, 0 ; PLAY_PL 2"), "{t}");
+    assert!(t.contains("ADD r3, 1 ; CMP_LT r3, 3 ; GOTO 1") || t.contains("ADD r3, 1 ; CMP_LT r3, 4 ; GOTO 1"), "{t}");
+    // apres la comparaison : les commandes de la vignette 1 (retour au titre de la page, lecture de la video 1), puis retour au debut
+    assert!(t.contains("JUMP_TITLE"), "{t}");
+    assert!(t.ends_with("GOTO 1"), "{t}");
+    assert_eq!(text(4).matches("GOTO").count(), 1, "{}", text(4));
+    assert!(!text(4).contains("ADD"));
+    if std::env::var_os("BDAUTHOR_TEST_OUT").is_none() { let _ = std::fs::remove_dir_all(&dir); }
+}

@@ -845,3 +845,13 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Sous-titres : style du texte retiré des réglages de la piste (il est dans l'aperçu du rendu) ; zone « Style de la piste » de l'aperçu détachable dans sa propre fenêtre.
 - Widget Texte : « Police : » et « Alignement : » à gauche de leur menu.
 - Jaquette : déplacement de la vue au clic droit maintenu ; couleurs du fond et des repères réglables (gardées dans config.txt : cover_bg, cover_guide) ; boutons annuler/rétablir retirés.
+
+## Export 161 — retouches de l'éditeur, copie sans ré-encodage, remplissage du disque, lancement automatique
+
+- Éditeur de menu : zone de style ancrée à droite, jaquette grise par défaut, frise en bas ; aimantation réglable (px) ; jaquette : grille d'aimantation, gras/italique, boutons Supprimer/Copier/Couper/Coller et ▲▼ retirés (raccourcis clavier), icônes de calques à 17 pt, calque masqué = œil barré. Ctrl+S enregistre. Sous-titres : pistes réordonnables par glisser-déposer. Formats de jaquette : Blu-ray standard 11 mm (269×148), épais 14 mm, etc.
+- Menus en 1920×1080 par défaut : `menu.taille` vaut « 1080 » (défaut, y compris clé absente) ou « video » (taille de la 1re vidéo, écrit explicitement quand la case est décochée).
+- Encodage, deux options (désactivées par défaut) :
+  - `encodage.copie_si_conforme` : une vidéo H.264 déjà admise (profil High/Main, niveau ≤ 4.1, yuv420p, cadence constante, taille et cadence de la cible, refs, débit de pointe sur 1 s ≤ maxrate, images clés ≤ 2,5 s) garde son flux (`-c:v copy`). Refusée avec chapitres exacts ; repli sur ré-encodage si la copie échoue. Non vérifiables : tampon T-STD/VBV, GOP ouvert → tester sur lecteur.
+  - `encodage.remplir_disque` : x264 en deux passes au débit qui remplit le disque (`fill.rs` : capacité et marge de l'onglet ISO, réserve 200 Mo + 8 Mo/vidéo, audio et vidéos copiées déduits, plafond maxrate × 0,9, erreur sous 800 kb/s). ~30 % plus long. Le CRF est grisé.
+- Lancement automatique par page (`PageDesign::idle`, JSON `lancement_auto: {secondes, element}`, élément désigné par son `id`) : le flux de menu étant hors multiplex (`stream_model` 1), l'ICS n'a pas de `selection_timeout_pts` ; `user_timeout_duration` ne fait que retirer un sous-menu. On compte donc les passages du fond dans l'objet de la page : `MOVE r3,0 ; PLAY_PL ; NOP×3 ; ADD r3,1 ; CMP_LT r3,N ; GOTO 1 ; <commandes du bouton> ; GOTO 1` (`R_IDLE` = r3, N = ⌈secondes / durée du fond⌉). La playlist de la page boucle (pas d'arrêt sur image). Délai arrondi au passage entier supérieur ; non vérifié sur lecteur matériel.
+- Disques sans zone ni protection (README).

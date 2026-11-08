@@ -244,3 +244,25 @@ fn page_background_json() {
     p.bg = PageBg { visual: PageVisual::Project, music: PageMusic::File("m.mp3".into()) };
     assert_eq!(PageDesign::from_value(&parse(&p.to_value().to_pretty()).unwrap()).unwrap(), p);
 }
+
+#[test]
+fn automatic_launch_is_saved_and_checked() {
+    common::fr();
+    let mut d = page(2);
+    d.items[1].id = 5;
+    d.idle = Some(Idle { seconds: 30, item: 5 });
+    assert!(d.validate(0, 1, 2).iter().all(|p| !p.error), "{:?}", d.validate(0, 1, 2));
+    let back = PageDesign::from_value(&parse(&d.to_value().to_pretty()).unwrap()).unwrap();
+    assert_eq!(back.idle, Some(Idle { seconds: 30, item: 5 }));
+    // delai borne, element inconnu ou qui n'est pas un bouton : erreur
+    let long = parse(r##"{"lancement_auto":{"secondes":99999,"element":5},"elements":[]}"##).unwrap();
+    assert_eq!(PageDesign::from_value(&long).unwrap().idle.unwrap().seconds, MAX_IDLE_SECONDS);
+    d.idle = Some(Idle { seconds: 30, item: 77 });
+    assert!(d.validate(0, 1, 2).iter().any(|p| p.error && p.msg.contains("Lancement automatique")));
+    d.items[0].id = 9; // le titre n'est pas un bouton
+    d.idle = Some(Idle { seconds: 30, item: 9 });
+    assert!(d.validate(0, 1, 2).iter().any(|p| p.error));
+    // sans reglage : rien d'ecrit
+    d.idle = None;
+    assert!(!d.to_value().to_pretty().contains("lancement_auto"));
+}

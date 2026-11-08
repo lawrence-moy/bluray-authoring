@@ -18,6 +18,10 @@ pub const MOVE_RI_INSN: u32 = 0x5040_0001;
 pub const PLAY_PL_PM_INSN: u32 = 0x4282_0000;
 /// Comparaison « registre == valeur immediate » : si elle est fausse, la commande suivante est sautee.
 pub const CMP_EQ_RI_INSN: u32 = 0x4840_0200;
+/// CMP « registre < immediat » : la commande suivante ne s'execute que si le test est vrai.
+pub const CMP_LT_RI_INSN: u32 = 0x4840_0700;
+/// ADD « registre += immediat ».
+pub const ADD_RI_INSN: u32 = 0x5040_0003;
 /// SET_STREAM (groupe SET, sous-groupe SETSYSTEM), deux operandes immediats.
 pub const SET_STREAM_INSN: u32 = 0x51C0_0001;
 

@@ -15,7 +15,7 @@ use crate::film::{make_film_m2ts, make_still_m2ts};
 use crate::ig::py_round;
 use crate::json::{self, Value};
 use crate::menu::{build_menu_clip, required_ics_pts, MenuButton, MenuOptions};
-use crate::mobj::{Command, MovieObject, MovieObjectBdmv, GOTO_INSN, JUMP_TITLE_INSN, JUMP_TITLE_REG_INSN, MOVE_RI_INSN, MOVE_RR_INSN, NOP_INSN, PLAY_PL_INSN, PLAY_PL_PM_INSN};
+use crate::mobj::{ADD_RI_INSN, CMP_LT_RI_INSN, Command, MovieObject, MovieObjectBdmv, GOTO_INSN, JUMP_TITLE_INSN, JUMP_TITLE_REG_INSN, MOVE_RI_INSN, MOVE_RR_INSN, NOP_INSN, PLAY_PL_INSN, PLAY_PL_PM_INSN};
 use crate::convert::{generate_pages, GenVideo};
 use crate::nav::{make_index, make_playlist, make_playlist_multi, AudioStn, PlaylistParams, VideoStn};
 use crate::palette::RgbaImage;
@@ -109,6 +109,8 @@ const R_RETURN: u32 = 1;
 /// Registre ou un bouton « langue audio » range la langue choisie (`Language::id` ; 0 = aucun choix) : chaque video choisit sa
 /// piste de cette langue a son demarrage.
 const R_AUDIO: u32 = 2;
+/// Registre ou une page a lancement automatique compte les passages du fond de menu depuis son affichage.
+const R_IDLE: u32 = 3;
 
 /// « m:ss »
 fn mmss(t: f64) -> String {
@@ -209,7 +211,7 @@ struct ButtonEnv<'a> {
 
 /// Boutons (et surface d'objets graphiques de chacun) de la page `page` sur `pages` d'apres sa mise en page.
 /// `decor` : textes et images non cliquables a l'echelle du menu.
-fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], page: usize, pages: usize, target: &dyn Fn(NavAction, Option<Target>) -> (u32, Vec<Command>)) -> Result<(Vec<MenuButton>, Vec<u64>)> {
+fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], page: usize, pages: usize, target: &dyn Fn(NavAction, Option<Target>) -> (u32, Vec<Command>)) -> Result<(Vec<MenuButton>, Vec<u64>, Vec<u32>)> {
     let (renderer, s) = (e.renderer, e.s);
     let (mut buttons, mut pix) = (Vec::new(), Vec::new());
     let mut item_nav: Vec<(u32, crate::design::NavLinks)> = Vec::new();
@@ -348,7 +350,8 @@ fn page_buttons(e: &ButtonEnv, design: &PageDesign, decor: &[(usize, Decor)], pa
             };
         }
     }
-    Ok((buttons, pix))
+    let ids = item_nav.iter().map(|(id, _)| *id).collect();
+    Ok((buttons, pix, ids))
 }
 
 /// Image fixe -> clip de fond numero `num` (m2ts + clpi dans `files`).
@@ -1190,7 +1193,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     // `looping` : fond anime ou sonore (le menu tourne alors toujours en boucle)
     // clips de fond animes ou sonores (pour le resume de la construction)
     let anim_clips: std::cell::RefCell<BTreeSet<u32>> = Default::default();
-    let add_menu_page = |files: &mut BTreeMap<String, Vec<u8>>, buttons: &[MenuButton], pix: &[u64], ig_num: u32, pl_num: u32, bg_num: u32, bgscan: &ClipScan, label: &str, looping: bool, anim_fps: u32| -> Result<MenuStats> {
+    let add_menu_page = |files: &mut BTreeMap<String, Vec<u8>>, buttons: &[MenuButton], pix: &[u64], ig_num: u32, pl_num: u32, bg_num: u32, bgscan: &ClipScan, label: &str, looping: bool, anim_fps: u32, auto_launch: bool| -> Result<MenuStats> {
         let pts = required_ics_pts(pix, (menu_size.0 as u64, menu_size.1 as u64), 42956, 9000);
         let clip = build_menu_clip(buttons, &MenuOptions { ics_pts: pts, video_size: menu_size, ui_model: 0, rgb_colors: 63, frame_rate_code: FRAME_RATES.iter().find(|r| r.0 == bgscan.fps).map_or(1, |r| r.2),
             anim_fps: if anim_fps == 0 { crate::design::DEFAULT_ANIM_FPS } else { anim_fps } as f64 }).map_err(Error::Format)?;
@@ -1207,7 +1210,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             audio: bgscan.audio_codes.first().map(|&(pid, coding, fmt_rate)| AudioStn { pid, coding, fmt_rate, lang }),
             with_menu: true, menu_clip: format!("{ig_num:05}"), menu_in: (pts / 2) as u32, menu_out: (pts / 2 + 1501) as u32,
             // 2 = arret infini sur la derniere image : le menu ne redemarre pas ; un fond anime ou sonore tourne toujours en boucle
-            still_mode: if boucle || looping { 0 } else { 2 },
+            still_mode: if boucle || looping || auto_launch { 0 } else { 2 },
             ..Default::default()
         }));
         Ok(stats)
@@ -1244,6 +1247,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let mut next_pl = (n + np) as u32;
     let mut next_bg = (n + 1) as u32;
     let mut first_page: Option<MenuStats> = None;
+    let mut page_idle: Vec<Option<(u32, Vec<Command>)>> = Vec::new();
     for (k, d) in pages.iter().enumerate() {
         let what = trf!("page {}{}", k + 1, if d.name.is_empty() { String::new() } else { format!(" ({})", d.name) });
         let origin = page_title(k);
@@ -1275,7 +1279,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             plane: (menu_size.0, menu_size.1), langs: &lang_ids, sounds: &sound_ids,
         };
         let decor_r = scale_decor(d, sc_);
-        let (buttons, pix) = page_buttons(&benv, d, &decor_r, k, np, &target)?;
+        let (buttons, pix, button_ids) = page_buttons(&benv, d, &decor_r, k, np, &target)?;
         if buttons.is_empty() { return bad(trf!("{}: no button (the player could not leave it)", what)); }
         if let Some(m) = weight_note(&pix, &what) { (env.log)(&m); }
         let decor: Vec<Decor> = scale_decor(d, sd).into_iter().map(|(_, d)| d).collect();
@@ -1291,7 +1295,19 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             next_bg += 1;
             (num, own_background(env, &mb, &custom_fond, size, &decor, &tmp.0, &format!("fond_page{k}.png"), fond_s, fps, &still_opts, &mut files, num)?, animated)
         };
-        let res = add_menu_page(&mut files, &buttons, &pix, 80002 + k as u32, (n + k) as u32, bg_num, &pscan, &what, looping, d.anim_fps)?;
+        // lancement automatique : commandes du bouton choisi, executees au bout de N passages du fond (voir l'objet de la page)
+        let idle = d.idle.and_then(|i| match button_ids.iter().position(|id| *id == i.item && i.item != 0) {
+            Some(b) => {
+                let cmds = if buttons[b].commands.is_empty() { vec![Command::new(JUMP_TITLE_INSN, buttons[b].title, 0)] } else { buttons[b].commands.clone() };
+                let dur = pscan.end90.saturating_sub(pscan.start90).max(1);
+                let loops = ((i.seconds as u64 * 90_000 + dur - 1) / dur).clamp(1, 1_000_000) as u32;
+                (env.log)(&trf!("{}: automatic launch after {} s ({} passes of the background, {} s each)", what, i.seconds, loops, format!("{:.1}", dur as f64 / 90_000.0)));
+                Some((loops, cmds))
+            }
+            None => { (env.log)(&trf!("warning: {}: the item chosen for automatic launch is not a button of the disc (ignored)", what)); None }
+        });
+        let res = add_menu_page(&mut files, &buttons, &pix, 80002 + k as u32, (n + k) as u32, bg_num, &pscan, &what, looping, d.anim_fps, idle.is_some())?;
+        page_idle.push(idle);
         if k == 0 { first_page = Some(res); }
     }
     let first_page = first_page.expect("au moins une page");
@@ -1378,10 +1394,26 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         objs.push(MovieObject::new(with_audio(v, vec![Command::new(PLAY_PL_INSN, v as u32, 0), jump_back])));
     }
     for k in 0..np {
-        objs.push(MovieObject::new(vec![
-            Command::new(PLAY_PL_INSN, (n + k) as u32, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0),
-            Command::new(GOTO_INSN, 0, 0),
-        ]));
+        objs.push(MovieObject::new(match page_idle.get(k).and_then(|x| x.as_ref()) {
+            None => vec![
+                Command::new(PLAY_PL_INSN, (n + k) as u32, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0),
+                Command::new(GOTO_INSN, 0, 0),
+            ],
+            // page a lancement automatique : compteur remis a zero a l'arrivee, +1 a chaque passage du fond ; tant qu'il est sous la
+            // limite on rejoue le fond, sinon on execute les commandes du bouton choisi
+            Some((loops, cmds)) => {
+                let mut c = vec![
+                    Command::new(MOVE_RI_INSN, R_IDLE, 0),
+                    Command::new(PLAY_PL_INSN, (n + k) as u32, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0), Command::new(NOP_INSN, 0, 0),
+                    Command::new(ADD_RI_INSN, R_IDLE, 1),
+                    Command::new(CMP_LT_RI_INSN, R_IDLE, *loops),
+                    Command::new(GOTO_INSN, 1, 0),
+                ];
+                c.extend(cmds.iter().cloned());
+                c.push(Command::new(GOTO_INSN, 1, 0));
+                c
+            }
+        }));
     }
     for &v in pfm.keys() {
         objs.push(MovieObject::new(with_audio(v, vec![

@@ -389,7 +389,7 @@ pub fn copy_decor(src: &PageDesign, target: PageDesign) -> PageDesign {
         }
     }
     items.extend(slots);
-    let mut d = PageDesign { items, layers: src.layers.clone(), bg: src.bg.clone(), name: target_name, anim_fps: src.anim_fps };
+    let mut d = PageDesign { items, layers: src.layers.clone(), bg: src.bg.clone(), name: target_name, anim_fps: src.anim_fps, idle: None };
     d.normalize_layers();
     d
 }
