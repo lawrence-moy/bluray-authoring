@@ -15,7 +15,7 @@ fn force_keys_arguments() {
     assert!(force_keys_args(&[]).is_empty());
     assert!(force_keys_args(&[0.0]).is_empty());
     assert_eq!(force_keys_args(&[12.5, 30.0]), vec!["-force_key_frames", "12.4995,29.9995", "-forced-idr", "1"]);
-    let info = VideoInfo { width: 1920, height: 1080, fps_num: 25, fps_den: 1, pix_fmt: "yuv420p".into(), full_range: false, codec: "h264".into(), duration_s: 60.0, has_audio: true, field_order: String::new() };
+    let info = VideoInfo { width: 1920, height: 1080, fps_num: 25, fps_den: 1, pix_fmt: "yuv420p".into(), full_range: false, codec: "h264".into(), duration_s: 60.0, has_audio: true, field_order: String::new(), ..Default::default() };
     let o = EncodeOpts { force_keys: vec![10.0, 20.04], ..Default::default() };
     let (a, _) = encode_args(Path::new("in.mp4"), Path::new("out.ts"), &info, &o);
     let k = a.iter().position(|x| x == "-force_key_frames").expect("images cles forcees");

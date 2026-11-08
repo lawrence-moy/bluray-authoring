@@ -618,6 +618,9 @@ fn cache_key_with(path: &Path, lang: [u8; 3], o: &EncodeOpts, info: &ffmpeg::Vid
     if !extra.is_empty() { s.push_str(&format!("|audio={extra}")); }
     // chapitres exacts : une image cle par chapitre, donc un encodage par liste d'instants
     if !o.force_keys.is_empty() { s.push_str(&format!("|cles={}", ffmpeg::force_keys_args(&o.force_keys).get(1).cloned().unwrap_or_default())); }
+    // flux recopie ou debit cible : encodages differents du CRF (les cles sans ces options restent celles d'avant)
+    if o.copy_video { s.push_str("|copie"); }
+    if let Some(k) = o.video_kbps.filter(|_| !o.copy_video) { s.push_str(&format!("|kbps={k}")); }
     Ok(format!("{:016x}", fnv1a(s.as_bytes())))
 }
 
@@ -830,8 +833,56 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     }
     let mut audio_langs: Vec<Vec<[u8; 3]>> = Vec::new();
 
+    // copie sans reencodage et debit cible : decides avant tout encodage, d'apres l'etat de chaque video et la place du disque
+    let fill = enc_cfg.get("remplir_disque").and_then(Value::as_bool).unwrap_or(false);
+    let copy_ok = enc_cfg.get("copie_si_conforme").and_then(Value::as_bool).unwrap_or(false);
+    let mut copy_rate: Vec<Option<ffmpeg::StreamRate>> = vec![None; n];
+    let mut target_kbps: Option<u32> = None;
+    if fill || copy_ok {
+        let infos: Vec<Option<ffmpeg::VideoInfo>> = vids.iter().map(|v| vfile(v).ok().and_then(|f| ffmpeg::probe(env.tools, &p(&f)).ok())).collect();
+        if copy_ok {
+            for (i, v) in vids.iter().enumerate() {
+                let Some(info) = &infos[i] else { continue };
+                if v.get("chapitres_exacts").and_then(Value::as_bool) == Some(true) {
+                    (env.log)(&trf!("video {}: re-encoding needed (exact chapters need a key frame at each chapter)", i + 1));
+                    continue;
+                }
+                (env.log)(&trf!("video {}: checking whether the video stream can be copied as is ...", i + 1));
+                match ffmpeg::check_copy(env.tools, &p(&vfile(v)?), info, eopts.maxrate, env.cancel)? {
+                    Ok(r) => {
+                        (env.log)(&trf!("   conforming: {} kb/s on average, {} kb/s at peak", format!("{:.0}", r.avg_kbps), format!("{:.0}", r.peak_kbps)));
+                        copy_rate[i] = Some(r);
+                    }
+                    Err(why) => (env.log)(&trf!("   re-encoding needed: {}", why.join("; "))),
+                }
+            }
+        }
+        if fill {
+            let iso = crate::iso::IsoSettings::from_value(proj.get("iso")).map_err(Error::Format)?;
+            let (disc, capacity) = crate::iso::CAPACITIES[iso.capacity.min(crate::iso::CAPACITIES.len() - 1)];
+            let abr = crate::fill::parse_kbps(&eopts.audio_bitrate);
+            let (mut audio, mut copied, mut secs) = (0u64, 0u64, 0.0f64);
+            for (i, info) in infos.iter().enumerate() {
+                let d = info.as_ref().map_or(0.0, |x| x.duration_s);
+                let tracks = audio_plan.as_ref().map_or(1, |pl| pl.videos[i].tracks.len().max(1));
+                audio += crate::fill::audio_bytes(abr, tracks, d);
+                match &copy_rate[i] { Some(r) => copied += r.bytes, None => secs += d }
+            }
+            let plan = crate::fill::fill_bitrate(&crate::fill::FillInput {
+                capacity, margin_pct: iso.margin, reserve: crate::fill::menu_reserve_bytes(n), audio_bytes: audio, copied_bytes: copied,
+                encode_seconds: secs, cap_kbps: eopts.maxrate / 10 * 9,
+            }).map_err(Error::Format)?;
+            (env.log)(&crate::fill::describe(&plan, disc));
+            target_kbps = Some(plan.kbps);
+        }
+    }
+
     // 1. videos ; part de chaque video dans la progression : selon sa duree (une longue video avance moins vite qu'une courte)
-    let weights: Vec<f64> = vids.iter().map(|v| vfile(v).ok().and_then(|f| ffmpeg::probe(env.tools, &p(&f)).ok()).map_or(1.0, |i| i.duration_s.max(1.0))).collect();
+    let weights: Vec<f64> = vids.iter().enumerate().map(|(i, v)| {
+        let w = vfile(v).ok().and_then(|f| ffmpeg::probe(env.tools, &p(&f)).ok()).map_or(1.0, |i| i.duration_s.max(1.0));
+        // une video recopiee ne coute presque rien ; un encodage a debit cible dure deux passes
+        if copy_rate[i].is_some() { w * 0.03 } else if target_kbps.is_some() { w * 1.3 } else { w }
+    }).collect();
     let total_w: f64 = weights.iter().sum::<f64>().max(1e-6);
     for (i, v) in vids.iter().enumerate() {
         let name = vfile(v)?;
@@ -857,10 +908,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let a_sig = if audio_plan.is_some() { audio_signature(&a_tracks, &a_langs) } else { String::new() };
         audio_langs.push(a_langs.clone());
         // chapitres exacts : une image cle IDR a chaque chapitre (les reperes tombent alors sur l'image choisie)
-        let eopts = match v.get("chapitres_exacts").and_then(Value::as_bool) {
+        let mut eopts = match v.get("chapitres_exacts").and_then(Value::as_bool) {
             Some(true) => EncodeOpts { force_keys: chapter_times(v, info.duration_s), ..eopts.clone() },
             _ => eopts.clone(),
         };
+        if copy_rate[i].is_some() { eopts.copy_video = true; } else { eopts.video_kbps = target_kbps; }
         let cached = match &cache_dir {
             Some(d) => {
                 let f = d.join(format!("{}.m2ts", cache_key_with(&src, lang, &eopts, &info, &a_sig)?));
@@ -874,7 +926,17 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 let before: f64 = weights[..i].iter().sum();
                 let (lo, hi) = (before / total_w * 0.85, (before + weights[i]) / total_w * 0.85);
                 let progress = &mut *env.progress;
-                let (m, st) = crate::film::make_film_m2ts_tracks(env.tools, &src, &a_langs, &a_tracks, &eopts, None, &mut |f| progress(lo + (hi - lo) * f), env.cancel)?;
+                let first = crate::film::make_film_m2ts_tracks(env.tools, &src, &a_langs, &a_tracks, &eopts, None, &mut |f| progress(lo + (hi - lo) * f), env.cancel);
+                let (m, st) = match first {
+                    // la copie n'a pas donne un flux utilisable : on reencode la video normalement
+                    Err(e) if eopts.copy_video && !matches!(e, Error::Cancelled) => {
+                        (env.log)(&trf!("   the copy failed ({}): re-encoding the video instead", e));
+                        eopts.copy_video = false;
+                        eopts.video_kbps = target_kbps;
+                        crate::film::make_film_m2ts_tracks(env.tools, &src, &a_langs, &a_tracks, &eopts, None, &mut |f| progress(lo + (hi - lo) * f), env.cancel)?
+                    }
+                    r => r?,
+                };
                 (env.log)(&trf!("   {}: {} frames, {} audio frames", st.cible, st.images, st.trames_audio));
                 if let Some(d) = &cache_dir {
                     std::fs::create_dir_all(d)?;

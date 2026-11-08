@@ -783,3 +783,77 @@ fn several_audio_tracks_per_video() {
     assert_eq!(ids.len(), 2, "{ids:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Construit le projet `projet.json` de `dir` ; rend le compte rendu de verification, le journal et le dossier de sortie.
+fn build_in(tools: &Tools, dir: &std::path::Path, out: &str) -> (BuildInfo, Vec<String>) {
+    let mut logs = Vec::new();
+    let info = {
+        let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join(out), &mut env).unwrap()
+    };
+    (info, logs)
+}
+
+#[test]
+fn conforming_video_is_copied_not_reencoded() {
+    common::fr();
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_copy_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
+    // a.mp4 : deja un flux Blu-ray (720p23,976, High 4.1, GOP ferme) ; b.mp4 : 640x360 a 25 i/s, pas admis tel quel
+    run(&["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24000/1001:duration=4", "-f", "lavfi", "-i", "sine=duration=4", "-c:v", "libx264", "-profile:v", "high", "-level", "4.1",
+          "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-x264-params", "keyint=24:min-keyint=24:open-gop=0:bframes=2:scenecut=0", "-c:a", "aac", "-shortest", dir.join("a.mp4").to_str().unwrap()]);
+    run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i", "sine=duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", dir.join("b.mp4").to_str().unwrap()]);
+    let info = bdauthor_core::ffmpeg::probe(&tools, &dir.join("a.mp4")).unwrap();
+    assert!(matches!(info.profile.as_str(), "High" | "Main") && info.level == 41 && info.cfr, "{info:?}");
+    let cancel = AtomicBool::new(false);
+    let r = bdauthor_core::ffmpeg::check_copy(&tools, &dir.join("a.mp4"), &info, 30000, &cancel).unwrap().expect("a.mp4 devrait etre conforme");
+    assert!(r.avg_kbps > 0.0 && r.max_key_gap_s <= 1.1, "{r:?}");
+    let bi = bdauthor_core::ffmpeg::probe(&tools, &dir.join("b.mp4")).unwrap();
+    assert!(bdauthor_core::ffmpeg::check_copy(&tools, &dir.join("b.mp4"), &bi, 30000, &cancel).unwrap().is_err());
+
+    let proj = r##"{ "titre": "Copie", "langue": "fra",
+      "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
+      "encodage": {"preset": "ultrafast", "copie_si_conforme": true}, "menu": {"fond_secondes": 2} }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let (info, logs) = build_in(&tools, &dir, "out");
+    assert!(info.report.ok(), "{}", info.report.render());
+    assert_eq!(logs.iter().filter(|l| l.contains("conforme :")).count(), 1, "{logs:?}");
+    assert_eq!(logs.iter().filter(|l| l.contains("reencodage necessaire")).count(), 1, "{logs:?}");
+    assert_eq!(logs.iter().filter(|l| l.contains("flux video copie")).count(), 1, "{logs:?}");
+    // le clip de la video copiee garde les images de la source (96 images a 23,976 i/s pendant 4 s)
+    let clip = std::fs::read(dir.join("out/BDMV/STREAM/00000.m2ts")).unwrap();
+    let frames = bdauthor_core::film::load_encoded_m2ts(&clip).unwrap().video.len();
+    assert!((95..=97).contains(&frames), "{frames}");
+    let sc = bdauthor_core::tsclip::scan_clip(&clip).unwrap();
+    assert!(sc.eps.len() >= 4, "points d'acces : {}", sc.eps.len());
+}
+
+#[test]
+fn target_bitrate_encoding_follows_the_plan() {
+    common::fr();
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_fill_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
+    run(&["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=4", "-f", "lavfi", "-i", "sine=duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", dir.join("a.mp4").to_str().unwrap()]);
+    // un plafond de 2000 kb/s (vbv-maxrate) : le debit vise est 90 % de ce plafond, bien en dessous de ce qu'un BD-25 permettrait
+    let proj = r##"{ "titre": "Debit", "langue": "fra", "videos": [ {"fichier": "a.mp4"} ],
+      "encodage": {"preset": "ultrafast", "remplir_disque": true, "maxrate": 2000}, "menu": {"fond_secondes": 2} }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let (info, logs) = build_in(&tools, &dir, "out");
+    assert!(info.report.ok(), "{}", info.report.render());
+    assert!(logs.iter().any(|l| l.contains("debit video vise : 1800 kb/s") && l.contains("plafonne")), "{logs:?}");
+    let clip = std::fs::read(dir.join("out/BDMV/STREAM/00000.m2ts")).unwrap();
+    // 4 s a ~1800 kb/s de video + 192 kb/s d'audio, multiplexes : de l'ordre de 1 Mo, loin d'un encodage en CRF 18 de cette mire
+    assert!(clip.len() > 300_000 && clip.len() < 1_600_000, "{} octets", clip.len());
+    // sans le plan, le CRF est utilise (autre taille, et pas de ligne de debit)
+    std::fs::write(dir.join("projet.json"), proj.replace("\"remplir_disque\": true, ", "")).unwrap();
+    let (_, logs2) = build_in(&tools, &dir, "out2");
+    assert!(!logs2.iter().any(|l| l.contains("debit video vise")), "{logs2:?}");
+}

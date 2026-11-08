@@ -129,7 +129,7 @@ fn no_window(_c: &mut Command) {}
 
 // ---------------------------------------------------------------- sondage
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct VideoInfo {
     pub width: u32,
     pub height: u32,
@@ -142,6 +142,22 @@ pub struct VideoInfo {
     pub has_audio: bool,
     /// Ordre des trames d'une source entrelacee (« tt », « bb », « tb », « bt ») ; vide ou « progressive » sinon.
     pub field_order: String,
+    /// Profil H.264 (« High », « Main »...), vide si inconnu.
+    pub profile: String,
+    /// Niveau H.264 sur 2 chiffres (41 pour 4.1), 0 si inconnu.
+    pub level: u32,
+    /// Nombre d'images de reference annonce dans le SPS, 0 si inconnu.
+    pub refs: u32,
+    /// Cadence constante (cadence de base == cadence moyenne) ?
+    pub cfr: bool,
+}
+
+/// Fraction « n/d » en nombre (0 si invalide).
+fn frac(s: &str) -> f64 {
+    match s.split_once('/') {
+        Some((a, b)) => { let (a, b) = (a.trim().parse::<f64>().unwrap_or(0.0), b.trim().parse::<f64>().unwrap_or(0.0)); if b > 0.0 { a / b } else { 0.0 } }
+        None => s.trim().parse().unwrap_or(0.0),
+    }
 }
 
 impl VideoInfo {
@@ -199,13 +215,21 @@ pub fn parse_probe_flat(text: &str) -> Result<VideoInfo> {
         duration_s: get(&format, "duration").parse().unwrap_or(0.0),
         has_audio: streams.values().any(|s| s.get("codec_type").map(String::as_str) == Some("audio")),
         field_order: get(video, "field_order"),
+        profile: get(video, "profile"),
+        level: get(video, "level").parse::<i64>().ok().filter(|l| *l > 0).map_or(0, |l| l as u32),
+        refs: get(video, "refs").parse().unwrap_or(0),
+        cfr: {
+            let (r, a) = (frac(&get(video, "r_frame_rate")), frac(&get(video, "avg_frame_rate")));
+            // ffprobe ne donne pas d'avg_frame_rate pour certains conteneurs : on le tient alors pour constant
+            a == 0.0 || (r - a).abs() <= r * 0.002
+        },
     })
 }
 
 pub fn probe(tools: &Tools, src: &Path) -> Result<VideoInfo> {
     let mut c = Command::new(&tools.ffprobe);
     c.args(["-v", "error", "-of", "flat", "-show_entries"])
-        .arg("stream=index,codec_type,codec_name,width,height,r_frame_rate,pix_fmt,color_range,field_order:format=duration")
+        .arg("stream=index,codec_type,codec_name,profile,level,refs,width,height,r_frame_rate,avg_frame_rate,pix_fmt,color_range,field_order:format=duration")
         .arg(src);
     no_window(&mut c);
     let out = c.output()?;
@@ -305,15 +329,24 @@ pub struct EncodeOpts {
     pub preset: String,
     /// Instants (secondes depuis le debut) ou placer une image cle IDR : chapitres exacts. Vide : GOP reguliers seulement.
     pub force_keys: Vec<f64>,
+    /// Copier le flux video tel quel (sans le reencoder) : seulement pour une source deja conforme (voir `copy_blockers`).
+    pub copy_video: bool,
+    /// Debit video moyen vise (kb/s) : encodage en deux passes au lieu du CRF (remplir le disque). `None` : CRF.
+    pub video_kbps: Option<u32>,
 }
 
 impl Default for EncodeOpts {
     fn default() -> Self {
-        EncodeOpts { crf: 18, maxrate: 30000, keyint: 30, audio_bitrate: "192k".into(), preset: "medium".into(), force_keys: Vec::new() }
+        EncodeOpts { crf: 18, maxrate: 30000, keyint: 30, audio_bitrate: "192k".into(), preset: "medium".into(), force_keys: Vec::new(), copy_video: false, video_kbps: None }
     }
 }
 
 fn x264_args_scan(crf: u32, maxrate: u32, keyint: u32, preset: &str, scan: Scan) -> Vec<String> {
+    x264_args_rate(crf, None, maxrate, keyint, preset, scan)
+}
+
+/// Comme `x264_args_scan`, avec un debit moyen vise (`kbps`) a la place du CRF.
+fn x264_args_rate(crf: u32, kbps: Option<u32>, maxrate: u32, keyint: u32, preset: &str, scan: Scan) -> Vec<String> {
     let mut x264 = format!(
         "bluray-compat=1:keyint={keyint}:open-gop=0:aud=1:nal-hrd=vbr:vbv-maxrate={maxrate}:vbv-bufsize=30000:level=4.1:bframes=3"
     );
@@ -324,8 +357,11 @@ fn x264_args_scan(crf: u32, maxrate: u32, keyint: u32, preset: &str, scan: Scan)
         Scan::Bff => x264.push_str(":bff=1"),
     }
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let mut out = v(&["-c:v", "libx264", "-profile:v", "high", "-preset", preset, "-crf"]);
-    out.push(crf.to_string());
+    let mut out = v(&["-c:v", "libx264", "-profile:v", "high", "-preset", preset]);
+    match kbps {
+        Some(k) => { out.push("-b:v".into()); out.push(format!("{k}k")); }
+        None => { out.push("-crf".into()); out.push(crf.to_string()); }
+    }
     out.extend(v(&["-x264-params"]));
     out.push(x264);
     out.extend(v(&["-color_primaries", "bt709", "-color_trc", "bt709", "-colorspace", "bt709", "-color_range", "tv"]));
@@ -445,14 +481,38 @@ pub fn encode_args(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts) -> 
 /// Comme `encode_args`, avec des pistes audio choisies (dans l'ordre du disque) ; `tracks` vide : la premiere piste audio du fichier.
 /// Les fichiers audio doivent avoir un chemin utilisable tel quel.
 pub fn encode_args_tracks(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tracks: &[crate::audio::AudioTrackCfg]) -> (Vec<String>, Target) {
-    use crate::audio::AudioSource;
-    let tg = pick_target_scan(info.width, info.height, info.fps(), info.interlaced().then(|| info.top_first()));
+    encode_args_full(src, dst, info, o, tracks, None)
+}
+
+fn target_of(info: &VideoInfo) -> Target {
+    pick_target_scan(info.width, info.height, info.fps(), info.interlaced().then(|| info.top_first()))
+}
+
+/// Filtre video qui amene la source a la cible Blu-ray `tg`.
+fn video_filter(info: &VideoInfo, tg: &Target) -> String {
     let interl = matches!(tg.scan, Scan::Tff | Scan::Bff);
     let pre = if tg.deinterlace { "bwdif=mode=send_field," } else { "" };
-    let vf = format!(
+    format!(
         "{pre}fps={},scale={}:{}:in_range={}:in_color_matrix=bt709:out_range=tv:out_color_matrix=bt709{},format=yuv420p",
         tg.fps, tg.width, tg.height, if info.full_range { "pc" } else { "tv" }, if interl { ":interl=1" } else { "" }
-    );
+    )
+}
+
+/// Arguments de la premiere passe d'un encodage a debit cible : video seule, sortie jetee, statistiques dans `log`.
+pub fn first_pass_args(src: &Path, info: &VideoInfo, o: &EncodeOpts, log: &Path) -> (Vec<String>, Target) {
+    let tg = target_of(info);
+    let mut a: Vec<String> = vec!["-i".into(), s(src), "-map".into(), "0:v:0".into(), "-an".into(), "-vf".into(), video_filter(info, &tg)];
+    a.extend(x264_args_rate(o.crf, o.video_kbps, o.maxrate, o.keyint, &o.preset, tg.scan));
+    a.extend(force_keys_args(&o.force_keys));
+    a.extend(["-pass".to_string(), "1".into(), "-passlogfile".into(), s(log), "-f".into(), "null".into(), if cfg!(windows) { "NUL".into() } else { "/dev/null".into() }]);
+    (a, tg)
+}
+
+/// `pass` : `Some((2, journal))` pour la seconde passe d'un encodage a debit cible.
+fn encode_args_full(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tracks: &[crate::audio::AudioTrackCfg], pass: Option<(u8, &Path)>) -> (Vec<String>, Target) {
+    use crate::audio::AudioSource;
+    let tg = target_of(info);
+    let vf = video_filter(info, &tg);
     let mut a: Vec<String> = ["-i"].iter().map(|x| x.to_string()).collect();
     a.push(s(src));
     if !tracks.is_empty() {
@@ -481,9 +541,16 @@ pub fn encode_args_tracks(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOp
     } else {
         a.extend(["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=48000", "-map", "0:v:0", "-map", "1:a:0", "-shortest", "-vf"].iter().map(|x| x.to_string()));
     }
-    a.push(vf);
-    a.extend(x264_args_scan(o.crf, o.maxrate, o.keyint, &o.preset, tg.scan));
-    a.extend(force_keys_args(&o.force_keys));
+    if o.copy_video {
+        // flux video recopie tel quel (pas de filtre) ; le muxeur MPEG-TS ajoute les delimiteurs d'unite d'acces et passe en Annex B
+        a.pop();
+        a.extend(["-c:v", "copy"].iter().map(|x| x.to_string()));
+    } else {
+        a.push(vf);
+        a.extend(x264_args_rate(o.crf, o.video_kbps, o.maxrate, o.keyint, &o.preset, tg.scan));
+        a.extend(force_keys_args(&o.force_keys));
+        if let Some((n, log)) = pass { a.extend(["-pass".to_string(), n.to_string(), "-passlogfile".into(), s(log)]); }
+    }
     a.extend(["-c:a", "ac3", "-b:a"].iter().map(|x| x.to_string()));
     a.push(o.audio_bitrate.clone());
     a.extend(["-ar", "48000", "-ac", "2", "-f", "mpegts", "-pes_payload_size", "0"].iter().map(|x| x.to_string()));
@@ -516,6 +583,17 @@ pub fn encode_to_ts_tracks(
     progress: &mut dyn FnMut(f64),
     cancel: &AtomicBool,
 ) -> Result<Target> {
+    if opts.video_kbps.is_some() && !opts.copy_video {
+        // debit cible : premiere passe (analyse, 30 % du temps annonce), puis seconde passe (le TS definitif)
+        let log = dst.with_extension("x264");
+        let (a1, _) = first_pass_args(src, info, opts, &log);
+        run_ffmpeg(tools, &a1, info.duration_s, &mut |f| progress(f * 0.3), cancel)?;
+        let (a2, tg) = encode_args_full(src, dst, info, opts, tracks, Some((2, &log)));
+        let r = run_ffmpeg(tools, &a2, info.duration_s, &mut |f| progress(0.3 + f * 0.7), cancel);
+        for suffix in ["-0.log", "-0.log.mbtree"] { let _ = std::fs::remove_file(format!("{}{suffix}", log.display())); }
+        r?;
+        return Ok(tg);
+    }
     let (args, tg) = encode_args_tracks(src, dst, info, opts, tracks);
     run_ffmpeg(tools, &args, info.duration_s, progress, cancel)?;
     Ok(tg)
@@ -824,7 +902,7 @@ mod tests {
     #[test]
     fn arguments_identiques_a_python() {
         let info = VideoInfo { width: 1280, height: 720, fps_num: 60000, fps_den: 1001, pix_fmt: "yuv420p".into(), full_range: false,
-                               codec: "h264".into(), duration_s: 10.0, has_audio: true, field_order: String::new() };
+                               codec: "h264".into(), duration_s: 10.0, has_audio: true, field_order: String::new(), ..Default::default() };
         let (a, _) = encode_args(Path::new("in.mp4"), Path::new("out.ts"), &info, &EncodeOpts::default());
         let line = a.join(" ");
         assert!(line.contains("fps=60000/1001,scale=1280:720:in_range=tv:in_color_matrix=bt709:out_range=tv:out_color_matrix=bt709,format=yuv420p"));
@@ -1037,4 +1115,203 @@ impl AudioPlayback {
 
 impl Drop for AudioPlayback {
     fn drop(&mut self) { self.stop(); }
+}
+
+// ---------------------------------------------------------------- copie sans reencodage (source deja conforme)
+
+/// Raisons qui empechent de recopier tel quel le flux video de `info` dans un disque Blu-ray (liste vide : rien ne s'y oppose dans ce
+/// que ffprobe indique du flux). Ni le debit ni la taille du tampon ne sont examines ici : voir `scan_video_rate` et `rate_blockers`.
+pub fn copy_blockers(info: &VideoInfo) -> Vec<String> {
+    let mut p = Vec::new();
+    if info.codec != "h264" {
+        p.push(trf!("video codec “{}” (H.264 expected)", info.codec));
+        return p;
+    }
+    if !matches!(info.profile.as_str(), "High" | "Main") {
+        p.push(trf!("H.264 profile “{}” (High or Main expected)", if info.profile.is_empty() { "?" } else { info.profile.as_str() }));
+    }
+    if info.level == 0 || info.level > 41 {
+        p.push(trf!("H.264 level {} (4.1 at most)", if info.level == 0 { "?".to_string() } else { format!("{}.{}", info.level / 10, info.level % 10) }));
+    }
+    if info.pix_fmt != "yuv420p" || info.full_range {
+        p.push(trf!("pixel format “{}” (8-bit 4:2:0, limited range expected)", info.pix_fmt));
+    }
+    if !info.cfr {
+        p.push(tr("variable frame rate").to_string());
+    }
+    let tg = target_of(info);
+    if tg.deinterlace || tg.scan == Scan::PsF {
+        p.push(trf!("{} fps at {}x{}: this format has to be converted to be allowed on a Blu-ray", format!("{:.3}", info.fps()), info.width, info.height));
+    } else {
+        if (info.width, info.height) != (tg.width, tg.height) {
+            p.push(trf!("size {}x{} (a Blu-ray needs {}x{})", info.width, info.height, tg.width, tg.height));
+        }
+        let fps = if info.interlaced() && info.fps() >= 45.0 { info.fps() / 2.0 } else { info.fps() };
+        let want = frac(tg.fps);
+        if (fps - want).abs() > 0.01 {
+            p.push(trf!("frame rate {} (a Blu-ray needs {})", format!("{fps:.3}"), format!("{want:.3}")));
+        }
+    }
+    // niveau 4.1 : 4 images de reference en 1080, 9 en 720
+    let max_refs = if info.height > 720 { 4 } else { 9 };
+    if info.refs > max_refs {
+        p.push(trf!("{} reference frames (at most {} at this size)", info.refs, max_refs));
+    }
+    p
+}
+
+/// Debits d'un flux video, mesures sur ses paquets.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct StreamRate {
+    /// taille totale du flux video (octets)
+    pub bytes: u64,
+    /// debit moyen (kb/s)
+    pub avg_kbps: f64,
+    /// debit maximal sur une seconde glissante (kb/s)
+    pub peak_kbps: f64,
+    /// plus grand ecart entre deux images cles (s)
+    pub max_key_gap_s: f64,
+}
+
+/// Debits calcules depuis les paquets `(instant en s, taille en octets, image cle ?)` ; `duration_s` : duree du fichier (0 : deduite).
+pub fn rate_from_packets(pk: &[(f64, u32, bool)], duration_s: f64) -> StreamRate {
+    if pk.is_empty() { return StreamRate::default(); }
+    let mut v: Vec<(f64, u32, bool)> = pk.to_vec();
+    v.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let bytes: u64 = v.iter().map(|p| p.1 as u64).sum();
+    let span = (v[v.len() - 1].0 - v[0].0).max(0.0);
+    let dur = if duration_s > 0.0 { duration_s } else { span.max(0.001) };
+    // fenetre glissante d'une seconde : (t - 1, t]
+    let (mut lo, mut acc, mut peak) = (0usize, 0u64, 0u64);
+    for i in 0..v.len() {
+        acc += v[i].1 as u64;
+        while v[i].0 - v[lo].0 >= 1.0 { acc -= v[lo].1 as u64; lo += 1; }
+        peak = peak.max(acc);
+    }
+    let keys: Vec<f64> = v.iter().filter(|p| p.2).map(|p| p.0).collect();
+    let gap = keys.windows(2).map(|w| w[1] - w[0]).fold(0.0, f64::max);
+    StreamRate { bytes, avg_kbps: bytes as f64 * 8.0 / dur / 1000.0, peak_kbps: peak as f64 * 8.0 / 1000.0, max_key_gap_s: gap }
+}
+
+/// Lit tous les paquets video du fichier avec ffprobe (sans decoder) et en tire les debits.
+pub fn scan_video_rate(tools: &Tools, src: &Path, duration_s: f64, cancel: &AtomicBool) -> Result<StreamRate> {
+    let mut c = Command::new(&tools.ffprobe);
+    c.args(["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time,dts_time,size,flags", "-of", "csv=p=0"]).arg(src);
+    c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    no_window(&mut c);
+    let mut child = c.spawn()?;
+    let stdout = child.stdout.take().expect("stdout");
+    let mut pk: Vec<(f64, u32, bool)> = Vec::new();
+    for (n, line) in BufReader::new(stdout).lines().enumerate() {
+        if n % 4096 == 0 && cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::Cancelled);
+        }
+        let Ok(line) = line else { break };
+        let f: Vec<&str> = line.trim().split(',').collect();
+        if f.len() < 4 { continue; }
+        let t = f[1].parse::<f64>().or_else(|_| f[0].parse::<f64>());
+        let (Ok(t), Ok(size)) = (t, f[2].parse::<u32>()) else { continue };
+        pk.push((t, size, f[3].starts_with('K')));
+    }
+    let _ = child.wait();
+    if pk.is_empty() { return Err(Error::Probe(tr("no video packet").into())); }
+    Ok(rate_from_packets(&pk, duration_s))
+}
+
+/// Raisons tirees des debits qui empechent la copie (`max_kbps` : debit maximal accepte sur une seconde).
+pub fn rate_blockers(r: &StreamRate, max_kbps: u32) -> Vec<String> {
+    let mut p = Vec::new();
+    if r.peak_kbps > max_kbps as f64 {
+        p.push(trf!("peak bitrate {} kb/s over one second (limit {} kb/s)", format!("{:.0}", r.peak_kbps), max_kbps));
+    }
+    if r.max_key_gap_s > 2.5 {
+        p.push(trf!("key frames {} s apart (2.5 s at most)", format!("{:.1}", r.max_key_gap_s)));
+    }
+    p
+}
+
+/// Verifie si la video `src` peut etre copiee sans reencodage. `Ok(Ok(debits))` : oui ; `Ok(Err(raisons))` : non.
+pub fn check_copy(tools: &Tools, src: &Path, info: &VideoInfo, max_kbps: u32, cancel: &AtomicBool) -> Result<std::result::Result<StreamRate, Vec<String>>> {
+    let b = copy_blockers(info);
+    if !b.is_empty() { return Ok(Err(b)); }
+    let r = scan_video_rate(tools, src, info.duration_s, cancel)?;
+    let b = rate_blockers(&r, max_kbps);
+    Ok(if b.is_empty() { Ok(r) } else { Err(b) })
+}
+
+#[cfg(test)]
+mod copie_tests {
+    use super::*;
+
+    fn conforme() -> VideoInfo {
+        VideoInfo { width: 1920, height: 1080, fps_num: 24000, fps_den: 1001, pix_fmt: "yuv420p".into(), codec: "h264".into(), duration_s: 100.0, has_audio: true,
+                    profile: "High".into(), level: 41, refs: 4, cfr: true, ..Default::default() }
+    }
+
+    #[test]
+    fn source_conforme_et_ses_obstacles() {
+        assert!(copy_blockers(&conforme()).is_empty());
+        let mut i = conforme(); i.codec = "hevc".into();
+        assert_eq!(copy_blockers(&i).len(), 1);
+        let mut i = conforme(); i.level = 51; i.profile = "High 4:4:4 Predictive".into();
+        assert_eq!(copy_blockers(&i).len(), 2);
+        let mut i = conforme(); i.width = 1920; i.height = 800; // 2,40:1 non anamorphose : taille non admise
+        assert!(copy_blockers(&i).iter().any(|m| m.contains("1920x800")), "{:?}", copy_blockers(&i));
+        let mut i = conforme(); i.fps_num = 25; i.fps_den = 1; // 1080p25 : doit passer en PsF
+        assert!(!copy_blockers(&i).is_empty());
+        let mut i = conforme(); i.cfr = false; i.full_range = true; i.refs = 6;
+        assert_eq!(copy_blockers(&i).len(), 3);
+        // 720p59.94 et 1080i50 (trames du haut) sont admis
+        let i = VideoInfo { width: 1280, height: 720, fps_num: 60000, fps_den: 1001, refs: 3, ..conforme() };
+        assert!(copy_blockers(&i).is_empty(), "{:?}", copy_blockers(&i));
+        let i = VideoInfo { fps_num: 25, fps_den: 1, field_order: "tt".into(), ..conforme() };
+        assert!(copy_blockers(&i).is_empty(), "{:?}", copy_blockers(&i));
+    }
+
+    #[test]
+    fn sondage_profil_niveau_cadence() {
+        let t = "streams.stream.0.codec_type=\"video\"\nstreams.stream.0.codec_name=\"h264\"\nstreams.stream.0.profile=\"High\"\nstreams.stream.0.level=41\nstreams.stream.0.refs=4\n\
+                 streams.stream.0.width=1920\nstreams.stream.0.height=1080\nstreams.stream.0.pix_fmt=\"yuv420p\"\nstreams.stream.0.r_frame_rate=\"24000/1001\"\nstreams.stream.0.avg_frame_rate=\"24000/1001\"\nformat.duration=\"10\"\n";
+        let i = parse_probe_flat(t).unwrap();
+        assert_eq!((i.profile.as_str(), i.level, i.refs, i.cfr), ("High", 41, 4, true));
+        assert!(copy_blockers(&i).is_empty());
+        let vfr = t.replace("avg_frame_rate=\"24000/1001\"", "avg_frame_rate=\"2300/100\"");
+        assert!(!parse_probe_flat(&vfr).unwrap().cfr);
+    }
+
+    #[test]
+    fn debits_des_paquets() {
+        // 1 image par 0,5 s : 1000 octets, une image cle sur 4 ; un paquet de 50 000 octets cree un pic
+        let mut pk: Vec<(f64, u32, bool)> = (0..20).map(|k| (k as f64 * 0.5, 1000, k % 4 == 0)).collect();
+        let r = rate_from_packets(&pk, 0.0);
+        assert!((r.max_key_gap_s - 2.0).abs() < 1e-9);
+        assert!((r.peak_kbps - 16.0).abs() < 1e-9, "{}", r.peak_kbps); // deux paquets par seconde glissante = 2000 octets
+        assert!(rate_blockers(&r, 30000).is_empty());
+        pk[5].1 = 50_000;
+        let r = rate_from_packets(&pk, 0.0);
+        assert!(r.peak_kbps > 400.0 && !rate_blockers(&r, 300).is_empty());
+        assert_eq!(r.bytes, 19 * 1000 + 50_000 - 0);
+        let slow = rate_from_packets(&[(0.0, 10, true), (3.0, 10, true)], 0.0);
+        assert!(rate_blockers(&slow, 30000).iter().any(|m| m.contains("3.0")));
+    }
+
+    #[test]
+    fn arguments_copie_et_debit_cible() {
+        let info = conforme();
+        let copie = EncodeOpts { copy_video: true, ..Default::default() };
+        let l = encode_args(Path::new("in.mkv"), Path::new("out.ts"), &info, &copie).0.join(" ");
+        assert!(l.contains("-c:v copy") && !l.contains("libx264") && !l.contains("-vf") && !l.contains("-crf"), "{l}");
+        assert!(l.contains("-c:a ac3") && l.ends_with("out.ts"));
+        let cible = EncodeOpts { video_kbps: Some(8000), ..Default::default() };
+        let (p1, _) = first_pass_args(Path::new("in.mkv"), &info, &cible, Path::new("log"));
+        let l1 = p1.join(" ");
+        assert!(l1.contains("-b:v 8000k") && !l1.contains("-crf") && l1.contains("-an") && l1.contains("-pass 1 -passlogfile log") && l1.contains("-f null"), "{l1}");
+        let (p2, _) = encode_args_full(Path::new("in.mkv"), Path::new("out.ts"), &info, &cible, &[], Some((2, Path::new("log"))));
+        let l2 = p2.join(" ");
+        assert!(l2.contains("-b:v 8000k") && l2.contains("-pass 2 -passlogfile log") && l2.contains("vbv-maxrate=30000"), "{l2}");
+        // sans debit cible : le CRF comme avant
+        assert!(encode_args(Path::new("in.mkv"), Path::new("out.ts"), &info, &EncodeOpts::default()).0.join(" ").contains("-crf 18"));
+    }
 }

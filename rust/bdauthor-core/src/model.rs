@@ -92,6 +92,10 @@ pub struct ProjectModel {
     pub videos: Vec<VideoEntry>,
     pub crf: u32,
     pub preset: String,
+    /// Viser un debit video qui remplit le disque (capacite et marge des reglages de l'image ISO) au lieu du CRF.
+    pub fill_disc: bool,
+    /// Recopier sans reencodage les videos deja conformes au Blu-ray.
+    pub copy_conform: bool,
     pub bg: String, // chemin ; vide = fond genere
     /// Sequence d'ouverture : video jouee a l'insertion du disque (vide = aucune).
     pub intro: String,
@@ -121,7 +125,7 @@ pub struct ProjectModel {
 impl Default for ProjectModel {
     fn default() -> Self {
         ProjectModel {
-            title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), bg: String::new(), intro: String::new(), bg_video: String::new(), bg_video_audio: false, music: String::new(), bg_seconds: 5.0,
+            title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), fill_disc: false, copy_conform: false, bg: String::new(), intro: String::new(), bg_video: String::new(), bg_video_audio: false, music: String::new(), bg_seconds: 5.0,
             menu_1080: false, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], iso: Default::default(), cover: Default::default(), label: Default::default(), raw: Value::Obj(vec![]),
         }
     }
@@ -167,6 +171,8 @@ impl ProjectModel {
         if let Some(e) = v.get("encodage") {
             if let Some(c) = e.get("crf").and_then(Value::as_i64) { m.crf = c.clamp(0, 51) as u32; }
             if let Some(p) = e.get("preset").and_then(Value::as_str) { m.preset = p.into(); }
+            m.fill_disc = e.get("remplir_disque").and_then(Value::as_bool).unwrap_or(false);
+            m.copy_conform = e.get("copie_si_conforme").and_then(Value::as_bool).unwrap_or(false);
         }
         if let Some(menu) = v.get("menu") {
             m.bg = menu.get("fond").and_then(Value::as_str).unwrap_or("").into();
@@ -221,6 +227,8 @@ impl ProjectModel {
         let mut enc = root.get("encodage").cloned().unwrap_or(Value::Obj(vec![]));
         set(&mut enc, "crf", Some(n(self.crf as f64)));
         set(&mut enc, "preset", Some(s(&self.preset)));
+        set(&mut enc, "remplir_disque", if self.fill_disc { Some(Value::Bool(true)) } else { None });
+        set(&mut enc, "copie_si_conforme", if self.copy_conform { Some(Value::Bool(true)) } else { None });
         set(&mut root, "encodage", Some(enc));
         let mut menu = root.get("menu").cloned().unwrap_or(Value::Obj(vec![]));
         set(&mut menu, "fond", if self.bg.is_empty() { None } else { Some(s(&self.bg)) });

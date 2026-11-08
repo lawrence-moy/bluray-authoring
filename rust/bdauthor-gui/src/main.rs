@@ -908,10 +908,32 @@ impl eframe::App for App {
                         changed |= ui.checkbox(&mut m.menu_1080, tr("Menu in 1920x1080 (otherwise: video size)")).changed();
                         ui.separator();
                         ui.heading(tr("Encoding"));
-                        ui.horizontal(|ui| {
-                            ui.label(tr("x264 quality (CRF, lower = better):"));
-                            changed |= ui.add(egui::Slider::new(&mut m.crf, 0..=51)).changed();
+                        ui.add_enabled_ui(!m.fill_disc, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(tr("x264 quality (CRF, lower = better):"));
+                                changed |= ui.add(egui::Slider::new(&mut m.crf, 0..=51)).changed();
+                            });
                         });
+                        changed |= ui.checkbox(&mut m.fill_disc, tr("Aim for a bitrate that fills the disc (instead of a fixed quality)"))
+                            .on_hover_text(tr("The videos to encode share what is left of the disc once the menus, the audio and the copied videos are counted: same average bitrate for all, in two passes (about 30 % longer). The disc type and the filling limit are those of the ISO image settings."))
+                            .changed();
+                        if m.fill_disc {
+                            // meme reglage que l'onglet « Generation ISO » : type de disque et part de la capacite a remplir
+                            ui.horizontal(|ui| {
+                                ui.label(tr("Disc:"));
+                                egui::ComboBox::from_id_salt("capacite_remplir").selected_text(bdauthor_core::iso::CAPACITIES[m.iso.capacity.min(2)].0).show_ui(ui, |ui| {
+                                    for (k, (name, _)) in bdauthor_core::iso::CAPACITIES.iter().enumerate() {
+                                        changed |= ui.selectable_value(&mut m.iso.capacity, k, *name).changed();
+                                    }
+                                });
+                                ui.label(tr("fill up to"));
+                                let mut pct = if m.iso.margin == 0 { 97 } else { m.iso.margin };
+                                if ui.add(egui::DragValue::new(&mut pct).range(50..=100).suffix(" %")).on_hover_text(tr("Share of the disc's capacity to fill (menus, audio and subtitles included). Also the safety margin of the ISO image.")).changed() { m.iso.margin = pct; changed = true; }
+                            });
+                        }
+                        changed |= ui.checkbox(&mut m.copy_conform, tr("Copy videos that already comply with Blu-ray (no re-encoding)"))
+                            .on_hover_text(tr("An H.264 video that is already allowed on a Blu-ray (profile, level, size, frame rate, bitrate) keeps its video stream as it is: faster, with no quality loss. The audio is still converted to AC-3. Not possible with exact chapters. If the copy fails, the video is re-encoded. The T-STD buffer cannot be checked: test the disc on a player."))
+                            .changed();
                         egui::ComboBox::from_label(tr("Encoding preset (slower = more compact)"))
                             .selected_text(m.preset.clone())
                             .show_ui(ui, |ui| {

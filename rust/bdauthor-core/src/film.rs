@@ -262,7 +262,7 @@ pub fn make_film_m2ts_tracks(
     }
     let (m2ts, mux) = mux_encoded_tracks(&enc, langs, &[])?;
     let frames = enc.audio.len() + enc.extra_audio.iter().map(Vec::len).sum::<usize>();
-    Ok((m2ts, FilmStats { cible: target.label.to_string(), images: enc.video.len(), trames_audio: frames, mux }))
+    Ok((m2ts, FilmStats { cible: if opts.copy_video { format!("{} ({})", target.label, crate::i18n::tr("video stream copied")) } else { target.label.to_string() }, images: enc.video.len(), trames_audio: frames, mux }))
 }
 
 /// Image fixe -> clip video seul (pas d'audio) de `seconds` secondes au format `size`.

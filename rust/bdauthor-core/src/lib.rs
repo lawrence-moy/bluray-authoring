@@ -10,6 +10,7 @@ pub mod deflate;
 pub mod pdf;
 pub mod clpi;
 pub mod ffmpeg;
+pub mod fill;
 pub mod design;
 pub mod disc;
 pub mod editor;
