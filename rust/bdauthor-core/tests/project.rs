@@ -899,3 +899,39 @@ fn page_launches_an_item_after_a_delay() {
     assert!(!text(4).contains("ADD"));
     if std::env::var_os("BDAUTHOR_TEST_OUT").is_none() { let _ = std::fs::remove_dir_all(&dir); }
 }
+
+#[test]
+fn menu_size_option_is_saved_and_applied() {
+    use bdauthor_core::model::{menu_size_for, parse_menu_size, ProjectModel};
+    common::fr();
+    assert_eq!(parse_menu_size("1280x720"), Some((1280, 720)));
+    assert_eq!(parse_menu_size("1281X721"), Some((1280, 720)));
+    assert_eq!(parse_menu_size("100x100"), Some((640, 360)));
+    assert_eq!(parse_menu_size("video"), None);
+    assert_eq!(menu_size_for(None, (1280, 720)), (1920, 1080));
+    assert_eq!(menu_size_for(Some("video"), (1280, 720)), (1280, 720));
+    assert_eq!(menu_size_for(Some("1600x900"), (1280, 720)), (1600, 900));
+    assert_eq!(menu_size_for(Some("n'importe quoi"), (1280, 720)), (1920, 1080));
+    let mut m = ProjectModel::from_json(r#"{"videos": [{"fichier": "a.mp4"}], "menu": {"taille": "1600x900"}}"#).unwrap();
+    assert_eq!(m.menu_custom, Some((1600, 900)));
+    assert!(m.to_json().contains("\"taille\": \"1600x900\""));
+    m.menu_custom = None;
+    m.menu_1080 = false;
+    assert!(m.to_json().contains("\"taille\": \"video\""));
+    m.menu_1080 = true;
+    assert!(m.to_json().contains("\"taille\": \"1080\""));
+
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_msize_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i", "sine=duration=3",
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-c:a", "aac", "-shortest"]).arg(dir.join("a.mp4")).status().unwrap().success());
+    let proj = r##"{ "titre": "Taille", "langue": "fra", "videos": [ {"fichier": "a.mp4"} ],
+      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2, "taille": "1280x720"} }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let (info, _logs) = build_in(&tools, &dir, "out");
+    assert!(info.report.ok(), "{}", info.report.render());
+    assert_eq!(info.menu_size, (1280, 720));
+    if std::env::var_os("BDAUTHOR_TEST_OUT").is_none() { let _ = std::fs::remove_dir_all(&dir); }
+}

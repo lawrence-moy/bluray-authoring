@@ -1164,5 +1164,19 @@
   "Start an item if nothing is pressed": "Lancer un élément si rien n'est pressé",
   "When the page has been shown for this long with no button pressed, the chosen item is activated (for example a thumbnail starts its video). The delay is counted in whole passes of the page's background, so it can run up to one pass longer: use a short background duration for a precise delay. Pressing any button leaves the page and cancels the countdown.": "Quand la page est affichée depuis ce délai sans qu'aucun bouton ait été pressé, l'élément choisi est activé (par exemple une vignette lance sa vidéo). Le délai est compté en passages entiers du fond de la page : il peut durer jusqu'à un passage de plus, donc réglez une durée de fond courte pour un délai précis. Appuyer sur un bouton quitte la page et annule le décompte.",
   "after": "au bout de",
-  "item to start": "élément à lancer"
+  "item to start": "élément à lancer",
+  "Custom…": "Personnalisée…",
+  "1920 x 1080": "1920 x 1080",
+  "Not a standard Blu-ray format (1920x1080 or 1280x720): some players may refuse the menu.": "Format Blu-ray non standard (1920x1080 ou 1280x720) : certains lecteurs peuvent refuser le menu.",
+  "Size of the first video": "Taille de la première vidéo",
+  "{}. Video image {}": "{}. Image de vidéo {}",
+  "A frame of one of the project's videos, chosen image by image (same widget as in the menu editor)": "Une image de l'une des vidéos du projet, choisie image par image (même widget que dans l'éditeur de menu)",
+  "Size of the menu images (background, buttons). The menu is always designed in 16:9, so the other side follows the one you change. 1920 x 1080 is the default; a smaller menu uses less player memory (many buttons or large images) but is less sharp.": "Taille des images du menu (fond, boutons). Le menu est toujours dessiné en 16:9 : l'autre côté suit celui que vous changez. 1920 x 1080 est le réglage par défaut ; un menu plus petit demande moins de mémoire au lecteur (beaucoup de boutons ou de grandes images) mais il est moins net.",
+  "+ Video image": "+ Image de vidéo",
+  "Menu size:": "Taille du menu :",
+  "Wheel: zoom · wheel click, right button held (or Space + drag): pan the view · Shift while resizing: proportional": "Molette : zoom · clic molette, clic droit maintenu (ou Espace + glisser) : déplacer la vue · Maj en redimensionnant : proportionnel",
+  "Custom ({} x {})": "Personnalisée ({} x {})",
+  "Drag to change the order of the languages (the rank is the track number)": "Glisser pour changer l'ordre des langues (le rang est le numéro de piste)",
+  "Remove this language": "Retirer cette langue",
+  "warning: menu size {}x{} is not a standard Blu-ray format (1920x1080 or 1280x720): some players may refuse the menu": "attention : la taille de menu {}x{} n'est pas un format Blu-ray standard (1920x1080 ou 1280x720) : certains lecteurs peuvent refuser le menu"
 }

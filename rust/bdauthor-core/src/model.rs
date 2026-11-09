@@ -18,6 +18,31 @@ pub struct ChapterEntry {
     pub title: String,
 }
 
+/// Plus petite et plus grande taille personnalisee d'un menu.
+pub const MENU_SIZE_MIN: (u32, u32) = (640, 360);
+pub const MENU_SIZE_MAX: (u32, u32) = (1920, 1080);
+
+/// Taille personnalisee ecrite « LARGEURxHAUTEUR » (valeurs paires, bornees) ; `None` pour « 1080 », « video » ou un texte invalide.
+pub fn parse_menu_size(t: &str) -> Option<(u32, u32)> {
+    let (w, h) = t.split_once(['x', 'X', '×'])?;
+    let (w, h): (u32, u32) = (w.trim().parse().ok()?, h.trim().parse().ok()?);
+    Some(clamp_menu_size(w, h))
+}
+
+/// Borne et arrondit au pair inferieur une taille de menu.
+pub fn clamp_menu_size(w: u32, h: u32) -> (u32, u32) {
+    ((w.clamp(MENU_SIZE_MIN.0, MENU_SIZE_MAX.0)) & !1, (h.clamp(MENU_SIZE_MIN.1, MENU_SIZE_MAX.1)) & !1)
+}
+
+/// Taille des menus d'apres `menu.taille` (absent ou « 1080 » : 1920x1080 ; « video » : celle de la premiere video ; « LxH » : personnalisee).
+pub fn menu_size_for(taille: Option<&str>, video: (u32, u32)) -> (u32, u32) {
+    match taille {
+        Some("video") => video,
+        Some(t) => parse_menu_size(t).unwrap_or((1920, 1080)),
+        None => (1920, 1080),
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct VideoEntry {
     pub file: String,
@@ -107,6 +132,8 @@ pub struct ProjectModel {
     pub music: String,
     pub bg_seconds: f64,
     pub menu_1080: bool,
+    /// Taille personnalisee des menus (largeur, hauteur) : prend le pas sur `menu_1080` (JSON `menu.taille` « 1280x720 »).
+    pub menu_custom: Option<(u32, u32)>,
     pub loop_menu: bool,
     pub cache: bool,
     /// Mises en page personnalisees (cle « mise_en_page »).
@@ -126,7 +153,7 @@ impl Default for ProjectModel {
     fn default() -> Self {
         ProjectModel {
             title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), fill_disc: false, copy_conform: false, bg: String::new(), intro: String::new(), bg_video: String::new(), bg_video_audio: false, music: String::new(), bg_seconds: 5.0,
-            menu_1080: true, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], iso: Default::default(), cover: Default::default(), label: Default::default(), raw: Value::Obj(vec![]),
+            menu_1080: true, menu_custom: None, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], iso: Default::default(), cover: Default::default(), label: Default::default(), raw: Value::Obj(vec![]),
         }
     }
 }
@@ -181,7 +208,9 @@ impl ProjectModel {
             m.bg_video_audio = menu.get("son_fond_video").and_then(Value::as_bool).unwrap_or(false);
             m.music = menu.get("musique").and_then(Value::as_str).unwrap_or("").into();
             m.bg_seconds = menu.get("fond_secondes").and_then(Value::as_f64).unwrap_or(5.0);
-            m.menu_1080 = menu.get("taille").and_then(Value::as_str) != Some("video");
+            let taille = menu.get("taille").and_then(Value::as_str);
+            m.menu_custom = taille.and_then(parse_menu_size);
+            m.menu_1080 = taille != Some("video");
             m.loop_menu = menu.get("boucle").and_then(Value::as_bool).unwrap_or(false);
             m.cache = menu.get("cache").and_then(Value::as_bool).unwrap_or(true);
         }
@@ -237,7 +266,7 @@ impl ProjectModel {
         set(&mut menu, "son_fond_video", if self.bg_video_audio { Some(Value::Bool(true)) } else { None });
         set(&mut menu, "musique", if self.music.is_empty() { None } else { Some(s(&self.music)) });
         set(&mut menu, "fond_secondes", Some(n(self.bg_seconds)));
-        set(&mut menu, "taille", Some(s(if self.menu_1080 { "1080" } else { "video" })));
+        set(&mut menu, "taille", Some(s(&match self.menu_custom { Some((w, h)) => format!("{w}x{h}"), None if self.menu_1080 => "1080".to_string(), None => "video".to_string() })));
         set(&mut menu, "boucle", Some(Value::Bool(self.loop_menu)));
         // anciens reglages des menus automatiques : retires du fichier
         set(&mut menu, "retour", None);
@@ -253,6 +282,17 @@ impl ProjectModel {
     }
 
     pub fn to_json(&self) -> String { self.to_value().to_pretty() }
+
+    /// Images de video posees sur la jaquette et l'etiquette : (cle de `cover::frame_key`, rang de la video, image), sans doublon.
+    pub fn cover_frames(&self) -> Vec<(String, usize, crate::design::VideoFrame)> {
+        let mut out: Vec<(String, usize, crate::design::VideoFrame)> = Vec::new();
+        for it in self.cover.items.iter().chain(self.label.items.iter()) {
+            let crate::cover::CoverKind::VideoImage { frame } = &it.kind else { continue };
+            let (Some(k), Some(v)) = (crate::cover::frame_key(frame), frame.video) else { continue };
+            if v < self.videos.len() && !out.iter().any(|o| o.0 == k) { out.push((k, v, *frame)); }
+        }
+        out
+    }
 
     /// Valeurs des champs automatiques de la jaquette et de l'etiquette (voir `cover::FIELDS`) ; `durations` : duree de chaque
     /// fichier video connue.

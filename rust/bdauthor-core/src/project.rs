@@ -1098,7 +1098,10 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
     }
     let size = (first.width, first.height);
-    let menu_size = if menu_cfg.get("taille").and_then(Value::as_str) != Some("video") { (1920, 1080) } else { size };
+    let menu_size = crate::model::menu_size_for(menu_cfg.get("taille").and_then(Value::as_str), size);
+    if menu_cfg.get("taille").and_then(Value::as_str).and_then(crate::model::parse_menu_size).is_some() && !matches!(menu_size, (1920, 1080) | (1280, 720)) {
+        (env.log)(&trf!("warning: menu size {}x{} is not a standard Blu-ray format (1920x1080 or 1280x720): some players may refuse the menu", menu_size.0, menu_size.1));
+    }
     let sc_ = menu_size.0 as f64 / 1920.0;
 
     let still_opts = EncodeOpts { crf: eopts.crf, preset: eopts.preset.clone(), ..Default::default() };
@@ -1154,17 +1157,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let size = match frame_sizes.get(&v) {
             Some(s) => *s,
             None => {
-                let i = ffmpeg::probe(tools_, &src)?;
-                let s = (1920, ((1920.0 * i.height.max(1) as f64 / i.width.max(1) as f64 / 2.0).round() as u32 * 2).max(2));
+                let s = crate::framesrc::full_frame_size(tools_, &src)?;
                 frame_sizes.insert(v, s);
                 s
             }
         };
-        let full = ffmpeg::extract_frame_rgba(tools_, &src, fr.at.min((dur - 0.05).max(0.0)), size, true)?;
-        let (cx, cy, cw, ch) = fr.crop_px(full.width, full.height);
-        let img = crate::cover::crop(&full, cx as i32, cy as i32, cw as i32, ch as i32);
         let f = tmp.0.join(format!("image_video_{}_{}_{}.png", v + 1, key.1, frame_files.len()));
-        std::fs::write(&f, crate::png::write_png(&img))?;
+        crate::framesrc::write_video_frame_png(tools_, &src, size, dur, fr, &f)?;
         frame_files.insert(key, f);
     }
     let sd = size.0 as f64 / 1920.0; // echelle des textes/images poses sur le fond (qui a la taille de la video)

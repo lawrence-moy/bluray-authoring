@@ -343,6 +343,11 @@ impl App {
         self.cur.and_then(|c| pages.iter().find(|p| p.r == c).cloned()).or_else(|| pages.first().cloned())
     }
 
+    /// Taille reelle des menus d'apres le projet (personnalisee, 1920x1080 ou celle de la premiere video).
+    fn effective_menu_plane(&self) -> (u32, u32) {
+        if let Some(c) = self.model.menu_custom { c } else if self.model.menu_1080 { (1920, 1080) } else { self.menu_plane() }
+    }
+
     /// Taille du menu sans l'option 1080 : celle de la premiere video une fois encodee (1080 si sa hauteur depasse 800, sinon 720).
     fn menu_plane(&self) -> (u32, u32) {
         let first = self.model.videos.first().map(|v| v.file.clone()).unwrap_or_default();
@@ -450,7 +455,7 @@ impl App {
         let fmt = |d: f64| { let s = d.round() as i64; if s >= 60 { trf!("{} min {} s", s / 60, format!("{:02}", s % 60)) } else { trf!("{} s", s) } };
         if !video.is_empty() {
             let d = self.media_duration(video, false)?;
-            let per_min = if self.menu_plane().1 >= 1080 { 60.0 } else { 30.0 };
+            let per_min = if self.effective_menu_plane().1 >= 1080 { 60.0 } else { 30.0 };
             return Some(trf!("Duration {} (played in full, looped) · about {} MB on the disc for each page that uses this background (estimate)", fmt(d), format!("{:.0}", d / 60.0 * per_min)));
         }
         if !music.is_empty() {
@@ -767,7 +772,7 @@ impl App {
 
         // poids de la page (images de boutons a decoder)
         if let Some(d) = info.design(&self.model.designs) {
-            let plane = if self.model.menu_1080 { (1920, 1080) } else { self.menu_plane() };
+            let plane = self.effective_menu_plane();
             let wt = d.weight(&self.model.designs.style, info.page, info.pages, plane);
             crate::style_ui::weight_ui(ui, &wt, plane);
         }
@@ -810,15 +815,17 @@ impl App {
             if ui.small_button("+").on_hover_text(tr("Zoom in")).clicked() { let nz = (z * 1.25).min(8.0); self.view_pan *= nz / z; self.view_zoom = nz; }
             if ui.small_button(tr("Fit")).on_hover_text(tr("Whole page in the window")).clicked() { self.view_zoom = 1.0; self.view_pan = egui::Vec2::ZERO; }
             ui.label(format!("{:.0} %", self.view_zoom * 100.0));
-            crate::help(ui, tr("Wheel: zoom · wheel click (or Space + drag): pan the view · Shift while resizing: proportional"));
+            crate::help(ui, tr("Wheel: zoom · wheel click, right button held (or Space + drag): pan the view · Shift while resizing: proportional"));
         });
         let avail = ui.available_size();
         let w = avail.x.min((avail.y - reserve).max(200.0) * 16.0 / 9.0).max(320.0);
         let (resp, painter) = ui.allocate_painter(vec2(w, w * 9.0 / 16.0), Sense::click_and_drag());
         let viewport = resp.rect;
-        // deplacement (clic molette ou Espace + bouton gauche) et zoom a la molette, centre sur le curseur
+        // deplacement (clic molette, clic droit maintenu ou Espace + bouton gauche) et zoom a la molette, centre sur le curseur
         let panning = (resp.hovered() || self.view_panning) && !ctx.wants_keyboard_input()
-            && ctx.input(|i| i.pointer.middle_down() || (i.key_down(Key::Space) && i.pointer.primary_down()));
+            && ctx.input(|i| i.pointer.middle_down() || (i.key_down(Key::Space) && i.pointer.primary_down())
+                // clic droit : on ne deplace la vue qu'une fois le pointeur eloigne (un simple clic droit garde son menu contextuel)
+                || (i.pointer.secondary_down() && (self.view_panning || i.pointer.press_origin().zip(i.pointer.latest_pos()).is_some_and(|(a, b)| a.distance(b) > 6.0))));
         let skip_input = panning || self.view_panning; // pas de clic ni de glissement d'element pendant (et juste apres) le deplacement
         self.view_panning = panning;
         if panning {
@@ -1969,11 +1976,14 @@ impl App {
                             let resp = ui.selectable_label(shown, label).on_hover_text(tr("Show the page (+ to expand its content). Double-click: rename. 🏠: home page"));
                             if resp.clicked() { pick_page = Some(k); }
                             if resp.double_clicked() { self.page_edit = Some((k, all[k].name.clone())); }
-                            if ui.small_button(ico("✏")).on_hover_text(tr("Rename the page")).clicked() { self.page_edit = Some((k, all[k].name.clone())); }
-                            let _ = ui.menu_button(ico("🗑"), |ui| {
-                                ui.label(tr("Links that led to this page will have to be chosen again."));
-                                if ui.button(tr("Delete the page")).clicked() { op = Some(LayerOp::PageDelete(k)); ui.close_menu(); }
-                            }).response.on_hover_text(tr("Delete the page"));
+                            // icones alignees a droite (de la droite vers la gauche : corbeille, puis crayon)
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                let _ = ui.menu_button(ico("🗑"), |ui| {
+                                    ui.label(tr("Links that led to this page will have to be chosen again."));
+                                    if ui.button(tr("Delete the page")).clicked() { op = Some(LayerOp::PageDelete(k)); ui.close_menu(); }
+                                }).response.on_hover_text(tr("Delete the page"));
+                                if ui.small_button(ico("✏")).on_hover_text(tr("Rename the page")).clicked() { self.page_edit = Some((k, all[k].name.clone())); }
+                            });
                         }
                     }).response;
                     rows.push((DragRow::Page(k), r.rect));
@@ -1995,8 +2005,6 @@ impl App {
                                 let _ = ui.dnd_drag_source(egui::Id::new(("calque", k, l.id)), DragRow::Layer(k, pos), |ui| ui.label(egui::RichText::new("☰").strong().size(ICON)))
                                     .response.on_hover_text(tr("Drag to move the layer (with its items), or drop it on another page"));
                                 if ui.small_button(ico(pm(layer_open))).on_hover_text(if layer_open { tr("Collapse the layer") } else { tr("Expand the layer") }).clicked() { toggle_layer = Some((k, l.id)); }
-                                if ui.small_button(if l.hidden { ico("👁").strikethrough().weak() } else { ico("👁") }).on_hover_text(if l.hidden { tr("Layer hidden in the preview (it stays on the disc): show") } else { tr("Hide in the preview (the layer stays on the disc)") }).clicked() { op = Some(LayerOp::Hidden(k, l.id)); }
-                                if ui.small_button(ico(if l.locked { "🔒" } else { "🔓" })).on_hover_text(if l.locked { tr("Locked: its items can no longer be selected in the preview; unlock") } else { tr("Lock (no more selection or moving in the preview)") }).clicked() { op = Some(LayerOp::Locked(k, l.id)); }
                                 let editing = matches!(&self.layer_edit, Some((ep, eid, _)) if *ep == k && *eid == l.id);
                                 if editing {
                                     if let Some((_, _, text)) = &mut self.layer_edit {
@@ -2009,12 +2017,19 @@ impl App {
                                     let resp = ui.selectable_label(shown && active == l.id, egui::RichText::new(format!("{}  ({n})", l.name))).on_hover_text(tr("Active layer: receives new items. Double-click: rename"));
                                     if resp.clicked() { activate = Some((k, l.id)); }
                                     if resp.double_clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
-                                    if ui.small_button(ico("✏")).on_hover_text(tr("Rename the layer")).clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
-                                    let _ = ui.menu_button(ico("🗑"), |ui| {
-                                        if ui.button(tr("Delete the layer (its items go to the neighboring layer)")).clicked() { op = Some(LayerOp::Remove(k, l.id, true)); ui.close_menu(); }
-                                        if ui.button(tr("Delete the layer and its items")).clicked() { op = Some(LayerOp::Remove(k, l.id, false)); ui.close_menu(); }
-                                    }).response.on_hover_text(tr("Delete the layer"));
                                 }
+                                // icones alignees a droite (de la droite vers la gauche : corbeille, crayon, cadenas, oeil)
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    if !editing {
+                                        let _ = ui.menu_button(ico("🗑"), |ui| {
+                                            if ui.button(tr("Delete the layer (its items go to the neighboring layer)")).clicked() { op = Some(LayerOp::Remove(k, l.id, true)); ui.close_menu(); }
+                                            if ui.button(tr("Delete the layer and its items")).clicked() { op = Some(LayerOp::Remove(k, l.id, false)); ui.close_menu(); }
+                                        }).response.on_hover_text(tr("Delete the layer"));
+                                        if ui.small_button(ico("✏")).on_hover_text(tr("Rename the layer")).clicked() { self.layer_edit = Some((k, l.id, l.name.clone())); }
+                                    }
+                                    if ui.small_button(ico(if l.locked { "🔒" } else { "🔓" })).on_hover_text(if l.locked { tr("Locked: its items can no longer be selected in the preview; unlock") } else { tr("Lock (no more selection or moving in the preview)") }).clicked() { op = Some(LayerOp::Locked(k, l.id)); }
+                                    if ui.small_button(if l.hidden { ico("👁").strikethrough().weak() } else { ico("👁") }).on_hover_text(if l.hidden { tr("Layer hidden in the preview (it stays on the disc): show") } else { tr("Hide in the preview (the layer stays on the disc)") }).clicked() { op = Some(LayerOp::Hidden(k, l.id)); }
+                                });
                             }).response;
                             rows.push((DragRow::Layer(k, pos), r.rect));
                         }

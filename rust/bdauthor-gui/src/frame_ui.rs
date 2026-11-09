@@ -3,6 +3,7 @@
 use crate::chapters_ui::{tc, tex_of};
 use crate::i18n::{tr, trf};
 use crate::timeline_ui::{Timeline, TimelineCfg};
+use bdauthor_core::cover::CoverKind;
 use bdauthor_core::design::{Kind, VideoFrame};
 use bdauthor_core::editor::{crop_drag, crop_full};
 use bdauthor_core::ffmpeg::{FrameStream, Tools};
@@ -24,6 +25,8 @@ pub struct FramePicker {
     item: usize,
     /// vignette alternative de cette video (au lieu d'une « Image de la video » : ni recadrage, ni proportions du widget)
     thumb_of: Option<usize>,
+    /// element de la jaquette (0) ou de l'etiquette (1) : (feuille, rang) ; `item` en est alors le rang
+    cover: Option<usize>,
     video: usize,
     vfile: String,
     file: PathBuf,
@@ -61,12 +64,32 @@ impl FramePicker {
         let title = bdauthor_core::editor::video_title(model, video);
         let rx = probe_async(&file, VIEW_W);
         Some(FramePicker {
-            page, item, thumb_of: None, video, vfile: v.file.clone(), file, title, widget_ratio: it.w.max(1) as f64 / it.h.max(1) as f64,
+            page, item, thumb_of: None, cover: None, video, vfile: v.file.clone(), file, title, widget_ratio: it.w.max(1) as f64 / it.h.max(1) as f64,
             frame: 0, crop: f.crop, ratio: if f.crop.is_some() { Ratio::Free } else { Ratio::Widget },
             info_rx: Some(rx), info: None, error: None, start_t: f.at, loader: None, tex: None, tex_frame: -1,
             tl: Timeline::new(STRIP_N, "barre_image"), playing: None, crop_drag: None,
         })
     }
+
+    /// Selecteur pour l'image de video de l'element `item` de la jaquette (`sheet` 0) ou de l'etiquette (1).
+    pub fn new_cover(model: &ProjectModel, sheet: usize, item: usize, base: &Path) -> Option<FramePicker> {
+        let it = if sheet == 0 { model.cover.items.get(item)? } else { model.label.items.get(item)? };
+        let CoverKind::VideoImage { frame: f } = &it.kind else { return None };
+        let video = f.video?;
+        let v = model.videos.get(video)?;
+        let file = if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { base.join(&v.file) };
+        let title = bdauthor_core::editor::video_title(model, video);
+        let rx = probe_async(&file, VIEW_W);
+        Some(FramePicker {
+            page: 0, item, thumb_of: None, cover: Some(sheet), video, vfile: v.file.clone(), file, title, widget_ratio: it.w.max(0.1) / it.h.max(0.1),
+            frame: 0, crop: f.crop, ratio: if f.crop.is_some() { Ratio::Free } else { Ratio::Widget },
+            info_rx: Some(rx), info: None, error: None, start_t: f.at, loader: None, tex: None, tex_frame: -1,
+            tl: Timeline::new(STRIP_N, "barre_image"), playing: None, crop_drag: None,
+        })
+    }
+
+    /// Vrai si le selecteur travaille pour la jaquette ou l'etiquette.
+    pub fn is_cover(&self) -> bool { self.cover.is_some() }
 
     /// Selecteur de l'instant de la vignette alternative de la video `video`.
     pub fn new_thumb(model: &ProjectModel, video: usize, base: &Path) -> Option<FramePicker> {
@@ -75,7 +98,7 @@ impl FramePicker {
         let title = bdauthor_core::editor::video_title(model, video);
         let rx = probe_async(&file, VIEW_W);
         Some(FramePicker {
-            page: 0, item: 0, thumb_of: Some(video), video, vfile: v.file.clone(), file, title, widget_ratio: 16.0 / 9.0,
+            page: 0, item: 0, thumb_of: Some(video), cover: None, video, vfile: v.file.clone(), file, title, widget_ratio: 16.0 / 9.0,
             frame: 0, crop: None, ratio: Ratio::Widget,
             info_rx: Some(rx), info: None, error: None, start_t: v.thumb_s.unwrap_or(1.0), loader: None, tex: None, tex_frame: -1,
             tl: Timeline::new(STRIP_N, "barre_image"), playing: None, crop_drag: None,
@@ -185,6 +208,14 @@ pub fn window(ctx: &egui::Context, fp: &mut FramePicker, model: &mut ProjectMode
         let ok_video = model.videos.get(fp.video).is_some_and(|v| v.file == fp.vfile);
         if let Some(vi) = fp.thumb_of {
             if let Some(v) = model.videos.get_mut(vi).filter(|_| ok_video) { v.thumb_s = Some(t); changed = true; }
+        } else if let Some(sheet) = fp.cover {
+            let items = if sheet == 0 { &mut model.cover.items } else { &mut model.label.items };
+            if let Some(CoverKind::VideoImage { frame: f }) = items.get_mut(fp.item).map(|it| &mut it.kind) {
+                if ok_video && f.video == Some(fp.video) {
+                    *f = VideoFrame { video: Some(fp.video), at: t, crop: fp.crop };
+                    changed = true;
+                }
+            }
         } else if let Some(Kind::Image { frame: Some(f), .. }) = model.designs.free.get_mut(fp.page).and_then(|d| d.items.get_mut(fp.item)).map(|it| &mut it.kind) {
             if ok_video && f.video == Some(fp.video) {
                 *f = VideoFrame { video: Some(fp.video), at: t, crop: fp.crop };

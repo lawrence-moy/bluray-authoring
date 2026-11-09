@@ -284,35 +284,53 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
     crate::help(ui, tr("Sizes given for a 1080-line video; they adapt automatically to 720."));
 }
 
+/// Langue deplacee par glisser-deposer dans la liste de la fenetre Projet (rang).
+#[derive(Clone, Copy)]
+struct LangRow(usize);
+
 /// Onglet « Langues » de la fenetre Projet (audio et sous-titres) : liste des langues du projet (le rang d'une langue est son numero de
 /// piste dans toutes les videos). Retourne vrai si quelque chose a change.
 pub fn languages_ui(ui: &mut egui::Ui, m: &mut ProjectModel) -> bool {
     let mut changed = false;
     {
         ui.label(tr("Languages of the audio and subtitle tracks. Subtitles: the rank in the list sets the track number, identical in all videos."));
-        let mut op: Option<(usize, i32)> = None; // (rang, -1 haut / 1 bas / 0 retirer)
-        let n = m.languages.len();
+        let mut del: Option<usize> = None;
+        let mut rows: Vec<egui::Rect> = Vec::new();
         for (k, l) in m.languages.iter_mut().enumerate() {
             ui.push_id(("langue", l.id), |ui| {
-                ui.horizontal(|ui| {
+                // ligne de la langue : poignee et nom a gauche, corbeille a droite
+                let hl = ui.painter().add(egui::Shape::Noop);
+                let row = ui.horizontal(|ui| {
+                    let _ = ui.dnd_drag_source(egui::Id::new(("langue_sous_titres", k)), LangRow(k), |ui| ui.label(egui::RichText::new("☰").strong().size(17.0)))
+                        .response.on_hover_text(tr("Drag to change the order of the languages (the rank is the track number)"));
                     ui.label(format!("{}.", k + 1));
                     changed |= ui.add(egui::TextEdit::singleline(&mut l.name).desired_width(150.0)).changed();
                     ui.label(tr("code:"));
                     changed |= ui.add(egui::TextEdit::singleline(&mut l.code).desired_width(40.0)).changed();
-                    if ui.add_enabled(k > 0, egui::Button::new("▲").small()).clicked() { op = Some((k, -1)); }
-                    if ui.add_enabled(k + 1 < n, egui::Button::new("▼").small()).clicked() { op = Some((k, 1)); }
-                    if ui.small_button(tr("Remove")).clicked() { op = Some((k, 0)); }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui.button(egui::RichText::new("🗑").size(17.0)).on_hover_text(tr("Remove this language")).clicked() { del = Some(k); }
+                    });
                 });
+                rows.push(row.response.rect);
+                // ligne survolee : fond en surbrillance (dessine sous les boutons)
+                if ui.rect_contains_pointer(row.response.rect) { ui.painter().set(hl, egui::Shape::rect_filled(row.response.rect.expand2(egui::vec2(3.0, 2.0)), 4.0, ui.visuals().widgets.hovered.weak_bg_fill)); }
             });
         }
-        if let Some((k, a)) = op {
-            match a {
-                -1 => m.move_language(k, k - 1),
-                1 => m.move_language(k, k + 1),
-                _ => { let id = m.languages[k].id; m.remove_language(id); }
+        // glisser-deposer : la langue se range a l'endroit indique par le trait bleu
+        if let (Some(from), Some(pos), Some(first), Some(last)) = (egui::DragAndDrop::payload::<LangRow>(ui.ctx()), ui.ctx().pointer_hover_pos(), rows.first(), rows.last()) {
+            let from = from.0;
+            let area = first.union(*last).expand(8.0);
+            if area.contains(pos) && from < m.languages.len() {
+                let to = rows.iter().filter(|r| r.center().y < pos.y).count();
+                let y = if to < rows.len() { rows[to].top() - 1.0 } else { last.bottom() + 1.0 };
+                ui.painter().hline(area.x_range(), y, egui::Stroke::new(2.5_f32, egui::Color32::from_rgb(90, 170, 255)));
+                if ui.input(|i| i.pointer.any_released()) {
+                    let to = if to > from { to - 1 } else { to };
+                    if to != from { m.move_language(from, to); changed = true; }
+                }
             }
-            changed = true;
         }
+        if let Some(k) = del { let id = m.languages[k].id; m.remove_language(id); changed = true; }
         ui.add_enabled_ui(m.languages.len() < MAX_SUB_TRACKS, |ui| {
             ui.menu_button(tr("Add a language ▾"), |ui| {
                 for code in ["fra", "eng", "deu", "spa", "ita", "por", "nld", "jpn", "zho", "rus", "ara", "kor"] {

@@ -305,6 +305,9 @@ struct App {
     /// selecteur d'image d'un widget « Image de la video » : (page, element)
     frame_picker: Option<frame_ui::FramePicker>,
     frame_request: Option<(usize, usize)>,
+    /// image de video d'un element de la jaquette (0) ou de l'etiquette (1) a choisir : (feuille, element)
+    cover_frame_request: Option<(usize, usize)>,
+    cover_frames: cover_ui::CoverFrames,
     /// video dont on choisit la vignette alternative (meme fenetre que le selecteur d'image)
     thumb_request: Option<usize>,
     /// images entieres des videos (widget « Image de la video »), par (fichier, instant en ms)
@@ -389,7 +392,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_grid: false, cover_grid_mm: 5.0, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, snap_px: 10, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_grid: false, cover_grid_mm: 5.0, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, cover_frame_request: None, cover_frames: Default::default(), thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, snap_px: 10, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -744,13 +747,18 @@ impl eframe::App for App {
             let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
             self.frame_picker = frame_ui::FramePicker::new(&self.model, page, item, &base);
         }
+        if let Some((sheet, item)) = self.cover_frame_request.take() {
+            let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+            self.frame_picker = frame_ui::FramePicker::new_cover(&self.model, sheet, item, &base);
+        }
         if let Some(vi) = self.thumb_request.take() {
             let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
             self.frame_picker = frame_ui::FramePicker::new_thumb(&self.model, vi, &base);
         }
+        let on_cover = self.frame_picker.as_ref().is_some_and(|fp| fp.is_cover());
         let res = self.frame_picker.as_mut().map(|fp| frame_ui::window(ctx, fp, &mut self.model));
         if let Some((ch, keep)) = res {
-            if ch { self.dirty = true; self.bump(); }
+            if ch { self.dirty = true; self.bump(); if on_cover { self.cover_gen += 1; } }
             if !keep { self.frame_picker = None; }
         }
         let mut open = self.show_config;
@@ -905,7 +913,32 @@ impl eframe::App for App {
                             changed |= ui.add(egui::TextEdit::singleline(&mut m.lang).desired_width(50.0)).changed();
                         });
                         changed |= file_row(ui, tr("Opening sequence:"), &mut m.intro, tr("(none: the menu opens directly)"), tr("Videos"), VIDEO_EXTS);
-                        changed |= ui.checkbox(&mut m.menu_1080, tr("Menu in 1920x1080 (otherwise: video size)")).changed();
+                        // taille des menus : 1920x1080 (defaut), celle de la video, ou personnalisee (proportions 16:9)
+                        ui.horizontal(|ui| {
+                            ui.label(tr("Menu size:"));
+                            let shown = match (m.menu_custom, m.menu_1080) { (Some((w, h)), _) => trf!("Custom ({} x {})", w, h), (None, true) => tr("1920 x 1080").to_string(), (None, false) => tr("Size of the first video").to_string() };
+                            egui::ComboBox::from_id_salt("taille_menu").selected_text(shown).show_ui(ui, |ui| {
+                                if ui.selectable_label(m.menu_custom.is_none() && m.menu_1080, tr("1920 x 1080")).clicked() { m.menu_custom = None; m.menu_1080 = true; changed = true; }
+                                if ui.selectable_label(m.menu_custom.is_none() && !m.menu_1080, tr("Size of the first video")).clicked() { m.menu_custom = None; m.menu_1080 = false; changed = true; }
+                                if ui.selectable_label(m.menu_custom.is_some(), tr("Custom…")).clicked() && m.menu_custom.is_none() { m.menu_custom = Some((1280, 720)); changed = true; }
+                            });
+                            if let Some((mut w, mut h)) = m.menu_custom {
+                                let (lo, hi) = (bdauthor_core::model::MENU_SIZE_MIN, bdauthor_core::model::MENU_SIZE_MAX);
+                                let cw = ui.add(egui::DragValue::new(&mut w).range(lo.0..=hi.0).speed(2.0)).changed();
+                                ui.label("×");
+                                let ch = ui.add(egui::DragValue::new(&mut h).range(lo.1..=hi.1).speed(2.0)).changed();
+                                // le menu est dessine en 16:9 : l'autre cote suit celui qu'on change
+                                if cw { h = (w as f64 * 9.0 / 16.0).round() as u32; }
+                                if ch { w = (h as f64 * 16.0 / 9.0).round() as u32; }
+                                if cw || ch { m.menu_custom = Some(bdauthor_core::model::clamp_menu_size(w, h)); changed = true; }
+                            }
+                        });
+                        if let Some((w, h)) = m.menu_custom {
+                            if !matches!((w, h), (1920, 1080) | (1280, 720)) {
+                                ui.colored_label(egui::Color32::from_rgb(230, 160, 60), tr("Not a standard Blu-ray format (1920x1080 or 1280x720): some players may refuse the menu."));
+                            }
+                        }
+                        crate::help(ui, tr("Size of the menu images (background, buttons). The menu is always designed in 16:9, so the other side follows the one you change. 1920 x 1080 is the default; a smaller menu uses less player memory (many buttons or large images) but is less sharp."));
                         ui.separator();
                         ui.heading(tr("Encoding"));
                         ui.add_enabled_ui(!m.fill_disc, |ui| {

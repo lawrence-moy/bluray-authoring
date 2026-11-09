@@ -2,7 +2,7 @@
 //! mise en page en pixels (pour le rendu) et export PDF. Le dessin des textes et des images est fait par `bdauthor-render`.
 use crate::i18n::tr;
 use crate::trf;
-use crate::design::Align;
+use crate::design::{Align, VideoFrame};
 use crate::json::Value;
 use crate::palette::RgbaImage;
 use crate::pdf;
@@ -82,6 +82,9 @@ impl ShapeKind {
 pub enum CoverKind {
     Text { text: String, size_pt: f64, color: [u8; 3], align: Align, font: String, fx: TextFx },
     Image { path: String },
+    /// image d'une video du projet (comme le widget « Image de la video » du menu) : video, instant et recadrage ; l'image est
+    /// extraite a part et passee a la mise en page par `vars` sous la cle `frame_key`
+    VideoImage { frame: VideoFrame },
     /// rectangle (coins arrondis de rayon `radius_mm`), ellipse inscrite dans le cadre, ou trait horizontal au milieu du cadre
     /// (tourne par `rot`) ; `fill` et `stroke` : couleurs, `None` = absent ; la bordure est a l'interieur du cadre
     /// `flip` (lignes) : la ligne va du coin bas gauche au coin haut droit du cadre au lieu de haut gauche -> bas droit
@@ -143,6 +146,10 @@ impl CoverItem {
     pub fn shape(shape: ShapeKind, x: f64, y: f64, w: f64, h: f64) -> CoverItem {
         let (fill, stroke) = if shape == ShapeKind::Line { (None, Some([255, 255, 255])) } else { (Some([255, 255, 255]), None) };
         CoverItem { kind: CoverKind::Shape { shape, fill, stroke, stroke_mm: 0.5, radius_mm: 0.0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
+    }
+    /// Image d'une video (a choisir) : 16/9 par defaut.
+    pub fn video_image(x: f64, y: f64, w: f64, h: f64) -> CoverItem {
+        CoverItem { kind: CoverKind::VideoImage { frame: VideoFrame { video: None, at: 0.0, crop: None } }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
     }
     pub fn image(path: &str, x: f64, y: f64, w: f64, h: f64) -> CoverItem {
         CoverItem { kind: CoverKind::Image { path: path.into() }, x, y, w, h, rot: 0, name: String::new(), layer: 0 }
@@ -284,6 +291,11 @@ impl Cover {
                     if path.is_empty() { return None; }
                     CoverDecor::Image { path: abs(path), x, y, w: iw, h: ih }
                 }
+                CoverKind::VideoImage { frame } => {
+                    // l'image extraite est donnee par `vars` ; sans elle (pas encore prete, video a choisir) l'element est ignore
+                    let p = vars.get(&frame_key(frame)?)?;
+                    CoverDecor::Image { path: PathBuf::from(p), x, y, w: iw, h: ih }
+                }
                 CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
                     CoverDecor::Shape { flip: *flip, style: *style, arrow: *arrow, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0) }
                 }
@@ -420,6 +432,13 @@ pub const FIELDS: [(&str, &str); 6] = [
 ];
 
 /// Remplace `{nom}` par sa valeur ; un champ inconnu reste tel quel.
+/// Cle sous laquelle `Cover::layout_with` cherche, dans `vars`, le fichier PNG de l'image d'une video (`None` : video a choisir).
+/// Le fichier est celui de `framesrc::write_video_frame_png`.
+pub fn frame_key(f: &VideoFrame) -> Option<String> {
+    let c = f.crop.map_or([-1; 4], |c| c.map(|v| (v * 1e4).round() as i64));
+    Some(format!("@image_video:{}:{}:{}:{}:{}:{}", f.video?, (f.at * 1000.0).round() as i64, c[0], c[1], c[2], c[3]))
+}
+
 pub fn apply_vars(text: &str, vars: &BTreeMap<String, String>) -> String {
     let mut out = text.to_string();
     for (k, v) in vars { out = out.replace(&format!("{{{k}}}"), v); }
@@ -691,6 +710,12 @@ fn item_to_value(it: &CoverItem) -> Value {
             e.push(("type".into(), Value::Str("image".into())));
             e.push(("fichier".into(), Value::Str(path.clone())));
         }
+        CoverKind::VideoImage { frame } => {
+            e.push(("type".into(), Value::Str("image_video".into())));
+            if let Some(v) = frame.video { e.push(("video".into(), n(v as f64 + 1.0))); }
+            e.push(("instant".into(), n((frame.at * 1e4).round() / 1e4)));
+            if let Some(c) = frame.crop { e.push(("recadrage".into(), Value::Arr(c.iter().map(|v| n((v * 1e4).round() / 1e4)).collect()))); }
+        }
     }
     for (k, v) in [("x", it.x), ("y", it.y), ("w", it.w), ("h", it.h)] { e.push((k.into(), n((v * 100.0).round() / 100.0))); }
     if it.rot != 0 { e.push(("rotation".into(), n(it.rot as f64))); }
@@ -735,6 +760,17 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
             arrow: e.get("fleche").and_then(Value::as_str).and_then(LineArrow::from_name).unwrap_or(LineArrow::None),
         },
         Some("image") => CoverKind::Image { path: e.get("fichier").and_then(Value::as_str).ok_or_else(|| trf!("{}, item {}: “fichier” missing", what, k + 1))?.to_string() },
+        Some("image_video") => CoverKind::VideoImage { frame: VideoFrame {
+            video: e.get("video").and_then(Value::as_f64).filter(|v| *v >= 1.0).map(|v| v as usize - 1),
+            at: e.get("instant").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).max(0.0),
+            crop: match e.get("recadrage") {
+                Some(Value::Arr(a)) if a.len() == 4 => {
+                    let g = |i: usize| a[i].as_f64().filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 1.0);
+                    Some([g(0), g(1), g(2).max(0.01), g(3).max(0.01)])
+                }
+                _ => None,
+            },
+        } },
         t => return Err(trf!("{}, item {}: unknown type {}", what, k + 1, format!("{:?}", t))),
     };
     let min_side = if matches!(&kind, CoverKind::Shape { shape: ShapeKind::Line, .. }) { 0.0 } else { 1.0 };

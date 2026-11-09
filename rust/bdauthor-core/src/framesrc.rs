@@ -22,6 +22,22 @@ pub fn scaled_height(src: (u32, u32), w: u32) -> u32 {
     ((w as f64 * src.1.max(1) as f64 / src.0.max(1) as f64 / 2.0).round() as u32 * 2).max(2)
 }
 
+/// Taille a laquelle on extrait l'image entiere d'une video pour un element « Image de la video » (1920 de large, proportions de la video).
+pub fn full_frame_size(tools: &Tools, src: &Path) -> crate::ffmpeg::Result<(u32, u32)> {
+    let i = probe(tools, src)?;
+    Ok((1920, scaled_height((i.width, i.height), 1920)))
+}
+
+/// Ecrit dans `dst` (PNG) l'image de la video `src` (de duree `duration_s`) a l'instant `fr.at`, prise a la taille `size` puis
+/// recadree comme `fr.crop`. Meme code pour les menus et la jaquette.
+pub fn write_video_frame_png(tools: &Tools, src: &Path, size: (u32, u32), duration_s: f64, fr: &crate::design::VideoFrame, dst: &Path) -> crate::ffmpeg::Result<()> {
+    let full = extract_frame_rgba(tools, src, fr.at.min((duration_s - 0.05).max(0.0)), size, true)?;
+    let (cx, cy, cw, ch) = fr.crop_px(full.width, full.height);
+    let img = crate::cover::crop(&full, cx as i32, cy as i32, cw as i32, ch as i32);
+    std::fs::write(dst, crate::png::write_png(&img))?;
+    Ok(())
+}
+
 /// Sonde la video dans un fil separe ; les images affichees feront `view_w` de large.
 pub fn probe_async(file: &Path, view_w: u32) -> Receiver<Result<VideoMeta, String>> {
     let (tx, rx) = channel();

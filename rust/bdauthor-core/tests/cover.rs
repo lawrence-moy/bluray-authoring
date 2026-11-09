@@ -329,3 +329,55 @@ fn line_styles_arrows_json() {
     let json = c2.to_value().unwrap().to_pretty();
     assert!(!json.contains("\"trait\"") && !json.contains("\"fleche\""), "{json}");
 }
+
+#[test]
+fn video_image_item_json_layout_and_frame() {
+    use bdauthor_core::design::VideoFrame;
+    let mut c = Cover::default();
+    let mut it = CoverItem::video_image(10.0, 20.0, 60.0, 40.0);
+    if let CoverKind::VideoImage { frame } = &mut it.kind { *frame = VideoFrame { video: Some(1), at: 2.5, crop: Some([0.1, 0.2, 0.5, 0.4]) }; }
+    let sans_video = CoverItem::video_image(0.0, 0.0, 30.0, 30.0);
+    c.items = vec![it.clone(), sans_video];
+    // enregistrement : video numerotee a partir de 1, image sans video gardee telle quelle
+    let text = c.to_value().unwrap().to_pretty();
+    assert!(text.contains("\"image_video\"") && text.contains("\"video\": 2") && text.contains("\"instant\": 2.5"), "{text}");
+    let back = Cover::from_value(Some(&bdauthor_core::json::parse(&text).unwrap())).unwrap();
+    assert_eq!(back.items, c.items);
+    // mise en page : sans image extraite l'element est ignore ; avec elle (cle donnee par `vars`) il devient une image
+    assert_eq!(c.layout(72, Path::new(".")).items.len(), 0);
+    let CoverKind::VideoImage { frame } = &it.kind else { unreachable!() };
+    let key = frame_key(frame).unwrap();
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert(key.clone(), "/tmp/image.png".to_string());
+    let lay = c.layout_with(72, Path::new("."), &vars);
+    assert_eq!(lay.items.len(), 1);
+    assert!(matches!(&lay.items[0].0, CoverDecor::Image { path, .. } if path == Path::new("/tmp/image.png")));
+    // le modele liste les images a extraire (sans doublon, video existante seulement)
+    let mut m = ProjectModel::from_json(r#"{"videos": [{"fichier": "a.mp4"}, {"fichier": "b.mp4"}]}"#).unwrap();
+    m.cover = c.clone();
+    m.label.items.push(it.clone());
+    let fr = m.cover_frames();
+    assert_eq!(fr.len(), 1);
+    assert_eq!((fr[0].0.as_str(), fr[0].1), (key.as_str(), 1));
+}
+
+#[test]
+fn video_frame_png_is_written_cropped() {
+    use bdauthor_core::design::VideoFrame;
+    use bdauthor_core::ffmpeg::Tools;
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_vframe_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("v.mp4");
+    assert!(std::process::Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-pix_fmt", "yuv420p"]).arg(&src).status().unwrap().success());
+    let size = bdauthor_core::framesrc::full_frame_size(&tools, &src).unwrap();
+    assert_eq!(size, (1920, 1080));
+    let (png, png2) = (dir.join("a.png"), dir.join("b.png"));
+    bdauthor_core::framesrc::write_video_frame_png(&tools, &src, size, 3.0, &VideoFrame { video: Some(0), at: 1.0, crop: None }, &png).unwrap();
+    bdauthor_core::framesrc::write_video_frame_png(&tools, &src, size, 3.0, &VideoFrame { video: Some(0), at: 1.0, crop: Some([0.0, 0.0, 0.5, 0.5]) }, &png2).unwrap();
+    let dim = |p: &Path| { let b = std::fs::read(p).unwrap(); (u32::from_be_bytes(b[16..20].try_into().unwrap()), u32::from_be_bytes(b[20..24].try_into().unwrap())) };
+    assert_eq!(dim(&png), (1920, 1080));
+    assert_eq!(dim(&png2), (960, 540));
+    let _ = std::fs::remove_dir_all(&dir);
+}

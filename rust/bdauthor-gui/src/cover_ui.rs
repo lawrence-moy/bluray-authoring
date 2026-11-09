@@ -6,9 +6,9 @@ use bdauthor_core::cover::{LineArrow, LineStyle, ShapeKind, VAlign, layer_state,
 use bdauthor_core::design::Align;
 use bdauthor_core::editor::ItemAlign;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Key, Rect, Sense, Stroke};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, TryRecvError};
+use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 
 /// Resolution (dpi) de l'apercu a l'ecran.
 const PREVIEW_DPI: u32 = 96;
@@ -117,6 +117,7 @@ fn item_label(it: &CoverItem, i: usize) -> String {
     match &it.kind {
         CoverKind::Text { text, .. } => trf!("{}. Text “{}”", i + 1, text.lines().next().unwrap_or("").chars().take(24).collect::<String>()),
         CoverKind::Image { path } => trf!("{}. Image {}", i + 1, std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
+        CoverKind::VideoImage { frame } => trf!("{}. Video image {}", i + 1, frame.video.map_or("?".to_string(), |v| format!("V{}", v + 1))),
         CoverKind::Shape { shape, .. } => format!("{}. {}", i + 1, shape.label()),
     }
 }
@@ -133,6 +134,43 @@ fn current_year() -> i32 {
     let mp = (5 * doy + 2) / 153;
     let m = if mp < 10 { mp + 3 } else { mp - 9 };
     (if m <= 2 { y + 1 } else { y }) as i32
+}
+
+/// Images de video posees sur la jaquette / l'etiquette : extraites en arriere-plan (meme code que les menus) dans des PNG
+/// temporaires, que la mise en page recoit par `vars` (cle `cover::frame_key`).
+pub struct CoverFrames {
+    /// cle de `frame_key` -> (video utilisee, fichier PNG)
+    ready: HashMap<String, (String, PathBuf)>,
+    /// extractions en cours (cle de `frame_key` + fichier de la video)
+    pending: HashSet<String>,
+    tx: Sender<(String, String, Result<PathBuf, String>)>,
+    rx: Receiver<(String, String, Result<PathBuf, String>)>,
+    /// extractions echouees (ne pas recommencer a chaque affichage)
+    failed: HashSet<String>,
+}
+
+impl Default for CoverFrames {
+    fn default() -> Self {
+        let (tx, rx) = channel();
+        CoverFrames { ready: HashMap::new(), pending: HashSet::new(), tx, rx, failed: HashSet::new() }
+    }
+}
+
+/// Fichier PNG temporaire de l'image `key` de la video `file`.
+fn frame_png_path(key: &str, file: &str) -> PathBuf {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    (key, file).hash(&mut h);
+    std::env::temp_dir().join("bdauthor_images_jaquette").join(format!("{:016x}.png", h.finish()))
+}
+
+/// Extrait l'image `fr` de la video `src` dans `dst` (comme pour un menu : image entiere a 1920 de large, puis recadrage).
+fn extract_cover_frame(src: &std::path::Path, fr: &bdauthor_core::design::VideoFrame, dst: &std::path::Path) -> Result<(), String> {
+    let tools = bdauthor_core::ffmpeg::Tools::locate().map_err(|e| e.to_string())?;
+    let i = bdauthor_core::ffmpeg::probe(&tools, src).map_err(|e| e.to_string())?;
+    let size = (1920, bdauthor_core::framesrc::scaled_height((i.width, i.height), 1920));
+    if let Some(d) = dst.parent() { let _ = std::fs::create_dir_all(d); }
+    bdauthor_core::framesrc::write_video_frame_png(&tools, src, size, i.duration_s, fr, dst).map_err(|e| e.to_string())
 }
 
 const IMG_EXT: [&str; 6] = ["png", "jpg", "jpeg", "bmp", "svg", "svgz"];
@@ -256,8 +294,64 @@ impl App {
         self.cover_gen += 1;
     }
 
+    /// Champs automatiques, plus les fichiers des images de video deja extraites.
     fn cover_vars(&self) -> BTreeMap<String, String> {
-        self.model.cover_vars(&self.durations, current_year())
+        let mut v = self.model.cover_vars(&self.durations, current_year());
+        for (k, (_, p)) in &self.cover_frames.ready { v.insert(k.clone(), p.to_string_lossy().into_owned()); }
+        v
+    }
+
+    /// Fichier de la video de rang `v` (chemin absolu).
+    fn cover_video_path(&self, v: usize) -> Option<PathBuf> {
+        let f = &self.model.videos.get(v)?.file;
+        let p = std::path::Path::new(f);
+        Some(if p.is_absolute() { p.to_path_buf() } else { self.base_dir().join(p) })
+    }
+
+    /// Recoit les images extraites et lance l'extraction de celles qui manquent ; rend vrai si l'apercu doit etre refait.
+    fn cover_frames_poll(&mut self, ctx: &egui::Context) -> bool {
+        let mut redraw = false;
+        while let Ok((key, file, res)) = self.cover_frames.rx.try_recv() {
+            let tag = format!("{key}\u{1}{file}");
+            self.cover_frames.pending.remove(&tag);
+            match res {
+                Ok(p) => { self.cover_frames.ready.insert(key, (file, p)); }
+                Err(_) => { self.cover_frames.failed.insert(tag); }
+            }
+            redraw = true;
+        }
+        let needed = self.model.cover_frames();
+        // une image dont la video a change (autre fichier au meme rang) n'est plus bonne
+        let before = self.cover_frames.ready.len();
+        let cur: HashMap<&String, String> = needed.iter().map(|(k, v, _)| (k, self.model.videos[*v].file.clone())).collect();
+        self.cover_frames.ready.retain(|k, (file, _)| cur.get(k).is_some_and(|f| f == file));
+        if self.cover_frames.ready.len() != before { redraw = true; }
+        for (key, v, fr) in needed {
+            let file = self.model.videos[v].file.clone();
+            let tag = format!("{key}\u{1}{file}");
+            if self.cover_frames.ready.contains_key(&key) || self.cover_frames.pending.contains(&tag) || self.cover_frames.failed.contains(&tag) { continue; }
+            let Some(src) = self.cover_video_path(v) else { continue };
+            let dst = frame_png_path(&key, &file);
+            if dst.is_file() { self.cover_frames.ready.insert(key, (file, dst)); redraw = true; continue; }
+            self.cover_frames.pending.insert(tag);
+            let (tx, ctx2) = (self.cover_frames.tx.clone(), ctx.clone());
+            std::thread::spawn(move || {
+                let r = extract_cover_frame(&src, &fr, &dst).map(|_| dst);
+                let _ = tx.send((key, file, r));
+                ctx2.request_repaint();
+            });
+        }
+        redraw
+    }
+
+    /// Avant un export : extrait tout de suite les images qui manquent (l'export attend).
+    fn cover_frames_now(&mut self) {
+        for (key, v, fr) in self.model.cover_frames() {
+            if self.cover_frames.ready.contains_key(&key) { continue; }
+            let file = self.model.videos[v].file.clone();
+            let (Some(src), dst) = (self.cover_video_path(v), frame_png_path(&key, &file)) else { continue };
+            if dst.is_file() || extract_cover_frame(&src, &fr, &dst).is_ok() { self.cover_frames.ready.insert(key, (file, dst)); }
+        }
     }
 
     /// Enregistre les modifications dans l'historique et traite Ctrl+Z / Ctrl+Y.
@@ -546,6 +640,15 @@ impl App {
                     changed = true;
                 }
             }
+            if ui.add_enabled(!self.model.videos.is_empty(), egui::Button::new(tr("+ Video image"))).on_hover_text(tr("A frame of one of the project's videos, chosen image by image (same widget as in the menu editor)")).clicked() {
+                let w = (tw * 0.4).min(100.0);
+                let mut it = CoverItem::video_image((tw - w) / 2.0, 50.0, w, w * 9.0 / 16.0);
+                if let CoverKind::VideoImage { frame } = &mut it.kind { frame.video = Some(0); frame.at = self.durations.get(&self.model.videos[0].file).map_or(0.0, |d| (d * 0.1).min(60.0)); }
+                it.layer = active;
+                doc.items_mut().push(it);
+                self.cover_select_only(Some(doc.items().len() - 1));
+                changed = true;
+            }
             for kind in [ShapeKind::Rect, ShapeKind::Ellipse, ShapeKind::Line] {
                 if ui.button(format!("+ {}", kind.label())).clicked() {
                     let w = (tw * 0.3).min(80.0);
@@ -595,6 +698,9 @@ impl App {
         ui.separator();
         let zones = doc.zones();
         let base_dir = self.base_dir();
+        let vlabels: Vec<String> = (0..self.model.videos.len()).map(|v| bdauthor_core::editor::video_title(&self.model, v)).collect();
+        let vdurs: Vec<Option<f64>> = self.model.videos.iter().map(|v| self.durations.get(&v.file).copied()).collect();
+        let mut pick_cover_frame = false;
         let it = &mut doc.items_mut()[i];
         ui.horizontal(|ui| {
             ui.label(tr("Name"));
@@ -647,8 +753,8 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     changed |= ui.checkbox(&mut fx.autofit, tr("Fit to frame")).on_hover_text(tr("Reduces the text size if it overflows the frame")).changed();
-                    changed |= ui.toggle_value(&mut fx.bold, egui::RichText::new("G").strong()).on_hover_text(tr("Bold")).changed();
-                    changed |= ui.toggle_value(&mut fx.italic, egui::RichText::new("I").italics()).on_hover_text(tr("Italic")).changed();
+                    changed |= ui.toggle_value(&mut fx.bold, egui::RichText::new(tr("Bold")).strong()).changed();
+                    changed |= ui.toggle_value(&mut fx.italic, egui::RichText::new(tr("Italic")).italics()).changed();
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("Outline"));
@@ -671,6 +777,27 @@ impl App {
                     changed |= ui.add(egui::TextEdit::singleline(path).desired_width(220.0)).changed();
                     if ui.button(tr("Choose…")).clicked() { pick_image = true; }
                 });
+            }
+            CoverKind::VideoImage { frame } => {
+                let vname = |v: usize| trf!("Video {}. {}", v + 1, vlabels.get(v).cloned().unwrap_or_default());
+                let shown = match frame.video { Some(v) if v < vlabels.len() => vname(v), _ => tr("(no video: to choose)").to_string() };
+                egui::ComboBox::from_label(tr("Video")).selected_text(shown).show_ui(ui, |ui| {
+                    for v in 0..vlabels.len() {
+                        if ui.selectable_label(frame.video == Some(v), vname(v)).clicked() { frame.video = Some(v); changed = true; }
+                    }
+                });
+                let max_t = frame.video.and_then(|v| vdurs.get(v).copied().flatten()).unwrap_or(1.0e6);
+                ui.horizontal(|ui| {
+                    ui.label(tr("Time:"));
+                    changed |= ui.add(egui::DragValue::new(&mut frame.at).speed(0.2).range(0.0..=max_t).suffix(" s")).changed();
+                    let m = frame.at.max(0.0) as u64;
+                    ui.label(egui::RichText::new(format!("{}:{:02}", m / 60, m % 60)).weak());
+                });
+                ui.horizontal(|ui| {
+                    if ui.add_enabled(frame.video.is_some(), egui::Button::new(tr("Choose the image…"))).on_hover_text(tr("Opens a window with the video image by image and a timeline, to choose the exact image and crop it")).clicked() { pick_cover_frame = true; }
+                    ui.label(egui::RichText::new(if frame.crop.is_some() { tr("cropped by hand") } else { tr("center of the image in 16:9") }).weak());
+                });
+                crate::help(ui, tr("A frame of the video at this time, fitted into the frame without distortion. “Choose the image…” lets you pick it image by image and crop it."));
             }
             CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, .. } => {
                 if *shape == ShapeKind::Line {
@@ -704,6 +831,7 @@ impl App {
                 }
             }
         }
+        if pick_cover_frame { self.cover_frame_request = Some((self.cover_page, i)); }
         if pick_image {
             if let Some(f) = rfd::FileDialog::new().add_filter(tr("Images"), &IMG_EXT).pick_file() {
                 let rel = self.relative(&f);
@@ -791,6 +919,7 @@ impl App {
         };
         let Some(path) = rfd::FileDialog::new().add_filter(label, &[ext]).set_file_name(file).save_file() else { return };
         if let Err(e) = &self.renderer { self.notice = trf!("Export failed: {}", e); return; }
+        self.cover_frames_now();
         let (base, vars) = (self.base_dir(), self.cover_vars());
         let (tx, rx) = channel();
         if self.cover_page == 0 { spawn_export(self.model.cover.clone(), kind, what, base, vars, path, tx); }
@@ -813,6 +942,7 @@ impl App {
 
     fn sheet_central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, doc: &mut dyn SheetDoc) {
         // apercu regenere quand le document, les champs automatiques ou la finesse necessaire ont change
+        if self.cover_frames_poll(ctx) { self.cover_gen += 1; }
         let vars = self.cover_vars();
         if vars != self.cover_vars_seen {
             self.cover_vars_seen = vars.clone();
