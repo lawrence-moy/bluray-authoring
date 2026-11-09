@@ -538,7 +538,9 @@ impl FontRenderer {
                     let src = self.cached_image(path)?;
                     let sc = (*w as f64 / src.width as f64).min(*h as f64 / src.height as f64);
                     let (nw, nh) = (((src.width as f64 * sc).round() as u32).max(1), ((src.height as f64 * sc).round() as u32).max(1));
-                    blit(&mut im, &resize(&src, nw, nh), *x + (*w - nw as i32) / 2, *y + (*h - nh as i32) / 2, 1.0);
+                    // redimensionnement (Lanczos, lent) garde en cache : deplacer un element ne le refait pas
+                    let rs = self.cached_sprite(hkey(|hh| ("decor_image", Arc::as_ptr(&src) as usize, nw, nh).hash(hh)), || resize(&src, nw, nh));
+                    blit(&mut im, &rs, *x + (*w - nw as i32) / 2, *y + (*h - nh as i32) / 2, 1.0);
                 }
             }
         }
@@ -554,7 +556,8 @@ impl FontRenderer {
         let mut im = lay.background();
         if let Some(p) = &lay.bg_image {
             let src = self.cached_image(p)?;
-            blit(&mut im, &cover_resize(&src, lay.size.0, lay.size.1), 0, 0, 1.0);
+            let bg = self.cached_sprite(hkey(|hh| ("sheet_bg", Arc::as_ptr(&src) as usize, lay.size).hash(hh)), || cover_resize(&src, lay.size.0, lay.size.1));
+            blit(&mut im, &bg, 0, 0, 1.0);
         }
         for (d, rot) in lay.items {
             // image introuvable : l'element est ignore (l'apercu reste affiche)
@@ -1296,7 +1299,8 @@ impl FontRenderer {
         }
         let im = Arc::new(make());
         let mut m = self.sprites.lock().unwrap();
-        if m.len() >= 160 {
+        // vide quand il y a trop d'elements ou trop de memoire (grandes images redimensionnees)
+        if m.len() >= 160 || m.values().map(|i| i.data.len()).sum::<usize>() + im.data.len() > 256 << 20 {
             m.clear();
         }
         m.insert(key, im.clone());
