@@ -12,7 +12,7 @@ fn json_roundtrip_and_file_images_unchanged() {
     d.items.push(Item { x: 0, y: 0, w: 10, h: 10, kind: Kind::Image { path: "logo.png".into(), link: None, frame: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     let v = d.to_value();
     let j = v.to_pretty();
-    assert!(j.contains("\"video\": 2") && j.contains("\"instant\": 12.5") && j.contains("\"fichier\": \"logo.png\""), "{j}");
+    assert!(j.contains("\"video\": 2") && j.contains("\"time_s\": 12.5") && j.contains("\"file\": \"logo.png\""), "{j}");
     let back = PageDesign::from_value(&v).unwrap();
     assert_eq!(frame_of(&back, 0), Some(VideoFrame { video: Some(1), at: 12.5, crop: None }));
     assert_eq!(frame_of(&back, 1), None);
@@ -42,7 +42,7 @@ fn crop_json_and_pixels() {
     let mut d = PageDesign { items: vec![Item::video_frame(0, 0, 400, 400, Some(0), 2.0)], ..Default::default() };
     if let Kind::Image { frame: Some(f), .. } = &mut d.items[0].kind { f.crop = Some([0.25, 0.1, 0.5, 0.8]); }
     let j = d.to_value().to_pretty();
-    assert!(j.contains("recadrage"), "{j}");
+    assert!(j.contains("crop"), "{j}");
     let back = PageDesign::from_value(&d.to_value()).unwrap();
     let f = frame_of(&back, 0).unwrap();
     assert_eq!(f.crop, Some([0.25, 0.1, 0.5, 0.8]));

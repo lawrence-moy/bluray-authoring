@@ -67,13 +67,13 @@ fn custom_animation_json_and_weight() {
     // sans image normale, l'animation n'est pas utilisee
     assert_eq!(Skin { normal: String::new(), ..sk.clone() }.anim_frames(), 0);
     // cadence de page : JSON
-    let t = r#"{"videos":[{"fichier":"a"}],"mise_en_page":{"pages":[{"nom":"P","animation_ips":12,"elements":[
-        {"type":"navigation","action":"aller_a","texte":"x","cible":{"page":1},"x":0,"y":0,"w":200,"h":80,
-         "images_etats":{"normal":"n.png","animation_selection":["a1.png","a2.png","a3.png"]}}]}]}}"#;
+    let t = r#"{"videos":[{"file":"a"}],"layout":{"pages":[{"name":"P","animation_fps":12,"items":[
+        {"type":"navigation","action":"aller_a","text":"x","target":{"page":1},"x":0,"y":0,"w":200,"h":80,
+         "state_images":{"normal":"n.png","animation_selected":["a1.png","a2.png","a3.png"]}}]}]}}"#;
     let m = bdauthor_core::model::ProjectModel::from_json(t).unwrap();
     let pg = &m.designs.free[0];
     assert_eq!(pg.anim_fps, 12);
-    assert!(fr(&m).contains("\"animation_ips\": 12"));
+    assert!(m.to_json().contains("\"animation_fps\": 12"));
     assert_eq!(pg.items[0].look.skin.sel_frames.len(), 3);
     // poids : image normale + 3 images d'animation (pas d'etat active distinct)
     let w = pg.weight(&m.designs.style, 0, 1, (1920, 1080));
@@ -99,10 +99,10 @@ fn selected_images_one_or_many() {
     sk.set_selected(vec![]);
     assert!(sk.selected_files().is_empty() && !sk.sel_once);
     // anciens projets : image « selectionne » + animation -> l'animation gagne ; animation d'une seule image -> image fixe
-    let v = bdauthor_core::json::parse(r#"{"normal":"n.png","selectionne":"s.png","animation_selection":["a.png","b.png"],"animation_une_fois":true}"#).unwrap();
+    let v = bdauthor_core::json::parse(r#"{"normal":"n.png","selected":"s.png","animation_selected":["a.png","b.png"],"animation_once":true}"#).unwrap();
     let old = Skin::from_value(&v);
     assert_eq!((old.selected.as_str(), old.sel_frames.len(), old.sel_once), ("", 2, true));
-    let v = bdauthor_core::json::parse(r#"{"normal":"n.png","animation_selection":["a.png"]}"#).unwrap();
+    let v = bdauthor_core::json::parse(r#"{"normal":"n.png","animation_selected":["a.png"]}"#).unwrap();
     let one = Skin::from_value(&v);
     assert_eq!((one.selected.as_str(), one.sel_frames.len()), ("a.png", 0));
 }
@@ -139,6 +139,3 @@ fn animated_normal_state() {
     // l'etat selectionne (fixe) reste partage par les deux boutons
     assert_eq!(page.bogs[0].buttons[0].selected.1, page.bogs[1].buttons[0].selected.1);
 }
-
-/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
-fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

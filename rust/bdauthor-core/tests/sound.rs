@@ -25,7 +25,7 @@ fn style_sounds_json_and_button_ids() {
     let back = ButtonStyle::from_value(&st.to_value()).unwrap();
     assert_eq!((back.sound_select.as_str(), back.sound_activate.as_str()), ("sons/clic.wav", "sons/ok.wav"));
     // sans son : pas de champ dans le JSON
-    assert!(ButtonStyle::default().to_value().get("son_selection").is_none() && ButtonStyle::default().to_value().get("son_activation").is_none());
+    assert!(ButtonStyle::default().to_value().get("sound_select").is_none() && ButtonStyle::default().to_value().get("sound_activate").is_none());
     // identifiants ecrits dans les boutons du menu
     let im = std::sync::Arc::new(bdauthor_core::palette::RgbaImage::new(20, 10));
     let mut b = MenuButton::new("", 1, 0, 0, vec![im.clone(), im.clone(), im]);
@@ -39,9 +39,9 @@ fn style_sounds_json_and_button_ids() {
 #[test]
 fn element_sounds_independent_of_style() {
     use bdauthor_core::model::ProjectModel;
-    let t = r#"{"videos":[{"fichier":"a"}],"mise_en_page":{"style_boutons":{"son_selection":"clic.wav"},"pages":[{"nom":"P","elements":[
-        {"type":"navigation","action":"aller_a","texte":"a","cible":{"page":1},"x":0,"y":0,"w":200,"h":80},
-        {"type":"navigation","action":"aller_a","texte":"b","cible":{"page":1},"x":300,"y":0,"w":200,"h":80,"sons":{"activation":"ok.wav"}}]}]}}"#;
+    let t = r#"{"videos":[{"file":"a"}],"layout":{"button_style":{"sound_select":"clic.wav"},"pages":[{"name":"P","items":[
+        {"type":"navigation","action":"aller_a","text":"a","target":{"page":1},"x":0,"y":0,"w":200,"h":80},
+        {"type":"navigation","action":"aller_a","text":"b","target":{"page":1},"x":300,"y":0,"w":200,"h":80,"sounds":{"activate":"ok.wav"}}]}]}}"#;
     let m = ProjectModel::from_json(t).unwrap();
     let st = &m.designs.style;
     let it = &m.designs.free[0].items;
@@ -49,8 +49,5 @@ fn element_sounds_independent_of_style() {
     assert_eq!(it[1].look.sounds(st), ("", "ok.wav"));
     let back = ProjectModel::from_json(&m.to_json()).unwrap();
     assert_eq!(back.designs.free[0].items[1].look.sounds, it[1].look.sounds);
-    assert!(fr(&m).contains("\"sons\""));
+    assert!(m.to_json().contains("\"sounds\""));
 }
-
-/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
-fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

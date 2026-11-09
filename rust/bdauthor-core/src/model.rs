@@ -173,79 +173,79 @@ fn n(x: f64) -> Value { Value::Num(x) }
 
 impl ProjectModel {
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let v = json::parse_project(text).map_err(|e| e.to_string())?;
+        let v = json::parse(text).map_err(|e| e.to_string())?;
         let mut m = ProjectModel { raw: v.clone(), ..Default::default() };
-        m.title = v.get("titre").and_then(Value::as_str).unwrap_or("Menu").into();
-        m.lang = v.get("langue").and_then(Value::as_str).unwrap_or("und").into();
+        m.title = v.get("title").and_then(Value::as_str).unwrap_or("Menu").into();
+        m.lang = v.get("language").and_then(Value::as_str).unwrap_or("und").into();
         for x in v.get("videos").and_then(Value::as_array).ok_or(tr("“videos” field missing"))? {
-            let mut e = VideoEntry::new(x.get("fichier").and_then(Value::as_str).ok_or(tr("video without “file”"))?);
+            let mut e = VideoEntry::new(x.get("file").and_then(Value::as_str).ok_or(tr("video without “file”"))?);
             e.raw = x.clone();
-            e.title = x.get("titre").and_then(Value::as_str).unwrap_or("").into();
-            e.thumb_s = x.get("vignette_s").and_then(Value::as_f64);
-            e.auto_s = x.get("chapitres_auto_s").and_then(Value::as_f64);
-            e.exact_chapters = x.get("chapitres_exacts").and_then(Value::as_bool).unwrap_or(false);
-            e.subs = crate::subtitle::tracks_from_value(x.get("soustitres"))?;
-            e.audio = crate::audio::tracks_from_value(x.get("pistes_audio"))?;
-            for c in x.get("chapitres").and_then(Value::as_array).unwrap_or(&[]) {
+            e.title = x.get("title").and_then(Value::as_str).unwrap_or("").into();
+            e.thumb_s = x.get("thumbnail_s").and_then(Value::as_f64);
+            e.auto_s = x.get("auto_chapters_s").and_then(Value::as_f64);
+            e.exact_chapters = x.get("exact_chapters").and_then(Value::as_bool).unwrap_or(false);
+            e.subs = crate::subtitle::tracks_from_value(x.get("subtitles"))?;
+            e.audio = crate::audio::tracks_from_value(x.get("audio_tracks"))?;
+            for c in x.get("chapters").and_then(Value::as_array).unwrap_or(&[]) {
                 e.chapters.push(match c {
-                    Value::Obj(_) => ChapterEntry { id: c.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), t: c.get("t").and_then(Value::as_f64).ok_or(tr("chapter without “t”"))?, title: c.get("titre").and_then(Value::as_str).unwrap_or("").into() },
+                    Value::Obj(_) => ChapterEntry { id: c.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), t: c.get("t").and_then(Value::as_f64).ok_or(tr("chapter without “t”"))?, title: c.get("title").and_then(Value::as_str).unwrap_or("").into() },
                     _ => ChapterEntry { id: 0, t: c.as_f64().ok_or(tr("chapter: number expected"))?, title: String::new() },
                 });
             }
             e.fix_chapter_ids();
             m.videos.push(e);
         }
-        if let Some(e) = v.get("encodage") {
+        if let Some(e) = v.get("encoding") {
             if let Some(c) = e.get("crf").and_then(Value::as_i64) { m.crf = c.clamp(0, 51) as u32; }
             if let Some(p) = e.get("preset").and_then(Value::as_str) { m.preset = p.into(); }
-            m.fill_disc = e.get("remplir_disque").and_then(Value::as_bool).unwrap_or(false);
-            m.copy_conform = e.get("copie_si_conforme").and_then(Value::as_bool).unwrap_or(false);
+            m.fill_disc = e.get("fill_disc").and_then(Value::as_bool).unwrap_or(false);
+            m.copy_conform = e.get("copy_if_conforming").and_then(Value::as_bool).unwrap_or(false);
         }
         if let Some(menu) = v.get("menu") {
-            m.bg = menu.get("fond").and_then(Value::as_str).unwrap_or("").into();
+            m.bg = menu.get("background").and_then(Value::as_str).unwrap_or("").into();
             m.intro = menu.get("intro").and_then(Value::as_str).unwrap_or("").into();
-            m.bg_video = menu.get("fond_video").and_then(Value::as_str).unwrap_or("").into();
-            m.bg_video_audio = menu.get("son_fond_video").and_then(Value::as_bool).unwrap_or(false);
-            m.music = menu.get("musique").and_then(Value::as_str).unwrap_or("").into();
-            m.bg_seconds = menu.get("fond_secondes").and_then(Value::as_f64).unwrap_or(5.0);
-            let taille = menu.get("taille").and_then(Value::as_str);
+            m.bg_video = menu.get("background_video").and_then(Value::as_str).unwrap_or("").into();
+            m.bg_video_audio = menu.get("background_video_audio").and_then(Value::as_bool).unwrap_or(false);
+            m.music = menu.get("music").and_then(Value::as_str).unwrap_or("").into();
+            m.bg_seconds = menu.get("background_seconds").and_then(Value::as_f64).unwrap_or(5.0);
+            let taille = menu.get("size").and_then(Value::as_str);
             m.menu_custom = taille.and_then(parse_menu_size);
             m.menu_1080 = taille != Some("video");
-            m.loop_menu = menu.get("boucle").and_then(Value::as_bool).unwrap_or(false);
-            m.cache = menu.get("cache").and_then(Value::as_bool).unwrap_or(true);
+            m.loop_menu = menu.get("loop").and_then(Value::as_bool).unwrap_or(false);
+            m.cache = menu.get("use_cache").and_then(Value::as_bool).unwrap_or(true);
         }
-        if let Some(d) = v.get("mise_en_page") { m.designs = Designs::from_value(d)?; }
-        m.languages = crate::subtitle::languages_from_value(v.get("langues"))?;
+        if let Some(d) = v.get("layout") { m.designs = Designs::from_value(d)?; }
+        m.languages = crate::subtitle::languages_from_value(v.get("languages"))?;
         m.iso = crate::iso::IsoSettings::from_value(v.get("iso"))?;
-        m.cover = crate::cover::Cover::from_value(v.get("jaquette"))?;
-        m.label = crate::cover::DiscLabel::from_value(v.get("etiquette"))?;
+        m.cover = crate::cover::Cover::from_value(v.get("cover"))?;
+        m.label = crate::cover::DiscLabel::from_value(v.get("label"))?;
         m.sync_chapters();
         Ok(m)
     }
 
     pub fn to_value(&self) -> Value {
         let mut root = self.raw.clone();
-        set(&mut root, "titre", Some(s(&self.title)));
-        set(&mut root, "langue", Some(s(&self.lang)));
+        set(&mut root, "title", Some(s(&self.title)));
+        set(&mut root, "language", Some(s(&self.lang)));
         let linked = self.designs.linked_chapters();
         let vids: Vec<Value> = self.videos.iter().enumerate().map(|(vi, e)| {
             let mut o = e.raw.clone();
-            set(&mut o, "fichier", Some(s(&e.file)));
-            set(&mut o, "titre", if e.title.is_empty() { None } else { Some(s(&e.title)) });
-            set(&mut o, "vignette_s", e.thumb_s.map(n));
-            set(&mut o, "chapitres_auto_s", e.auto_s.map(n));
-            set(&mut o, "chapitres_exacts", e.exact_chapters.then_some(Value::Bool(true)));
+            set(&mut o, "file", Some(s(&e.file)));
+            set(&mut o, "title", if e.title.is_empty() { None } else { Some(s(&e.title)) });
+            set(&mut o, "thumbnail_s", e.thumb_s.map(n));
+            set(&mut o, "auto_chapters_s", e.auto_s.map(n));
+            set(&mut o, "exact_chapters", e.exact_chapters.then_some(Value::Bool(true)));
             let subs: Vec<SubTrackCfg> = e.subs.iter().map(|t| self.synced_track(t)).collect();
-            set(&mut o, "soustitres", crate::subtitle::tracks_to_value(&subs));
+            set(&mut o, "subtitles", crate::subtitle::tracks_to_value(&subs));
             let audio: Vec<crate::audio::AudioTrackCfg> = e.audio.iter().map(|t| { let mut t = t.clone(); if let Some(l) = self.language(t.lang_id) { t.lang = l.code.clone(); } t }).collect();
-            set(&mut o, "pistes_audio", crate::audio::tracks_to_value(&audio));
-            set(&mut o, "chapitres", if e.chapters.is_empty() { None } else {
+            set(&mut o, "audio_tracks", crate::audio::tracks_to_value(&audio));
+            set(&mut o, "chapters", if e.chapters.is_empty() { None } else {
                 // l'identifiant n'est ecrit que pour les chapitres auxquels une vignette est liee
                 Some(Value::Arr(e.chapters.iter().map(|c| {
                     let used = linked.contains(&(vi, c.id));
                     if c.title.is_empty() && !used { return n(c.t); }
                     let mut o = vec![("t".to_string(), n(c.t))];
-                    if !c.title.is_empty() { o.push(("titre".into(), s(&c.title))); }
+                    if !c.title.is_empty() { o.push(("title".into(), s(&c.title))); }
                     if used { o.push(("id".into(), n(c.id as f64))); }
                     Value::Obj(o)
                 }).collect()))
@@ -253,35 +253,35 @@ impl ProjectModel {
             o
         }).collect();
         set(&mut root, "videos", Some(Value::Arr(vids)));
-        let mut enc = root.get("encodage").cloned().unwrap_or(Value::Obj(vec![]));
+        let mut enc = root.get("encoding").cloned().unwrap_or(Value::Obj(vec![]));
         set(&mut enc, "crf", Some(n(self.crf as f64)));
         set(&mut enc, "preset", Some(s(&self.preset)));
-        set(&mut enc, "remplir_disque", if self.fill_disc { Some(Value::Bool(true)) } else { None });
-        set(&mut enc, "copie_si_conforme", if self.copy_conform { Some(Value::Bool(true)) } else { None });
-        set(&mut root, "encodage", Some(enc));
+        set(&mut enc, "fill_disc", if self.fill_disc { Some(Value::Bool(true)) } else { None });
+        set(&mut enc, "copy_if_conforming", if self.copy_conform { Some(Value::Bool(true)) } else { None });
+        set(&mut root, "encoding", Some(enc));
         let mut menu = root.get("menu").cloned().unwrap_or(Value::Obj(vec![]));
-        set(&mut menu, "fond", if self.bg.is_empty() { None } else { Some(s(&self.bg)) });
+        set(&mut menu, "background", if self.bg.is_empty() { None } else { Some(s(&self.bg)) });
         set(&mut menu, "intro", if self.intro.is_empty() { None } else { Some(s(&self.intro)) });
-        set(&mut menu, "fond_video", if self.bg_video.is_empty() { None } else { Some(s(&self.bg_video)) });
-        set(&mut menu, "son_fond_video", if self.bg_video_audio { Some(Value::Bool(true)) } else { None });
-        set(&mut menu, "musique", if self.music.is_empty() { None } else { Some(s(&self.music)) });
-        set(&mut menu, "fond_secondes", Some(n(self.bg_seconds)));
-        set(&mut menu, "taille", Some(s(&match self.menu_custom { Some((w, h)) => format!("{w}x{h}"), None if self.menu_1080 => "1080".to_string(), None => "video".to_string() })));
-        set(&mut menu, "boucle", Some(Value::Bool(self.loop_menu)));
+        set(&mut menu, "background_video", if self.bg_video.is_empty() { None } else { Some(s(&self.bg_video)) });
+        set(&mut menu, "background_video_audio", if self.bg_video_audio { Some(Value::Bool(true)) } else { None });
+        set(&mut menu, "music", if self.music.is_empty() { None } else { Some(s(&self.music)) });
+        set(&mut menu, "background_seconds", Some(n(self.bg_seconds)));
+        set(&mut menu, "size", Some(s(&match self.menu_custom { Some((w, h)) => format!("{w}x{h}"), None if self.menu_1080 => "1080".to_string(), None => "video".to_string() })));
+        set(&mut menu, "loop", Some(Value::Bool(self.loop_menu)));
         // anciens reglages des menus automatiques : retires du fichier
-        set(&mut menu, "retour", None);
+        set(&mut menu, "return_to", None);
         set(&mut menu, "par_page", None);
-        set(&mut menu, "cache", Some(Value::Bool(self.cache)));
+        set(&mut menu, "use_cache", Some(Value::Bool(self.cache)));
         set(&mut root, "menu", Some(menu));
-        set(&mut root, "langues", crate::subtitle::languages_to_value(&self.languages));
+        set(&mut root, "languages", crate::subtitle::languages_to_value(&self.languages));
         set(&mut root, "iso", self.iso.to_value());
-        set(&mut root, "jaquette", self.cover.to_value());
-        set(&mut root, "etiquette", self.label.to_value());
-        set(&mut root, "mise_en_page", if self.designs.is_empty() { None } else { Some(self.designs.to_value()) });
+        set(&mut root, "cover", self.cover.to_value());
+        set(&mut root, "label", self.label.to_value());
+        set(&mut root, "layout", if self.designs.is_empty() { None } else { Some(self.designs.to_value()) });
         root
     }
 
-    pub fn to_json(&self) -> String { json::project_to_file(&self.to_value()).to_pretty() }
+    pub fn to_json(&self) -> String { self.to_value().to_pretty() }
 
     /// Images de video posees sur la jaquette et l'etiquette : (cle de `cover::frame_key`, rang de la video, image), sans doublon.
     pub fn cover_frames(&self) -> Vec<(String, usize, crate::design::VideoFrame)> {

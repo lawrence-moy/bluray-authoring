@@ -64,11 +64,11 @@ fn saved_with_ids_only_when_linked() {
     m.designs.free[0].items.push(Item::video_slot(0, 0, 400, 300, 240, 0, Some(20.0), ""));
     if let Kind::Slot { chapter, .. } = &mut m.designs.free[0].items[0].kind { *chapter = Some(used); }
     let j = m.to_json();
-    let v = bdauthor_core::json::parse_project(&j).unwrap();
-    let ch = v.get("videos").and_then(|x| x.as_array()).unwrap()[0].get("chapitres").and_then(|x| x.as_array()).unwrap().to_vec();
+    let v = bdauthor_core::json::parse(&j).unwrap();
+    let ch = v.get("videos").and_then(|x| x.as_array()).unwrap()[0].get("chapters").and_then(|x| x.as_array()).unwrap().to_vec();
     assert_eq!(ch[0].as_f64(), Some(10.0), "chapitre simple : un nombre");
     assert_eq!(ch[1].get("id").and_then(|x| x.as_f64()), Some(used as f64), "chapitre lie : son identifiant est ecrit");
-    assert!(ch[2].get("id").is_none() && ch[2].get("titre").is_some());
+    assert!(ch[2].get("id").is_none() && ch[2].get("title").is_some());
     // rechargement : le lien tient, meme si on deplace le chapitre dans le fichier (instant de la vignette recalcule)
     let back = ProjectModel::from_json(&j).unwrap();
     assert_eq!(slot_of(&back, 0), (Some(0), Some(20.0), Some(used)));
@@ -78,8 +78,8 @@ fn saved_with_ids_only_when_linked() {
     let back = ProjectModel::from_json(&moved).unwrap();
     assert_eq!(slot_of(&back, 0).1, Some(25.0));
     // fichier sans identifiants (ancien projet) : ids attribues, vignettes non liees
-    let old = r#"{"videos": [{"fichier": "a.mp4", "chapitres": [5, {"t": 9, "titre": "x"}]}],
-                  "mise_en_page": {"pages": [{"nom": "p", "elements": [{"type": "vignette", "x": 0, "y": 0, "w": 300, "h": 200, "vignette_h": 150, "video": 1, "depart_s": 9}]}]}}"#;
+    let old = r#"{"videos": [{"file": "a.mp4", "chapters": [5, {"t": 9, "title": "x"}]}],
+                  "layout": {"pages": [{"name": "p", "items": [{"type": "vignette", "x": 0, "y": 0, "w": 300, "h": 200, "thumbnail_h": 150, "video": 1, "start_s": 9}]}]}}"#;
     let o = ProjectModel::from_json(old).unwrap();
     assert_eq!(o.videos[0].chapters.iter().map(|c| c.id).collect::<Vec<_>>(), vec![1, 2]);
     assert_eq!(slot_of(&o, 0).2, None);

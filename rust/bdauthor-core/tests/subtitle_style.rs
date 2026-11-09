@@ -63,7 +63,7 @@ fn style_json_roundtrip_and_defaults_stay_compact() {
     t.style.bg_radius = 0;
     let back = SubTrackCfg::from_value(&t.to_value()).unwrap();
     assert_eq!(back, t);
-    let bad = bdauthor_core::json::parse(r#"{"fichier":"a.srt","style":{"alignement":"travers"}}"#).unwrap();
+    let bad = bdauthor_core::json::parse(r#"{"file":"a.srt","style":{"align":"travers"}}"#).unwrap();
     assert!(SubTrackCfg::from_value(&bad).is_err());
 }
 
@@ -194,7 +194,7 @@ fn file_positions_flag_json() {
     assert!(!t.to_value().to_pretty().contains("positions_fichier"));
     t.file_positions = false;
     let j = t.to_value().to_pretty();
-    assert!(j.contains("\"positions_fichier\": false"), "{j}");
+    assert!(j.contains("\"file_positions\": false"), "{j}");
     assert!(!SubTrackCfg::from_value(&t.to_value()).unwrap().file_positions);
 }
 
@@ -302,7 +302,7 @@ fn charset_via_file_and_json() {
     t.keep_format = false;
     let back = SubTrackCfg::from_value(&t.to_value()).unwrap();
     assert_eq!((back.charset, back.keep_format), (Charset::Cp1251, false));
-    let bad = bdauthor_core::json::parse(r#"{"fichier":"a.srt","encodage":"klingon"}"#).unwrap();
+    let bad = bdauthor_core::json::parse(r#"{"file":"a.srt","encoding":"klingon"}"#).unwrap();
     assert!(SubTrackCfg::from_value(&bad).is_err());
 }
 

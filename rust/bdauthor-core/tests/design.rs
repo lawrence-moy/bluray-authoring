@@ -66,7 +66,7 @@ fn pages_json_swap_remove() {
     assert_eq!(vids(&y), vec![Some(1), None]);
     let back = Designs::from_value(&parse(&y.to_value().to_pretty()).unwrap()).unwrap();
     assert_eq!(back, y, "une vignette sans video survit a l'enregistrement");
-    assert!(PageDesign::from_value(&parse(r##"{"elements":[{"type":"zzz","x":1,"y":1,"w":1,"h":1}]}"##).unwrap()).is_err());
+    assert!(PageDesign::from_value(&parse(r##"{"items":[{"type":"zzz","x":1,"y":1,"w":1,"h":1}]}"##).unwrap()).is_err());
 }
 
 #[test]
@@ -78,7 +78,7 @@ fn goto_buttons_json_remap_and_check() {
     p.items.push(Item { x: 500, y: 900, w: 300, h: 80, kind: Kind::Nav { action: NavAction::Goto, text: "Lire".into(), target: Some(Target::Video(2)) }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     ds.free.push(p);
     let text = ds.to_value().to_pretty();
-    assert!(text.contains("aller_a") && text.contains("\"cible\""));
+    assert!(text.contains("aller_a") && text.contains("\"target\""));
     assert!(text.contains("\"page\": 1"), "destination de page : {{\"page\": n}}");
     let back = Designs::from_value(&parse(&text).unwrap()).unwrap();
     assert_eq!(back, ds);
@@ -115,7 +115,7 @@ fn clickable_text_image_and_video_targets() {
     p.items.push(Item { x: 1300, y: 900, w: 300, h: 80, kind: Kind::Image { path: "deco.png".into(), link: None, frame: None }, look: Default::default(), layer: 0, sub: Default::default(), id: 0, nav: Default::default(), name: String::new() });
     ds.free.push(p);
     let text = ds.to_value().to_pretty();
-    assert!(text.contains("\"lire\": \"video\""), "{text}");
+    assert!(text.contains("\"play\": \"video\""), "{text}");
     let back = Designs::from_value(&parse(&text).unwrap()).unwrap();
     assert_eq!(back, ds);
     let items = &ds.free[0].items;
@@ -142,7 +142,7 @@ fn clickable_text_image_and_video_targets() {
     let probs = ds.free[0].check_targets(&ok);
     assert_eq!(probs.iter().filter(|p| p.error).count(), 2, "{probs:?}");
     // cible illisible
-    assert!(PageDesign::from_value(&parse(r#"{"elements":[{"type":"texte","texte":"x","taille":20,"x":0,"y":0,"w":50,"h":50,"cible":{"menu":"???"}}]}"#).unwrap()).is_err());
+    assert!(PageDesign::from_value(&parse(r#"{"items":[{"type":"texte","text":"x","size":20,"x":0,"y":0,"w":50,"h":50,"target":{"menu":"???"}}]}"#).unwrap()).is_err());
 }
 
 #[test]
@@ -178,9 +178,9 @@ fn button_style_json_scale_weight() {
     let back = ButtonStyle::from_value(&parse(&st.to_value().to_pretty()).unwrap()).unwrap();
     assert_eq!(back, st);
     // valeurs hors plage bornees, champs absents = defaut
-    let b = ButtonStyle::from_value(&parse(r#"{"halo": 999, "agrandir": -4}"#).unwrap()).unwrap();
+    let b = ButtonStyle::from_value(&parse(r#"{"glow": 999, "zoom": -4}"#).unwrap()).unwrap();
     assert_eq!((b.glow, b.zoom, b.sel_bg), (60, 0, ButtonStyle::default().sel_bg));
-    assert!(ButtonStyle::from_value(&parse(r##"{"fond": "#12"}"##).unwrap()).is_err());
+    assert!(ButtonStyle::from_value(&parse(r##"{"background": "#12"}"##).unwrap()).is_err());
     // echelle 720 : 20 px -> 13 px ; une epaisseur de 1 reste 1
     let k = st.scaled(1280.0 / 1920.0);
     assert_eq!((k.glow, k.normal_border_w), (13, 1));
@@ -197,7 +197,7 @@ fn button_style_json_scale_weight() {
     p.items.last_mut().unwrap().look.skin = Skin { normal: "b.png".into(), selected: "".into(), activated: "c.svg".into(), ..Default::default() };
     ds.free.push(p.clone());
     let text = ds.to_value().to_pretty();
-    assert!(text.contains("style_boutons") && text.contains("images_etats"));
+    assert!(text.contains("button_style") && text.contains("state_images"));
     assert_eq!(Designs::from_value(&parse(&text).unwrap()).unwrap(), ds);
     assert!(!Designs { style: st.clone(), ..Default::default() }.is_empty(), "un style seul doit etre enregistre");
     // poids : 2 vignettes (style propre sans halo, l'autre avec) + « Aller a » (images : 3 etats)
@@ -234,10 +234,10 @@ fn home_page_json_and_remap() {
 fn page_background_json() {
     common::fr();
     let mut p = page(1);
-    assert!(!p.to_value().to_pretty().contains("fond_page"));
+    assert!(!p.to_value().to_pretty().contains("page_background"));
     p.bg = PageBg { visual: PageVisual::Video("fond.mp4".into(), true), music: PageMusic::Silent };
     let t = p.to_value().to_pretty();
-    assert!(t.contains("fond_page") && t.contains("son_video"));
+    assert!(t.contains("page_background") && t.contains("video_sound"));
     assert_eq!(PageDesign::from_value(&parse(&t).unwrap()).unwrap(), p);
     p.bg = PageBg { visual: PageVisual::Image("a.png".into()), music: PageMusic::File("m.mp3".into()) };
     assert_eq!(PageDesign::from_value(&parse(&p.to_value().to_pretty()).unwrap()).unwrap(), p);
@@ -255,7 +255,7 @@ fn automatic_launch_is_saved_and_checked() {
     let back = PageDesign::from_value(&parse(&d.to_value().to_pretty()).unwrap()).unwrap();
     assert_eq!(back.idle, Some(Idle { seconds: 30, item: 5 }));
     // delai borne, element inconnu ou qui n'est pas un bouton : erreur
-    let long = parse(r##"{"lancement_auto":{"secondes":99999,"element":5},"elements":[]}"##).unwrap();
+    let long = parse(r##"{"auto_launch":{"seconds":99999,"item":5},"items":[]}"##).unwrap();
     assert_eq!(PageDesign::from_value(&long).unwrap().idle.unwrap().seconds, MAX_IDLE_SECONDS);
     d.idle = Some(Idle { seconds: 30, item: 77 });
     assert!(d.validate(0, 1, 2).iter().any(|p| p.error && p.msg.contains("Lancement automatique")));

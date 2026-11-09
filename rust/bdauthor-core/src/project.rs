@@ -124,7 +124,7 @@ const SNAP_TOL: i64 = 45;
 
 /// Instants des chapitres manuels d'une video du projet (hors 0), pour les images cles forcees.
 fn chapter_times(v: &Value, duration: f64) -> Vec<f64> {
-    let mut t: Vec<f64> = v.get("chapitres").and_then(Value::as_array).unwrap_or(&[]).iter()
+    let mut t: Vec<f64> = v.get("chapters").and_then(Value::as_array).unwrap_or(&[]).iter()
         .filter_map(|c| match c { Value::Obj(_) => c.get("t").and_then(Value::as_f64), _ => c.as_f64() })
         .filter(|t| *t > 0.0 && *t < duration).collect();
     t.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
@@ -522,14 +522,14 @@ pub struct Chapter { pub mark45: u32, pub name: String, pub t_rel: f64 }
 /// Reperes d'une video ; vide s'il y a moins de 2 chapitres. Chaque repere (sauf le premier) est cale sur l'image d'acces qui precede.
 pub fn parse_chapters(v: &Value, sc: &ClipScan) -> Result<Vec<Chapter>> {
     let dur = (sc.end90 - sc.start90) as f64 / 90000.0;
-    let auto = v.get("chapitres_auto_s").and_then(Value::as_f64).unwrap_or(0.0);
+    let auto = v.get("auto_chapters_s").and_then(Value::as_f64).unwrap_or(0.0);
     let mut spec: Vec<(f64, Option<String>)> = Vec::new();
-    if let Some(a) = v.get("chapitres").and_then(Value::as_array) {
+    if let Some(a) = v.get("chapters").and_then(Value::as_array) {
         for c in a {
             match c {
                 Value::Obj(_) => {
                     let t = c.get("t").and_then(Value::as_f64).ok_or_else(|| Error::Format(tr("chapter without time “t”").into()))?;
-                    spec.push((t, c.get("titre").and_then(Value::as_str).map(String::from)));
+                    spec.push((t, c.get("title").and_then(Value::as_str).map(String::from)));
                 }
                 _ => spec.push((c.as_f64().ok_or_else(|| Error::Format(tr("chapter: number of seconds expected").into()))?, None)),
             }
@@ -761,16 +761,16 @@ fn slot_tracks(langs: &[crate::subtitle::Language], all: &[Vec<crate::subtitle::
 pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) -> Result<BuildInfo> {
     let base = std::fs::canonicalize(project_path).unwrap_or_else(|_| project_path.to_path_buf());
     let base = base.parent().map(Path::to_path_buf).unwrap_or_default();
-    let proj = json::parse_project(&std::fs::read_to_string(project_path)?).map_err(|e| Error::Format(e.to_string()))?;
+    let proj = json::parse(&std::fs::read_to_string(project_path)?).map_err(|e| Error::Format(e.to_string()))?;
     let vids = proj.get("videos").and_then(Value::as_array).ok_or_else(|| Error::Format(tr("“videos” field (list) missing").into()))?;
     let n = vids.len();
     if !(1..=MAX_VIDEOS).contains(&n) {
         return bad(trf!("1 to {} videos expected, {} given", MAX_VIDEOS, n));
     }
-    let lang_s = proj.get("langue").and_then(Value::as_str).unwrap_or("und");
+    let lang_s = proj.get("language").and_then(Value::as_str).unwrap_or("und");
     let lang: [u8; 3] = lang_s.as_bytes().try_into().map_err(|_| Error::Format(trf!("language “{}”: 3 letters expected (e.g. fra)", lang_s)))?;
     let empty = Value::Obj(vec![]);
-    let enc_cfg = proj.get("encodage").unwrap_or(&empty);
+    let enc_cfg = proj.get("encoding").unwrap_or(&empty);
     let mut eopts = EncodeOpts::default();
     if let Some(c) = get_usize(enc_cfg.get("crf"), "encodage.crf")? { eopts.crf = c as u32; }
     if let Some(c) = get_usize(enc_cfg.get("maxrate"), "encodage.maxrate")? { eopts.maxrate = c as u32; }
@@ -778,18 +778,18 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     if let Some(s) = enc_cfg.get("preset").and_then(Value::as_str) { eopts.preset = s.to_string(); }
     if let Some(s) = enc_cfg.get("audio_bitrate").and_then(Value::as_str) { eopts.audio_bitrate = s.to_string(); }
     let menu_cfg = proj.get("menu").unwrap_or(&empty);
-    let title = proj.get("titre").and_then(Value::as_str).unwrap_or("Menu").to_string();
-    let boucle = menu_cfg.get("boucle").and_then(Value::as_bool).unwrap_or(false);
-    let fond_s = menu_cfg.get("fond_secondes").and_then(Value::as_f64).unwrap_or(5.0);
+    let title = proj.get("title").and_then(Value::as_str).unwrap_or("Menu").to_string();
+    let boucle = menu_cfg.get("loop").and_then(Value::as_bool).unwrap_or(false);
+    let fond_s = menu_cfg.get("background_seconds").and_then(Value::as_f64).unwrap_or(5.0);
     let p = |f: &str| -> PathBuf { let q = Path::new(f); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
-    let vfile = |v: &Value| -> Result<String> { v.get("fichier").and_then(Value::as_str).map(String::from).ok_or_else(|| Error::Format(tr("video without “file” field").into())) };
+    let vfile = |v: &Value| -> Result<String> { v.get("file").and_then(Value::as_str).map(String::from).ok_or_else(|| Error::Format(tr("video without “file” field").into())) };
     let vtitle = |v: &Value| -> String {
-        v.get("titre").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| {
-            Path::new(v.get("fichier").and_then(Value::as_str).unwrap_or("")).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
+        v.get("title").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| {
+            Path::new(v.get("file").and_then(Value::as_str).unwrap_or("")).file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default()
         })
     };
     // pages du menu verifiees avant tout encodage (sauf les instants des chapitres, compares plus tard a la duree reelle des videos)
-    if let Some(v) = proj.get("mise_en_page") {
+    if let Some(v) = proj.get("layout") {
         let ds = Designs::from_value(v).map_err(|e| Error::Format(trf!("layout: {}", e)))?;
         let np = ds.free.len();
         let mut errs = Vec::new();
@@ -803,7 +803,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             return layout_failure(&errs, &mut *env.log);
         }
     }
-    let cache_dir = if menu_cfg.get("cache").and_then(Value::as_bool).unwrap_or(true) { Some(base.join(".cache_bdauthor")) } else { None };
+    let cache_dir = if menu_cfg.get("use_cache").and_then(Value::as_bool).unwrap_or(true) { Some(base.join(".cache_bdauthor")) } else { None };
 
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
     let tmp = TmpDir(std::env::temp_dir().join(format!("bdauthor_build_{}_{nanos}", std::process::id())));
@@ -814,15 +814,15 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let mut pg_info: Vec<Vec<(u16, [u8; 3])>> = Vec::new();
 
     // langues de sous-titres du projet : le rang d'une langue est son numero de piste dans toutes les videos
-    let languages = crate::subtitle::languages_from_value(proj.get("langues")).map_err(Error::Format)?;
+    let languages = crate::subtitle::languages_from_value(proj.get("languages")).map_err(Error::Format)?;
     if languages.len() > crate::film::MAX_SUB_TRACKS {
         return bad(trf!("{} subtitle languages: {} at most", languages.len(), crate::film::MAX_SUB_TRACKS));
     }
     let lang_ids: Vec<u32> = languages.iter().map(|l| l.id).collect();
-    let all_subs: Vec<Vec<crate::subtitle::SubTrackCfg>> = vids.iter().map(|v| crate::subtitle::tracks_from_value(v.get("soustitres")).map_err(Error::Format)).collect::<Result<_>>()?;
+    let all_subs: Vec<Vec<crate::subtitle::SubTrackCfg>> = vids.iter().map(|v| crate::subtitle::tracks_from_value(v.get("subtitles")).map_err(Error::Format)).collect::<Result<_>>()?;
     let (slots, n_slots) = if languages.is_empty() { (Vec::new(), 0) } else { slot_tracks(&languages, &all_subs)? };
     // pistes audio : meme regle de numerotation par langue (les langues audio viennent de la meme liste)
-    let all_audio: Vec<Vec<crate::audio::AudioTrackCfg>> = vids.iter().map(|v| crate::audio::tracks_from_value(v.get("pistes_audio")).map_err(Error::Format)).collect::<Result<_>>()?;
+    let all_audio: Vec<Vec<crate::audio::AudioTrackCfg>> = vids.iter().map(|v| crate::audio::tracks_from_value(v.get("audio_tracks")).map_err(Error::Format)).collect::<Result<_>>()?;
     if languages.is_empty() && all_audio.iter().any(|t| !t.is_empty()) {
         return bad(tr("audio tracks configured but no language in the project's language list (menu Edit > Subtitle languages)"));
     }
@@ -837,8 +837,8 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     let mut audio_langs: Vec<Vec<[u8; 3]>> = Vec::new();
 
     // copie sans reencodage et debit cible : decides avant tout encodage, d'apres l'etat de chaque video et la place du disque
-    let fill = enc_cfg.get("remplir_disque").and_then(Value::as_bool).unwrap_or(false);
-    let copy_ok = enc_cfg.get("copie_si_conforme").and_then(Value::as_bool).unwrap_or(false);
+    let fill = enc_cfg.get("fill_disc").and_then(Value::as_bool).unwrap_or(false);
+    let copy_ok = enc_cfg.get("copy_if_conforming").and_then(Value::as_bool).unwrap_or(false);
     let mut copy_rate: Vec<Option<ffmpeg::StreamRate>> = vec![None; n];
     let mut target_kbps: Option<u32> = None;
     if fill || copy_ok {
@@ -846,7 +846,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         if copy_ok {
             for (i, v) in vids.iter().enumerate() {
                 let Some(info) = &infos[i] else { continue };
-                if v.get("chapitres_exacts").and_then(Value::as_bool) == Some(true) {
+                if v.get("exact_chapters").and_then(Value::as_bool) == Some(true) {
                     (env.log)(&trf!("video {}: re-encoding needed (exact chapters need a key frame at each chapter)", i + 1));
                     continue;
                 }
@@ -911,7 +911,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let a_sig = if audio_plan.is_some() { audio_signature(&a_tracks, &a_langs) } else { String::new() };
         audio_langs.push(a_langs.clone());
         // chapitres exacts : une image cle IDR a chaque chapitre (les reperes tombent alors sur l'image choisie)
-        let mut eopts = match v.get("chapitres_exacts").and_then(Value::as_bool) {
+        let mut eopts = match v.get("exact_chapters").and_then(Value::as_bool) {
             Some(true) => EncodeOpts { force_keys: chapter_times(v, info.duration_s), ..eopts.clone() },
             _ => eopts.clone(),
         };
@@ -977,7 +977,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     for (v, sc) in vids.iter().zip(&scans) {
         video_chapters.push(parse_chapters(v, sc)?);
     }
-    let mut designs = match proj.get("mise_en_page") {
+    let mut designs = match proj.get("layout") {
         Some(v) => Designs::from_value(v).map_err(|e| Error::Format(trf!("layout: {}", e)))?,
         None => Designs::default(),
     };
@@ -1098,21 +1098,21 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
     }
     let size = (first.width, first.height);
-    let menu_size = crate::model::menu_size_for(menu_cfg.get("taille").and_then(Value::as_str), size);
-    if menu_cfg.get("taille").and_then(Value::as_str).and_then(crate::model::parse_menu_size).is_some() && !matches!(menu_size, (1920, 1080) | (1280, 720)) {
+    let menu_size = crate::model::menu_size_for(menu_cfg.get("size").and_then(Value::as_str), size);
+    if menu_cfg.get("size").and_then(Value::as_str).and_then(crate::model::parse_menu_size).is_some() && !matches!(menu_size, (1920, 1080) | (1280, 720)) {
         (env.log)(&trf!("warning: menu size {}x{} is not a standard Blu-ray format (1920x1080 or 1280x720): some players may refuse the menu", menu_size.0, menu_size.1));
     }
     let sc_ = menu_size.0 as f64 / 1920.0;
 
     let still_opts = EncodeOpts { crf: eopts.crf, preset: eopts.preset.clone(), ..Default::default() };
-    let custom_fond: Option<PathBuf> = menu_cfg.get("fond").and_then(Value::as_str).map(|f| p(f));
+    let custom_fond: Option<PathBuf> = menu_cfg.get("background").and_then(Value::as_str).map(|f| p(f));
     // fond anime (video) et musique des menus
-    let bg_video: Option<PathBuf> = menu_cfg.get("fond_video").and_then(Value::as_str).filter(|f| !f.is_empty()).map(|f| p(f));
-    let music: Option<PathBuf> = menu_cfg.get("musique").and_then(Value::as_str).filter(|f| !f.is_empty()).map(|f| p(f));
+    let bg_video: Option<PathBuf> = menu_cfg.get("background_video").and_then(Value::as_str).filter(|f| !f.is_empty()).map(|f| p(f));
+    let music: Option<PathBuf> = menu_cfg.get("music").and_then(Value::as_str).filter(|f| !f.is_empty()).map(|f| p(f));
     let mut mb = MenuBg { video: bg_video.clone(), video_audio: false, music: music.clone(), seconds: fond_s, lang, cache: cache_dir.clone() };
     if let Some(v) = &bg_video {
         let info = ffmpeg::probe(env.tools, v)?;
-        mb.video_audio = info.has_audio && menu_cfg.get("son_fond_video").and_then(Value::as_bool).unwrap_or(false);
+        mb.video_audio = info.has_audio && menu_cfg.get("background_video_audio").and_then(Value::as_bool).unwrap_or(false);
         mb.seconds = info.duration_s.max(1.0);
     } else if let Some(m) = &music {
         mb.seconds = ffmpeg::probe_duration(env.tools, m)?.max(1.0);
@@ -1262,7 +1262,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                 (None, None) => (0, vec![set_ret(back), Command::new(JUMP_TITLE_INSN, v as u32 + 1, 0)]),
             };
             let label = if !label.is_empty() { label.clone() } else if let Some(t) = start { mmss(*t) } else { vtitle(vj) };
-            let at = thumb_at.or(*start).or_else(|| vj.get("vignette_s").and_then(Value::as_f64));
+            let at = thumb_at.or(*start).or_else(|| vj.get("thumbnail_s").and_then(Value::as_f64));
             Some(SlotSpec { label, source: p(&vfile(vj).ok()?), at, duration: durations[v], commands, go })
         };
         let target = |a: NavAction, t: Option<Target>| -> (u32, Vec<Command>) {

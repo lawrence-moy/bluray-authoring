@@ -353,14 +353,14 @@ impl Cover {
         if self.is_default() { return None; }
         let n = |x: f64| Value::Num(x);
         let mut o: Vec<(String, Value)> = vec![
-            ("face_mm".into(), n(self.face_mm)), ("hauteur_mm".into(), n(self.height_mm)), ("tranche_mm".into(), n(self.spine_mm)), ("fond_perdu_mm".into(), n(self.bleed_mm)),
-            ("couleurs".into(), Value::Obj(vec![("dos".into(), color_hex(self.colors[0])), ("tranche".into(), color_hex(self.colors[1])), ("face".into(), color_hex(self.colors[2]))])),
-            ("traits_coupe".into(), Value::Bool(self.marks)), ("dpi".into(), n(self.dpi as f64)),
+            ("face_width_mm".into(), n(self.face_mm)), ("height_mm".into(), n(self.height_mm)), ("spine_mm".into(), n(self.spine_mm)), ("bleed_mm".into(), n(self.bleed_mm)),
+            ("colors".into(), Value::Obj(vec![("back".into(), color_hex(self.colors[0])), ("spine".into(), color_hex(self.colors[1])), ("front".into(), color_hex(self.colors[2]))])),
+            ("crop_marks".into(), Value::Bool(self.marks)), ("dpi".into(), n(self.dpi as f64)),
         ];
-        if !self.bg_image.is_empty() { o.push(("image_fond".into(), Value::Str(self.bg_image.clone()))); }
+        if !self.bg_image.is_empty() { o.push(("background_image".into(), Value::Str(self.bg_image.clone()))); }
         let items: Vec<Value> = self.items.iter().map(item_to_value).collect();
-        if !self.layers.is_empty() { o.push(("calques".into(), layers_to_value(&self.layers))); }
-        o.push(("elements".into(), Value::Arr(items)));
+        if !self.layers.is_empty() { o.push(("layers".into(), layers_to_value(&self.layers))); }
+        o.push(("items".into(), Value::Arr(items)));
         Some(Value::Obj(o))
     }
 
@@ -368,20 +368,20 @@ impl Cover {
         let mut c = Cover::default();
         let Some(v) = v else { return Ok(c) };
         let num = |k: &str, d: f64| v.get(k).and_then(Value::as_f64).filter(|x| x.is_finite()).unwrap_or(d);
-        c.face_mm = num("face_mm", c.face_mm).clamp(20.0, 400.0);
-        c.height_mm = num("hauteur_mm", c.height_mm).clamp(20.0, 400.0);
-        c.spine_mm = num("tranche_mm", c.spine_mm).clamp(0.0, 100.0);
-        c.bleed_mm = num("fond_perdu_mm", c.bleed_mm).clamp(0.0, 20.0);
+        c.face_mm = num("face_width_mm", c.face_mm).clamp(20.0, 400.0);
+        c.height_mm = num("height_mm", c.height_mm).clamp(20.0, 400.0);
+        c.spine_mm = num("spine_mm", c.spine_mm).clamp(0.0, 100.0);
+        c.bleed_mm = num("bleed_mm", c.bleed_mm).clamp(0.0, 20.0);
         c.dpi = num("dpi", c.dpi as f64).round().clamp(72.0, 600.0) as u32;
-        c.marks = v.get("traits_coupe").and_then(Value::as_bool).unwrap_or(false);
-        if let Some(cs) = v.get("couleurs") {
-            for (i, k) in ["dos", "tranche", "face"].iter().enumerate() { c.colors[i] = color_from(cs.get(k), c.colors[i]); }
+        c.marks = v.get("crop_marks").and_then(Value::as_bool).unwrap_or(false);
+        if let Some(cs) = v.get("colors") {
+            for (i, k) in ["back", "spine", "front"].iter().enumerate() { c.colors[i] = color_from(cs.get(k), c.colors[i]); }
         }
-        c.bg_image = v.get("image_fond").and_then(Value::as_str).unwrap_or("").to_string();
-        if let Some(a) = v.get("elements").and_then(Value::as_array) {
+        c.bg_image = v.get("background_image").and_then(Value::as_str).unwrap_or("").to_string();
+        if let Some(a) = v.get("items").and_then(Value::as_array) {
             for (k, e) in a.iter().enumerate() { c.items.push(item_from_value(e, k, "jaquette")?); }
         }
-        c.layers = layers_from_value(v.get("calques"));
+        c.layers = layers_from_value(v.get("layers"));
         clamp_layers(&mut c.items, c.layers.len());
         Ok(c)
     }
@@ -423,7 +423,7 @@ pub fn rotate_quarters(img: &RgbaImage, q: u32) -> RgbaImage {
 // ------------------------------------------------------------------ champs automatiques
 /// Champs remplis depuis le projet : (nom, description).
 pub const FIELDS: [(&str, &str); 6] = [
-    ("titre", "disc title"),
+    ("title", "disc title"),
     ("liste_videos", "one line per video: number, title and duration"),
     ("nb_videos", "number of videos"),
     ("duree_totale", "total duration of the videos"),
@@ -538,12 +538,12 @@ impl DiscLabel {
     pub fn to_value(&self) -> Option<Value> {
         if self.is_default() { return None; }
         let mut o: Vec<(String, Value)> = vec![
-            ("diametre_mm".into(), Value::Num(self.diameter_mm)), ("trou_mm".into(), Value::Num(self.hole_mm)), ("fond_perdu_mm".into(), Value::Num(self.bleed_mm)),
-            ("couleur".into(), color_hex(self.color)), ("reperes".into(), Value::Bool(self.marks)), ("dpi".into(), Value::Num(self.dpi as f64)),
+            ("diameter_mm".into(), Value::Num(self.diameter_mm)), ("hole_mm".into(), Value::Num(self.hole_mm)), ("bleed_mm".into(), Value::Num(self.bleed_mm)),
+            ("color".into(), color_hex(self.color)), ("marks".into(), Value::Bool(self.marks)), ("dpi".into(), Value::Num(self.dpi as f64)),
         ];
-        if !self.bg_image.is_empty() { o.push(("image_fond".into(), Value::Str(self.bg_image.clone()))); }
-        if !self.layers.is_empty() { o.push(("calques".into(), layers_to_value(&self.layers))); }
-        o.push(("elements".into(), Value::Arr(self.items.iter().map(item_to_value).collect())));
+        if !self.bg_image.is_empty() { o.push(("background_image".into(), Value::Str(self.bg_image.clone()))); }
+        if !self.layers.is_empty() { o.push(("layers".into(), layers_to_value(&self.layers))); }
+        o.push(("items".into(), Value::Arr(self.items.iter().map(item_to_value).collect())));
         Some(Value::Obj(o))
     }
 
@@ -551,17 +551,17 @@ impl DiscLabel {
         let mut c = DiscLabel::default();
         let Some(v) = v else { return Ok(c) };
         let num = |k: &str, d: f64| v.get(k).and_then(Value::as_f64).filter(|x| x.is_finite()).unwrap_or(d);
-        c.diameter_mm = num("diametre_mm", c.diameter_mm).clamp(30.0, 200.0);
-        c.hole_mm = num("trou_mm", c.hole_mm).clamp(0.0, c.diameter_mm - 5.0);
-        c.bleed_mm = num("fond_perdu_mm", c.bleed_mm).clamp(0.0, 20.0);
+        c.diameter_mm = num("diameter_mm", c.diameter_mm).clamp(30.0, 200.0);
+        c.hole_mm = num("hole_mm", c.hole_mm).clamp(0.0, c.diameter_mm - 5.0);
+        c.bleed_mm = num("bleed_mm", c.bleed_mm).clamp(0.0, 20.0);
         c.dpi = num("dpi", c.dpi as f64).round().clamp(72.0, 600.0) as u32;
-        c.marks = v.get("reperes").and_then(Value::as_bool).unwrap_or(false);
-        c.color = color_from(v.get("couleur"), c.color);
-        c.bg_image = v.get("image_fond").and_then(Value::as_str).unwrap_or("").to_string();
-        if let Some(a) = v.get("elements").and_then(Value::as_array) {
+        c.marks = v.get("marks").and_then(Value::as_bool).unwrap_or(false);
+        c.color = color_from(v.get("color"), c.color);
+        c.bg_image = v.get("background_image").and_then(Value::as_str).unwrap_or("").to_string();
+        if let Some(a) = v.get("items").and_then(Value::as_array) {
             for (k, e) in a.iter().enumerate() { c.items.push(item_from_value(e, k, "etiquette")?); }
         }
-        c.layers = layers_from_value(v.get("calques"));
+        c.layers = layers_from_value(v.get("layers"));
         clamp_layers(&mut c.items, c.layers.len());
         Ok(c)
     }
@@ -679,48 +679,48 @@ fn item_to_value(it: &CoverItem) -> Value {
     match &it.kind {
         CoverKind::Text { text, size_pt, color, align, font, fx } => {
             e.push(("type".into(), Value::Str("texte".into())));
-            e.push(("texte".into(), Value::Str(text.clone())));
-            e.push(("taille_pt".into(), n(*size_pt)));
-            e.push(("couleur".into(), color_hex(*color)));
-            e.push(("alignement".into(), Value::Str(align.name().into())));
-            if !font.is_empty() { e.push(("police".into(), Value::Str(font.clone()))); }
+            e.push(("text".into(), Value::Str(text.clone())));
+            e.push(("size_pt".into(), n(*size_pt)));
+            e.push(("color".into(), color_hex(*color)));
+            e.push(("align".into(), Value::Str(align.name().into())));
+            if !font.is_empty() { e.push(("font".into(), Value::Str(font.clone()))); }
             let d = TextFx::default();
-            if fx.outline_mm != d.outline_mm { e.push(("contour_mm".into(), n(fx.outline_mm))); }
-            if fx.outline_color != d.outline_color { e.push(("contour_couleur".into(), color_hex(fx.outline_color))); }
-            if fx.shadow_mm != d.shadow_mm { e.push(("ombre_mm".into(), n(fx.shadow_mm))); }
-            if fx.shadow_color != d.shadow_color { e.push(("ombre_couleur".into(), color_hex(fx.shadow_color))); }
-            if fx.spacing != d.spacing { e.push(("interligne".into(), n(fx.spacing))); }
-            if fx.valign != d.valign { e.push(("alignement_v".into(), Value::Str(fx.valign.name().into()))); }
-            if fx.autofit { e.push(("ajuster".into(), Value::Bool(true))); }
-            if fx.bold { e.push(("gras".into(), Value::Bool(true))); }
-            if fx.italic { e.push(("italique".into(), Value::Bool(true))); }
+            if fx.outline_mm != d.outline_mm { e.push(("outline_mm".into(), n(fx.outline_mm))); }
+            if fx.outline_color != d.outline_color { e.push(("outline_color".into(), color_hex(fx.outline_color))); }
+            if fx.shadow_mm != d.shadow_mm { e.push(("shadow_mm".into(), n(fx.shadow_mm))); }
+            if fx.shadow_color != d.shadow_color { e.push(("shadow_color".into(), color_hex(fx.shadow_color))); }
+            if fx.spacing != d.spacing { e.push(("line_spacing".into(), n(fx.spacing))); }
+            if fx.valign != d.valign { e.push(("valign".into(), Value::Str(fx.valign.name().into()))); }
+            if fx.autofit { e.push(("autofit".into(), Value::Bool(true))); }
+            if fx.bold { e.push(("bold".into(), Value::Bool(true))); }
+            if fx.italic { e.push(("italic".into(), Value::Bool(true))); }
         }
         CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
-            if *style != LineStyle::Solid { e.push(("trait".into(), Value::Str(style.name().into()))); }
-            if *arrow != LineArrow::None { e.push(("fleche".into(), Value::Str(arrow.name().into()))); }
-            if *flip { e.push(("inverse".into(), Value::Bool(true))); }
+            if *style != LineStyle::Solid { e.push(("line_style".into(), Value::Str(style.name().into()))); }
+            if *arrow != LineArrow::None { e.push(("arrow".into(), Value::Str(arrow.name().into()))); }
+            if *flip { e.push(("flipped".into(), Value::Bool(true))); }
             e.push(("type".into(), Value::Str("forme".into())));
-            e.push(("forme".into(), Value::Str(shape.name().into())));
-            if let Some(c) = fill { e.push(("remplissage".into(), color_hex(*c))); }
-            if let Some(c) = stroke { e.push(("bordure".into(), color_hex(*c))); }
-            e.push(("epaisseur_mm".into(), n(*stroke_mm)));
-            if *radius_mm != 0.0 { e.push(("rayon_mm".into(), n(*radius_mm))); }
+            e.push(("shape".into(), Value::Str(shape.name().into())));
+            if let Some(c) = fill { e.push(("fill".into(), color_hex(*c))); }
+            if let Some(c) = stroke { e.push(("border".into(), color_hex(*c))); }
+            e.push(("thickness_mm".into(), n(*stroke_mm)));
+            if *radius_mm != 0.0 { e.push(("radius_mm".into(), n(*radius_mm))); }
         }
         CoverKind::Image { path } => {
             e.push(("type".into(), Value::Str("image".into())));
-            e.push(("fichier".into(), Value::Str(path.clone())));
+            e.push(("file".into(), Value::Str(path.clone())));
         }
         CoverKind::VideoImage { frame } => {
             e.push(("type".into(), Value::Str("image_video".into())));
             if let Some(v) = frame.video { e.push(("video".into(), n(v as f64 + 1.0))); }
-            e.push(("instant".into(), n((frame.at * 1e4).round() / 1e4)));
-            if let Some(c) = frame.crop { e.push(("recadrage".into(), Value::Arr(c.iter().map(|v| n((v * 1e4).round() / 1e4)).collect()))); }
+            e.push(("time_s".into(), n((frame.at * 1e4).round() / 1e4)));
+            if let Some(c) = frame.crop { e.push(("crop".into(), Value::Arr(c.iter().map(|v| n((v * 1e4).round() / 1e4)).collect()))); }
         }
     }
     for (k, v) in [("x", it.x), ("y", it.y), ("w", it.w), ("h", it.h)] { e.push((k.into(), n((v * 100.0).round() / 100.0))); }
     if it.rot != 0 { e.push(("rotation".into(), n(it.rot as f64))); }
-    if !it.name.is_empty() { e.push(("nom".into(), Value::Str(it.name.clone()))); }
-    if it.layer != 0 { e.push(("calque".into(), n(it.layer as f64))); }
+    if !it.name.is_empty() { e.push(("name".into(), Value::Str(it.name.clone()))); }
+    if it.layer != 0 { e.push(("layer".into(), n(it.layer as f64))); }
     Value::Obj(e)
 }
 
@@ -728,42 +728,42 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
     let f = |key: &str| e.get(key).and_then(Value::as_f64).unwrap_or(0.0);
     let kind = match e.get("type").and_then(Value::as_str) {
         Some("texte") => CoverKind::Text {
-            text: e.get("texte").and_then(Value::as_str).unwrap_or("").to_string(),
-            size_pt: e.get("taille_pt").and_then(Value::as_f64).unwrap_or(24.0).clamp(1.0, 600.0),
-            color: color_from(e.get("couleur"), [255, 255, 255]),
-            align: e.get("alignement").and_then(Value::as_str).and_then(Align::from_name).unwrap_or(Align::Center),
-            font: e.get("police").and_then(Value::as_str).unwrap_or("").to_string(),
+            text: e.get("text").and_then(Value::as_str).unwrap_or("").to_string(),
+            size_pt: e.get("size_pt").and_then(Value::as_f64).unwrap_or(24.0).clamp(1.0, 600.0),
+            color: color_from(e.get("color"), [255, 255, 255]),
+            align: e.get("align").and_then(Value::as_str).and_then(Align::from_name).unwrap_or(Align::Center),
+            font: e.get("font").and_then(Value::as_str).unwrap_or("").to_string(),
             fx: {
                 let d = TextFx::default();
                 let g = |k: &str, dv: f64| e.get(k).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(dv);
                 TextFx {
-                    outline_mm: g("contour_mm", d.outline_mm).clamp(0.0, 10.0),
-                    outline_color: color_from(e.get("contour_couleur"), d.outline_color),
-                    shadow_mm: g("ombre_mm", d.shadow_mm).clamp(0.0, 10.0),
-                    shadow_color: color_from(e.get("ombre_couleur"), d.shadow_color),
-                    spacing: g("interligne", d.spacing).clamp(0.3, 5.0),
-                    valign: e.get("alignement_v").and_then(Value::as_str).and_then(VAlign::from_name).unwrap_or(d.valign),
-                    autofit: e.get("ajuster").and_then(Value::as_bool).unwrap_or(false),
-                    bold: e.get("gras").and_then(Value::as_bool).unwrap_or(false),
-                    italic: e.get("italique").and_then(Value::as_bool).unwrap_or(false),
+                    outline_mm: g("outline_mm", d.outline_mm).clamp(0.0, 10.0),
+                    outline_color: color_from(e.get("outline_color"), d.outline_color),
+                    shadow_mm: g("shadow_mm", d.shadow_mm).clamp(0.0, 10.0),
+                    shadow_color: color_from(e.get("shadow_color"), d.shadow_color),
+                    spacing: g("line_spacing", d.spacing).clamp(0.3, 5.0),
+                    valign: e.get("valign").and_then(Value::as_str).and_then(VAlign::from_name).unwrap_or(d.valign),
+                    autofit: e.get("autofit").and_then(Value::as_bool).unwrap_or(false),
+                    bold: e.get("bold").and_then(Value::as_bool).unwrap_or(false),
+                    italic: e.get("italic").and_then(Value::as_bool).unwrap_or(false),
                 }
             },
         },
         Some("forme") => CoverKind::Shape {
-            shape: e.get("forme").and_then(Value::as_str).and_then(ShapeKind::from_name).unwrap_or(ShapeKind::Rect),
-            fill: e.get("remplissage").map(|v| color_from(Some(v), [255, 255, 255])),
-            stroke: e.get("bordure").map(|v| color_from(Some(v), [255, 255, 255])),
-            stroke_mm: e.get("epaisseur_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.5).clamp(0.0, 50.0),
-            radius_mm: e.get("rayon_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 200.0),
-            flip: matches!(e.get("inverse"), Some(Value::Bool(true))),
-            style: e.get("trait").and_then(Value::as_str).and_then(LineStyle::from_name).unwrap_or(LineStyle::Solid),
-            arrow: e.get("fleche").and_then(Value::as_str).and_then(LineArrow::from_name).unwrap_or(LineArrow::None),
+            shape: e.get("shape").and_then(Value::as_str).and_then(ShapeKind::from_name).unwrap_or(ShapeKind::Rect),
+            fill: e.get("fill").map(|v| color_from(Some(v), [255, 255, 255])),
+            stroke: e.get("border").map(|v| color_from(Some(v), [255, 255, 255])),
+            stroke_mm: e.get("thickness_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.5).clamp(0.0, 50.0),
+            radius_mm: e.get("radius_mm").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 200.0),
+            flip: matches!(e.get("flipped"), Some(Value::Bool(true))),
+            style: e.get("line_style").and_then(Value::as_str).and_then(LineStyle::from_name).unwrap_or(LineStyle::Solid),
+            arrow: e.get("arrow").and_then(Value::as_str).and_then(LineArrow::from_name).unwrap_or(LineArrow::None),
         },
-        Some("image") => CoverKind::Image { path: e.get("fichier").and_then(Value::as_str).ok_or_else(|| trf!("{}, item {}: “fichier” missing", what, k + 1))?.to_string() },
+        Some("image") => CoverKind::Image { path: e.get("file").and_then(Value::as_str).ok_or_else(|| trf!("{}, item {}: “file” missing", what, k + 1))?.to_string() },
         Some("image_video") => CoverKind::VideoImage { frame: VideoFrame {
             video: e.get("video").and_then(Value::as_f64).filter(|v| *v >= 1.0).map(|v| v as usize - 1),
-            at: e.get("instant").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).max(0.0),
-            crop: match e.get("recadrage") {
+            at: e.get("time_s").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(0.0).max(0.0),
+            crop: match e.get("crop") {
                 Some(Value::Arr(a)) if a.len() == 4 => {
                     let g = |i: usize| a[i].as_f64().filter(|v| v.is_finite()).unwrap_or(0.0).clamp(0.0, 1.0);
                     Some([g(0), g(1), g(2).max(0.01), g(3).max(0.01)])
@@ -775,7 +775,7 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
     };
     let min_side = if matches!(&kind, CoverKind::Shape { shape: ShapeKind::Line, .. }) { 0.0 } else { 1.0 };
     let rot = match f("rotation").round() as i64 { 90 => 90, 270 | -90 => 270, _ => 0 };
-    Ok(CoverItem { kind, x: f("x"), y: f("y"), w: f("w").max(min_side), h: f("h").max(min_side), rot, name: e.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), layer: f("calque").max(0.0) as usize })
+    Ok(CoverItem { kind, x: f("x"), y: f("y"), w: f("w").max(min_side), h: f("h").max(min_side), rot, name: e.get("name").and_then(Value::as_str).unwrap_or("").to_string(), layer: f("layer").max(0.0) as usize })
 }
 
 // ------------------------------------------------------------------ calques
@@ -820,16 +820,16 @@ fn clamp_layers(items: &mut [CoverItem], n: usize) {
 
 fn layers_to_value(layers: &[CoverLayer]) -> Value {
     Value::Arr(layers.iter().map(|l| Value::Obj(vec![
-        ("nom".into(), Value::Str(l.name.clone())), ("visible".into(), Value::Bool(l.visible)), ("verrouille".into(), Value::Bool(l.locked)),
+        ("name".into(), Value::Str(l.name.clone())), ("visible".into(), Value::Bool(l.visible)), ("locked".into(), Value::Bool(l.locked)),
     ])).collect())
 }
 
 fn layers_from_value(v: Option<&Value>) -> Vec<CoverLayer> {
     let Some(a) = v.and_then(Value::as_array) else { return vec![] };
     let l: Vec<CoverLayer> = a.iter().enumerate().map(|(k, e)| CoverLayer {
-        name: e.get("nom").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("Calque {}", k + 1)),
+        name: e.get("name").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| format!("Calque {}", k + 1)),
         visible: e.get("visible").and_then(Value::as_bool).unwrap_or(true),
-        locked: e.get("verrouille").and_then(Value::as_bool).unwrap_or(false),
+        locked: e.get("locked").and_then(Value::as_bool).unwrap_or(false),
     }).collect();
     normalize_layers(l)
 }

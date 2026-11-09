@@ -110,7 +110,7 @@ Projects are readable JSON files you can edit by hand (relative paths allowed). 
 }
 ```
 
-Keys are in English. Older project files written with French keys (`titre`, `fichier`, `encodage`…) are still read and are rewritten with English keys on the next save.
+Keys are in English. Project files written by earlier versions with French keys (`titre`, `fichier`, `encodage`…) are no longer read.
 
 ---
 

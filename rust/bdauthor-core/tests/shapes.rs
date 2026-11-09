@@ -26,10 +26,10 @@ fn json_roundtrip() {
     if let Kind::Shape { paint, .. } = &mut d.items[1].kind { *paint = Paint { flip: true, style: LineStyle::Dashed, arrow: LineArrow::End, stroke_px: 9, ..*paint }; }
     let v = d.to_value();
     let j = v.to_pretty();
-    assert!(j.contains("\"type\": \"forme\"") && j.contains("\"forme\": \"rectangle\"") && j.contains("\"forme\": \"ligne\""), "{j}");
-    assert!(j.contains("\"remplissage\": \"#0a141e\"") && j.contains("\"bordure\": \"#ff0080\"") && j.contains("\"arrondi\": 24") && j.contains("\"opacite\": 40"), "{j}");
-    assert!(!j.contains("\"opacite\": 100"), "opaque par defaut, non ecrit : {j}");
-    assert!(j.contains("\"retourne\": true") && j.contains("\"trait\": \"tirets\"") && j.contains("\"fleche\": \"fin\""), "{j}");
+    assert!(j.contains("\"type\": \"forme\"") && j.contains("\"shape\": \"rectangle\"") && j.contains("\"shape\": \"ligne\""), "{j}");
+    assert!(j.contains("\"fill\": \"#0a141e\"") && j.contains("\"border\": \"#ff0080\"") && j.contains("\"radius\": 24") && j.contains("\"opacity\": 40"), "{j}");
+    assert!(!j.contains("\"opacity\": 100"), "opaque par defaut, non ecrit : {j}");
+    assert!(j.contains("\"flip\": true") && j.contains("\"line_style\": \"tirets\"") && j.contains("\"arrow\": \"fin\""), "{j}");
     let back = PageDesign::from_value(&v).unwrap();
     assert_eq!(paint(&back, 0), paint(&d, 0));
     assert_eq!(paint(&back, 1), paint(&d, 1));

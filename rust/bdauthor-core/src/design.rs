@@ -29,24 +29,24 @@ impl Target {
     /// Valeur JSON (champ « cible »).
     pub fn to_value(self) -> Value {
         let num = |v: usize| Value::Num((v + 1) as f64);
-        let then = |e: Option<usize>| e.map(|p| ("ensuite".to_string(), num(p)));
+        let then = |e: Option<usize>| e.map(|p| ("then".to_string(), num(p)));
         let o = match self {
             Target::Main(p) => vec![("page".to_string(), num(p))],
-            Target::Video(v) => vec![("lire".to_string(), Value::Str("video".into())), ("video".to_string(), num(v))],
-            Target::Stay(e) => std::iter::once(("rester".to_string(), Value::Bool(true))).chain(then(e)).collect(),
-            Target::Audio(id, e) => std::iter::once(("audio_langue".to_string(), Value::Num(id as f64))).chain(then(e)).collect(),
+            Target::Video(v) => vec![("play".to_string(), Value::Str("video".into())), ("video".to_string(), num(v))],
+            Target::Stay(e) => std::iter::once(("stay".to_string(), Value::Bool(true))).chain(then(e)).collect(),
+            Target::Audio(id, e) => std::iter::once(("audio_language".to_string(), Value::Num(id as f64))).chain(then(e)).collect(),
         };
         Value::Obj(o)
     }
     pub fn from_value(c: &Value) -> Option<Target> {
         let n = |key: &str| c.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
-        if c.get("rester").and_then(Value::as_bool) == Some(true) {
-            return Some(Target::Stay(n("ensuite")));
+        if c.get("stay").and_then(Value::as_bool) == Some(true) {
+            return Some(Target::Stay(n("then")));
         }
-        if let Some(id) = c.get("audio_langue").and_then(Value::as_i64) {
-            return if id >= 1 { Some(Target::Audio(id as u32, n("ensuite"))) } else { None };
+        if let Some(id) = c.get("audio_language").and_then(Value::as_i64) {
+            return if id >= 1 { Some(Target::Audio(id as u32, n("then"))) } else { None };
         }
-        if c.get("lire").and_then(Value::as_str) == Some("video") {
+        if c.get("play").and_then(Value::as_str) == Some("video") {
             return n("video").map(Target::Video);
         }
         n("page").map(Target::Main)
@@ -194,14 +194,14 @@ impl Paint {
     /// Couleur d'une ligne : celle du trait, a defaut celle du remplissage.
     pub fn line_color(&self) -> Option<[u8; 3]> { self.stroke.or(self.fill) }
     fn put(&self, shape: ShapeKind, put: &mut dyn FnMut(&str, Value)) {
-        if let Some(c) = self.fill { put("remplissage", hex(c)); }
-        if let Some(c) = self.stroke { put("bordure", hex(c)); put("epaisseur", Value::Num(self.stroke_px as f64)); }
-        if self.radius > 0 && shape == ShapeKind::Rect { put("arrondi", Value::Num(self.radius as f64)); }
-        if self.opacity < 100 { put("opacite", Value::Num(self.opacity as f64)); }
+        if let Some(c) = self.fill { put("fill", hex(c)); }
+        if let Some(c) = self.stroke { put("border", hex(c)); put("thickness", Value::Num(self.stroke_px as f64)); }
+        if self.radius > 0 && shape == ShapeKind::Rect { put("radius", Value::Num(self.radius as f64)); }
+        if self.opacity < 100 { put("opacity", Value::Num(self.opacity as f64)); }
         if shape == ShapeKind::Line {
-            if self.flip { put("retourne", Value::Bool(true)); }
-            if self.style != LineStyle::Solid { put("trait", Value::Str(self.style.name().into())); }
-            if self.arrow != LineArrow::None { put("fleche", Value::Str(self.arrow.name().into())); }
+            if self.flip { put("flip", Value::Bool(true)); }
+            if self.style != LineStyle::Solid { put("line_style", Value::Str(self.style.name().into())); }
+            if self.arrow != LineArrow::None { put("arrow", Value::Str(self.arrow.name().into())); }
         }
     }
     fn from_item(e: &Value) -> Result<Paint, String> {
@@ -210,14 +210,14 @@ impl Paint {
         };
         let int = |k: &str, d: i32| e.get(k).and_then(Value::as_f64).map_or(d, |x| x.round().max(0.0) as i32);
         Ok(Paint {
-            fill: col("remplissage")?,
-            stroke: col("bordure")?,
-            stroke_px: int("epaisseur", 4).clamp(1, 200),
-            radius: int("arrondi", 0).min(540),
-            flip: e.get("retourne").and_then(Value::as_bool).unwrap_or(false),
-            style: e.get("trait").and_then(Value::as_str).and_then(LineStyle::from_name).unwrap_or(LineStyle::Solid),
-            arrow: e.get("fleche").and_then(Value::as_str).and_then(LineArrow::from_name).unwrap_or(LineArrow::None),
-            opacity: e.get("opacite").and_then(Value::as_f64).map_or(100, |x| x.round().clamp(0.0, 100.0) as u8),
+            fill: col("fill")?,
+            stroke: col("border")?,
+            stroke_px: int("thickness", 4).clamp(1, 200),
+            radius: int("radius", 0).min(540),
+            flip: e.get("flip").and_then(Value::as_bool).unwrap_or(false),
+            style: e.get("line_style").and_then(Value::as_str).and_then(LineStyle::from_name).unwrap_or(LineStyle::Solid),
+            arrow: e.get("arrow").and_then(Value::as_str).and_then(LineArrow::from_name).unwrap_or(LineArrow::None),
+            opacity: e.get("opacity").and_then(Value::as_f64).map_or(100, |x| x.round().clamp(0.0, 100.0) as u8),
         })
     }
 }
@@ -283,13 +283,13 @@ impl TextDeco {
     /// Champs JSON de l'element (seulement ceux qui servent).
     fn put(&self, put: &mut dyn FnMut(&str, Value)) {
         if self.bg_opacity > 0 {
-            put("fond_couleur", hex(self.bg_color));
-            put("fond_opacite", Value::Num(self.bg_opacity.min(100) as f64));
-            if self.bg_radius > 0 { put("fond_arrondi", Value::Num(self.bg_radius as f64)); }
+            put("background_color", hex(self.bg_color));
+            put("background_opacity", Value::Num(self.bg_opacity.min(100) as f64));
+            if self.bg_radius > 0 { put("background_radius", Value::Num(self.bg_radius as f64)); }
         }
         if self.outline > 0 {
-            put("contour", Value::Num(self.outline as f64));
-            put("contour_couleur", hex(self.outline_color));
+            put("outline", Value::Num(self.outline as f64));
+            put("outline_color", hex(self.outline_color));
         }
     }
     fn from_item(e: &Value) -> Result<TextDeco, String> {
@@ -298,11 +298,11 @@ impl TextDeco {
         };
         let int = |k: &str| e.get(k).and_then(Value::as_f64).map_or(0, |x| x.round().max(0.0) as i32);
         Ok(TextDeco {
-            bg_color: col("fond_couleur", [0, 0, 0])?,
-            bg_opacity: int("fond_opacite").min(100) as u8,
-            bg_radius: int("fond_arrondi").min(540),
-            outline: int("contour").min(60),
-            outline_color: col("contour_couleur", [0, 0, 0])?,
+            bg_color: col("background_color", [0, 0, 0])?,
+            bg_opacity: int("background_opacity").min(100) as u8,
+            bg_radius: int("background_radius").min(540),
+            outline: int("outline").min(60),
+            outline_color: col("outline_color", [0, 0, 0])?,
         })
     }
 }
@@ -350,7 +350,7 @@ pub struct NavLinks {
 }
 
 impl NavLinks {
-    pub const KEYS: [&'static str; 4] = ["haut", "bas", "gauche", "droite"];
+    pub const KEYS: [&'static str; 4] = ["up", "down", "left", "right"];
     pub fn is_auto(&self) -> bool { *self == NavLinks::default() }
     pub fn get(&self, d: usize) -> NavLink { [self.up, self.down, self.left, self.right][d] }
     pub fn set(&mut self, d: usize, l: NavLink) {
@@ -399,13 +399,13 @@ impl SubChoice {
         match self {
             SubChoice::Keep => None,
             SubChoice::Off => Some(Value::Str("aucun".into())),
-            SubChoice::Lang(id) => Some(Value::Obj(vec![("langue".into(), Value::Num(id as f64))])),
+            SubChoice::Lang(id) => Some(Value::Obj(vec![("language".into(), Value::Num(id as f64))])),
         }
     }
     fn from_value(v: Option<&Value>) -> SubChoice {
         match v {
             Some(Value::Str(s)) if s == "aucun" => SubChoice::Off,
-            Some(o @ Value::Obj(_)) => match o.get("langue").and_then(Value::as_i64) { Some(id) if id >= 1 => SubChoice::Lang(id as u32), _ => SubChoice::Keep },
+            Some(o @ Value::Obj(_)) => match o.get("language").and_then(Value::as_i64) { Some(id) if id >= 1 => SubChoice::Lang(id as u32), _ => SubChoice::Keep },
             _ => SubChoice::Keep,
         }
     }
@@ -504,24 +504,24 @@ impl PageBg {
             PageVisual::Image(p) => o.push(("image".into(), Value::Str(p.clone()))),
             PageVisual::Video(p, a) => {
                 o.push(("video".into(), Value::Str(p.clone())));
-                if *a { o.push(("son_video".into(), Value::Bool(true))); }
+                if *a { o.push(("video_sound".into(), Value::Bool(true))); }
             }
         }
         match &self.music {
             PageMusic::Project => {}
-            PageMusic::Silent => o.push(("musique".into(), Value::Null)),
-            PageMusic::File(p) => o.push(("musique".into(), Value::Str(p.clone()))),
+            PageMusic::Silent => o.push(("music".into(), Value::Null)),
+            PageMusic::File(p) => o.push(("music".into(), Value::Str(p.clone()))),
         }
         Value::Obj(o)
     }
     pub fn from_value(v: &Value) -> PageBg {
         let st = |k: &str| v.get(k).and_then(Value::as_str).filter(|x| !x.is_empty()).map(String::from);
         let visual = match (st("video"), st("image")) {
-            (Some(p), _) => PageVisual::Video(p, v.get("son_video").and_then(Value::as_bool).unwrap_or(false)),
+            (Some(p), _) => PageVisual::Video(p, v.get("video_sound").and_then(Value::as_bool).unwrap_or(false)),
             (None, Some(p)) => PageVisual::Image(p),
             _ => PageVisual::Project,
         };
-        let music = match v.get("musique") {
+        let music = match v.get("music") {
             None => PageMusic::Project,
             Some(Value::Str(p)) if !p.is_empty() => PageMusic::File(p.clone()),
             Some(_) => PageMusic::Silent,
@@ -783,138 +783,138 @@ impl PageDesign {
             let mut put = |k: &str, v: Value| o.push((k.to_string(), v));
             match &it.kind {
                 Kind::Slot { thumb_h, video, link, start, chapter, label, thumb_at, ret } => {
-                    put("type", Value::Str("vignette".into())); put("vignette_h", num(*thumb_h));
+                    put("type", Value::Str("vignette".into())); put("thumbnail_h", num(*thumb_h));
                     put("video", video.map_or(Value::Null, |v| num(v as i32 + 1)));
-                    if let Some(t) = link { put("cible", t.to_value()); }
-                    if let Some(t) = start { put("depart_s", Value::Num(*t)); }
-                    if let (Some(c), Some(_)) = (chapter, start) { put("chapitre", num(*c as i32)); }
-                    if !label.is_empty() { put("libelle", Value::Str(label.clone())); }
+                    if let Some(t) = link { put("target", t.to_value()); }
+                    if let Some(t) = start { put("start_s", Value::Num(*t)); }
+                    if let (Some(c), Some(_)) = (chapter, start) { put("chapter", num(*c as i32)); }
+                    if !label.is_empty() { put("caption", Value::Str(label.clone())); }
                     if let Some(t) = thumb_at { put("image_s", Value::Num(*t)); }
-                    if let Some(r) = ret.to_value() { put("retour", r); }
+                    if let Some(r) = ret.to_value() { put("return_to", r); }
                 }
                 Kind::Nav { action, text, target } => {
-                    put("type", Value::Str("navigation".into())); put("action", Value::Str(action.name().into())); put("texte", Value::Str(text.clone()));
-                    if let (NavAction::Goto, Some(t)) = (action, target) { put("cible", t.to_value()); }
+                    put("type", Value::Str("navigation".into())); put("action", Value::Str(action.name().into())); put("text", Value::Str(text.clone()));
+                    if let (NavAction::Goto, Some(t)) = (action, target) { put("target", t.to_value()); }
                 }
                 Kind::Text { text, size, color, align, font, link, deco } => {
-                    if let Some(t) = link { put("cible", t.to_value()); }
+                    if let Some(t) = link { put("target", t.to_value()); }
                     deco.put(&mut |k, v| put(k, v));
-                    if !font.is_empty() { put("police", Value::Str(font.clone())); }
-                    put("type", Value::Str("texte".into())); put("texte", Value::Str(text.clone())); put("taille", num(*size));
-                    put("couleur", Value::Str(format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]))); put("alignement", Value::Str(align.name().into()));
+                    if !font.is_empty() { put("font", Value::Str(font.clone())); }
+                    put("type", Value::Str("texte".into())); put("text", Value::Str(text.clone())); put("size", num(*size));
+                    put("color", Value::Str(format!("#{:02x}{:02x}{:02x}", color[0], color[1], color[2]))); put("align", Value::Str(align.name().into()));
                 }
                 Kind::Shape { shape, paint } => {
-                    put("type", Value::Str("forme".into())); put("forme", Value::Str(shape.name().into()));
+                    put("type", Value::Str("forme".into())); put("shape", Value::Str(shape.name().into()));
                     paint.put(*shape, &mut |k, v| put(k, v));
                 }
                 Kind::Image { path, link, frame } => {
-                    if let Some(t) = link { put("cible", t.to_value()); }
+                    if let Some(t) = link { put("target", t.to_value()); }
                     put("type", Value::Str("image".into()));
                     match frame {
                         Some(f) => {
                             if let Some(v) = f.video { put("video", num(v as i32 + 1)); }
-                            put("instant", Value::Num(f.at));
-                            if let Some(c) = f.crop { put("recadrage", Value::Arr(c.iter().map(|v| Value::Num((v * 1e4).round() / 1e4)).collect())); }
+                            put("time_s", Value::Num(f.at));
+                            if let Some(c) = f.crop { put("crop", Value::Arr(c.iter().map(|v| Value::Num((v * 1e4).round() / 1e4)).collect())); }
                         }
-                        None => put("fichier", Value::Str(path.clone())),
+                        None => put("file", Value::Str(path.clone())),
                     }
                 }
             }
             put("x", num(it.x)); put("y", num(it.y)); put("w", num(it.w)); put("h", num(it.h));
             if let Some(st) = &it.look.style { put("style", st.to_value()); }
-            if !it.look.skin.is_empty() { put("images_etats", it.look.skin.to_value()); }
-            if let Some(s) = &it.look.sounds { put("sons", s.to_value()); }
-            if !self.layers.is_empty() { put("calque", num(it.layer as i32)); }
-            if let Some(v) = it.sub.to_value() { put("soustitres", v); }
-            if !it.name.is_empty() { put("nom", Value::Str(it.name.clone())); }
+            if !it.look.skin.is_empty() { put("state_images", it.look.skin.to_value()); }
+            if let Some(s) = &it.look.sounds { put("sounds", s.to_value()); }
+            if !self.layers.is_empty() { put("layer", num(it.layer as i32)); }
+            if let Some(v) = it.sub.to_value() { put("subtitles", v); }
+            if !it.name.is_empty() { put("name", Value::Str(it.name.clone())); }
             if it.id != 0 { put("id", num(it.id as i32)); }
             if let Some(v) = it.nav.to_value() { put("navigation", v); }
             Value::Obj(o)
         }).collect();
-        let mut o = vec![("elements".into(), Value::Arr(items))];
+        let mut o = vec![("items".into(), Value::Arr(items))];
         if !self.layers.is_empty() {
             let ls = self.layers.iter().map(|l| {
-                let mut o = vec![("id".to_string(), num(l.id as i32)), ("nom".to_string(), Value::Str(l.name.clone()))];
-                if l.hidden { o.push(("masque".into(), Value::Bool(true))); }
-                if l.locked { o.push(("verrouille".into(), Value::Bool(true))); }
+                let mut o = vec![("id".to_string(), num(l.id as i32)), ("name".to_string(), Value::Str(l.name.clone()))];
+                if l.hidden { o.push(("hidden".into(), Value::Bool(true))); }
+                if l.locked { o.push(("locked".into(), Value::Bool(true))); }
                 Value::Obj(o)
             }).collect();
-            o.push(("calques".into(), Value::Arr(ls)));
+            o.push(("layers".into(), Value::Arr(ls)));
         }
-        if !self.name.is_empty() { o.push(("nom".into(), Value::Str(self.name.clone()))); }
-        if self.anim_fps != 0 { o.push(("animation_ips".into(), Value::Num(self.anim_fps as f64))); }
-        if let Some(i) = self.idle { o.push(("lancement_auto".into(), Value::Obj(vec![("secondes".into(), Value::Num(i.seconds as f64)), ("element".into(), Value::Num(i.item as f64))]))); }
-        if !self.bg.is_default() { o.push(("fond_page".into(), self.bg.to_value())); }
+        if !self.name.is_empty() { o.push(("name".into(), Value::Str(self.name.clone()))); }
+        if self.anim_fps != 0 { o.push(("animation_fps".into(), Value::Num(self.anim_fps as f64))); }
+        if let Some(i) = self.idle { o.push(("auto_launch".into(), Value::Obj(vec![("seconds".into(), Value::Num(i.seconds as f64)), ("item".into(), Value::Num(i.item as f64))]))); }
+        if !self.bg.is_default() { o.push(("page_background".into(), self.bg.to_value())); }
         Value::Obj(o)
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
         let mut items = Vec::new();
-        for (k, e) in v.get("elements").and_then(Value::as_array).ok_or(tr("page without “elements”"))?.iter().enumerate() {
+        for (k, e) in v.get("items").and_then(Value::as_array).ok_or(tr("page without “items”"))?.iter().enumerate() {
             let at = |key: &str| -> Result<i32, String> { e.get(key).and_then(Value::as_f64).map(|x| x.round() as i32).ok_or_else(|| trf!("item {}: “{}” missing", k + 1, key)) };
             let st = |key: &str| e.get(key).and_then(Value::as_str);
             let link = || -> Result<Option<Target>, String> {
-                match e.get("cible") { None | Some(Value::Null) => Ok(None), Some(c) => Target::from_value(c).map(Some).ok_or_else(|| trf!("item {}: invalid target", k + 1)) }
+                match e.get("target") { None | Some(Value::Null) => Ok(None), Some(c) => Target::from_value(c).map(Some).ok_or_else(|| trf!("item {}: invalid target", k + 1)) }
             };
             let kind = match st("type").ok_or_else(|| trf!("item {} without type", k + 1))? {
                 "vignette" => {
                     let one = |key: &str| e.get(key).and_then(Value::as_f64).map(|x| (x.round() as i64 - 1).max(0) as usize);
                     let video = one("video");
                     let num = |key: &str| e.get(key).and_then(Value::as_f64).map(|x| x.max(0.0));
-                    Kind::Slot { thumb_h: at("vignette_h")?, video, link: link()?, start: num("depart_s"),
-                                 chapter: num("depart_s").and_then(|_| e.get("chapitre").and_then(Value::as_f64)).map(|c| c.max(0.0) as u32), label: st("libelle").unwrap_or("").to_string(),
-                                 thumb_at: num("image_s"), ret: SlotReturn::from_value(e.get("retour")) }
+                    Kind::Slot { thumb_h: at("thumbnail_h")?, video, link: link()?, start: num("start_s"),
+                                 chapter: num("start_s").and_then(|_| e.get("chapter").and_then(Value::as_f64)).map(|c| c.max(0.0) as u32), label: st("caption").unwrap_or("").to_string(),
+                                 thumb_at: num("image_s"), ret: SlotReturn::from_value(e.get("return_to")) }
                 }
                 "navigation" => {
                     let action = st("action").and_then(NavAction::from_name).ok_or_else(|| trf!("item {}: unknown action", k + 1))?;
-                    let target = match e.get("cible") {
+                    let target = match e.get("target") {
                         Some(c) if action == NavAction::Goto => Some(Target::from_value(c).ok_or_else(|| trf!("item {}: invalid target", k + 1))?),
                         _ => None,
                     };
-                    Kind::Nav { action, text: st("texte").unwrap_or(action.default_text()).to_string(), target }
+                    Kind::Nav { action, text: st("text").unwrap_or(action.default_text()).to_string(), target }
                 }
                 "texte" => {
-                    let c = st("couleur").unwrap_or("#ffffff").trim_start_matches('#');
+                    let c = st("color").unwrap_or("#ffffff").trim_start_matches('#');
                     let rgb = u32::from_str_radix(c, 16).ok().filter(|_| c.len() == 6).ok_or_else(|| trf!("item {}: invalid color", k + 1))?;
-                    Kind::Text { text: st("texte").unwrap_or("").to_string(), size: at("taille")?, color: [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8],
-                                 align: st("alignement").and_then(Align::from_name).unwrap_or(Align::Center), font: st("police").unwrap_or("").to_string(), link: link()?,
+                    Kind::Text { text: st("text").unwrap_or("").to_string(), size: at("size")?, color: [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8],
+                                 align: st("align").and_then(Align::from_name).unwrap_or(Align::Center), font: st("font").unwrap_or("").to_string(), link: link()?,
                                  deco: TextDeco::from_item(e).map_err(|m| trf!("item {}: {}", k + 1, m))? }
                 }
-                "image" if e.get("instant").is_some() || e.get("video").is_some() => {
+                "image" if e.get("time_s").is_some() || e.get("video").is_some() => {
                     let video = e.get("video").and_then(Value::as_f64).filter(|v| *v >= 1.0).map(|v| v as usize - 1);
-                    let at = e.get("instant").and_then(Value::as_f64).unwrap_or(0.0).max(0.0);
-                    let crop = e.get("recadrage").and_then(Value::as_array).filter(|a| a.len() == 4).and_then(|a| {
+                    let at = e.get("time_s").and_then(Value::as_f64).unwrap_or(0.0).max(0.0);
+                    let crop = e.get("crop").and_then(Value::as_array).filter(|a| a.len() == 4).and_then(|a| {
                         let v: Vec<f64> = a.iter().filter_map(Value::as_f64).collect();
                         (v.len() == 4 && v[2] > 0.0 && v[3] > 0.0).then(|| [v[0].clamp(0.0, 1.0), v[1].clamp(0.0, 1.0), v[2].min(1.0), v[3].min(1.0)])
                     });
                     Kind::Image { path: String::new(), link: link()?, frame: Some(VideoFrame { video, at, crop }) }
                 }
                 "forme" => Kind::Shape {
-                    shape: st("forme").and_then(ShapeKind::from_name).unwrap_or(ShapeKind::Rect),
+                    shape: st("shape").and_then(ShapeKind::from_name).unwrap_or(ShapeKind::Rect),
                     paint: Paint::from_item(e).map_err(|m| trf!("item {}: {}", k + 1, m))?,
                 },
-                "image" => Kind::Image { path: st("fichier").ok_or_else(|| trf!("item {}: “fichier” missing", k + 1))?.to_string(), link: link()?, frame: None },
+                "image" => Kind::Image { path: st("file").ok_or_else(|| trf!("item {}: “file” missing", k + 1))?.to_string(), link: link()?, frame: None },
                 t => return Err(trf!("item {}: unknown type “{}”", k + 1, t)),
             };
             let look = Look {
                 style: match e.get("style") { Some(v @ Value::Obj(_)) => Some(ButtonStyle::from_value(v).map_err(|m| trf!("item {}: {}", k + 1, m))?), _ => None },
-                skin: e.get("images_etats").map(Skin::from_value).unwrap_or_default(),
-                sounds: e.get("sons").map(crate::style::ItemSounds::from_value),
+                skin: e.get("state_images").map(Skin::from_value).unwrap_or_default(),
+                sounds: e.get("sounds").map(crate::style::ItemSounds::from_value),
             };
-            let layer = e.get("calque").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32);
-            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer, sub: SubChoice::from_value(e.get("soustitres")), id: e.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), nav: NavLinks::from_value(e.get("navigation")), name: e.get("nom").and_then(Value::as_str).unwrap_or("").to_string() });
+            let layer = e.get("layer").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32);
+            items.push(Item { x: at("x")?, y: at("y")?, w: at("w")?, h: at("h")?, kind, look, layer, sub: SubChoice::from_value(e.get("subtitles")), id: e.get("id").and_then(Value::as_f64).map_or(0, |x| x.max(0.0) as u32), nav: NavLinks::from_value(e.get("navigation")), name: e.get("name").and_then(Value::as_str).unwrap_or("").to_string() });
         }
-        let layers = v.get("calques").and_then(Value::as_array).map(|a| a.iter().enumerate().map(|(k, l)| Layer {
+        let layers = v.get("layers").and_then(Value::as_array).map(|a| a.iter().enumerate().map(|(k, l)| Layer {
             id: l.get("id").and_then(Value::as_f64).map_or(k as u32 + 1, |x| x.max(1.0) as u32),
-            name: l.get("nom").and_then(Value::as_str).unwrap_or("").to_string(),
-            hidden: l.get("masque").and_then(Value::as_bool).unwrap_or(false),
-            locked: l.get("verrouille").and_then(Value::as_bool).unwrap_or(false),
+            name: l.get("name").and_then(Value::as_str).unwrap_or("").to_string(),
+            hidden: l.get("hidden").and_then(Value::as_bool).unwrap_or(false),
+            locked: l.get("locked").and_then(Value::as_bool).unwrap_or(false),
         }).collect()).unwrap_or_default();
-        let mut d = PageDesign { items, layers, name: v.get("nom").and_then(Value::as_str).unwrap_or("").to_string(), bg: v.get("fond_page").map(PageBg::from_value).unwrap_or_default(),
-            anim_fps: v.get("animation_ips").and_then(Value::as_f64).map_or(0, |x| x.round().clamp(0.0, 60.0) as u32),
-            idle: v.get("lancement_auto").and_then(|a| Some(Idle {
-                seconds: a.get("secondes").and_then(Value::as_f64)?.round().clamp(1.0, MAX_IDLE_SECONDS as f64) as u32,
-                item: a.get("element").and_then(Value::as_f64)?.max(0.0) as u32,
+        let mut d = PageDesign { items, layers, name: v.get("name").and_then(Value::as_str).unwrap_or("").to_string(), bg: v.get("page_background").map(PageBg::from_value).unwrap_or_default(),
+            anim_fps: v.get("animation_fps").and_then(Value::as_f64).map_or(0, |x| x.round().clamp(0.0, 60.0) as u32),
+            idle: v.get("auto_launch").and_then(|a| Some(Idle {
+                seconds: a.get("seconds").and_then(Value::as_f64)?.round().clamp(1.0, MAX_IDLE_SECONDS as f64) as u32,
+                item: a.get("item").and_then(Value::as_f64)?.max(0.0) as u32,
             })) };
         d.normalize_layers();
         d.normalize_ids();
@@ -1075,8 +1075,8 @@ impl Designs {
 
     pub fn to_value(&self) -> Value {
         let mut o = vec![("pages".to_string(), Value::Arr(self.free.iter().map(PageDesign::to_value).collect()))];
-        if self.style != ButtonStyle::default() { o.push(("style_boutons".into(), self.style.to_value())); }
-        if let Some(h) = self.home { o.push(("accueil".into(), h.to_value())); }
+        if self.style != ButtonStyle::default() { o.push(("button_style".into(), self.style.to_value())); }
+        if let Some(h) = self.home { o.push(("home".into(), h.to_value())); }
         Value::Obj(o)
     }
 
@@ -1087,8 +1087,8 @@ impl Designs {
                 d.free.push(PageDesign::from_value(page).map_err(|e| trf!("page {}: {}", k + 1, e))?);
             }
         }
-        if let Some(h) = v.get("accueil") { d.home = Some(Target::from_value(h).ok_or(tr("invalid home page"))?); }
-        if let Some(st) = v.get("style_boutons") { d.style = ButtonStyle::from_value(st).map_err(|e| trf!("button style: {}", e))?; }
+        if let Some(h) = v.get("home") { d.home = Some(Target::from_value(h).ok_or(tr("invalid home page"))?); }
+        if let Some(st) = v.get("button_style") { d.style = ButtonStyle::from_value(st).map_err(|e| trf!("button style: {}", e))?; }
         Ok(d)
     }
 }

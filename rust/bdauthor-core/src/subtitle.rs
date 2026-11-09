@@ -928,11 +928,11 @@ impl Language {
     pub fn from_value(v: &Value) -> Result<Self, String> {
         let id = v.get("id").and_then(Value::as_i64).filter(|n| *n >= 1).ok_or(tr("languages: “id” (integer >= 1) expected"))? as u32;
         let code = v.get("code").and_then(Value::as_str).unwrap_or("und").to_string();
-        let name = v.get("nom").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| code.clone());
+        let name = v.get("name").and_then(Value::as_str).filter(|s| !s.is_empty()).map(String::from).unwrap_or_else(|| code.clone());
         Ok(Language { id, name, code })
     }
     pub fn to_value(&self) -> Value {
-        Value::Obj(vec![("id".into(), Value::Num(self.id as f64)), ("nom".into(), Value::Str(self.name.clone())), ("code".into(), Value::Str(self.code.clone()))])
+        Value::Obj(vec![("id".into(), Value::Num(self.id as f64)), ("name".into(), Value::Str(self.name.clone())), ("code".into(), Value::Str(self.code.clone()))])
     }
     /// Code sur 3 octets (`und` si invalide).
     pub fn code_bytes(&self) -> [u8; 3] {
@@ -961,7 +961,7 @@ pub fn default_language_name(code: &str) -> String {
 pub fn languages_from_value(v: Option<&Value>) -> Result<Vec<Language>, String> {
     let out: Vec<Language> = match v {
         None | Some(Value::Null) => vec![],
-        Some(a) => a.as_array().ok_or(tr("“langues”: list expected"))?.iter().map(Language::from_value).collect::<Result<_, _>>()?,
+        Some(a) => a.as_array().ok_or(tr("“languages”: list expected"))?.iter().map(Language::from_value).collect::<Result<_, _>>()?,
     };
     for (k, l) in out.iter().enumerate() {
         if out[..k].iter().any(|x| x.id == l.id) { return Err(trf!("languages: duplicate identifier {}", l.id)); }
@@ -1005,45 +1005,45 @@ impl SubTrackCfg {
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
-        let source = match (v.get("fichier").and_then(Value::as_str), v.get("piste").and_then(Value::as_i64)) {
+        let source = match (v.get("file").and_then(Value::as_str), v.get("track").and_then(Value::as_i64)) {
             (Some(f), _) => SubSource::File(f.into()),
             (None, Some(n)) if n >= 0 => SubSource::Embedded(n as u32),
             _ => return Err(tr("subtitles: “file” or “track” expected").into()),
         };
         let mut st = SubStyle::default();
         if let Some(s) = v.get("style") {
-            if let Some(x) = s.get("police").and_then(Value::as_str) { st.font = x.into(); }
-            if let Some(x) = s.get("taille").and_then(Value::as_i64) { st.size = x.clamp(8, 400) as i32; }
-            if let Some(x) = s.get("couleur").and_then(Value::as_str) { st.color = parse_hex(x)?; }
-            if let Some(x) = s.get("contour_couleur").and_then(Value::as_str) { st.outline_color = parse_hex(x)?; }
-            if let Some(x) = s.get("contour").and_then(Value::as_i64) { st.outline = x.clamp(0, 30) as i32; }
+            if let Some(x) = s.get("font").and_then(Value::as_str) { st.font = x.into(); }
+            if let Some(x) = s.get("size").and_then(Value::as_i64) { st.size = x.clamp(8, 400) as i32; }
+            if let Some(x) = s.get("color").and_then(Value::as_str) { st.color = parse_hex(x)?; }
+            if let Some(x) = s.get("outline_color").and_then(Value::as_str) { st.outline_color = parse_hex(x)?; }
+            if let Some(x) = s.get("outline").and_then(Value::as_i64) { st.outline = x.clamp(0, 30) as i32; }
             if let Some(x) = s.get("position").and_then(Value::as_str) { st.pos = VPos::from_name(x).ok_or_else(|| trf!("unknown subtitle position: {}", x))?; }
-            if let Some(x) = s.get("marge").and_then(Value::as_i64) { st.margin = x.clamp(0, 540) as i32; }
-            if let Some(x) = s.get("alignement").and_then(Value::as_str) { st.halign = HAlign::from_name(x).ok_or_else(|| trf!("unknown subtitle alignment: {}", x))?; }
-            if let Some(x) = s.get("marge_cote").and_then(Value::as_i64) { st.margin_x = x.clamp(0, 960) as i32; }
-            if let Some(x) = s.get("largeur_max").and_then(Value::as_i64) { st.max_width = x.clamp(30, 100) as i32; }
-            if let Some(x) = s.get("cesure").and_then(Value::as_bool) { st.wrap = x; }
-            if let Some(x) = s.get("ombre").and_then(Value::as_i64) { st.shadow = x.clamp(0, 30) as i32; }
-            if let Some(x) = s.get("ombre_couleur").and_then(Value::as_str) { st.shadow_color = parse_hex(x)?; }
-            if let Some(x) = s.get("ombre_opacite").and_then(Value::as_i64) { st.shadow_opacity = x.clamp(0, 100) as i32; }
-            if let Some(x) = s.get("fond_opacite").and_then(Value::as_i64) { st.bg_opacity = x.clamp(0, 100) as i32; }
-            if let Some(x) = s.get("fond_couleur").and_then(Value::as_str) { st.bg_color = parse_hex(x)?; }
-            if let Some(x) = s.get("fond_marge").and_then(Value::as_i64) { st.bg_pad = x.clamp(0, 100) as i32; }
-            if let Some(x) = s.get("fond_arrondi").and_then(Value::as_i64) { st.bg_radius = x.clamp(0, 100) as i32; }
+            if let Some(x) = s.get("margin").and_then(Value::as_i64) { st.margin = x.clamp(0, 540) as i32; }
+            if let Some(x) = s.get("align").and_then(Value::as_str) { st.halign = HAlign::from_name(x).ok_or_else(|| trf!("unknown subtitle alignment: {}", x))?; }
+            if let Some(x) = s.get("side_margin").and_then(Value::as_i64) { st.margin_x = x.clamp(0, 960) as i32; }
+            if let Some(x) = s.get("max_width").and_then(Value::as_i64) { st.max_width = x.clamp(30, 100) as i32; }
+            if let Some(x) = s.get("wrap").and_then(Value::as_bool) { st.wrap = x; }
+            if let Some(x) = s.get("shadow").and_then(Value::as_i64) { st.shadow = x.clamp(0, 30) as i32; }
+            if let Some(x) = s.get("shadow_color").and_then(Value::as_str) { st.shadow_color = parse_hex(x)?; }
+            if let Some(x) = s.get("shadow_opacity").and_then(Value::as_i64) { st.shadow_opacity = x.clamp(0, 100) as i32; }
+            if let Some(x) = s.get("background_opacity").and_then(Value::as_i64) { st.bg_opacity = x.clamp(0, 100) as i32; }
+            if let Some(x) = s.get("background_color").and_then(Value::as_str) { st.bg_color = parse_hex(x)?; }
+            if let Some(x) = s.get("background_margin").and_then(Value::as_i64) { st.bg_pad = x.clamp(0, 100) as i32; }
+            if let Some(x) = s.get("background_radius").and_then(Value::as_i64) { st.bg_radius = x.clamp(0, 100) as i32; }
         }
         Ok(SubTrackCfg {
             source,
-            lang_id: v.get("langue_id").and_then(Value::as_i64).filter(|n| *n >= 1).map_or(0, |n| n as u32),
-            lang: v.get("langue").and_then(Value::as_str).unwrap_or("und").into(),
-            offset_ms: v.get("decalage_ms").and_then(Value::as_f64).map_or(0, |x| x.round() as i64),
-            strip_notes: v.get("retirer_indications").and_then(Value::as_bool).unwrap_or(false),
-            file_positions: v.get("positions_fichier").and_then(Value::as_bool).unwrap_or(true),
-            keep_format: v.get("mise_en_forme").and_then(Value::as_bool).unwrap_or(true),
-            charset: match v.get("encodage").and_then(Value::as_str) {
+            lang_id: v.get("language_id").and_then(Value::as_i64).filter(|n| *n >= 1).map_or(0, |n| n as u32),
+            lang: v.get("language").and_then(Value::as_str).unwrap_or("und").into(),
+            offset_ms: v.get("offset_ms").and_then(Value::as_f64).map_or(0, |x| x.round() as i64),
+            strip_notes: v.get("strip_notes").and_then(Value::as_bool).unwrap_or(false),
+            file_positions: v.get("file_positions").and_then(Value::as_bool).unwrap_or(true),
+            keep_format: v.get("keep_formatting").and_then(Value::as_bool).unwrap_or(true),
+            charset: match v.get("encoding").and_then(Value::as_str) {
                 None => crate::charset::Charset::Auto,
                 Some(x) => crate::charset::Charset::from_name(x).ok_or_else(|| trf!("unknown subtitle encoding: {}", x))?,
             },
-            fps: v.get("cadence_ips").and_then(Value::as_f64).filter(|f| f.is_finite() && *f >= 1.0 && *f <= 240.0),
+            fps: v.get("fps").and_then(Value::as_f64).filter(|f| f.is_finite() && *f >= 1.0 && *f <= 240.0),
             style: st,
         })
     }
@@ -1051,45 +1051,45 @@ impl SubTrackCfg {
     pub fn to_value(&self) -> Value {
         let hex = |c: [u8; 3]| Value::Str(format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]));
         let mut o = vec![match &self.source {
-            SubSource::File(f) => ("fichier".to_string(), Value::Str(f.clone())),
-            SubSource::Embedded(n) => ("piste".to_string(), Value::Num(*n as f64)),
+            SubSource::File(f) => ("file".to_string(), Value::Str(f.clone())),
+            SubSource::Embedded(n) => ("track".to_string(), Value::Num(*n as f64)),
         }];
-        o.push(("langue".into(), Value::Str(self.lang.clone())));
+        o.push(("language".into(), Value::Str(self.lang.clone())));
         if self.lang_id != 0 {
-            o.push(("langue_id".into(), Value::Num(self.lang_id as f64)));
+            o.push(("language_id".into(), Value::Num(self.lang_id as f64)));
         }
         if self.offset_ms != 0 {
-            o.push(("decalage_ms".into(), Value::Num(self.offset_ms as f64)));
+            o.push(("offset_ms".into(), Value::Num(self.offset_ms as f64)));
         }
-        if let Some(f) = self.fps { o.push(("cadence_ips".into(), Value::Num(f))); }
-        if self.strip_notes { o.push(("retirer_indications".into(), Value::Bool(true))); }
-        if !self.file_positions { o.push(("positions_fichier".into(), Value::Bool(false))); }
-        if !self.keep_format { o.push(("mise_en_forme".into(), Value::Bool(false))); }
-        if self.charset != crate::charset::Charset::Auto { o.push(("encodage".into(), Value::Str(self.charset.name().into()))); }
+        if let Some(f) = self.fps { o.push(("fps".into(), Value::Num(f))); }
+        if self.strip_notes { o.push(("strip_notes".into(), Value::Bool(true))); }
+        if !self.file_positions { o.push(("file_positions".into(), Value::Bool(false))); }
+        if !self.keep_format { o.push(("keep_formatting".into(), Value::Bool(false))); }
+        if self.charset != crate::charset::Charset::Auto { o.push(("encoding".into(), Value::Str(self.charset.name().into()))); }
         let s = &self.style;
         let mut st = Vec::new();
-        if !s.font.is_empty() { st.push(("police".to_string(), Value::Str(s.font.clone()))); }
-        st.push(("taille".into(), Value::Num(s.size as f64)));
-        st.push(("couleur".into(), hex(s.color)));
-        st.push(("contour_couleur".into(), hex(s.outline_color)));
-        st.push(("contour".into(), Value::Num(s.outline as f64)));
+        if !s.font.is_empty() { st.push(("font".to_string(), Value::Str(s.font.clone()))); }
+        st.push(("size".into(), Value::Num(s.size as f64)));
+        st.push(("color".into(), hex(s.color)));
+        st.push(("outline_color".into(), hex(s.outline_color)));
+        st.push(("outline".into(), Value::Num(s.outline as f64)));
         st.push(("position".into(), Value::Str(s.pos.name().into())));
-        st.push(("marge".into(), Value::Num(s.margin as f64)));
+        st.push(("margin".into(), Value::Num(s.margin as f64)));
         let d = SubStyle::default();
-        if s.halign != d.halign { st.push(("alignement".into(), Value::Str(s.halign.name().into()))); }
-        if s.margin_x != d.margin_x { st.push(("marge_cote".into(), Value::Num(s.margin_x as f64))); }
-        if s.max_width != d.max_width { st.push(("largeur_max".into(), Value::Num(s.max_width as f64))); }
-        if s.wrap { st.push(("cesure".into(), Value::Bool(true))); }
+        if s.halign != d.halign { st.push(("align".into(), Value::Str(s.halign.name().into()))); }
+        if s.margin_x != d.margin_x { st.push(("side_margin".into(), Value::Num(s.margin_x as f64))); }
+        if s.max_width != d.max_width { st.push(("max_width".into(), Value::Num(s.max_width as f64))); }
+        if s.wrap { st.push(("wrap".into(), Value::Bool(true))); }
         if s.shadow != 0 {
-            st.push(("ombre".into(), Value::Num(s.shadow as f64)));
-            st.push(("ombre_couleur".into(), hex(s.shadow_color)));
-            st.push(("ombre_opacite".into(), Value::Num(s.shadow_opacity as f64)));
+            st.push(("shadow".into(), Value::Num(s.shadow as f64)));
+            st.push(("shadow_color".into(), hex(s.shadow_color)));
+            st.push(("shadow_opacity".into(), Value::Num(s.shadow_opacity as f64)));
         }
         if s.bg_opacity != 0 {
-            st.push(("fond_opacite".into(), Value::Num(s.bg_opacity as f64)));
-            st.push(("fond_couleur".into(), hex(s.bg_color)));
-            st.push(("fond_marge".into(), Value::Num(s.bg_pad as f64)));
-            st.push(("fond_arrondi".into(), Value::Num(s.bg_radius as f64)));
+            st.push(("background_opacity".into(), Value::Num(s.bg_opacity as f64)));
+            st.push(("background_color".into(), hex(s.bg_color)));
+            st.push(("background_margin".into(), Value::Num(s.bg_pad as f64)));
+            st.push(("background_radius".into(), Value::Num(s.bg_radius as f64)));
         }
         o.push(("style".into(), Value::Obj(st)));
         Value::Obj(o)
@@ -1114,7 +1114,7 @@ fn parse_hex(s: &str) -> Result<[u8; 3], String> {
 pub fn tracks_from_value(v: Option<&Value>) -> Result<Vec<SubTrackCfg>, String> {
     match v {
         None | Some(Value::Null) => Ok(vec![]),
-        Some(a) => a.as_array().ok_or(tr("“soustitres”: list expected"))?.iter().map(SubTrackCfg::from_value).collect(),
+        Some(a) => a.as_array().ok_or(tr("“subtitles”: list expected"))?.iter().map(SubTrackCfg::from_value).collect(),
     }
 }
 

@@ -76,7 +76,7 @@ fn json_roundtrip_in_project() {
     m.cover = c.clone();
     let m2 = ProjectModel::from_json(&m.to_json()).unwrap();
     assert_eq!(m2.cover, c);
-    assert!(!fr(&ProjectModel::default()).contains("jaquette"));
+    assert!(!ProjectModel::default().to_json().contains("\"cover\""));
 }
 
 #[test]
@@ -340,7 +340,7 @@ fn video_image_item_json_layout_and_frame() {
     c.items = vec![it.clone(), sans_video];
     // enregistrement : video numerotee a partir de 1, image sans video gardee telle quelle
     let text = c.to_value().unwrap().to_pretty();
-    assert!(text.contains("\"image_video\"") && text.contains("\"video\": 2") && text.contains("\"instant\": 2.5"), "{text}");
+    assert!(text.contains("\"image_video\"") && text.contains("\"video\": 2") && text.contains("\"time_s\": 2.5"), "{text}");
     let back = Cover::from_value(Some(&bdauthor_core::json::parse(&text).unwrap())).unwrap();
     assert_eq!(back.items, c.items);
     // mise en page : sans image extraite l'element est ignore ; avec elle (cle donnee par `vars`) il devient une image
@@ -353,7 +353,7 @@ fn video_image_item_json_layout_and_frame() {
     assert_eq!(lay.items.len(), 1);
     assert!(matches!(&lay.items[0].0, CoverDecor::Image { path, .. } if path == Path::new("/tmp/image.png")));
     // le modele liste les images a extraire (sans doublon, video existante seulement)
-    let mut m = ProjectModel::from_json(r#"{"videos": [{"fichier": "a.mp4"}, {"fichier": "b.mp4"}]}"#).unwrap();
+    let mut m = ProjectModel::from_json(r#"{"videos": [{"file": "a.mp4"}, {"file": "b.mp4"}]}"#).unwrap();
     m.cover = c.clone();
     m.label.items.push(it.clone());
     let fr = m.cover_frames();
@@ -381,6 +381,3 @@ fn video_frame_png_is_written_cropped() {
     assert_eq!(dim(&png2), (960, 540));
     let _ = std::fs::remove_dir_all(&dir);
 }
-
-/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
-fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

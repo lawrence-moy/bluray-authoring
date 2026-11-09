@@ -162,11 +162,11 @@ fn start_is_delayed_when_too_early() {
 fn model_json_roundtrip_with_subtitles() {
     common::fr();
     use bdauthor_core::model::ProjectModel;
-    let src = r##"{ "titre": "T", "langue": "fra", "videos": [
-        {"fichier": "a.mp4", "inconnu": 7, "soustitres": [
-            {"fichier": "a_fr.srt", "langue": "fra", "decalage_ms": -250, "style": {"taille": 64, "couleur": "#ffee00", "contour": 5, "position": "haut", "marge": 40, "police": "arial.ttf"}},
-            {"piste": 1, "langue": "eng"} ]},
-        {"fichier": "b.mp4"} ] }"##;
+    let src = r##"{ "title": "T", "language": "fra", "videos": [
+        {"file": "a.mp4", "inconnu": 7, "subtitles": [
+            {"file": "a_fr.srt", "language": "fra", "offset_ms": -250, "style": {"size": 64, "color": "#ffee00", "outline": 5, "position": "haut", "margin": 40, "font": "arial.ttf"}},
+            {"track": 1, "language": "eng"} ]},
+        {"file": "b.mp4"} ] }"##;
     let m = ProjectModel::from_json(src).unwrap();
     assert_eq!(m.videos[0].subs.len(), 2);
     let t = &m.videos[0].subs[0];
@@ -176,8 +176,8 @@ fn model_json_roundtrip_with_subtitles() {
     assert!(m.videos[1].subs.is_empty());
     let again = ProjectModel::from_json(&m.to_json()).unwrap();
     assert_eq!(again.videos[0].subs, m.videos[0].subs);
-    assert!(fr(&m).contains("\"inconnu\""), "champ inconnu perdu");
-    assert!(!fr(&m).contains("\"soustitres\": []"));
+    assert!(m.to_json().contains("\"inconnu\""), "champ inconnu perdu");
+    assert!(!m.to_json().contains("\"subtitles\": []"));
     // validation : fichier manquant, langue invalide
     let mut m2 = m.clone();
     m2.videos[0].subs[1].lang = "fr".into();
@@ -185,8 +185,5 @@ fn model_json_roundtrip_with_subtitles() {
     assert!(probs.iter().any(|p| p.contains("sous-titres 1") && p.contains("introuvable")), "{probs:?}");
     assert!(probs.iter().any(|p| p.contains("sous-titres 2") && p.contains("langue")), "{probs:?}");
     // une erreur de style est signalee a la lecture
-    assert!(ProjectModel::from_json(r#"{"videos":[{"fichier":"a","soustitres":[{"fichier":"x.srt","style":{"position":"ailleurs"}}]}]}"#).is_err());
+    assert!(ProjectModel::from_json(r#"{"videos":[{"file":"a","subtitles":[{"file":"x.srt","style":{"position":"ailleurs"}}]}]}"#).is_err());
 }
-
-/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
-fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

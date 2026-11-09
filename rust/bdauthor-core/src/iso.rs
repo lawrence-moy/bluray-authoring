@@ -1138,38 +1138,38 @@ impl IsoSettings {
         let Some(v) = v else { return Ok(s) };
         let st = |k: &str| v.get(k).and_then(crate::json::Value::as_str).unwrap_or("").to_string();
         let flag = |k: &str, d: bool| v.get(k).and_then(crate::json::Value::as_bool).unwrap_or(d);
-        s.keep = match v.get("conserver").and_then(crate::json::Value::as_str) {
+        s.keep = match v.get("keep").and_then(crate::json::Value::as_str) {
             None | Some("dossier") => IsoKeep::Folder,
             Some("iso") => IsoKeep::Iso,
             Some("les_deux") => IsoKeep::Both,
-            Some(x) => return Err(trf!("iso.conserver: “{}” unknown (dossier, iso, les_deux)", x)),
+            Some(x) => return Err(trf!("iso.keep: “{}” unknown (dossier, iso, les_deux)", x)),
         };
-        s.file = st("fichier");
-        if let Some(c) = v.get("capacite").and_then(crate::json::Value::as_str) {
-            s.capacity = CAPACITIES.iter().position(|(n, _)| *n == c).ok_or(trf!("iso.capacite: “{}” unknown (BD-25, BD-50, BD-100)", c))?;
+        s.file = st("file");
+        if let Some(c) = v.get("capacity").and_then(crate::json::Value::as_str) {
+            s.capacity = CAPACITIES.iter().position(|(n, _)| *n == c).ok_or(trf!("iso.capacity: “{}” unknown (BD-25, BD-50, BD-100)", c))?;
         }
-        s.opts.label = st("nom_volume");
-        s.opts.owner = st("proprietaire");
-        s.opts.organization = st("organisation");
+        s.opts.label = st("volume_name");
+        s.opts.owner = st("owner");
+        s.opts.organization = st("organization");
         s.opts.contact = st("contact");
         s.opts.udf = match v.get("udf").and_then(crate::json::Value::as_str) {
             None | Some("2.50") => UdfRev::V250,
             Some("2.60") => UdfRev::V260,
             Some(x) => return Err(trf!("iso.udf: “{}” unknown (2.50, 2.60)", x)),
         };
-        s.opts.align = flag("aligner", true);
-        s.opts.play_order = flag("ordre_lecture", true);
-        s.opts.mirror = flag("miroir", true);
+        s.opts.align = flag("align_blocks", true);
+        s.opts.play_order = flag("play_order", true);
+        s.opts.mirror = flag("mirror", true);
         s.opts.date = match v.get("date").and_then(crate::json::Value::as_str) {
             Some(t) => IsoDate::Custom(IsoStamp::parse(t).ok_or(trf!("iso.date: “{}” invalid (YYYY-MM-DD HH:MM)", t))?),
-            None => if flag("date_fixe", false) { IsoDate::Fixed } else { IsoDate::Now },
+            None => if flag("fixed_date", false) { IsoDate::Fixed } else { IsoDate::Now },
         };
-        s.opts.compat = flag("compatibilite", true);
-        if let Some(m) = v.get("marge").and_then(crate::json::Value::as_f64) {
-            if !(0.0..=100.0).contains(&m) { return Err(trf!("iso.marge: 0 to 100 (0: disabled), {} given", m)); }
+        s.opts.compat = flag("compatibility", true);
+        if let Some(m) = v.get("margin").and_then(crate::json::Value::as_f64) {
+            if !(0.0..=100.0).contains(&m) { return Err(trf!("iso.margin: 0 to 100 (0: disabled), {} given", m)); }
             s.margin = m.round() as u8;
         }
-        s.verify = flag("verifier", true);
+        s.verify = flag("verify", true);
         Ok(s)
     }
 
@@ -1179,19 +1179,19 @@ impl IsoSettings {
         let d = IsoSettings::default();
         let mut o: Vec<(String, Value)> = Vec::new();
         let mut text = |k: &str, v: &str| if !v.is_empty() { o.push((k.into(), Value::Str(v.into()))); };
-        text("conserver", match self.keep { IsoKeep::Folder => "", IsoKeep::Iso => "iso", IsoKeep::Both => "les_deux" });
-        text("fichier", &self.file);
-        text("capacite", if self.capacity == 0 { "" } else { CAPACITIES.get(self.capacity).map_or("", |c| c.0) });
-        text("nom_volume", &self.opts.label);
-        text("proprietaire", &self.opts.owner);
-        text("organisation", &self.opts.organization);
+        text("keep", match self.keep { IsoKeep::Folder => "", IsoKeep::Iso => "iso", IsoKeep::Both => "les_deux" });
+        text("file", &self.file);
+        text("capacity", if self.capacity == 0 { "" } else { CAPACITIES.get(self.capacity).map_or("", |c| c.0) });
+        text("volume_name", &self.opts.label);
+        text("owner", &self.opts.owner);
+        text("organization", &self.opts.organization);
         text("contact", &self.opts.contact);
         text("udf", if self.opts.udf == UdfRev::V260 { "2.60" } else { "" });
-        for (k, v, dv) in [("aligner", self.opts.align, d.opts.align), ("ordre_lecture", self.opts.play_order, d.opts.play_order), ("miroir", self.opts.mirror, d.opts.mirror), ("date_fixe", self.opts.date == IsoDate::Fixed, false), ("compatibilite", self.opts.compat, d.opts.compat), ("verifier", self.verify, d.verify)] {
+        for (k, v, dv) in [("align_blocks", self.opts.align, d.opts.align), ("play_order", self.opts.play_order, d.opts.play_order), ("mirror", self.opts.mirror, d.opts.mirror), ("fixed_date", self.opts.date == IsoDate::Fixed, false), ("compatibility", self.opts.compat, d.opts.compat), ("verify", self.verify, d.verify)] {
             if v != dv { o.push((k.into(), Value::Bool(v))); }
         }
         if let IsoDate::Custom(c) = self.opts.date { o.push(("date".into(), Value::Str(c.text()))); }
-        if self.margin != d.margin { o.push(("marge".into(), Value::Num(self.margin as f64))); }
+        if self.margin != d.margin { o.push(("margin".into(), Value::Num(self.margin as f64))); }
         if o.is_empty() { None } else { Some(Value::Obj(o)) }
     }
 

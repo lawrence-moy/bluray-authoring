@@ -51,16 +51,16 @@ fn plan_lets_each_video_keep_its_languages() {
 #[test]
 fn audio_tracks_json_and_validation() {
     common::fr();
-    let t = r#"{"langue":"fra","langues":[{"id":1,"nom":"Francais","code":"fra"},{"id":2,"nom":"Anglais","code":"eng"}],
-      "videos":[{"fichier":"a.mp4","pistes_audio":[{"piste":0,"langue":"xxx","langue_id":1,"decalage_ms":-120},{"fichier":"en.wav","langue_id":2}]}]}"#;
+    let t = r#"{"language":"fra","languages":[{"id":1,"name":"Francais","code":"fra"},{"id":2,"name":"Anglais","code":"eng"}],
+      "videos":[{"file":"a.mp4","audio_tracks":[{"track":0,"language":"xxx","language_id":1,"offset_ms":-120},{"file":"en.wav","language_id":2}]}]}"#;
     let mut m = ProjectModel::from_json(t).unwrap();
     assert_eq!(m.videos[0].audio.len(), 2);
     assert_eq!(m.videos[0].audio[0].offset_ms, -120);
     assert_eq!(m.videos[0].audio[1].source, AudioSource::File("en.wav".into()));
     // le code ecrit suit la langue du projet
     let out = m.to_json();
-    let fro = fr(&m);
-    assert!(fro.contains("\"langue\": \"fra\"") && fro.contains("\"langue_id\": 2") && fro.contains("\"decalage_ms\": -120"), "{fro}");
+    let fro = m.to_json();
+    assert!(fro.contains("\"language\": \"fra\"") && fro.contains("\"language_id\": 2") && fro.contains("\"offset_ms\": -120"), "{fro}");
     assert_eq!(ProjectModel::from_json(&out).unwrap().videos[0].audio, m.to_value_audio_for_test());
     let probs = |m: &ProjectModel| -> Vec<String> { m.validate(std::path::Path::new("/nonexistent")).into_iter().filter(|p| !p.contains("introuvable")).collect() };
     assert!(probs(&m).is_empty(), "{:?}", probs(&m));
@@ -79,6 +79,3 @@ impl AudioForTest for ProjectModel {
         back.videos[0].audio.clone()
     }
 }
-
-/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
-fn fr(m: &ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

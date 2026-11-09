@@ -128,17 +128,17 @@ impl ButtonStyle {
         let hex = |c: [u8; 3]| Value::Str(format!("#{:02x}{:02x}{:02x}", c[0], c[1], c[2]));
         let n = |v: i32| Value::Num(v as f64);
         let mut o = vec![
-            ("fond".into(), hex(self.normal_bg)), ("texte".into(), hex(self.normal_text)), ("cadre".into(), hex(self.normal_border)),
-            ("cadre_epaisseur".into(), n(self.normal_border_w)), ("assombrir".into(), n(self.dim)),
-            ("fond_selection".into(), hex(self.sel_bg)), ("texte_selection".into(), hex(self.sel_text)), ("cadre_selection".into(), hex(self.sel_border)),
-            ("cadre_selection_epaisseur".into(), n(self.sel_border_w)), ("arrondi".into(), n(self.radius)),
-            ("halo".into(), n(self.glow)), ("halo_couleur".into(), hex(self.glow_color)), ("halo_anime".into(), Value::Bool(self.glow_pulse)), ("agrandir".into(), n(self.zoom)),
-            ("fond_cliquable".into(), n(self.backdrop)), ("souligner".into(), Value::Bool(self.underline)),
-            ("etat_active".into(), Value::Bool(self.activated)), ("fond_active".into(), hex(self.act_bg)),
-            ("texte_active".into(), hex(self.act_text)), ("cadre_active".into(), hex(self.act_border)),
+            ("background".into(), hex(self.normal_bg)), ("text".into(), hex(self.normal_text)), ("frame".into(), hex(self.normal_border)),
+            ("frame_thickness".into(), n(self.normal_border_w)), ("dim".into(), n(self.dim)),
+            ("background_selected".into(), hex(self.sel_bg)), ("text_selected".into(), hex(self.sel_text)), ("frame_selected".into(), hex(self.sel_border)),
+            ("frame_selected_thickness".into(), n(self.sel_border_w)), ("radius".into(), n(self.radius)),
+            ("glow".into(), n(self.glow)), ("glow_color".into(), hex(self.glow_color)), ("glow_animated".into(), Value::Bool(self.glow_pulse)), ("zoom".into(), n(self.zoom)),
+            ("background_clickable".into(), n(self.backdrop)), ("underline".into(), Value::Bool(self.underline)),
+            ("activated_state".into(), Value::Bool(self.activated)), ("background_activated".into(), hex(self.act_bg)),
+            ("text_activated".into(), hex(self.act_text)), ("frame_activated".into(), hex(self.act_border)),
         ];
-        if !self.sound_select.is_empty() { o.push(("son_selection".into(), Value::Str(self.sound_select.clone()))); }
-        if !self.sound_activate.is_empty() { o.push(("son_activation".into(), Value::Str(self.sound_activate.clone()))); }
+        if !self.sound_select.is_empty() { o.push(("sound_select".into(), Value::Str(self.sound_select.clone()))); }
+        if !self.sound_activate.is_empty() { o.push(("sound_activate".into(), Value::Str(self.sound_activate.clone()))); }
         Value::Obj(o)
     }
 
@@ -155,29 +155,29 @@ impl ButtonStyle {
         };
         let int = |k: &str, d: &mut i32| { if let Some(x) = v.get(k).and_then(Value::as_f64) { *d = x.round() as i32; } };
         let boolean = |k: &str, d: &mut bool| { if let Some(x) = v.get(k).and_then(Value::as_bool) { *d = x; } };
-        col("fond", &mut s.normal_bg)?;
-        col("texte", &mut s.normal_text)?;
-        col("cadre", &mut s.normal_border)?;
-        int("cadre_epaisseur", &mut s.normal_border_w);
-        int("assombrir", &mut s.dim);
-        col("fond_selection", &mut s.sel_bg)?;
-        col("texte_selection", &mut s.sel_text)?;
-        col("cadre_selection", &mut s.sel_border)?;
-        int("cadre_selection_epaisseur", &mut s.sel_border_w);
-        int("arrondi", &mut s.radius);
-        int("halo", &mut s.glow);
-        col("halo_couleur", &mut s.glow_color)?;
-        boolean("halo_anime", &mut s.glow_pulse);
-        int("agrandir", &mut s.zoom);
-        int("fond_cliquable", &mut s.backdrop);
-        boolean("souligner", &mut s.underline);
-        boolean("etat_active", &mut s.activated);
-        col("fond_active", &mut s.act_bg)?;
-        col("texte_active", &mut s.act_text)?;
-        col("cadre_active", &mut s.act_border)?;
+        col("background", &mut s.normal_bg)?;
+        col("text", &mut s.normal_text)?;
+        col("frame", &mut s.normal_border)?;
+        int("frame_thickness", &mut s.normal_border_w);
+        int("dim", &mut s.dim);
+        col("background_selected", &mut s.sel_bg)?;
+        col("text_selected", &mut s.sel_text)?;
+        col("frame_selected", &mut s.sel_border)?;
+        int("frame_selected_thickness", &mut s.sel_border_w);
+        int("radius", &mut s.radius);
+        int("glow", &mut s.glow);
+        col("glow_color", &mut s.glow_color)?;
+        boolean("glow_animated", &mut s.glow_pulse);
+        int("zoom", &mut s.zoom);
+        int("background_clickable", &mut s.backdrop);
+        boolean("underline", &mut s.underline);
+        boolean("activated_state", &mut s.activated);
+        col("background_activated", &mut s.act_bg)?;
+        col("text_activated", &mut s.act_text)?;
+        col("frame_activated", &mut s.act_border)?;
         let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-        s.sound_select = text("son_selection");
-        s.sound_activate = text("son_activation");
+        s.sound_select = text("sound_select");
+        s.sound_activate = text("sound_activate");
         Ok(s.clamped())
     }
 }
@@ -248,17 +248,17 @@ impl Skin {
     }
     pub fn to_value(&self) -> Value {
         let mut o = Vec::new();
-        for (k, v) in [("normal", &self.normal), ("selectionne", &self.selected), ("active", &self.activated)] {
+        for (k, v) in [("normal", &self.normal), ("selected", &self.selected), ("activated", &self.activated)] {
             if !v.is_empty() { o.push((k.to_string(), Value::Str(v.clone()))); }
         }
         let list = |f: &[String]| Value::Arr(f.iter().map(|x| Value::Str(x.clone())).collect());
         if !self.normal_frames.is_empty() {
             o.push(("animation_normal".into(), list(&self.normal_frames)));
-            if self.normal_once { o.push(("animation_normal_une_fois".into(), Value::Bool(true))); }
+            if self.normal_once { o.push(("animation_normal_once".into(), Value::Bool(true))); }
         }
         if !self.sel_frames.is_empty() {
-            o.push(("animation_selection".into(), list(&self.sel_frames)));
-            if self.sel_once { o.push(("animation_une_fois".into(), Value::Bool(true))); }
+            o.push(("animation_selected".into(), list(&self.sel_frames)));
+            if self.sel_once { o.push(("animation_once".into(), Value::Bool(true))); }
         }
         Value::Obj(o)
     }
@@ -267,12 +267,12 @@ impl Skin {
         let frames = |k: &str| -> Vec<String> { v.get(k).and_then(Value::as_array)
             .map(|a| a.iter().filter_map(Value::as_str).filter(|f| !f.is_empty()).map(String::from).collect()).unwrap_or_default() };
         let flag = |k: &str| v.get(k).and_then(Value::as_bool).unwrap_or(false);
-        let mut s = Skin { normal: g("normal"), selected: g("selectionne"), activated: g("active"), ..Default::default() };
+        let mut s = Skin { normal: g("normal"), selected: g("selected"), activated: g("activated"), ..Default::default() };
         // une animation (si presente) prime sur l'image fixe du meme etat, comme sur le disque ; une animation d'une image est une image fixe
-        let sel = frames("animation_selection");
-        if !sel.is_empty() { s.set_selected(sel); if s.sel_frames.len() >= 2 { s.sel_once = flag("animation_une_fois"); } }
+        let sel = frames("animation_selected");
+        if !sel.is_empty() { s.set_selected(sel); if s.sel_frames.len() >= 2 { s.sel_once = flag("animation_once"); } }
         let nor = frames("animation_normal");
-        if !nor.is_empty() { s.set_normal(nor); if s.normal_frames.len() >= 2 { s.normal_once = flag("animation_normal_une_fois"); } }
+        if !nor.is_empty() { s.set_normal(nor); if s.normal_frames.len() >= 2 { s.normal_once = flag("animation_normal_once"); } }
         s
     }
 }
@@ -307,13 +307,13 @@ pub struct ItemSounds {
 impl ItemSounds {
     pub fn to_value(&self) -> Value {
         let mut o = Vec::new();
-        if !self.select.is_empty() { o.push(("selection".to_string(), Value::Str(self.select.clone()))); }
-        if !self.activate.is_empty() { o.push(("activation".to_string(), Value::Str(self.activate.clone()))); }
+        if !self.select.is_empty() { o.push(("select".to_string(), Value::Str(self.select.clone()))); }
+        if !self.activate.is_empty() { o.push(("activate".to_string(), Value::Str(self.activate.clone()))); }
         Value::Obj(o)
     }
     pub fn from_value(v: &Value) -> ItemSounds {
         let g = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
-        ItemSounds { select: g("selection"), activate: g("activation") }
+        ItemSounds { select: g("select"), activate: g("activate") }
     }
 }
 

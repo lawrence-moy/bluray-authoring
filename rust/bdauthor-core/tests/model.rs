@@ -2,10 +2,10 @@ mod common;
 use bdauthor_core::json::{parse, Value};
 use bdauthor_core::model::*;
 
-const EX: &str = r#"{ "titre": "Mes vidéos", "langue": "fra", "inconnu": {"a": 1},
-  "videos": [ {"fichier": "a.mp4", "titre": "Première", "chapitres": [0, 120, {"t": 300, "titre": "Le pont"}], "extra": true},
-              {"fichier": "b.mp4", "vignette_s": 3.0, "chapitres_auto_s": 60} ],
-  "encodage": {"crf": 20, "preset": "fast", "maxrate": 25000}, "menu": {"fond": "f.png", "fond_secondes": 5, "par_page": 8} }"#;
+const EX: &str = r#"{ "title": "Mes vidéos", "language": "fra", "inconnu": {"a": 1},
+  "videos": [ {"file": "a.mp4", "title": "Première", "chapters": [0, 120, {"t": 300, "title": "Le pont"}], "extra": true},
+              {"file": "b.mp4", "thumbnail_s": 3.0, "auto_chapters_s": 60} ],
+  "encoding": {"crf": 20, "preset": "fast", "maxrate": 25000}, "menu": {"background": "f.png", "background_seconds": 5, "par_page": 8} }"#;
 
 #[test]
 fn roundtrip_preserves_everything() {
@@ -16,13 +16,13 @@ fn roundtrip_preserves_everything() {
     assert_eq!(m.videos[0].chapters[2].title, "Le pont");
     assert_eq!((m.crf, m.preset.as_str()), (20, "fast"));
     let out = m.to_json();
-    let back = bdauthor_core::json::parse_project(&out).unwrap();
-    let orig = bdauthor_core::json::parse_project(EX).unwrap();
+    let back = bdauthor_core::json::parse(&out).unwrap();
+    let orig = bdauthor_core::json::parse(EX).unwrap();
     // champs inconnus conserves ; ancien reglage des menus automatiques retire
     assert_eq!(back.get("inconnu"), orig.get("inconnu"));
     assert!(back.get("menu").unwrap().get("par_page").is_none());
     assert_eq!(back.get("videos").unwrap().as_array().unwrap()[0].get("extra"), Some(&Value::Bool(true)));
-    assert_eq!(back.get("encodage").unwrap().get("maxrate").unwrap().as_i64(), Some(25000));
+    assert_eq!(back.get("encoding").unwrap().get("maxrate").unwrap().as_i64(), Some(25000));
     // le modele relu est identique
     // idempotent : relire puis réécrire redonne exactement le même texte
     assert_eq!(ProjectModel::from_json(&out).unwrap().to_json(), out);
@@ -35,11 +35,11 @@ fn edits_and_validation() {
     m.videos[1].title = "Seconde".into();
     m.videos[1].auto_s = None;
     m.videos[1].chapters.push(ChapterEntry { id: 1, t: 10.0, title: String::new() });
-    let v = bdauthor_core::json::parse_project(&m.to_json()).unwrap();
+    let v = bdauthor_core::json::parse(&m.to_json()).unwrap();
     let v1 = &v.get("videos").unwrap().as_array().unwrap()[1];
-    assert_eq!(v1.get("titre").unwrap().as_str(), Some("Seconde"));
-    assert!(v1.get("chapitres_auto_s").is_none());
-    assert_eq!(v1.get("chapitres").unwrap().as_array().unwrap()[0].as_f64(), Some(10.0));
+    assert_eq!(v1.get("title").unwrap().as_str(), Some("Seconde"));
+    assert!(v1.get("auto_chapters_s").is_none());
+    assert_eq!(v1.get("chapters").unwrap().as_array().unwrap()[0].as_f64(), Some(10.0));
     assert!(v.get("menu").unwrap().get("par_page").is_none());
     let probs = m.validate(std::path::Path::new("/nonexistent"));
     assert!(probs.iter().any(|p| p.contains("introuvable")), "{probs:?}");

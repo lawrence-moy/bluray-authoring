@@ -37,27 +37,27 @@ impl AudioTrackCfg {
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
-        let source = match (v.get("fichier").and_then(Value::as_str), v.get("piste").and_then(Value::as_i64)) {
+        let source = match (v.get("file").and_then(Value::as_str), v.get("track").and_then(Value::as_i64)) {
             (Some(f), _) => AudioSource::File(f.into()),
             (None, Some(n)) if n >= 0 => AudioSource::Embedded(n as u32),
             _ => return Err(tr("audio tracks: “file” or “track” expected").into()),
         };
         Ok(AudioTrackCfg {
             source,
-            lang_id: v.get("langue_id").and_then(Value::as_i64).filter(|n| *n >= 1).map_or(0, |n| n as u32),
-            lang: v.get("langue").and_then(Value::as_str).unwrap_or("und").into(),
-            offset_ms: v.get("decalage_ms").and_then(Value::as_f64).map_or(0, |x| x.round() as i64),
+            lang_id: v.get("language_id").and_then(Value::as_i64).filter(|n| *n >= 1).map_or(0, |n| n as u32),
+            lang: v.get("language").and_then(Value::as_str).unwrap_or("und").into(),
+            offset_ms: v.get("offset_ms").and_then(Value::as_f64).map_or(0, |x| x.round() as i64),
         })
     }
 
     pub fn to_value(&self) -> Value {
         let mut o = vec![match &self.source {
-            AudioSource::File(f) => ("fichier".to_string(), Value::Str(f.clone())),
-            AudioSource::Embedded(n) => ("piste".to_string(), Value::Num(*n as f64)),
+            AudioSource::File(f) => ("file".to_string(), Value::Str(f.clone())),
+            AudioSource::Embedded(n) => ("track".to_string(), Value::Num(*n as f64)),
         }];
-        o.push(("langue".into(), Value::Str(self.lang.clone())));
-        if self.lang_id != 0 { o.push(("langue_id".into(), Value::Num(self.lang_id as f64))); }
-        if self.offset_ms != 0 { o.push(("decalage_ms".into(), Value::Num(self.offset_ms as f64))); }
+        o.push(("language".into(), Value::Str(self.lang.clone())));
+        if self.lang_id != 0 { o.push(("language_id".into(), Value::Num(self.lang_id as f64))); }
+        if self.offset_ms != 0 { o.push(("offset_ms".into(), Value::Num(self.offset_ms as f64))); }
         Value::Obj(o)
     }
 
@@ -79,7 +79,7 @@ impl AudioTrackCfg {
 pub fn tracks_from_value(v: Option<&Value>) -> Result<Vec<AudioTrackCfg>, String> {
     match v {
         None | Some(Value::Null) => Ok(vec![]),
-        Some(a) => a.as_array().ok_or(tr("“pistes_audio”: list expected"))?.iter().map(AudioTrackCfg::from_value).collect(),
+        Some(a) => a.as_array().ok_or(tr("“audio_tracks”: list expected"))?.iter().map(AudioTrackCfg::from_value).collect(),
     }
 }
 

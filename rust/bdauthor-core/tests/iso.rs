@@ -194,19 +194,19 @@ fn project_settings() {
     m.iso.verify = false;
     m.iso.file = "disques/vacances.iso".into();
     let j = m.to_json();
-    let v = bdauthor_core::json::parse_project(&j).unwrap();
+    let v = bdauthor_core::json::parse(&j).unwrap();
     let iso = v.get("iso").unwrap();
-    assert_eq!(iso.get("conserver").and_then(|x| x.as_str()), Some("les_deux"));
-    assert_eq!(iso.get("capacite").and_then(|x| x.as_str()), Some("BD-50"));
-    assert!(iso.get("aligner").is_none(), "valeur par defaut non ecrite");
+    assert_eq!(iso.get("keep").and_then(|x| x.as_str()), Some("les_deux"));
+    assert_eq!(iso.get("capacity").and_then(|x| x.as_str()), Some("BD-50"));
+    assert!(iso.get("align_blocks").is_none(), "valeur par defaut non ecrite");
     let back = ProjectModel::from_json(&j).unwrap();
     assert_eq!(back.iso, m.iso);
     assert_eq!(back.iso.iso_path(Path::new("/p"), Path::new("/x/out")), Path::new("/p/disques/vacances.iso"));
     let d = IsoSettings::default();
     assert_eq!(d.iso_path(Path::new("/p"), Path::new("/x/out")), Path::new("/x/out.iso"));
     // valeurs inconnues refusees
-    assert!(ProjectModel::from_json(r#"{"videos": [], "iso": {"capacite": "BD-30"}}"#).is_err());
-    assert!(ProjectModel::from_json(r#"{"videos": [], "iso": {"conserver": "tout"}}"#).is_err());
+    assert!(ProjectModel::from_json(r#"{"videos": [], "iso": {"capacity": "BD-30"}}"#).is_err());
+    assert!(ProjectModel::from_json(r#"{"videos": [], "iso": {"keep": "tout"}}"#).is_err());
 }
 
 #[test]

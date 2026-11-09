@@ -110,7 +110,7 @@ Les projets sont des fichiers JSON lisibles et éditables à la main (chemins re
 }
 ```
 
-Les clés sont en anglais. Les anciens projets écrits avec des clés françaises (`titre`, `fichier`, `encodage`…) sont toujours lus et réécrits avec des clés anglaises au prochain enregistrement.
+Les clés sont en anglais. Les projets écrits par les versions précédentes avec des clés françaises (`titre`, `fichier`, `encodage`…) ne sont plus lus.
 
 ---
 

@@ -4,8 +4,8 @@ use bdauthor_core::png::write_png;
 
 #[test]
 fn json_basic() {
-    let v = parse(r#"{"titre":"Mes vidéos 😀","n":[1,2.5,-3e2,{"t":95,"titre":"Le pont"}],"ok":true,"x":null,"n":7}"#).unwrap();
-    assert_eq!(v.get("titre").unwrap().as_str().unwrap(), "Mes vidéos 😀");
+    let v = parse(r#"{"title":"Mes vidéos 😀","n":[1,2.5,-3e2,{"t":95,"title":"Le pont"}],"ok":true,"x":null,"n":7}"#).unwrap();
+    assert_eq!(v.get("title").unwrap().as_str().unwrap(), "Mes vidéos 😀");
     assert_eq!(v.get("n").unwrap().as_i64(), Some(7), "derniere valeur gagne");
     assert_eq!(v.get("ok").unwrap().as_bool(), Some(true));
     assert!(v.get("x").unwrap().is_null());

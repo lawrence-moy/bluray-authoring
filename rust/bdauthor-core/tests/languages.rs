@@ -3,12 +3,12 @@ mod common;
 use bdauthor_core::design::*;
 use bdauthor_core::model::*;
 
-const PROJECT: &str = r##"{ "titre": "T", "langue": "fra",
-  "langues": [ {"id":1,"nom":"Français","code":"fra"}, {"id":2,"nom":"Anglais","code":"eng"}, {"id":3,"nom":"Allemand","code":"deu"} ],
-  "videos": [ {"fichier": "a.mp4", "soustitres": [ {"fichier":"f.srt","langue":"fra","langue_id":1}, {"fichier":"e.srt","langue":"eng","langue_id":2} ]},
-              {"fichier": "b.mp4", "soustitres": [ {"fichier":"e.srt","langue":"eng","langue_id":2}, {"fichier":"f.srt","langue":"fra","langue_id":1}, {"fichier":"d.srt","langue":"deu","langue_id":3} ]} ],
-  "mise_en_page": { "pages": [ { "nom": "P", "elements": [
-     {"type":"texte","texte":"EN","x":0,"y":0,"w":300,"h":80,"taille":40,"cible":{"rester":true},"soustitres":{"langue":2}} ] } ] } }"##;
+const PROJECT: &str = r##"{ "title": "T", "language": "fra",
+  "languages": [ {"id":1,"name":"Français","code":"fra"}, {"id":2,"name":"Anglais","code":"eng"}, {"id":3,"name":"Allemand","code":"deu"} ],
+  "videos": [ {"file": "a.mp4", "subtitles": [ {"file":"f.srt","language":"fra","language_id":1}, {"file":"e.srt","language":"eng","language_id":2} ]},
+              {"file": "b.mp4", "subtitles": [ {"file":"e.srt","language":"eng","language_id":2}, {"file":"f.srt","language":"fra","language_id":1}, {"file":"d.srt","language":"deu","language_id":3} ]} ],
+  "layout": { "pages": [ { "name": "P", "items": [
+     {"type":"texte","text":"EN","x":0,"y":0,"w":300,"h":80,"size":40,"target":{"stay":true},"subtitles":{"language":2}} ] } ] } }"##;
 
 #[test]
 fn validation_of_languages() {
@@ -49,25 +49,25 @@ fn validation_of_languages() {
 #[test]
 fn language_choice_json() {
     common::fr();
-    let t = r#"{"videos":[{"fichier":"a"}],"langues":[{"id":4,"nom":"Anglais","code":"eng"}],
-      "mise_en_page":{"pages":[{"nom":"P","elements":[{"type":"texte","texte":"x","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"rester":true},"soustitres":{"langue":4}}]}]}}"#;
+    let t = r#"{"videos":[{"file":"a"}],"languages":[{"id":4,"name":"Anglais","code":"eng"}],
+      "layout":{"pages":[{"name":"P","items":[{"type":"texte","text":"x","x":0,"y":0,"w":10,"h":10,"size":40,"target":{"stay":true},"subtitles":{"language":4}}]}]}}"#;
     let m = ProjectModel::from_json(t).unwrap();
     assert_eq!(m.designs.free[0].items[0].sub, SubChoice::Lang(4));
-    assert!(fr(&m).contains("\"langue\": 4"));
-    assert!(ProjectModel::from_json(r#"{"videos":[{"fichier":"a"}],"langues":[{"id":1,"code":"fra"},{"id":1,"code":"eng"}]}"#).is_err());
+    assert!(m.to_json().contains("\"language\": 4"));
+    assert!(ProjectModel::from_json(r#"{"videos":[{"file":"a"}],"languages":[{"id":1,"code":"fra"},{"id":1,"code":"eng"}]}"#).is_err());
 }
 
 #[test]
 fn audio_language_action() {
     common::fr();
     // texte cliquable (pas seulement un bouton) qui regle la langue audio 4
-    let t = r#"{"videos":[{"fichier":"a","pistes_audio":[{"piste":1,"langue":"eng","langue_id":4}]}],"langues":[{"id":4,"nom":"Anglais","code":"eng"}],
-      "mise_en_page":{"pages":[{"nom":"P","elements":[{"type":"texte","texte":"x","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"audio_langue":4}}]}]}}"#;
+    let t = r#"{"videos":[{"file":"a","audio_tracks":[{"track":1,"language":"eng","language_id":4}]}],"languages":[{"id":4,"name":"Anglais","code":"eng"}],
+      "layout":{"pages":[{"name":"P","items":[{"type":"texte","text":"x","x":0,"y":0,"w":10,"h":10,"size":40,"target":{"audio_language":4}}]}]}}"#;
     let mut m = ProjectModel::from_json(t).unwrap();
     let link = |m: &ProjectModel| match &m.designs.free[0].items[0].kind { Kind::Text { link, .. } => *link, _ => None };
     assert_eq!(link(&m), Some(Target::Audio(4, None)));
     assert_eq!(m.designs.free[0].items[0].sub, SubChoice::Keep);
-    assert!(fr(&m).contains("\"audio_langue\": 4"));
+    assert!(m.to_json().contains("\"audio_language\": 4"));
     let probs = |m: &ProjectModel| -> Vec<String> { m.validate(std::path::Path::new("/nonexistent")).into_iter().filter(|p| !p.contains("introuvable")).collect() };
     assert!(!probs(&m).iter().any(|p| p.contains("Élément cliquable")), "{:?}", probs(&m));
     // plus aucune video avec cette langue : avertissement
@@ -85,19 +85,19 @@ fn audio_language_action() {
 fn setting_then_exit_page() {
     common::fr();
     // reglage des sous-titres puis page 2 ; reglage audio puis page 3 ; JSON, renumerotation et suppression de page
-    let t = r#"{"videos":[{"fichier":"a"}],"langues":[{"id":4,"nom":"Anglais","code":"eng"}],
-      "mise_en_page":{"pages":[
-        {"nom":"P1","elements":[
-          {"type":"texte","texte":"st","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"rester":true,"ensuite":2},"soustitres":{"langue":4}},
-          {"type":"texte","texte":"au","x":0,"y":20,"w":10,"h":10,"taille":40,"cible":{"audio_langue":4,"ensuite":3}},
-          {"type":"texte","texte":"ici","x":0,"y":40,"w":10,"h":10,"taille":40,"cible":{"rester":true},"soustitres":"aucun"}]},
-        {"nom":"P2","elements":[]},{"nom":"P3","elements":[]}]}}"#;
+    let t = r#"{"videos":[{"file":"a"}],"languages":[{"id":4,"name":"Anglais","code":"eng"}],
+      "layout":{"pages":[
+        {"name":"P1","items":[
+          {"type":"texte","text":"st","x":0,"y":0,"w":10,"h":10,"size":40,"target":{"stay":true,"then":2},"subtitles":{"language":4}},
+          {"type":"texte","text":"au","x":0,"y":20,"w":10,"h":10,"size":40,"target":{"audio_language":4,"then":3}},
+          {"type":"texte","text":"ici","x":0,"y":40,"w":10,"h":10,"size":40,"target":{"stay":true},"subtitles":"aucun"}]},
+        {"name":"P2","items":[]},{"name":"P3","items":[]}]}}"#;
     let mut m = ProjectModel::from_json(t).unwrap();
     let links = |m: &ProjectModel| -> Vec<Option<Target>> { m.designs.free[0].items.iter().map(|it| it.link()).collect() };
     assert_eq!(links(&m), [Some(Target::Stay(Some(1))), Some(Target::Audio(4, Some(2))), Some(Target::Stay(None))]);
     let back = ProjectModel::from_json(&m.to_json()).unwrap();
     assert_eq!(links(&back), links(&m));
-    assert!(fr(&m).contains("\"ensuite\": 2"));
+    assert!(m.to_json().contains("\"then\": 2"));
     assert_eq!(Target::Audio(4, Some(2)).without_exit(), Target::Audio(4, None));
     // echange des pages 2 et 3 : les sorties suivent
     bdauthor_core::editor::swap_pages(&mut m, 1, 2);
@@ -106,6 +106,3 @@ fn setting_then_exit_page() {
     m.designs.page_removed(2);
     assert_eq!(links(&m)[..2], [Some(Target::Stay(None)), Some(Target::Audio(4, Some(1)))]);
 }
-
-/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
-fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

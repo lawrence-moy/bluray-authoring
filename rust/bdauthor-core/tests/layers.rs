@@ -68,11 +68,11 @@ fn layers_group_and_order_items() {
 #[test]
 fn unknown_layers_are_regrouped() {
     // JSON edite a la main : elements de calques melanges ou inconnus
-    let v = bdauthor_core::json::parse(r#"{ "calques": [ {"id": 4, "nom": "Fond"}, {"id": 9, "nom": "Boutons"} ], "elements": [
-      {"type":"texte","texte":"b1","x":0,"y":0,"w":10,"h":10,"taille":20,"calque":9},
-      {"type":"texte","texte":"f1","x":0,"y":0,"w":10,"h":10,"taille":20,"calque":4},
-      {"type":"texte","texte":"z","x":0,"y":0,"w":10,"h":10,"taille":20,"calque":77},
-      {"type":"texte","texte":"b2","x":0,"y":0,"w":10,"h":10,"taille":20,"calque":9} ] }"#).unwrap();
+    let v = bdauthor_core::json::parse(r#"{ "layers": [ {"id": 4, "name": "Fond"}, {"id": 9, "name": "Boutons"} ], "items": [
+      {"type":"texte","text":"b1","x":0,"y":0,"w":10,"h":10,"size":20,"layer":9},
+      {"type":"texte","text":"f1","x":0,"y":0,"w":10,"h":10,"size":20,"layer":4},
+      {"type":"texte","text":"z","x":0,"y":0,"w":10,"h":10,"size":20,"layer":77},
+      {"type":"texte","text":"b2","x":0,"y":0,"w":10,"h":10,"size":20,"layer":9} ] }"#).unwrap();
     let d = PageDesign::from_value(&v).unwrap();
     assert_eq!(names(&d), ["f1", "z", "b1", "b2"]);
     assert_eq!(d.items[1].layer, 4);

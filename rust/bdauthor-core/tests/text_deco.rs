@@ -10,7 +10,7 @@ fn plain_text_writes_no_deco_fields() {
     let d = PageDesign { items: vec![Item::text("Titre", 100, 90, 800, 110, 60)], ..Default::default() };
     assert!(text_deco(&d).is_plain());
     let j = d.to_value().to_pretty();
-    assert!(!j.contains("fond_") && !j.contains("contour"), "{j}");
+    assert!(!j.contains("fond_") && !j.contains("outline"), "{j}");
 }
 
 #[test]
@@ -21,14 +21,14 @@ fn deco_roundtrip() {
     }
     let v = d.to_value();
     let j = v.to_pretty();
-    assert!(j.contains("\"fond_couleur\": \"#0a141e\"") && j.contains("\"fond_opacite\": 65") && j.contains("\"fond_arrondi\": 16"), "{j}");
-    assert!(j.contains("\"contour\": 4") && j.contains("\"contour_couleur\": \"#ff0080\""), "{j}");
+    assert!(j.contains("\"background_color\": \"#0a141e\"") && j.contains("\"background_opacity\": 65") && j.contains("\"background_radius\": 16"), "{j}");
+    assert!(j.contains("\"outline\": 4") && j.contains("\"outline_color\": \"#ff0080\""), "{j}");
     let back = PageDesign::from_value(&v).unwrap();
     assert_eq!(text_deco(&back), text_deco(&d));
     // fond seul, sans arrondi : pas de champ inutile
     if let Kind::Text { deco, .. } = &mut d.items[0].kind { deco.outline = 0; deco.bg_radius = 0; }
     let j = d.to_value().to_pretty();
-    assert!(j.contains("fond_opacite") && !j.contains("fond_arrondi") && !j.contains("contour"), "{j}");
+    assert!(j.contains("background_opacity") && !j.contains("background_radius") && !j.contains("outline"), "{j}");
 }
 
 #[test]
@@ -39,7 +39,7 @@ fn deco_bad_color_and_limits() {
     let s = v.to_pretty().replace("\"#000000\"", "\"rouge\"");
     assert!(PageDesign::from_value(&bdauthor_core::json::parse(&s).unwrap()).is_err(), "couleur invalide refusee");
     // valeurs hors bornes ramenees dans les limites
-    let s = d.to_value().to_pretty().replace("\"fond_opacite\": 50", "\"fond_opacite\": 250");
+    let s = d.to_value().to_pretty().replace("\"background_opacity\": 50", "\"background_opacity\": 250");
     v = bdauthor_core::json::parse(&s).unwrap();
     assert_eq!(text_deco(&PageDesign::from_value(&v).unwrap()).bg_opacity, 100);
 }

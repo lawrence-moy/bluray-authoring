@@ -94,9 +94,9 @@ fn full_project() {
             .arg(dir.join(format!("videos/{f}.mp4"))).status().unwrap().success();
         assert!(ok);
     }
-    let proj = r#"{ "titre": "Test", "langue": "fra",
-      "videos": [ {"fichier": "videos/a.mp4", "titre": "Alpha", "chapitres": [0, 2.5, {"t": 3, "titre": "Fin"}]}, {"fichier": "videos/b.mp4"}, {"fichier": "videos/c.mp4", "titre": "Gamma"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2} }"#;
+    let proj = r#"{ "title": "Test", "language": "fra",
+      "videos": [ {"file": "videos/a.mp4", "title": "Alpha", "chapters": [0, 2.5, {"t": 3, "title": "Fin"}]}, {"file": "videos/b.mp4"}, {"file": "videos/c.mp4", "title": "Gamma"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2} }"#;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let mut logs = Vec::new();
     let mut last = 0.0;
@@ -140,40 +140,40 @@ fn custom_layout_project() {
     }
     // page 1 : titre, logo, 2 vignettes, une image devant la 2e, « Suivant » deplace, petite vignette de la video 3 menant a la page 3 ;
     // page 2 : video 3 ; page 3 : favoris et liens ; page 4 : chapitres de la video 1
-    let proj = r##"{ "titre": "Test", "langue": "fra",
-      "videos": [ {"fichier": "a.mp4", "chapitres": [0, 2.5, 3.2]}, {"fichier": "b.mp4"}, {"fichier": "c.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
-      "mise_en_page": { "pages": [
-        { "elements": [
-          {"type":"texte","texte":"Mon titre","x":100,"y":60,"w":1700,"h":120,"taille":90,"couleur":"#ffcc00","alignement":"gauche","fond_couleur":"#000000","fond_opacite":50,"fond_arrondi":12,"contour":3,"contour_couleur":"#202020"},
-          {"type":"image","video":2,"instant":1.5,"x":1500,"y":200,"w":320,"h":180},
-          {"type":"image","video":1,"instant":0.5,"recadrage":[0.1,0.1,0.5,0.5],"x":1500,"y":420,"w":200,"h":200},
-          {"type":"image","fichier":"b.mp4","x":1500,"y":800,"w":300,"h":200},
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1},
-          {"type":"image","fichier":"b.mp4","x":1400,"y":500,"w":300,"h":200},
-          {"type":"navigation","action":"suivant","texte":"Page 2","x":800,"y":900,"w":300,"h":90},
-          {"type":"vignette","vignette_h":150,"x":100,"y":800,"w":250,"h":200,"video":3,"cible":{"page":3}} ] },
-        { "elements": [
-          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":3},
-          {"type":"navigation","action":"precedent","texte":"<","x":400,"y":900,"w":300,"h":90},
-          {"type":"navigation","action":"suivant","texte":">","x":1200,"y":900,"w":300,"h":90} ] },
-        { "elements": [
-          {"type":"texte","texte":"Mes favoris","x":100,"y":60,"w":1700,"h":120,"taille":80,"couleur":"#ffffff","alignement":"centre"},
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":3},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1},
-          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90},
-          {"type":"navigation","action":"aller_a","texte":"Chapitres de a","cible":{"page":4},"x":1200,"y":900,"w":400,"h":90},
-          {"type":"texte","texte":"Lire c","x":100,"y":700,"w":400,"h":90,"taille":60,"couleur":"#ffffff","alignement":"centre","cible":{"lire":"video","video":3}},
-          {"type":"image","fichier":"b.mp4","x":1600,"y":60,"w":200,"h":120,"cible":{"page":1}},
-          {"type":"navigation","action":"aller_a","texte":"Lire b","cible":{"lire":"video","video":2},"x":1500,"y":700,"w":300,"h":90},
-          {"type":"vignette","vignette_h":100,"x":600,"y":700,"w":200,"h":130,"video":null},
-          {"type":"vignette","vignette_h":100,"x":850,"y":700,"w":200,"h":130,"video":3} ] },
-        { "elements": [
-          {"type":"vignette","vignette_h":200,"x":100,"y":300,"w":400,"h":250,"video":1,"depart_s":0},
-          {"type":"vignette","vignette_h":200,"x":600,"y":300,"w":400,"h":250,"video":1,"depart_s":2.5},
-          {"type":"vignette","vignette_h":200,"x":1100,"y":300,"w":400,"h":250,"video":9,"depart_s":3.2},
-          {"type":"navigation","action":"aller_a","texte":"Retour","cible":{"page":1},"x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
+    let proj = r##"{ "title": "Test", "language": "fra",
+      "videos": [ {"file": "a.mp4", "chapters": [0, 2.5, 3.2]}, {"file": "b.mp4"}, {"file": "c.mp4"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2},
+      "layout": { "pages": [
+        { "items": [
+          {"type":"texte","text":"Mon titre","x":100,"y":60,"w":1700,"h":120,"size":90,"color":"#ffcc00","align":"gauche","background_color":"#000000","background_opacity":50,"background_radius":12,"outline":3,"outline_color":"#202020"},
+          {"type":"image","video":2,"time_s":1.5,"x":1500,"y":200,"w":320,"h":180},
+          {"type":"image","video":1,"time_s":0.5,"crop":[0.1,0.1,0.5,0.5],"x":1500,"y":420,"w":200,"h":200},
+          {"type":"image","file":"b.mp4","x":1500,"y":800,"w":300,"h":200},
+          {"type":"vignette","thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":2},
+          {"type":"vignette","thumbnail_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1},
+          {"type":"image","file":"b.mp4","x":1400,"y":500,"w":300,"h":200},
+          {"type":"navigation","action":"suivant","text":"Page 2","x":800,"y":900,"w":300,"h":90},
+          {"type":"vignette","thumbnail_h":150,"x":100,"y":800,"w":250,"h":200,"video":3,"target":{"page":3}} ] },
+        { "items": [
+          {"type":"vignette","thumbnail_h":300,"x":600,"y":300,"w":560,"h":356,"video":3},
+          {"type":"navigation","action":"precedent","text":"<","x":400,"y":900,"w":300,"h":90},
+          {"type":"navigation","action":"suivant","text":">","x":1200,"y":900,"w":300,"h":90} ] },
+        { "items": [
+          {"type":"texte","text":"Mes favoris","x":100,"y":60,"w":1700,"h":120,"size":80,"color":"#ffffff","align":"centre"},
+          {"type":"vignette","thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":3},
+          {"type":"vignette","thumbnail_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1},
+          {"type":"navigation","action":"precedent","text":"Retour","x":800,"y":900,"w":300,"h":90},
+          {"type":"navigation","action":"aller_a","text":"Chapitres de a","target":{"page":4},"x":1200,"y":900,"w":400,"h":90},
+          {"type":"texte","text":"Lire c","x":100,"y":700,"w":400,"h":90,"size":60,"color":"#ffffff","align":"centre","target":{"play":"video","video":3}},
+          {"type":"image","file":"b.mp4","x":1600,"y":60,"w":200,"h":120,"target":{"page":1}},
+          {"type":"navigation","action":"aller_a","text":"Lire b","target":{"play":"video","video":2},"x":1500,"y":700,"w":300,"h":90},
+          {"type":"vignette","thumbnail_h":100,"x":600,"y":700,"w":200,"h":130,"video":null},
+          {"type":"vignette","thumbnail_h":100,"x":850,"y":700,"w":200,"h":130,"video":3} ] },
+        { "items": [
+          {"type":"vignette","thumbnail_h":200,"x":100,"y":300,"w":400,"h":250,"video":1,"start_s":0},
+          {"type":"vignette","thumbnail_h":200,"x":600,"y":300,"w":400,"h":250,"video":1,"start_s":2.5},
+          {"type":"vignette","thumbnail_h":200,"x":1100,"y":300,"w":400,"h":250,"video":9,"start_s":3.2},
+          {"type":"navigation","action":"aller_a","text":"Retour","target":{"page":1},"x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     // la page de chapitres invalide (video 9) bloque la construction avant tout encodage, avec l'erreur dans le journal
     let mut logs = Vec::new();
@@ -229,10 +229,10 @@ fn project_with_subtitles() {
     let streams = bdauthor_core::ffmpeg::list_subtitle_streams(&tools, &dir.join("a.mp4")).unwrap();
     assert_eq!(streams.len(), 1);
     assert!(streams[0].is_text() && streams[0].lang == "eng", "{streams:?}");
-    let proj = r#"{ "titre": "Test", "langue": "fra",
-      "videos": [ {"fichier": "a.mp4", "soustitres": [ {"fichier": "a_fr.srt", "langue": "fra", "style": {"taille": 70}}, {"piste": 0, "langue": "eng", "decalage_ms": 250, "style": {"position": "haut"}} ]},
-                  {"fichier": "b.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2} }"#;
+    let proj = r#"{ "title": "Test", "language": "fra",
+      "videos": [ {"file": "a.mp4", "subtitles": [ {"file": "a_fr.srt", "language": "fra", "style": {"size": 70}}, {"track": 0, "language": "eng", "offset_ms": 250, "style": {"position": "haut"}} ]},
+                  {"file": "b.mp4"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2} }"#;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let build = |out: &str| {
         let mut logs = Vec::new();
@@ -286,14 +286,14 @@ fn styled_buttons_project() {
         assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", &format!("sine=frequency={hz}:duration=0.2")]).arg(dir.join(f)).status().unwrap().success());
     }
     // halo + agrandissement + etat active ; une vignette collee au bord gauche (son halo doit etre rogne) ; un bouton dessine
-    let proj = r##"{ "titre": "Style", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2, "taille": "video"},
-      "mise_en_page": { "style_boutons": {"halo": 24, "agrandir": 10, "etat_active": true, "halo_anime": true, "son_selection": "clic.wav"},
-        "pages": [ { "elements": [
-          {"type":"vignette","vignette_h":300,"x":0,"y":300,"w":560,"h":356,"video":1},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2,"style":{"halo":0,"agrandir":0},"sons":{"activation":"ok.wav"}},
-          {"type":"navigation","action":"aller_a","texte":"B","cible":{"lire":"video","video":2},"x":800,"y":900,"w":300,"h":90,
-           "images_etats":{"normal":"btn.png","animation_normal":["n1.png","n2.png"],"animation_selection":["f1.png","f2.png","f3.png"],"animation_une_fois":true}} ] } ] } }"##;
+    let proj = r##"{ "title": "Style", "language": "fra", "videos": [ {"file": "a.mp4"}, {"file": "b.mp4"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2, "size": "video"},
+      "layout": { "button_style": {"glow": 24, "zoom": 10, "activated_state": true, "glow_animated": true, "sound_select": "clic.wav"},
+        "pages": [ { "items": [
+          {"type":"vignette","thumbnail_h":300,"x":0,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","thumbnail_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2,"style":{"glow":0,"zoom":0},"sounds":{"activate":"ok.wav"}},
+          {"type":"navigation","action":"aller_a","text":"B","target":{"play":"video","video":2},"x":800,"y":900,"w":300,"h":90,
+           "state_images":{"normal":"btn.png","animation_normal":["n1.png","n2.png"],"animation_selected":["f1.png","f2.png","f3.png"],"animation_once":true}} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let mut logs = Vec::new();
     let info = {
@@ -363,15 +363,15 @@ fn home_intro_and_play_all() {
             .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
     }
     // accueil = page 2 ; « Tout lire » sur la page 1 ; sequence d'ouverture
-    let proj = r##"{ "titre": "Accueil", "langue": "fra", "videos": [ {"fichier": "a.mp4", "chapitres": [0, 1.5]}, {"fichier": "b.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2, "intro": "intro.mp4"},
-      "mise_en_page": { "accueil": {"page": 2}, "pages": [
-        { "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2},
-          {"type":"navigation","action":"tout_lire","texte":"Tout lire","x":800,"y":900,"w":300,"h":90} ] },
-        { "elements": [
-          {"type":"navigation","action":"aller_a","texte":"Videos","cible":{"page":1},"x":800,"y":500,"w":300,"h":90} ] } ] } }"##;
+    let proj = r##"{ "title": "Accueil", "language": "fra", "videos": [ {"file": "a.mp4", "chapters": [0, 1.5]}, {"file": "b.mp4"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2, "intro": "intro.mp4"},
+      "layout": { "home": {"page": 2}, "pages": [
+        { "items": [
+          {"type":"vignette","thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","thumbnail_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2},
+          {"type":"navigation","action":"tout_lire","text":"Tout lire","x":800,"y":900,"w":300,"h":90} ] },
+        { "items": [
+          {"type":"navigation","action":"aller_a","text":"Videos","target":{"page":1},"x":800,"y":500,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
@@ -415,16 +415,16 @@ fn animated_menu_background_with_music() {
     }
     run(&["-f", "lavfi", "-i", "mandelbrot=size=320x180:rate=25", "-t", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", dir.join("fond.mp4").to_str().unwrap()]);
     run(&["-f", "lavfi", "-i", "sine=frequency=440:duration=5", "-c:a", "libmp3lame", dir.join("musique.mp3").to_str().unwrap()]);
-    let proj = r##"{ "titre": "Anime", "langue": "fra", "videos": [ {"fichier": "a.mp4", "chapitres": [0, 1]}, {"fichier": "b.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_video": "fond.mp4", "musique": "musique.mp3"},
-      "mise_en_page": { "pages": [
-        { "elements": [
-          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":1},
-          {"type":"navigation","action":"suivant","texte":">","x":800,"y":900,"w":300,"h":90} ] },
-        { "elements": [
-          {"type":"texte","texte":"Page 2","x":100,"y":60,"w":800,"h":120,"taille":80,"couleur":"#ffcc00","alignement":"gauche"},
-          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":2},
-          {"type":"navigation","action":"precedent","texte":"<","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
+    let proj = r##"{ "title": "Anime", "language": "fra", "videos": [ {"file": "a.mp4", "chapters": [0, 1]}, {"file": "b.mp4"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_video": "fond.mp4", "music": "musique.mp3"},
+      "layout": { "pages": [
+        { "items": [
+          {"type":"vignette","thumbnail_h":300,"x":600,"y":300,"w":560,"h":356,"video":1},
+          {"type":"navigation","action":"suivant","text":">","x":800,"y":900,"w":300,"h":90} ] },
+        { "items": [
+          {"type":"texte","text":"Page 2","x":100,"y":60,"w":800,"h":120,"size":80,"color":"#ffcc00","align":"gauche"},
+          {"type":"vignette","thumbnail_h":300,"x":600,"y":300,"w":560,"h":356,"video":2},
+          {"type":"navigation","action":"precedent","text":"<","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let build = |out: &str| {
         let mut logs = Vec::new();
@@ -481,19 +481,19 @@ fn per_page_backgrounds() {
     run(&["-f", "lavfi", "-i", "sine=frequency=440:duration=4", "-c:a", "libmp3lame", dir.join("musique.mp3").to_str().unwrap()]);
     run(&["-f", "lavfi", "-i", "color=c=green:size=320x180", "-frames:v", "1", dir.join("vert.png").to_str().unwrap()]);
     // musique du projet ; page 1 : video propre, sans musique ; page 2 : image propre + musique du projet ; page 3 : comme le projet
-    let proj = r##"{ "titre": "Fonds", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"}, {"fichier": "c.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"musique": "musique.mp3", "fond_secondes": 2},
-      "mise_en_page": { "pages": [
-        { "fond_page": {"video": "fond.mp4", "musique": null}, "elements": [
-          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":1},
-          {"type":"navigation","action":"suivant","texte":">","x":800,"y":900,"w":300,"h":90} ] },
-        { "fond_page": {"image": "vert.png"}, "elements": [
-          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":2},
-          {"type":"navigation","action":"precedent","texte":"<","x":400,"y":900,"w":300,"h":90},
-          {"type":"navigation","action":"suivant","texte":">","x":1200,"y":900,"w":300,"h":90} ] },
-        { "elements": [
-          {"type":"vignette","vignette_h":300,"x":600,"y":300,"w":560,"h":356,"video":3},
-          {"type":"navigation","action":"precedent","texte":"<","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
+    let proj = r##"{ "title": "Fonds", "language": "fra", "videos": [ {"file": "a.mp4"}, {"file": "b.mp4"}, {"file": "c.mp4"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"music": "musique.mp3", "background_seconds": 2},
+      "layout": { "pages": [
+        { "page_background": {"video": "fond.mp4", "music": null}, "items": [
+          {"type":"vignette","thumbnail_h":300,"x":600,"y":300,"w":560,"h":356,"video":1},
+          {"type":"navigation","action":"suivant","text":">","x":800,"y":900,"w":300,"h":90} ] },
+        { "page_background": {"image": "vert.png"}, "items": [
+          {"type":"vignette","thumbnail_h":300,"x":600,"y":300,"w":560,"h":356,"video":2},
+          {"type":"navigation","action":"precedent","text":"<","x":400,"y":900,"w":300,"h":90},
+          {"type":"navigation","action":"suivant","text":">","x":1200,"y":900,"w":300,"h":90} ] },
+        { "items": [
+          {"type":"vignette","thumbnail_h":300,"x":600,"y":300,"w":560,"h":356,"video":3},
+          {"type":"navigation","action":"precedent","text":"<","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
@@ -530,10 +530,10 @@ fn invalid_main_layout_stops_before_encoding() {
     assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=1", "-c:v", "libx264", "-pix_fmt", "yuv420p"])
         .arg(dir.join("a.mp4")).status().unwrap().success());
     // page 1 : une vignette de la video 2 alors que le projet n'en a qu'une
-    let proj = r##"{ "videos": [ {"fichier": "a.mp4"} ], "encodage": {"preset": "ultrafast"},
-      "mise_en_page": { "pages": [ { "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2} ] } ] } }"##;
+    let proj = r##"{ "videos": [ {"file": "a.mp4"} ], "encoding": {"preset": "ultrafast"},
+      "layout": { "pages": [ { "items": [
+          {"type":"vignette","thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","thumbnail_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let mut logs = Vec::new();
     let r = {
@@ -563,18 +563,18 @@ fn generic_pages_with_chapter_thumbnails() {
     }
     // page 1 : vignette de la video a, vignette de chapitre de a a 3 s (retour a l'accueil), « Suivant » ;
     // page 2 (accueil) : vignette de chapitre de b a 2 s (retour en page 1), « Precedent »
-    let proj = r##"{ "titre": "Generique", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
-      "langues": [ {"id":1,"nom":"Français","code":"fra"}, {"id":2,"nom":"Anglais","code":"eng"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
-      "mise_en_page": { "accueil": {"page": 2}, "pages": [
-        { "nom": "Videos", "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1,"soustitres":"aucun"},
-          {"type":"vignette","vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1,"depart_s":3,"libelle":"Milieu","retour":"accueil"},
-          {"type":"navigation","action":"suivant","texte":"Suite","x":800,"y":900,"w":300,"h":90} ] },
-        { "nom": "Chapitres", "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2,"depart_s":2,"retour":{"page":1},"soustitres":{"langue":2}},
-          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90},
-          {"type":"texte","texte":"Sous-titres FR","x":1300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":{"langue":1}} ] } ] } }"##;
+    let proj = r##"{ "title": "Generique", "language": "fra", "videos": [ {"file": "a.mp4"}, {"file": "b.mp4"} ],
+      "languages": [ {"id":1,"name":"Français","code":"fra"}, {"id":2,"name":"Anglais","code":"eng"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2},
+      "layout": { "home": {"page": 2}, "pages": [
+        { "name": "Videos", "items": [
+          {"type":"vignette","thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":1,"subtitles":"aucun"},
+          {"type":"vignette","thumbnail_h":300,"x":1000,"y":300,"w":560,"h":356,"video":1,"start_s":3,"caption":"Milieu","return_to":"accueil"},
+          {"type":"navigation","action":"suivant","text":"Suite","x":800,"y":900,"w":300,"h":90} ] },
+        { "name": "Chapitres", "items": [
+          {"type":"vignette","thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":2,"start_s":2,"return_to":{"page":1},"subtitles":{"language":2}},
+          {"type":"navigation","action":"precedent","text":"Retour","x":800,"y":900,"w":300,"h":90},
+          {"type":"texte","text":"Sous-titres FR","x":1300,"y":900,"w":400,"h":90,"size":40,"target":{"stay":true},"subtitles":{"language":1}} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
@@ -639,16 +639,16 @@ fn language_list_fixes_track_numbers() {
             .arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
     }
     // langues : 1 = fra (piste 0), 2 = eng (piste 1). La video a les range dans l'ordre inverse ; la video b n'a que l'anglais.
-    let proj = r##"{ "titre": "Langues", "langue": "fra",
-      "langues": [ {"id":1,"nom":"Francais","code":"fra"}, {"id":2,"nom":"Anglais","code":"eng"} ],
-      "videos": [ {"fichier": "a.mp4", "soustitres": [ {"fichier":"en.srt","langue":"eng","langue_id":2}, {"fichier":"fr.srt","langue":"fra","langue_id":1} ]},
-                  {"fichier": "b.mp4", "soustitres": [ {"fichier":"en.srt","langue":"eng","langue_id":2} ]} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
-      "mise_en_page": { "pages": [ { "nom": "Menu", "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
-          {"type":"texte","texte":"English","x":1300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true,"ensuite":2},"soustitres":{"langue":2}},
-          {"type":"texte","texte":"Francais","x":300,"y":900,"w":400,"h":90,"taille":40,"cible":{"rester":true},"soustitres":{"langue":1}} ] },
-        { "nom": "Fin", "elements": [ {"type":"texte","texte":"Retour","x":100,"y":100,"w":300,"h":90,"taille":40,"cible":{"page":1}} ] } ] } }"##;
+    let proj = r##"{ "title": "Langues", "language": "fra",
+      "languages": [ {"id":1,"name":"Francais","code":"fra"}, {"id":2,"name":"Anglais","code":"eng"} ],
+      "videos": [ {"file": "a.mp4", "subtitles": [ {"file":"en.srt","language":"eng","language_id":2}, {"file":"fr.srt","language":"fra","language_id":1} ]},
+                  {"file": "b.mp4", "subtitles": [ {"file":"en.srt","language":"eng","language_id":2} ]} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2},
+      "layout": { "pages": [ { "name": "Menu", "items": [
+          {"type":"vignette","thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"texte","text":"English","x":1300,"y":900,"w":400,"h":90,"size":40,"target":{"stay":true,"then":2},"subtitles":{"language":2}},
+          {"type":"texte","text":"Francais","x":300,"y":900,"w":400,"h":90,"size":40,"target":{"stay":true},"subtitles":{"language":1}} ] },
+        { "name": "Fin", "items": [ {"type":"texte","text":"Retour","x":100,"y":100,"w":300,"h":90,"size":40,"target":{"page":1}} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let info = {
         let (mut log, mut prog) = (|_m: &str| {}, |_f: f64| {});
@@ -709,16 +709,16 @@ fn several_audio_tracks_per_video() {
     let streams = bdauthor_core::ffmpeg::list_audio_streams(&tools, &dir.join("a.mp4")).unwrap();
     assert_eq!(streams.iter().map(|s| (s.index, s.lang.as_str())).collect::<Vec<_>>(), vec![(0, "fra"), (1, "eng")]);
     // langues : 1 = fra (piste 1), 2 = eng (piste 2). La video a les declare dans l'ordre inverse.
-    let proj = r##"{ "titre": "Audio", "langue": "fra",
-      "langues": [ {"id":1,"nom":"Francais","code":"fra"}, {"id":2,"nom":"Anglais","code":"eng"} ],
-      "videos": [ {"fichier": "a.mp4", "pistes_audio": [ {"piste":1,"langue":"eng","langue_id":2}, {"piste":0,"langue":"fra","langue_id":1} ]},
-                  {"fichier": "b.mp4", "pistes_audio": [ {"fichier":"doub.wav","langue":"fra","langue_id":1} ]},
-                  {"fichier": "a.mp4"},
-                  {"fichier": "a.mp4", "pistes_audio": [ {"piste":1,"langue":"eng","langue_id":2} ]} ],
-      "mise_en_page": {"pages": [ {"nom": "P", "elements": [
-          {"type":"texte","texte":"English","x":100,"y":100,"w":400,"h":90,"taille":40,"cible":{"audio_langue":2}},
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1} ] } ] },
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2} }"##;
+    let proj = r##"{ "title": "Audio", "language": "fra",
+      "languages": [ {"id":1,"name":"Francais","code":"fra"}, {"id":2,"name":"Anglais","code":"eng"} ],
+      "videos": [ {"file": "a.mp4", "audio_tracks": [ {"track":1,"language":"eng","language_id":2}, {"track":0,"language":"fra","language_id":1} ]},
+                  {"file": "b.mp4", "audio_tracks": [ {"file":"doub.wav","language":"fra","language_id":1} ]},
+                  {"file": "a.mp4"},
+                  {"file": "a.mp4", "audio_tracks": [ {"track":1,"language":"eng","language_id":2} ]} ],
+      "layout": {"pages": [ {"name": "P", "items": [
+          {"type":"texte","text":"English","x":100,"y":100,"w":400,"h":90,"size":40,"target":{"audio_language":2}},
+          {"type":"vignette","thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":1} ] } ] },
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2} }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let build = |out: &str| {
         let mut logs = Vec::new();
@@ -816,9 +816,9 @@ fn conforming_video_is_copied_not_reencoded() {
     let bi = bdauthor_core::ffmpeg::probe(&tools, &dir.join("b.mp4")).unwrap();
     assert!(bdauthor_core::ffmpeg::check_copy(&tools, &dir.join("b.mp4"), &bi, 30000, &cancel).unwrap().is_err());
 
-    let proj = r##"{ "titre": "Copie", "langue": "fra",
-      "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
-      "encodage": {"preset": "ultrafast", "copie_si_conforme": true}, "menu": {"fond_secondes": 2} }"##;
+    let proj = r##"{ "title": "Copie", "language": "fra",
+      "videos": [ {"file": "a.mp4"}, {"file": "b.mp4"} ],
+      "encoding": {"preset": "ultrafast", "copy_if_conforming": true}, "menu": {"background_seconds": 2} }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let (info, logs) = build_in(&tools, &dir, "out");
     assert!(info.report.ok(), "{}", info.report.render());
@@ -843,8 +843,8 @@ fn target_bitrate_encoding_follows_the_plan() {
     let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
     run(&["-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=4", "-f", "lavfi", "-i", "sine=duration=4", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", "-shortest", dir.join("a.mp4").to_str().unwrap()]);
     // un plafond de 2000 kb/s (vbv-maxrate) : le debit vise est 90 % de ce plafond, bien en dessous de ce qu'un BD-25 permettrait
-    let proj = r##"{ "titre": "Debit", "langue": "fra", "videos": [ {"fichier": "a.mp4"} ],
-      "encodage": {"preset": "ultrafast", "remplir_disque": true, "maxrate": 2000}, "menu": {"fond_secondes": 2} }"##;
+    let proj = r##"{ "title": "Debit", "language": "fra", "videos": [ {"file": "a.mp4"} ],
+      "encoding": {"preset": "ultrafast", "fill_disc": true, "maxrate": 2000}, "menu": {"background_seconds": 2} }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let (info, logs) = build_in(&tools, &dir, "out");
     assert!(info.report.ok(), "{}", info.report.render());
@@ -853,7 +853,7 @@ fn target_bitrate_encoding_follows_the_plan() {
     // 4 s a ~1800 kb/s de video + 192 kb/s d'audio, multiplexes : de l'ordre de 1 Mo, loin d'un encodage en CRF 18 de cette mire
     assert!(clip.len() > 300_000 && clip.len() < 1_600_000, "{} octets", clip.len());
     // sans le plan, le CRF est utilise (autre taille, et pas de ligne de debit)
-    std::fs::write(dir.join("projet.json"), proj.replace("\"remplir_disque\": true, ", "")).unwrap();
+    std::fs::write(dir.join("projet.json"), proj.replace("\"fill_disc\": true, ", "")).unwrap();
     let (_, logs2) = build_in(&tools, &dir, "out2");
     assert!(!logs2.iter().any(|l| l.contains("debit video vise")), "{logs2:?}");
 }
@@ -870,16 +870,16 @@ fn page_launches_an_item_after_a_delay() {
             "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-c:a", "aac", "-shortest"]).arg(dir.join(format!("{f}.mp4"))).status().unwrap().success());
     }
     // page 1 : vignette de la video 1 (id 7) lancee seule apres 6 s ; page 2 sans delai
-    let proj = r##"{ "titre": "Delai", "langue": "fra", "videos": [ {"fichier": "a.mp4"}, {"fichier": "b.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2},
-      "mise_en_page": { "pages": [
-        { "nom": "Auto", "lancement_auto": {"secondes": 6, "element": 7}, "elements": [
-          {"type":"vignette","id":7,"vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
-          {"type":"vignette","id":8,"vignette_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2},
-          {"type":"navigation","action":"suivant","texte":"Suite","x":800,"y":900,"w":300,"h":90} ] },
-        { "nom": "Calme", "elements": [
-          {"type":"vignette","vignette_h":300,"x":200,"y":300,"w":560,"h":356,"video":2},
-          {"type":"navigation","action":"precedent","texte":"Retour","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
+    let proj = r##"{ "title": "Delai", "language": "fra", "videos": [ {"file": "a.mp4"}, {"file": "b.mp4"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2},
+      "layout": { "pages": [
+        { "name": "Auto", "auto_launch": {"seconds": 6, "item": 7}, "items": [
+          {"type":"vignette","id":7,"thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":1},
+          {"type":"vignette","id":8,"thumbnail_h":300,"x":1000,"y":300,"w":560,"h":356,"video":2},
+          {"type":"navigation","action":"suivant","text":"Suite","x":800,"y":900,"w":300,"h":90} ] },
+        { "name": "Calme", "items": [
+          {"type":"vignette","thumbnail_h":300,"x":200,"y":300,"w":560,"h":356,"video":2},
+          {"type":"navigation","action":"precedent","text":"Retour","x":800,"y":900,"w":300,"h":90} ] } ] } }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let (info, logs) = build_in(&tools, &dir, "out");
     assert!(info.report.ok(), "{}", info.report.render());
@@ -912,14 +912,14 @@ fn menu_size_option_is_saved_and_applied() {
     assert_eq!(menu_size_for(Some("video"), (1280, 720)), (1280, 720));
     assert_eq!(menu_size_for(Some("1600x900"), (1280, 720)), (1600, 900));
     assert_eq!(menu_size_for(Some("n'importe quoi"), (1280, 720)), (1920, 1080));
-    let mut m = ProjectModel::from_json(r#"{"videos": [{"fichier": "a.mp4"}], "menu": {"taille": "1600x900"}}"#).unwrap();
+    let mut m = ProjectModel::from_json(r#"{"videos": [{"file": "a.mp4"}], "menu": {"size": "1600x900"}}"#).unwrap();
     assert_eq!(m.menu_custom, Some((1600, 900)));
-    assert!(fr(&m).contains("\"taille\": \"1600x900\""));
+    assert!(m.to_json().contains("\"size\": \"1600x900\""));
     m.menu_custom = None;
     m.menu_1080 = false;
-    assert!(fr(&m).contains("\"taille\": \"video\""));
+    assert!(m.to_json().contains("\"size\": \"video\""));
     m.menu_1080 = true;
-    assert!(fr(&m).contains("\"taille\": \"1080\""));
+    assert!(m.to_json().contains("\"size\": \"1080\""));
 
     let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
     let dir = std::env::temp_dir().join(format!("bdauthor_msize_{}", std::process::id()));
@@ -927,14 +927,11 @@ fn menu_size_option_is_saved_and_applied() {
     std::fs::create_dir_all(&dir).unwrap();
     assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i", "sine=duration=3",
         "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast", "-c:a", "aac", "-shortest"]).arg(dir.join("a.mp4")).status().unwrap().success());
-    let proj = r##"{ "titre": "Taille", "langue": "fra", "videos": [ {"fichier": "a.mp4"} ],
-      "encodage": {"preset": "ultrafast"}, "menu": {"fond_secondes": 2, "taille": "1280x720"} }"##;
+    let proj = r##"{ "title": "Taille", "language": "fra", "videos": [ {"file": "a.mp4"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2, "size": "1280x720"} }"##;
     std::fs::write(dir.join("projet.json"), proj).unwrap();
     let (info, _logs) = build_in(&tools, &dir, "out");
     assert!(info.report.ok(), "{}", info.report.render());
     assert_eq!(info.menu_size, (1280, 720));
     if std::env::var_os("BDAUTHOR_TEST_OUT").is_none() { let _ = std::fs::remove_dir_all(&dir); }
 }
-
-/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
-fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }
