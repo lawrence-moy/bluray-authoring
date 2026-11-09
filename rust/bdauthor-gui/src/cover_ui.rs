@@ -831,7 +831,7 @@ impl App {
                 }
             }
         }
-        if pick_cover_frame { self.cover_frame_request = Some((self.cover_page, i)); }
+        if pick_cover_frame { self.cover_frame_request = Some((self.cover_page as usize, i)); }
         if pick_image {
             if let Some(f) = rfd::FileDialog::new().add_filter(tr("Images"), &IMG_EXT).pick_file() {
                 let rel = self.relative(&f);
