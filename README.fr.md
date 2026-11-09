@@ -14,20 +14,23 @@ bdauthor prend vos fichiers vidéo, vos pistes audio et vos sous-titres, vous la
 
 ### Menus
 - **Éditeur visuel de menus** : placez, déplacez et redimensionnez les éléments à la souris, avec aimantation, guides et ordre de superposition (devant / derrière).
-- **Widgets** : *Texte*, *Image*, *Vignette de vidéo*, *Boutons de navigation*, *Rectangle* (remplissage, bordure, arrondi, transparence réglable) et *Ligne* (manipulée par ses deux extrémités, tirets, flèches, angles à 45°).
+- **Widgets** : *Texte*, *Image*, *Vignette de vidéo*, *Image de vidéo* (n'importe quelle image d'une vidéo, avec recadrage possible), *Boutons de navigation*, *Rectangle* (remplissage, bordure, arrondi, transparence réglable) et *Ligne* (manipulée par ses deux extrémités, tirets, flèches, angles à 45°).
 - **Vrais boutons Blu-ray** : navigation entre boutons calculée automatiquement, pagination automatique des menus, menus de chapitres avec vignettes.
 - **Détection des chevauchements** : un clignotement signale les éléments qui se recouvrent (rouge) ou un texte masqué par un bouton (orange).
-- **Aperçu fidèle** : le rendu affiché dans l'éditeur est celui qui sera gravé, plus un simulateur de navigation pour tester les boutons avant génération.
+- **Aperçu fidèle** : le rendu affiché dans l'éditeur est celui qui sera gravé, plus un simulateur de navigation pour tester les boutons avant génération. Le déplacement de l'aperçu se fait en maintenant le clic droit.
+- **Lancement automatique par page** : une page peut lancer seule l'un de ses boutons après un délai si le spectateur ne fait rien (le délai est un nombre entier de boucles du fond).
+- **Résolution des menus** : 1920×1080 par défaut, ou la taille de la première vidéo, ou une taille personnalisée en 16:9.
 
 ### Vidéo, audio et sous-titres
-- **Encodage via ffmpeg** (H.264 / AC3) avec réglage de qualité (CRF) et de preset, cache d'encodage, annulation, et **progression détaillée** (étape, temps écoulé, estimation du temps restant, détail ffmpeg).
+- **Encodage via ffmpeg** (H.264 / AC3) avec réglage de qualité (CRF) et de preset, mode optionnel **remplir le disque** (même débit moyen pour toutes les vidéos, en deux passes, pour utiliser la capacité du disque), **copie des vidéos H.264 conformes Blu-ray** (flux vidéo conservé, audio converti en AC-3) en option, cache d'encodage, annulation, et **progression détaillée** (étape, temps écoulé, estimation du temps restant, détail ffmpeg).
 - **Plusieurs pistes audio par vidéo**, chacune avec sa langue ; réordonnables par glisser-déposer ; fenêtre d'écoute avec forme d'onde pour caler un décalage.
 - **Boutons de langue audio** : le disque retient la *langue* choisie et chaque vidéo sélectionne sa propre piste correspondante au démarrage.
-- **Sous-titres** : pistes avec langue, style de texte réglable, fenêtre d'aperçu avec frise de lecture.
+- **Sous-titres** : pistes avec langue, style de texte réglable, fenêtre d'aperçu avec frise de lecture, et liste des langues de sous-titres du projet réordonnable par glisser-déposer.
 - **Chapitres** manuels ou automatiques, vignettes de menu choisies sur une frise vidéo (aperçu image par image).
 
 ### Jaquette
-- **Éditeur de jaquette** (dos, tranche, face) avec repères, déplacement au clic droit, couleurs de fond et de repères réglables, export PDF.
+- **Éditeur de jaquette** (dos, tranche, face) et **éditeur d'étiquette de disque**, avec repères, déplacement au clic droit, couleurs de fond et de repères réglables, textes (gras / italique, contour, ombre), images, formes et **images de vidéo** (même sélecteur d'image que l'éditeur de menus).
+- Export en **PDF** (taille réelle ou découpé sur A4) ou en **PNG**.
 
 ### Disque
 - Génération d'un dossier **`BDMV`** complet ou d'une **image ISO**.
@@ -36,7 +39,7 @@ bdauthor prend vos fichiers vidéo, vos pistes audio et vos sous-titres, vous la
 - Disques **sans zone et sans protection** : ni AACS, ni BD+, ni code de région (A/B/C), donc lisibles sur tout lecteur. Le verrouillage par zone et la protection anti-copie exigent des licences commerciales et ne sont pas gérés.
 
 ### Confort
-- Interface **bilingue** (français / anglais), projets enregistrés en **JSON lisible**.
+- Interface **bilingue** (français / anglais), projets enregistrés en **JSON lisible** aux clés anglaises.
 - Annuler / rétablir, copier-coller d'éléments, paramètres mémorisés.
 
 ---
@@ -98,14 +101,16 @@ Les projets sont des fichiers JSON lisibles et éditables à la main (chemins re
 
 ```json
 {
-  "titre": "Mon disque",
-  "langue": "fra",
+  "title": "Mon disque",
+  "language": "fra",
   "videos": [
-    { "fichier": "film1.mp4", "titre": "Film 1", "chapitres_auto_s": 60 }
+    { "file": "film1.mp4", "title": "Film 1", "auto_chapters_s": 60 }
   ],
-  "encodage": { "crf": 18, "preset": "medium" }
+  "encoding": { "crf": 18, "preset": "medium" }
 }
 ```
+
+Les clés sont en anglais. Les anciens projets écrits avec des clés françaises (`titre`, `fichier`, `encodage`…) sont toujours lus et réécrits avec des clés anglaises au prochain enregistrement.
 
 ---
 
@@ -116,6 +121,12 @@ Les projets sont des fichiers JSON lisibles et éditables à la main (chemins re
 - **Limites connues** : les fichiers sont lus en mémoire lors du muxage ; le cache d'encodage ne conserve pas les statistiques d'encodage.
 
 Les notes techniques détaillées (format, pièges, tests) sont dans [`NOTES.md`](NOTES.md).
+
+---
+
+## Polices
+
+bdauthor n'embarque aucune police. Les menus, jaquettes et étiquettes sont dessinés avec un fichier de police trouvé sur l'ordinateur : la variable d'environnement `BDAUTHOR_FONT`, puis les polices du système (Arial, Segoe UI ou Calibri sous Windows ; DejaVu ou Arial ailleurs). Les éléments de texte peuvent aussi pointer vers n'importe quel fichier `.ttf`. Les polices du système ont leur propre licence ; pour des disques et jaquettes destinés à être diffusés, préférez des polices libres (SIL OFL, par exemple Liberation, DejaVu, Noto).
 
 ---
 

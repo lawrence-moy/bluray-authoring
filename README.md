@@ -14,20 +14,23 @@ bdauthor takes your video files, audio tracks and subtitles, lets you design the
 
 ### Menus
 - **Visual menu editor**: place, move and resize elements with the mouse, with snapping, guides and stacking order (front / back).
-- **Widgets**: *Text*, *Image*, *Video thumbnail*, *Navigation buttons*, *Rectangle* (fill, border, rounded corners, adjustable opacity) and *Line* (edited through its two endpoints; dashes, arrows, 45° angle snapping).
+- **Widgets**: *Text*, *Image*, *Video thumbnail*, *Video image* (any frame of a video, with optional crop), *Navigation buttons*, *Rectangle* (fill, border, rounded corners, adjustable opacity) and *Line* (edited through its two endpoints; dashes, arrows, 45° angle snapping).
 - **Real Blu-ray buttons**: button-to-button navigation computed automatically, automatic menu pagination, chapter menus with thumbnails.
 - **Overlap detection**: a blink warns about overlapping elements (red) or text hidden behind a button (orange).
-- **Faithful preview**: what the editor shows is what gets authored, plus a navigation simulator to test the buttons before building.
+- **Faithful preview**: what the editor shows is what gets authored, plus a navigation simulator to test the buttons before building. Pan the preview by holding the right mouse button.
+- **Per-page automatic launch**: a page can start one of its buttons by itself after a delay if the viewer does nothing (the delay is a whole number of background loops).
+- **Menu resolution**: 1920×1080 by default, or the size of the first video, or a custom 16:9 size.
 
 ### Video, audio and subtitles
-- **Encoding through ffmpeg** (H.264 / AC3) with quality (CRF) and preset settings, an encoding cache, cancellation, and **detailed progress** (step, elapsed time, ETA, ffmpeg detail).
+- **Encoding through ffmpeg** (H.264 / AC3) with quality (CRF) and preset settings, an optional **fill the disc** mode (same average bitrate for all videos, two passes, to use the disc capacity), optional **copy of Blu-ray-compliant H.264 videos** (video stream kept as is, audio converted to AC-3), an encoding cache, cancellation, and **detailed progress** (step, elapsed time, ETA, ffmpeg detail).
 - **Several audio tracks per video**, each with its own language; reorder them by drag and drop; a listening window with a waveform to adjust offsets.
 - **Audio language buttons**: the disc remembers the chosen *language*, and each video selects its own matching track at start.
-- **Subtitles**: tracks with language, adjustable text style, and a preview window with a playback timeline.
+- **Subtitles**: tracks with language, adjustable text style, a preview window with a playback timeline, and a project-wide list of subtitle languages that you can reorder by drag and drop.
 - **Chapters**, manual or automatic; menu thumbnails picked on a video timeline (frame-accurate preview).
 
 ### Cover
-- **Cover editor** (back, spine, front) with guides, right-button panning, adjustable background and guide colors, PDF export.
+- **Cover editor** (back, spine, front) and **disc label editor**, with guides, right-button panning, adjustable background and guide colors, text (bold / italic, outline, shadow), images, shapes and **video images** (same frame picker as the menu editor).
+- Export to **PDF** (actual size or tiled on A4) or **PNG**.
 
 ### Disc output
 - Complete **`BDMV`** folder or **ISO image**.
@@ -36,7 +39,7 @@ bdauthor takes your video files, audio tracks and subtitles, lets you design the
 - Discs are **region-free and unprotected**: no AACS, BD+ or region code (A/B/C), so they play on any player. Region locking and copy protection require commercial licences and are not supported.
 
 ### Convenience
-- **Bilingual interface** (French / English); projects saved as **human-readable JSON**.
+- **Bilingual interface** (French / English); projects saved as **human-readable JSON** with English keys.
 - Undo / redo, copy-paste of elements, remembered settings.
 
 ---
@@ -98,16 +101,16 @@ Projects are readable JSON files you can edit by hand (relative paths allowed). 
 
 ```json
 {
-  "titre": "My disc",
-  "langue": "eng",
+  "title": "My disc",
+  "language": "eng",
   "videos": [
-    { "fichier": "movie1.mp4", "titre": "Movie 1", "chapitres_auto_s": 60 }
+    { "file": "movie1.mp4", "title": "Movie 1", "auto_chapters_s": 60 }
   ],
-  "encodage": { "crf": 18, "preset": "medium" }
+  "encoding": { "crf": 18, "preset": "medium" }
 }
 ```
 
-Note: JSON keys are in French for historical reasons.
+Keys are in English. Older project files written with French keys (`titre`, `fichier`, `encodage`…) are still read and are rewritten with English keys on the next save.
 
 ---
 
@@ -118,6 +121,12 @@ Note: JSON keys are in French for historical reasons.
 - **Known limits**: files are read into memory during muxing; the encoding cache does not keep encoding statistics.
 
 Detailed technical notes (format, pitfalls, tests) are in [`NOTES.md`](NOTES.md).
+
+---
+
+## Fonts
+
+bdauthor does not bundle any font. Menus, covers and labels are drawn with a font file found on the computer: the `BDAUTHOR_FONT` environment variable, then the system fonts (Arial, Segoe UI or Calibri on Windows; DejaVu or Arial elsewhere). Text items can also point to any `.ttf` file. System fonts are subject to their own licences; for discs and covers you plan to distribute, prefer freely licensed fonts (SIL OFL, e.g. Liberation, DejaVu, Noto).
 
 ---
 
