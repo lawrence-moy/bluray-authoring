@@ -6,7 +6,9 @@ bdauthor takes your video files, audio tracks and subtitles, lets you design the
 
 > ⚠️ Under active development. Generated discs are checked by a built-in verifier and play in VLC; not all standalone players have been tested yet. See [Project status](#project-status).
 
-![bdauthor](screenshots/capture.jpg)
+![Videos: audio tracks, subtitles and chapters](screenshots/capture2.jpg)
+
+![Menu editor: pages, layers and navigation buttons](screenshots/capture3.jpg)
 
 ---
 

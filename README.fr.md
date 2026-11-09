@@ -6,7 +6,9 @@ bdauthor prend vos fichiers vidéo, vos pistes audio et vos sous-titres, vous la
 
 > ⚠️ Projet en développement actif. Les disques générés sont vérifiés par un contrôleur intégré et lus dans VLC ; tous les lecteurs de salon ne sont pas encore testés. Voir [État du projet](#état-du-projet).
 
-![bdauthor](screenshots/capture.jpg)
+![Vidéos : pistes audio, sous-titres et chapitres](screenshots/capture2.jpg)
+
+![Éditeur de menus : pages, calques et boutons de navigation](screenshots/capture3.jpg)
 
 ---
 
