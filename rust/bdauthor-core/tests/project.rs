@@ -914,12 +914,12 @@ fn menu_size_option_is_saved_and_applied() {
     assert_eq!(menu_size_for(Some("n'importe quoi"), (1280, 720)), (1920, 1080));
     let mut m = ProjectModel::from_json(r#"{"videos": [{"fichier": "a.mp4"}], "menu": {"taille": "1600x900"}}"#).unwrap();
     assert_eq!(m.menu_custom, Some((1600, 900)));
-    assert!(m.to_json().contains("\"taille\": \"1600x900\""));
+    assert!(fr(&m).contains("\"taille\": \"1600x900\""));
     m.menu_custom = None;
     m.menu_1080 = false;
-    assert!(m.to_json().contains("\"taille\": \"video\""));
+    assert!(fr(&m).contains("\"taille\": \"video\""));
     m.menu_1080 = true;
-    assert!(m.to_json().contains("\"taille\": \"1080\""));
+    assert!(fr(&m).contains("\"taille\": \"1080\""));
 
     let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
     let dir = std::env::temp_dir().join(format!("bdauthor_msize_{}", std::process::id()));
@@ -935,3 +935,6 @@ fn menu_size_option_is_saved_and_applied() {
     assert_eq!(info.menu_size, (1280, 720));
     if std::env::var_os("BDAUTHOR_TEST_OUT").is_none() { let _ = std::fs::remove_dir_all(&dir); }
 }
+
+/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
+fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

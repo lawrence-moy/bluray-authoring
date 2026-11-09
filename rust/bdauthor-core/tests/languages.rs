@@ -53,7 +53,7 @@ fn language_choice_json() {
       "mise_en_page":{"pages":[{"nom":"P","elements":[{"type":"texte","texte":"x","x":0,"y":0,"w":10,"h":10,"taille":40,"cible":{"rester":true},"soustitres":{"langue":4}}]}]}}"#;
     let m = ProjectModel::from_json(t).unwrap();
     assert_eq!(m.designs.free[0].items[0].sub, SubChoice::Lang(4));
-    assert!(m.to_json().contains("\"langue\": 4"));
+    assert!(fr(&m).contains("\"langue\": 4"));
     assert!(ProjectModel::from_json(r#"{"videos":[{"fichier":"a"}],"langues":[{"id":1,"code":"fra"},{"id":1,"code":"eng"}]}"#).is_err());
 }
 
@@ -67,7 +67,7 @@ fn audio_language_action() {
     let link = |m: &ProjectModel| match &m.designs.free[0].items[0].kind { Kind::Text { link, .. } => *link, _ => None };
     assert_eq!(link(&m), Some(Target::Audio(4, None)));
     assert_eq!(m.designs.free[0].items[0].sub, SubChoice::Keep);
-    assert!(m.to_json().contains("\"audio_langue\": 4"));
+    assert!(fr(&m).contains("\"audio_langue\": 4"));
     let probs = |m: &ProjectModel| -> Vec<String> { m.validate(std::path::Path::new("/nonexistent")).into_iter().filter(|p| !p.contains("introuvable")).collect() };
     assert!(!probs(&m).iter().any(|p| p.contains("Élément cliquable")), "{:?}", probs(&m));
     // plus aucune video avec cette langue : avertissement
@@ -97,7 +97,7 @@ fn setting_then_exit_page() {
     assert_eq!(links(&m), [Some(Target::Stay(Some(1))), Some(Target::Audio(4, Some(2))), Some(Target::Stay(None))]);
     let back = ProjectModel::from_json(&m.to_json()).unwrap();
     assert_eq!(links(&back), links(&m));
-    assert!(m.to_json().contains("\"ensuite\": 2"));
+    assert!(fr(&m).contains("\"ensuite\": 2"));
     assert_eq!(Target::Audio(4, Some(2)).without_exit(), Target::Audio(4, None));
     // echange des pages 2 et 3 : les sorties suivent
     bdauthor_core::editor::swap_pages(&mut m, 1, 2);
@@ -106,3 +106,6 @@ fn setting_then_exit_page() {
     m.designs.page_removed(2);
     assert_eq!(links(&m)[..2], [Some(Target::Stay(None)), Some(Target::Audio(4, Some(1)))]);
 }
+
+/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
+fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

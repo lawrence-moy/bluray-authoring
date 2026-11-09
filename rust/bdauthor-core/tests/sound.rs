@@ -49,5 +49,8 @@ fn element_sounds_independent_of_style() {
     assert_eq!(it[1].look.sounds(st), ("", "ok.wav"));
     let back = ProjectModel::from_json(&m.to_json()).unwrap();
     assert_eq!(back.designs.free[0].items[1].look.sounds, it[1].look.sounds);
-    assert!(m.to_json().contains("\"sons\""));
+    assert!(fr(&m).contains("\"sons\""));
 }
+
+/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
+fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

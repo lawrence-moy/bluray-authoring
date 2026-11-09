@@ -64,7 +64,7 @@ fn saved_with_ids_only_when_linked() {
     m.designs.free[0].items.push(Item::video_slot(0, 0, 400, 300, 240, 0, Some(20.0), ""));
     if let Kind::Slot { chapter, .. } = &mut m.designs.free[0].items[0].kind { *chapter = Some(used); }
     let j = m.to_json();
-    let v = bdauthor_core::json::parse(&j).unwrap();
+    let v = bdauthor_core::json::parse_project(&j).unwrap();
     let ch = v.get("videos").and_then(|x| x.as_array()).unwrap()[0].get("chapitres").and_then(|x| x.as_array()).unwrap().to_vec();
     assert_eq!(ch[0].as_f64(), Some(10.0), "chapitre simple : un nombre");
     assert_eq!(ch[1].get("id").and_then(|x| x.as_f64()), Some(used as f64), "chapitre lie : son identifiant est ecrit");

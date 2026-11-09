@@ -59,7 +59,8 @@ fn audio_tracks_json_and_validation() {
     assert_eq!(m.videos[0].audio[1].source, AudioSource::File("en.wav".into()));
     // le code ecrit suit la langue du projet
     let out = m.to_json();
-    assert!(out.contains("\"langue\": \"fra\"") && out.contains("\"langue_id\": 2") && out.contains("\"decalage_ms\": -120"), "{out}");
+    let fro = fr(&m);
+    assert!(fro.contains("\"langue\": \"fra\"") && fro.contains("\"langue_id\": 2") && fro.contains("\"decalage_ms\": -120"), "{fro}");
     assert_eq!(ProjectModel::from_json(&out).unwrap().videos[0].audio, m.to_value_audio_for_test());
     let probs = |m: &ProjectModel| -> Vec<String> { m.validate(std::path::Path::new("/nonexistent")).into_iter().filter(|p| !p.contains("introuvable")).collect() };
     assert!(probs(&m).is_empty(), "{:?}", probs(&m));
@@ -78,3 +79,6 @@ impl AudioForTest for ProjectModel {
         back.videos[0].audio.clone()
     }
 }
+
+/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
+fn fr(m: &ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

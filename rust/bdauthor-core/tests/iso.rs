@@ -194,7 +194,7 @@ fn project_settings() {
     m.iso.verify = false;
     m.iso.file = "disques/vacances.iso".into();
     let j = m.to_json();
-    let v = parse(&j).unwrap();
+    let v = bdauthor_core::json::parse_project(&j).unwrap();
     let iso = v.get("iso").unwrap();
     assert_eq!(iso.get("conserver").and_then(|x| x.as_str()), Some("les_deux"));
     assert_eq!(iso.get("capacite").and_then(|x| x.as_str()), Some("BD-50"));

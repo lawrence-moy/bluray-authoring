@@ -929,6 +929,8 @@ impl App {
     }
 
     fn cover_central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        // avant de sortir la feuille du modele (`take` ci-dessous) : l'extraction a besoin de voir les elements
+        if self.cover_frames_poll(ctx) { self.cover_gen += 1; }
         if self.cover_page == 0 {
             let mut d = std::mem::take(&mut self.model.cover);
             self.sheet_central(ui, ctx, &mut d);
@@ -942,7 +944,6 @@ impl App {
 
     fn sheet_central(&mut self, ui: &mut egui::Ui, ctx: &egui::Context, doc: &mut dyn SheetDoc) {
         // apercu regenere quand le document, les champs automatiques ou la finesse necessaire ont change
-        if self.cover_frames_poll(ctx) { self.cover_gen += 1; }
         let vars = self.cover_vars();
         if vars != self.cover_vars_seen {
             self.cover_vars_seen = vars.clone();

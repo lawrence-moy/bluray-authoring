@@ -173,7 +173,7 @@ fn n(x: f64) -> Value { Value::Num(x) }
 
 impl ProjectModel {
     pub fn from_json(text: &str) -> Result<Self, String> {
-        let v = json::parse(text).map_err(|e| e.to_string())?;
+        let v = json::parse_project(text).map_err(|e| e.to_string())?;
         let mut m = ProjectModel { raw: v.clone(), ..Default::default() };
         m.title = v.get("titre").and_then(Value::as_str).unwrap_or("Menu").into();
         m.lang = v.get("langue").and_then(Value::as_str).unwrap_or("und").into();
@@ -281,7 +281,7 @@ impl ProjectModel {
         root
     }
 
-    pub fn to_json(&self) -> String { self.to_value().to_pretty() }
+    pub fn to_json(&self) -> String { json::project_to_file(&self.to_value()).to_pretty() }
 
     /// Images de video posees sur la jaquette et l'etiquette : (cle de `cover::frame_key`, rang de la video, image), sans doublon.
     pub fn cover_frames(&self) -> Vec<(String, usize, crate::design::VideoFrame)> {

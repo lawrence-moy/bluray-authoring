@@ -73,7 +73,7 @@ fn custom_animation_json_and_weight() {
     let m = bdauthor_core::model::ProjectModel::from_json(t).unwrap();
     let pg = &m.designs.free[0];
     assert_eq!(pg.anim_fps, 12);
-    assert!(m.to_json().contains("\"animation_ips\": 12"));
+    assert!(fr(&m).contains("\"animation_ips\": 12"));
     assert_eq!(pg.items[0].look.skin.sel_frames.len(), 3);
     // poids : image normale + 3 images d'animation (pas d'etat active distinct)
     let w = pg.weight(&m.designs.style, 0, 1, (1920, 1080));
@@ -139,3 +139,6 @@ fn animated_normal_state() {
     // l'etat selectionne (fixe) reste partage par les deux boutons
     assert_eq!(page.bogs[0].buttons[0].selected.1, page.bogs[1].buttons[0].selected.1);
 }
+
+/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
+fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

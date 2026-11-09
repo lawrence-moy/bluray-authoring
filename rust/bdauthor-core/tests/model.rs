@@ -16,8 +16,8 @@ fn roundtrip_preserves_everything() {
     assert_eq!(m.videos[0].chapters[2].title, "Le pont");
     assert_eq!((m.crf, m.preset.as_str()), (20, "fast"));
     let out = m.to_json();
-    let back = parse(&out).unwrap();
-    let orig = parse(EX).unwrap();
+    let back = bdauthor_core::json::parse_project(&out).unwrap();
+    let orig = bdauthor_core::json::parse_project(EX).unwrap();
     // champs inconnus conserves ; ancien reglage des menus automatiques retire
     assert_eq!(back.get("inconnu"), orig.get("inconnu"));
     assert!(back.get("menu").unwrap().get("par_page").is_none());
@@ -35,7 +35,7 @@ fn edits_and_validation() {
     m.videos[1].title = "Seconde".into();
     m.videos[1].auto_s = None;
     m.videos[1].chapters.push(ChapterEntry { id: 1, t: 10.0, title: String::new() });
-    let v = parse(&m.to_json()).unwrap();
+    let v = bdauthor_core::json::parse_project(&m.to_json()).unwrap();
     let v1 = &v.get("videos").unwrap().as_array().unwrap()[1];
     assert_eq!(v1.get("titre").unwrap().as_str(), Some("Seconde"));
     assert!(v1.get("chapitres_auto_s").is_none());

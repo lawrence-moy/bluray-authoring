@@ -51,11 +51,11 @@ fn keyframes_from_compact_output() {
 fn exact_chapters_flag_json() {
     let m = ProjectModel::from_json(r#"{"videos":[{"fichier":"a.mp4","chapitres":[0,12.5],"chapitres_exacts":true},{"fichier":"b.mp4"}]}"#).unwrap();
     assert!(m.videos[0].exact_chapters && !m.videos[1].exact_chapters);
-    let j = m.to_json();
+    let j = fr(&m);
     assert_eq!(j.matches("chapitres_exacts").count(), 1);
     let mut m2 = m.clone();
     m2.videos[0].exact_chapters = false;
-    assert!(!m2.to_json().contains("chapitres_exacts"));
+    assert!(!fr(&m2).contains("chapitres_exacts"));
 }
 
 fn source(tools: &Tools, dir: &Path) -> PathBuf {
@@ -103,3 +103,6 @@ fn frames_stream_and_forced_keyframes() {
     assert!(k.iter().any(|t| (t - 1.48).abs() < 0.021), "image cle a 1,48 s : {k:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
+fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

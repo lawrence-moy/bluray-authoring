@@ -76,7 +76,7 @@ fn json_roundtrip_in_project() {
     m.cover = c.clone();
     let m2 = ProjectModel::from_json(&m.to_json()).unwrap();
     assert_eq!(m2.cover, c);
-    assert!(!ProjectModel::default().to_json().contains("jaquette"));
+    assert!(!fr(&ProjectModel::default()).contains("jaquette"));
 }
 
 #[test]
@@ -381,3 +381,6 @@ fn video_frame_png_is_written_cropped() {
     assert_eq!(dim(&png2), (960, 540));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
+fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

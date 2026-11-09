@@ -176,8 +176,8 @@ fn model_json_roundtrip_with_subtitles() {
     assert!(m.videos[1].subs.is_empty());
     let again = ProjectModel::from_json(&m.to_json()).unwrap();
     assert_eq!(again.videos[0].subs, m.videos[0].subs);
-    assert!(m.to_json().contains("\"inconnu\""), "champ inconnu perdu");
-    assert!(!m.to_json().contains("\"soustitres\": []"));
+    assert!(fr(&m).contains("\"inconnu\""), "champ inconnu perdu");
+    assert!(!fr(&m).contains("\"soustitres\": []"));
     // validation : fichier manquant, langue invalide
     let mut m2 = m.clone();
     m2.videos[0].subs[1].lang = "fr".into();
@@ -187,3 +187,6 @@ fn model_json_roundtrip_with_subtitles() {
     // une erreur de style est signalee a la lecture
     assert!(ProjectModel::from_json(r#"{"videos":[{"fichier":"a","soustitres":[{"fichier":"x.srt","style":{"position":"ailleurs"}}]}]}"#).is_err());
 }
+
+/// Texte du projet aux noms de cles internes (le fichier ecrit est en anglais).
+fn fr(m: &bdauthor_core::model::ProjectModel) -> String { bdauthor_core::json::parse_project(&m.to_json()).unwrap().to_pretty() }

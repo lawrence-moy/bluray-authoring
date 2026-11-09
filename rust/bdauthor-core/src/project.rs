@@ -761,7 +761,7 @@ fn slot_tracks(langs: &[crate::subtitle::Language], all: &[Vec<crate::subtitle::
 pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) -> Result<BuildInfo> {
     let base = std::fs::canonicalize(project_path).unwrap_or_else(|_| project_path.to_path_buf());
     let base = base.parent().map(Path::to_path_buf).unwrap_or_default();
-    let proj = json::parse(&std::fs::read_to_string(project_path)?).map_err(|e| Error::Format(e.to_string()))?;
+    let proj = json::parse_project(&std::fs::read_to_string(project_path)?).map_err(|e| Error::Format(e.to_string()))?;
     let vids = proj.get("videos").and_then(Value::as_array).ok_or_else(|| Error::Format(tr("“videos” field (list) missing").into()))?;
     let n = vids.len();
     if !(1..=MAX_VIDEOS).contains(&n) {
