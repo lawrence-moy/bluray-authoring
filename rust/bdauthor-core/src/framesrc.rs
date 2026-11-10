@@ -193,14 +193,16 @@ impl Strip {
         let order = Arc::new(strip_order(n, from, to, focus));
         std::thread::spawn(move || {
             let Ok(tools) = Tools::locate() else { return };
-            if !exact {
+            // une passe unique lit toute la plage (tout le fichier pour une frise de film entier) : elle ne vaut que pour une plage courte ;
+            // au-dela, n recherches directes (-ss) en parallele sont bien plus rapides
+            if !exact && (to - from) <= 180.0 {
                 let mut alive = true;
                 let got = stream_range_keyframes(&tools, &src, from, to, n, size, |i, img| { alive = tx.send((i, img)).is_ok(); alive });
                 if !alive { return; }
                 if matches!(got, Ok(g) if g > 0) { return; }
             }
             let next = Arc::new(AtomicUsize::new(0));
-            let workers = std::thread::available_parallelism().map_or(2, |p| p.get()).clamp(1, 4);
+            let workers = std::thread::available_parallelism().map_or(2, |p| p.get()).clamp(2, 8);
             let mut handles = Vec::new();
             for _ in 0..workers {
                 let (tx, src, tools, next, order) = (tx.clone(), src.clone(), tools.clone(), next.clone(), order.clone());
