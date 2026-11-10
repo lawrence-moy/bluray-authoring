@@ -58,7 +58,11 @@ struct Config {
     /// editeur de jaquette : couleur du fond autour de la feuille, et des reperes (bords, plis du dos / tranche / face), RGBA
     cover_bg: [u8; 4],
     cover_guide: [u8; 4],
+    /// projets recents (le plus recent d'abord)
+    recent: Vec<String>,
 }
+
+const MAX_RECENT: usize = 10;
 
 fn rgba_text(c: [u8; 4]) -> String { format!("{},{},{},{}", c[0], c[1], c[2], c[3]) }
 fn parse_rgba(v: &str) -> Option<[u8; 4]> {
@@ -189,7 +193,7 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, recent: Vec::new() };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
@@ -197,6 +201,7 @@ impl Config {
                     Some(("ffmpeg_path", v)) => c.ffmpeg_path = v.trim().to_string(),
                     Some(("autosave", v)) => c.autosave = v.trim() != "false",
                     Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
+                    Some(("recent", v)) => if !v.trim().is_empty() && c.recent.len() < MAX_RECENT { c.recent.push(v.trim().to_string()) },
                     Some(("lang", v)) => c.lang = v.trim().to_string(),
                     // l'ancien fond par defaut (noir, ecrit lors d'un enregistrement des reglages) laisse place au nouveau (gris)
                     Some(("cover_bg", v)) => c.cover_bg = parse_rgba(v).filter(|c| *c != [18, 18, 18, 255]).unwrap_or(COVER_BG),
@@ -214,7 +219,9 @@ impl Config {
             if let Some(d) = p.parent() {
                 let _ = std::fs::create_dir_all(d);
             }
-            let _ = std::fs::write(p, format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\ncover_bg={}\ncover_guide={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang, rgba_text(self.cover_bg), rgba_text(self.cover_guide)));
+            let mut t = format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\ncover_bg={}\ncover_guide={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang, rgba_text(self.cover_bg), rgba_text(self.cover_guide));
+            for r in &self.recent { t.push_str(&format!("recent={}\n", r)); }
+            let _ = std::fs::write(p, t);
         }
     }
 }
@@ -472,11 +479,25 @@ impl App {
         }
     }
 
+    /// Place le projet en tete de la liste des projets recents (sans doublon) et l'enregistre.
+    fn add_recent(&mut self, p: &Path) {
+        let s = p.to_string_lossy().to_string();
+        self.cfg.recent.retain(|r| *r != s);
+        self.cfg.recent.insert(0, s);
+        self.cfg.recent.truncate(MAX_RECENT);
+        self.cfg.save();
+    }
+
     fn open(&mut self) {
         let Some(p) = rfd::FileDialog::new().add_filter(tr("bdauthor project"), &["json"]).pick_file() else { return };
+        self.open_path(p);
+    }
+
+    fn open_path(&mut self, p: PathBuf) {
         match std::fs::read_to_string(&p).map_err(|e| e.to_string()).and_then(|t| ProjectModel::from_json(&t)) {
             Ok(m) => {
                 self.model = m;
+                self.add_recent(&p);
                 self.path = Some(p);
                 self.dirty = false;
                 self.sel = if self.model.videos.is_empty() { None } else { Some(0) };
@@ -485,7 +506,11 @@ impl App {
                 self.restore_offer = None;
                 self.check_recovery();
             }
-            Err(e) => self.notice = trf!("Cannot open the project: {}", e),
+            Err(e) => {
+                // un fichier devenu introuvable disparait de la liste
+                if !p.exists() { let s = p.to_string_lossy().to_string(); self.cfg.recent.retain(|r| *r != s); self.cfg.save(); }
+                self.notice = trf!("Cannot open the project: {}", e);
+            }
         }
     }
 
@@ -504,6 +529,7 @@ impl App {
                 for q in [autosave_path(self.path.as_deref()), autosave_path(Some(target.as_path())), autosave_path(None)].into_iter().flatten() { let _ = std::fs::remove_file(q); }
                 self.autosave_ok = None;
                 self.restore_offer = None;
+                self.add_recent(&target);
                 self.path = Some(target);
                 self.dirty = false;
                 self.notice = tr("Project saved.").into();
@@ -1004,6 +1030,19 @@ impl eframe::App for App {
                     ui.add_enabled_ui(!busy, |ui| {
                         if ui.button(tr("New project")).clicked() { self.new_project(); ui.close_menu(); }
                         if ui.button(tr("Open project…")).clicked() { ui.close_menu(); self.open(); }
+                        let mut chosen: Option<PathBuf> = None;
+                        ui.add_enabled_ui(!self.cfg.recent.is_empty(), |ui| {
+                            ui.menu_button(tr("Recent projects"), |ui| {
+                                for r in self.cfg.recent.clone() {
+                                    let p = PathBuf::from(&r);
+                                    let name = p.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| r.clone());
+                                    if ui.button(name).on_hover_text(&r).clicked() { chosen = Some(p); ui.close_menu(); }
+                                }
+                                ui.separator();
+                                if ui.button(tr("Clear the list")).clicked() { self.cfg.recent.clear(); self.cfg.save(); ui.close_menu(); }
+                            });
+                        });
+                        if let Some(p) = chosen { ui.close_menu(); self.open_path(p); }
                         if ui.add(egui::Button::new(tr("Save")).shortcut_text("Ctrl+S")).clicked() { ui.close_menu(); self.save(false); }
                         if ui.button(tr("Save as…")).clicked() { ui.close_menu(); self.save(true); }
                     });
