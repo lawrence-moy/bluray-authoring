@@ -13,8 +13,8 @@ use eframe::egui;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 
-const VIEW_W: u32 = 960;
-const STRIP_N: usize = 40;
+use bdauthor_core::framesrc::VIEW_W;
+use bdauthor_core::framesrc::STRIP_N;
 
 /// Rapport impose au cadre de recadrage.
 #[derive(Clone, Copy, PartialEq)]

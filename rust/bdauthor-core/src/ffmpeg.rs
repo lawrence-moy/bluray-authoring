@@ -743,7 +743,11 @@ pub fn force_keys_args(times: &[f64]) -> Vec<String> {
 pub fn frame_args(src: &Path, t: f64, size: (u32, u32), exact: bool) -> Vec<String> {
     let mut a: Vec<String> = vec!["-v".into(), "error".into(), "-nostdin".into(), "-ss".into(), format!("{:.4}", t.max(0.0))];
     if !exact { a.push("-noaccurate_seek".into()); }
-    a.extend(["-i".to_string(), s(src), "-frames:v".into(), "1".into(), "-an".into(), "-sn".into(), "-vf".into(), format!("scale={}:{}", size.0, size.1)]);
+    // vignette : un seul fil de decodage par ffmpeg (plusieurs tournent en parallele) et mise a l'echelle rapide
+    let thumb = size.0 <= 320;
+    if thumb { a.extend(["-threads".to_string(), "1".into()]); }
+    a.extend(["-i".to_string(), s(src), "-frames:v".into(), "1".into(), "-an".into(), "-sn".into(), "-vf".into(),
+        format!("scale={}:{}{}", size.0, size.1, if thumb { ":flags=fast_bilinear" } else { "" })]);
     a.extend(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"].iter().map(|x| x.to_string()));
     a
 }

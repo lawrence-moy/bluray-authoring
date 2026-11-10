@@ -4,7 +4,7 @@
 //! reste aussi a l'appelant, qui connait ce qu'elle doit faire.
 use crate::chapters_ui::{tc, tex_of};
 use crate::i18n::tr;
-use bdauthor_core::framesrc::{scaled_height, Strip};
+use bdauthor_core::framesrc::{scaled_height, strip_thumb_size, Strip};
 use eframe::egui::{self, Color32, Rect, Stroke};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -112,7 +112,8 @@ impl Timeline {
 
     /// Lance le calcul des vignettes (`view` : taille des images affichees, pour les proportions).
     pub fn start(&mut self, file: &Path, duration: f64, view: (u32, u32)) {
-        self.strip = Some(Strip::start(file, duration, self.n, (THUMB_W, scaled_height(view, THUMB_W))));
+        // meme taille partout (et dans le prechargement) : la frise est reprise du cache disque
+        self.strip = Some(Strip::start(file, duration, self.n, strip_thumb_size(view)));
         self.tex = vec![None; self.n];
         self.file = Some(file.to_path_buf());
         self.view = view;

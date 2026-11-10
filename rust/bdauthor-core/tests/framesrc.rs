@@ -1,6 +1,7 @@
 //! Images d'une video pour les fenetres d'apercu : taille, sondage, extraction avec memoire, frise.
 use bdauthor_core::ffmpeg::Tools;
 use bdauthor_core::framesrc::*;
+use bdauthor_core::framesrc::{STRIP_N, VIEW_W, prefetch_strips, strip_thumb_size};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{Duration, Instant};
@@ -13,7 +14,16 @@ fn scaled_height_is_even_and_proportional() {
     assert_eq!(scaled_height((0, 0), 100), 100);
 }
 
+/// Cache des frises des tests : un dossier temporaire, jamais celui de l'utilisateur.
+fn test_cache() -> PathBuf {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    let d = std::env::temp_dir().join(format!("bdauthor_framesrc_cache_{}", std::process::id()));
+    ONCE.call_once(|| std::env::set_var("BDAUTHOR_CACHE_DIR", &d));
+    d
+}
+
 fn source(name: &str) -> Option<(Tools, PathBuf, PathBuf)> {
+    test_cache();
     let tools = Tools::locate().ok()?;
     let dir = std::env::temp_dir().join(format!("bdauthor_framesrc_{name}_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -190,5 +200,59 @@ fn keyframe_range_is_read_in_one_pass() {
     assert!(wait(|| { let (v, busy) = ex.poll(); seen.extend(v.into_iter().map(|x| x.0)); !busy }));
     seen.sort();
     assert_eq!(seen, (0..8).collect::<Vec<_>>());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn whole_strip_is_kept_in_the_disk_cache() {
+    let Some((_tools, src, dir)) = source("cache") else { eprintln!("ffmpeg absent : test ignore"); return };
+    let collect = |st: &mut Strip| {
+        let mut got: Vec<(usize, Vec<u8>)> = Vec::new();
+        assert!(wait(|| { let (v, busy) = st.poll(); got.extend(v.into_iter().map(|(i, im)| (i, im.data))); !busy }));
+        got.sort_by_key(|g| g.0);
+        got
+    };
+    let first = collect(&mut Strip::start(&src, 4.0, 6, (64, 36)));
+    assert_eq!(first.iter().map(|g| g.0).collect::<Vec<_>>(), (0..6).collect::<Vec<_>>());
+    let cache = test_cache().join("frises");
+    let files: Vec<_> = std::fs::read_dir(&cache).unwrap().flatten().filter(|e| e.path().extension().is_some_and(|x| x == "frise")).collect();
+    assert!(!files.is_empty(), "frise enregistree dans le cache");
+    // deuxieme ouverture : lue du cache, memes images, sans ffmpeg (meme si ffmpeg devenait introuvable)
+    let t0 = Instant::now();
+    let second = collect(&mut Strip::start(&src, 4.0, 6, (64, 36)));
+    assert_eq!(first, second);
+    assert!(t0.elapsed() < Duration::from_millis(500), "lecture du cache : {:?}", t0.elapsed());
+    // une video modifiee n'est pas confondue avec l'ancienne
+    std::thread::sleep(Duration::from_millis(20));
+    std::fs::write(&src, b"plus une video").unwrap();
+    let mut st = Strip::start(&src, 4.0, 6, (64, 36));
+    let third = collect(&mut st);
+    assert!(third.is_empty(), "fichier modifie : le cache ne sert plus");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn prefetch_fills_the_cache_used_by_the_windows() {
+    let Some((tools, src, dir)) = source("prefetch") else { eprintln!("ffmpeg absent : test ignore"); return };
+    prefetch_strips(vec![src.clone()]);
+    let i = bdauthor_core::ffmpeg::probe(&tools, &src).unwrap();
+    let size = strip_thumb_size((VIEW_W, scaled_height((i.width, i.height), VIEW_W)));
+    // la frise apparait dans le cache
+    let cache = test_cache().join("frises");
+    assert!(wait(|| std::fs::read_dir(&cache).map(|r| r.flatten().count() > 0).unwrap_or(false)));
+    std::thread::sleep(Duration::from_secs(1));
+    assert!(wait(|| {
+        let mut st = Strip::start(&src, i.duration_s, STRIP_N, size);
+        let mut n = 0;
+        let t0 = Instant::now();
+        // complete en moins de 300 ms : lue du cache
+        while t0.elapsed() < Duration::from_millis(300) {
+            let (v, busy) = st.poll();
+            n += v.len();
+            if !busy { break; }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        n == STRIP_N
+    }));
     let _ = std::fs::remove_dir_all(&dir);
 }

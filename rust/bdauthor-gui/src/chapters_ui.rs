@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
 
 /// Largeur des images decodees pour l'affichage (la hauteur suit les proportions de la video).
-const VIEW_W: u32 = 960;
+use bdauthor_core::framesrc::VIEW_W;
 /// Vignettes de la frise (toute la video).
-const STRIP_N: usize = 48;
+use bdauthor_core::framesrc::STRIP_N;
 /// Images gardees en memoire (environ 2 Mo chacune).
 const CACHE_MAX: usize = 40;
 

@@ -409,7 +409,7 @@ pub struct SubPreview {
 impl SubPreview {
     /// Charge les repliques : un fichier tout de suite, une piste integree par ffmpeg dans un fil separe.
     pub fn new(video: usize, track: usize, t: &SubTrackCfg, video_file: &Path, base: &Path, auto_fps: Option<f64>) -> SubPreview {
-        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), loader: None, last_img: None, meta_rx: Some(probe_async(video_file, 960)), meta: None, tl: Timeline::new(48, "frise_sous_titres"), playing: None, t_ms: 0, free: false, last_cue: 0, sprite: None, zoom: 1.0, img_rect: egui::Rect::NOTHING, style_detached: false, bottom_h: 200.0 };
+        let mut p = SubPreview { video, track, raw: None, rx: None, shown: Vec::new(), shown_offset: None, charset: t.charset, lang: t.lang.clone(), auto_fps, lim: QualityLimits::default(), issues: None, cue: 0, bg: 0, vh: 1080, safe: false, key: String::new(), tex: None, video_file: video_file.to_path_buf(), loader: None, last_img: None, meta_rx: Some(probe_async(video_file, bdauthor_core::framesrc::VIEW_W)), meta: None, tl: Timeline::new(bdauthor_core::framesrc::STRIP_N, "frise_sous_titres"), playing: None, t_ms: 0, free: false, last_cue: 0, sprite: None, zoom: 1.0, img_rect: egui::Rect::NOTHING, style_detached: false, bottom_h: 200.0 };
         match &t.source {
             SubSource::File(f) => p.raw = Some(load_cues_enc(&abs(base, f), t.fps.or(auto_fps), t.charset, &t.lang)),
             SubSource::Embedded(idx) => {

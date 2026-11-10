@@ -171,10 +171,180 @@ pub fn strip_order(n: usize, from: f64, to: f64, focus: Option<f64>) -> Vec<usiz
     out
 }
 
+/// Nombre de vignettes de la frise d'une video entiere (le meme pour toutes les fenetres : une frise calculee sert a toutes).
+pub const STRIP_N: usize = 48;
+/// Largeur des vignettes de la frise.
+pub const STRIP_THUMB_W: u32 = 160;
+/// Largeur des images d'apercu des fenetres (la frise prend les proportions de ces images).
+pub const VIEW_W: u32 = 960;
+/// Taille maximale du cache disque des frises : au-dela, les plus anciennes sont effacees.
+const STRIP_CACHE_MAX: u64 = 300 << 20;
+const STRIP_MAGIC: &[u8; 8] = b"BDASTRP1";
+
+/// Taille des vignettes de la frise pour des images d'apercu de taille `view`.
+pub fn strip_thumb_size(view: (u32, u32)) -> (u32, u32) { (STRIP_THUMB_W, scaled_height(view, STRIP_THUMB_W)) }
+
+/// Dossier du cache des frises : `BDAUTHOR_CACHE_DIR`, sinon le cache de l'utilisateur (LOCALAPPDATA, XDG_CACHE_HOME, ~/.cache).
+pub fn strip_cache_dir() -> Option<PathBuf> {
+    if let Some(d) = std::env::var_os("BDAUTHOR_CACHE_DIR") { return Some(PathBuf::from(d).join("frises")); }
+    let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+        .or_else(|| std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from))
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
+    Some(base.join("bdauthor").join("frises"))
+}
+
+fn fnv64(b: &[u8]) -> u64 {
+    b.iter().fold(0xcbf29ce484222325u64, |h, &x| (h ^ x as u64).wrapping_mul(0x100000001b3))
+}
+
+/// Fichier du cache pour cette frise, et sa cle (chemin, taille et date de la video, plage, nombre et taille des vignettes) :
+/// une video modifiee ou remplacee change de cle.
+fn strip_cache_entry(src: &Path, from: f64, to: f64, n: usize, size: (u32, u32), exact: bool) -> Option<(PathBuf, String)> {
+    let dir = strip_cache_dir()?;
+    let m = std::fs::metadata(src).ok()?;
+    let mt = m.modified().ok()?.duration_since(std::time::UNIX_EPOCH).ok()?.as_nanos();
+    let abs = std::fs::canonicalize(src).unwrap_or_else(|_| src.to_path_buf());
+    let key = format!("{}|{}|{}|{:x}|{:x}|{}|{}x{}|{}", abs.display(), m.len(), mt, from.to_bits(), to.to_bits(), n, size.0, size.1, exact);
+    Some((dir.join(format!("{:016x}.frise", fnv64(key.as_bytes()))), key))
+}
+
+fn read_u32(b: &[u8], p: &mut usize) -> Option<u32> {
+    let v = u32::from_le_bytes(b.get(*p..*p + 4)?.try_into().ok()?);
+    *p += 4;
+    Some(v)
+}
+
+/// Vignettes deja enregistrees (une case vide par vignette manquante) ; rien d'utilisable : tout est vide.
+fn load_strip_cache(path: &Path, key: &str, n: usize, size: (u32, u32)) -> Vec<Option<RgbaImage>> {
+    let mut out = vec![None; n];
+    let Ok(b) = std::fs::read(path) else { return out };
+    let parse = || -> Option<Vec<Option<RgbaImage>>> {
+        if b.get(..8)? != STRIP_MAGIC { return None; }
+        let mut p = 8;
+        let kl = read_u32(&b, &mut p)? as usize;
+        if b.get(p..p + kl)? != key.as_bytes() { return None; }
+        p += kl;
+        if read_u32(&b, &mut p)? as usize != n || read_u32(&b, &mut p)? != size.0 || read_u32(&b, &mut p)? != size.1 { return None; }
+        let len = size.0 as usize * size.1 as usize * 4;
+        let mut v = vec![None; n];
+        for slot in v.iter_mut() {
+            let here = *b.get(p)?;
+            p += 1;
+            if here == 1 {
+                *slot = Some(RgbaImage { width: size.0, height: size.1, data: b.get(p..p + len)?.to_vec() });
+                p += len;
+            }
+        }
+        Some(v)
+    };
+    if let Some(v) = parse() { out = v; }
+    let _ = std::fs::File::options().append(true).open(path).and_then(|f| f.set_modified(std::time::SystemTime::now()));
+    out
+}
+
+/// Enregistre les vignettes (ecriture atomique), puis ramene le cache sous sa taille maximale.
+fn save_strip_cache(path: &Path, key: &str, size: (u32, u32), imgs: &[Option<RgbaImage>]) {
+    let Some(dir) = path.parent() else { return };
+    if std::fs::create_dir_all(dir).is_err() { return; }
+    let len = size.0 as usize * size.1 as usize * 4;
+    let mut b = Vec::with_capacity(32 + key.len() + imgs.len() * (len + 1));
+    b.extend_from_slice(STRIP_MAGIC);
+    b.extend_from_slice(&(key.len() as u32).to_le_bytes());
+    b.extend_from_slice(key.as_bytes());
+    for v in [imgs.len() as u32, size.0, size.1] { b.extend_from_slice(&v.to_le_bytes()); }
+    for im in imgs {
+        match im {
+            Some(im) if im.data.len() == len => { b.push(1); b.extend_from_slice(&im.data); }
+            _ => b.push(0),
+        }
+    }
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
+    if std::fs::write(&tmp, &b).is_err() || std::fs::rename(&tmp, path).is_err() { let _ = std::fs::remove_file(&tmp); return; }
+    // les plus anciennes (dernier usage) sont effacees au-dela de la taille maximale
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let mut files: Vec<(std::time::SystemTime, u64, PathBuf)> = rd.flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "frise"))
+        .filter_map(|e| { let m = e.metadata().ok()?; Some((m.modified().ok()?, m.len(), e.path())) })
+        .collect();
+    let mut total: u64 = files.iter().map(|f| f.1).sum();
+    files.sort_by_key(|f| f.0);
+    for (_, l, f) in files {
+        if total <= STRIP_CACHE_MAX { break; }
+        if f != path && std::fs::remove_file(&f).is_ok() { total -= l; }
+    }
+}
+
+/// Calcule la frise dans le fil courant, en envoyant chaque vignette a `tx` (arret des que plus personne n'ecoute).
+/// `cache` : les vignettes deja enregistrees sont reprises, et celles calculees sont enregistrees (meme si le calcul est interrompu).
+#[allow(clippy::too_many_arguments)]
+fn run_strip(src: PathBuf, from: f64, to: f64, n: usize, size: (u32, u32), exact: bool, order: Vec<usize>, tx: Sender<(usize, RgbaImage)>, cache: bool, workers: usize) {
+    let entry = if cache { strip_cache_entry(&src, from, to, n, size, exact) } else { None };
+    let have = match &entry { Some((p, k)) => load_strip_cache(p, k, n, size), None => vec![None; n] };
+    for (i, im) in have.iter().enumerate() {
+        if let Some(im) = im { if tx.send((i, im.clone())).is_err() { return; } }
+    }
+    let todo: Vec<usize> = order.into_iter().filter(|&i| have.get(i).is_some_and(|h| h.is_none())).collect();
+    if todo.is_empty() { return; }
+    let Ok(tools) = Tools::locate() else { return };
+    let have = Arc::new(std::sync::Mutex::new(have));
+    let added = Arc::new(AtomicUsize::new(0));
+    let save = |have: &Arc<std::sync::Mutex<Vec<Option<RgbaImage>>>>| {
+        if let (Some((p, k)), true) = (&entry, added.load(Ordering::Relaxed) > 0) {
+            if let Ok(h) = have.lock() { save_strip_cache(p, k, size, &h); }
+        }
+    };
+    // une passe unique lit toute la plage (tout le fichier pour une frise de film entier) : elle ne vaut que pour une plage courte ;
+    // au-dela, des recherches directes (-ss) en parallele sont bien plus rapides
+    if !exact && (to - from) <= 180.0 {
+        let mut alive = true;
+        let got = stream_range_keyframes(&tools, &src, from, to, n, size, |i, img| {
+            if let Ok(mut h) = have.lock() { if let Some(s) = h.get_mut(i) { *s = Some(img.clone()); added.fetch_add(1, Ordering::Relaxed); } }
+            alive = tx.send((i, img)).is_ok();
+            alive
+        });
+        if !alive || matches!(got, Ok(g) if g > 0) { save(&have); return; }
+    }
+    let todo = Arc::new(todo);
+    let next = Arc::new(AtomicUsize::new(0));
+    let mut handles = Vec::new();
+    for _ in 0..workers.max(1) {
+        let (tx, src, tools, next, todo, have, added) = (tx.clone(), src.clone(), tools.clone(), next.clone(), todo.clone(), have.clone(), added.clone());
+        handles.push(std::thread::spawn(move || loop {
+            let k = next.fetch_add(1, Ordering::Relaxed);
+            let Some(&i) = todo.get(k) else { return };
+            let t = from + (i as f64 + 0.5) * (to - from) / n as f64;
+            if let Ok(img) = extract_frame_rgba(&tools, &src, t, size, exact) {
+                if let Ok(mut h) = have.lock() { if let Some(s) = h.get_mut(i) { *s = Some(img.clone()); added.fetch_add(1, Ordering::Relaxed); } }
+                if tx.send((i, img)).is_err() { next.store(usize::MAX / 2, Ordering::Relaxed); return; }
+            }
+        }));
+    }
+    for h in handles { let _ = h.join(); }
+    save(&have);
+}
+
+fn default_workers() -> usize { std::thread::available_parallelism().map_or(2, |p| p.get()).clamp(2, 8) }
+
+/// Calcule a l'avance, en arriere-plan et une video apres l'autre, la frise de chaque video (elle est alors lue du cache a
+/// l'ouverture des fenetres). Peu de ffmpeg a la fois, pour ne pas ralentir le reste ; les frises deja en cache ne coutent rien.
+pub fn prefetch_strips(files: Vec<PathBuf>) {
+    std::thread::spawn(move || {
+        let Ok(tools) = Tools::locate() else { return };
+        for f in files {
+            let Ok(i) = probe(&tools, &f) else { continue };
+            if i.duration_s <= 0.0 { continue; }
+            let size = strip_thumb_size((VIEW_W, scaled_height((i.width, i.height), VIEW_W)));
+            let (tx, _rx) = channel();
+            run_strip(f, 0.0, i.duration_s, STRIP_N, size, false, strip_order(STRIP_N, 0.0, i.duration_s, None), tx, true, 2);
+        }
+    });
+}
+
 impl Strip {
-    /// `n` vignettes de taille `size`, prises au milieu de `n` tranches egales de `duration` (images cles, rapide).
+    /// `n` vignettes de taille `size`, prises au milieu de `n` tranches egales de `duration` (images cles, rapide). Elles sont
+    /// gardees dans le cache disque : une frise deja calculee s'affiche aussitot.
     pub fn start(file: &Path, duration: f64, n: usize, size: (u32, u32)) -> Strip {
-        Strip::start_range(file, 0.0, duration, n, size, false)
+        Strip::spawn(file, 0.0, duration, n, size, false, None, true)
     }
 
     /// `n` vignettes prises au milieu de `n` tranches egales de la plage [`from`, `to`] (secondes). `exact` : images exactes
@@ -184,39 +354,19 @@ impl Strip {
         Strip::start_range_focus(file, from, to, n, size, exact, None)
     }
 
-    /// Comme `start_range`. Images cles : toute la plage est lue en une seule passe de ffmpeg (bien plus rapide que `n` extractions) ;
-    /// si cette passe ne donne rien, et pour les images exactes, les vignettes sont extraites une a une par plusieurs ffmpeg en
-    /// parallele, dans l'ordre de `strip_order` (`focus` : instant a servir en premier).
+    /// Comme `start_range` (sans cache disque). Images cles d'une plage courte : une seule passe de ffmpeg ; sinon, et si cette passe
+    /// ne donne rien, les vignettes sont extraites une a une par plusieurs ffmpeg en parallele, dans l'ordre de `strip_order`
+    /// (`focus` : instant a servir en premier).
     pub fn start_range_focus(file: &Path, from: f64, to: f64, n: usize, size: (u32, u32), exact: bool, focus: Option<f64>) -> Strip {
+        Strip::spawn(file, from, to, n, size, exact, focus, false)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn spawn(file: &Path, from: f64, to: f64, n: usize, size: (u32, u32), exact: bool, focus: Option<f64>, cache: bool) -> Strip {
         let (tx, rx) = channel();
         let src = file.to_path_buf();
-        let order = Arc::new(strip_order(n, from, to, focus));
-        std::thread::spawn(move || {
-            let Ok(tools) = Tools::locate() else { return };
-            // une passe unique lit toute la plage (tout le fichier pour une frise de film entier) : elle ne vaut que pour une plage courte ;
-            // au-dela, n recherches directes (-ss) en parallele sont bien plus rapides
-            if !exact && (to - from) <= 180.0 {
-                let mut alive = true;
-                let got = stream_range_keyframes(&tools, &src, from, to, n, size, |i, img| { alive = tx.send((i, img)).is_ok(); alive });
-                if !alive { return; }
-                if matches!(got, Ok(g) if g > 0) { return; }
-            }
-            let next = Arc::new(AtomicUsize::new(0));
-            let workers = std::thread::available_parallelism().map_or(2, |p| p.get()).clamp(2, 8);
-            let mut handles = Vec::new();
-            for _ in 0..workers {
-                let (tx, src, tools, next, order) = (tx.clone(), src.clone(), tools.clone(), next.clone(), order.clone());
-                handles.push(std::thread::spawn(move || loop {
-                    let k = next.fetch_add(1, Ordering::Relaxed);
-                    let Some(&i) = order.get(k) else { return };
-                    let t = from + (i as f64 + 0.5) * (to - from) / n as f64;
-                    if let Ok(img) = extract_frame_rgba(&tools, &src, t, size, exact) {
-                        if tx.send((i, img)).is_err() { next.store(usize::MAX / 2, Ordering::Relaxed); return; }
-                    }
-                }));
-            }
-            for h in handles { let _ = h.join(); }
-        });
+        let order = strip_order(n, from, to, focus);
+        std::thread::spawn(move || run_strip(src, from, to, n, size, exact, order, tx, cache, default_workers()));
         Strip { rx: Some(rx), n }
     }
 

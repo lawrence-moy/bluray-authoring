@@ -488,6 +488,17 @@ impl App {
         self.cfg.save();
     }
 
+    /// Calcule a l'avance la frise de vignettes des videos `idx` (toutes si vide), pour que les fenetres l'affichent aussitot.
+    fn prefetch_strips(&self, idx: &[usize]) {
+        let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+        let files: Vec<PathBuf> = self.model.videos.iter().enumerate()
+            .filter(|(i, _)| idx.is_empty() || idx.contains(i))
+            .map(|(_, v)| if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { base.join(&v.file) })
+            .filter(|f| f.is_file())
+            .collect();
+        if !files.is_empty() { bdauthor_core::framesrc::prefetch_strips(files); }
+    }
+
     fn open(&mut self) {
         let Some(p) = rfd::FileDialog::new().add_filter(tr("bdauthor project"), &["json"]).pick_file() else { return };
         self.open_path(p);
@@ -503,6 +514,7 @@ impl App {
                 self.sel = if self.model.videos.is_empty() { None } else { Some(0) };
                 self.reset_editor();
                 self.notice = tr("Project opened.").into();
+                self.prefetch_strips(&[]);
                 self.restore_offer = None;
                 self.check_recovery();
             }
@@ -662,9 +674,11 @@ impl App {
         let Some(files) = rfd::FileDialog::new()
             .add_filter(tr("Videos"), &["mp4", "mkv", "mov", "avi", "m2ts", "mts", "ts", "webm", "wmv", "flv", "m4v", "mpg", "mpeg"])
             .pick_files() else { return };
+        let first = self.model.videos.len();
         for f in files {
             self.model.videos.push(VideoEntry::new(&clean(&f)));
         }
+        self.prefetch_strips(&(first..self.model.videos.len()).collect::<Vec<_>>());
         if self.sel.is_none() && !self.model.videos.is_empty() {
             self.sel = Some(0);
         }
