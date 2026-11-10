@@ -62,6 +62,9 @@ pub(crate) fn tc(t: f64) -> String {
     format!("{}:{:02}:{:02}.{:02}", cs / 360_000, cs / 6000 % 60, cs / 100 % 60, cs % 100)
 }
 
+/// Instant au format hh:mm:ss:ii (ii = image dans la seconde) pour la cadence `fps`.
+pub(crate) fn tcf(t: f64, fps: f64) -> String { bdauthor_core::timecode::format(t, fps) }
+
 pub(crate) fn tex_of(ctx: &egui::Context, name: &str, img: &RgbaImage) -> egui::TextureHandle {
     let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data);
     ctx.load_texture(name, ci, egui::TextureOptions::LINEAR)
@@ -297,7 +300,7 @@ fn main_area(ui: &mut egui::Ui, ed: &mut ChapterEditor, action: &mut Option<bool
             if let Some(t) = &ed.tex {
                 p.image(t.id(), rect, egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), egui::Color32::WHITE);
             }
-            let info_txt = trf!("{} · frame {}", tc(ed.t_of(ed.frame)), ed.frame);
+            let info_txt = trf!("{} · frame {}", tcf(ed.t_of(ed.frame), ed.fps()), ed.frame);
             let g = p.layout_no_wrap(info_txt, egui::FontId::monospace(13.0), egui::Color32::from_gray(240));
             let box_r = egui::Rect::from_min_size(rect.min + egui::vec2(10.0, 10.0), g.size() + egui::vec2(12.0, 6.0));
             p.rect_filled(box_r, 2.0, egui::Color32::from_black_alpha(160));
@@ -332,8 +335,8 @@ fn main_area(ui: &mut egui::Ui, ed: &mut ChapterEditor, action: &mut Option<bool
                 if small_btn(ui, tr("+10 s")) { ed.seek(ed.frame + 10 * s1); }
                 if small_btn(ui, "▶|") { let n = ed.last_frame(); ed.seek(n); }
                 ui.add_space(8.0);
-                ui.label(egui::RichText::new(tc(ed.t_of(ed.frame))).monospace().strong());
-                ui.label(egui::RichText::new(format!("/ {}", tc(ed.duration()))).monospace().weak());
+                ui.label(egui::RichText::new(tcf(ed.t_of(ed.frame), ed.fps())).monospace().strong());
+                ui.label(egui::RichText::new(format!("/ {}", tcf(ed.duration(), ed.fps()))).monospace().weak());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.add(egui::Button::new(egui::RichText::new(tr("+ Chapter here (C)")).color(egui::Color32::from_rgb(240, 215, 122))).fill(egui::Color32::from_rgb(74, 63, 28)).min_size(egui::vec2(0.0, 28.0))).clicked() { ed.add_here(); }
                 });
@@ -360,7 +363,7 @@ fn side_panel(ui: &mut egui::Ui, ed: &mut ChapterEditor, action: &mut Option<boo
             ui.horizontal(|ui| {
                 let selected = ed.sel == Some(c.id);
                 if ui.selectable_label(selected, egui::RichText::new(format!("{:>2}", k + 1)).color(MARK).strong()).clicked() { ed.sel = Some(c.id); go = Some(c.t); }
-                if ui.link(egui::RichText::new(tc(c.t)).monospace()).on_hover_text(tr("Go to this chapter")).clicked() { ed.sel = Some(c.id); go = Some(c.t); }
+                if ui.link(egui::RichText::new(tcf(c.t, ed.fps())).monospace()).on_hover_text(tr("Go to this chapter")).clicked() { ed.sel = Some(c.id); go = Some(c.t); }
                 ui.add(egui::TextEdit::singleline(&mut c.title).hint_text(tr("name (optional)")).desired_width(170.0));
                 if crate::delete_button(ui, tr("Remove this chapter")) { del = Some(c.id); }
             });
@@ -387,7 +390,7 @@ fn side_panel(ui: &mut egui::Ui, ed: &mut ChapterEditor, action: &mut Option<boo
     ui.horizontal(|ui| {
         ui.label(tr("Video thumbnail:"));
         match ed.thumb_s {
-            Some(t) => { if ui.link(egui::RichText::new(tc(t)).monospace()).clicked() { let n = ed.frame_of(t); ed.seek(n); } }
+            Some(t) => { if ui.link(egui::RichText::new(tcf(t, ed.fps())).monospace()).clicked() { let n = ed.frame_of(t); ed.seek(n); } }
             None => { ui.label(egui::RichText::new(tr("automatic")).weak()); }
         }
     });
@@ -404,7 +407,7 @@ fn side_panel(ui: &mut egui::Ui, ed: &mut ChapterEditor, action: &mut Option<boo
                 ui.horizontal(|ui| {
                     ui.label(trf!("Chapter {} thumbnail ({} linked):", n + 1, count));
                     match at {
-                        Some(t) => { if ui.link(egui::RichText::new(tc(t)).monospace()).clicked() { let f = ed.frame_of(t); ed.seek(f); } }
+                        Some(t) => { if ui.link(egui::RichText::new(tcf(t, ed.fps())).monospace()).clicked() { let f = ed.frame_of(t); ed.seek(f); } }
                         None => { ui.label(egui::RichText::new(tr("follows the chapter")).weak()); }
                     }
                 });
@@ -436,7 +439,7 @@ fn timeline(ui: &mut egui::Ui, ed: &mut ChapterEditor) {
     let dur = ed.duration();
     let head_t = ed.t_of(ed.frame);
     let hint = tr("Wheel: zoom · Shift + wheel: scroll · drag a mark: move the chapter · click: go to this time");
-    let cfg = TimelineCfg { hint, below: 58.0, follow: ed.playing.is_some() };
+    let cfg = TimelineCfg { hint, below: 58.0, follow: ed.playing.is_some(), fps: Some(ed.fps()) };
     let (keys, chapters, sel) = (&ed.keys, &ed.chapters, ed.sel);
     let Some((resp, geo)) = ed.tl.show(ui, dur, head_t, &cfg, |p, g| {
         let (t0, span) = (g.start(), g.span());

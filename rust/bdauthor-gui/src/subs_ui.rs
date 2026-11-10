@@ -776,7 +776,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
                 else if pv.meta_rx.is_some() { ui.spinner(); ui.label(tr("Reading the video…")); }
             });
             if let Some(dur) = pv.meta.as_ref().map(|m| m.duration) {
-                let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 8.0, follow: pv.playing.is_some() };
+                let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 8.0, follow: pv.playing.is_some(), fps: None };
                 let head = pv.t_ms as f64 / 1000.0;
                 let (shown, sel) = (&pv.shown, pv.cue);
                 // les repliques de la piste en reperes sous les vignettes (la replique choisie en orange)

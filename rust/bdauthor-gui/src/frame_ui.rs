@@ -1,6 +1,6 @@
 //! Selecteur d'image du widget « Image de la video » : image exacte a l'instant choisi, barre de temps avec les vignettes de la
 //! video (apercu au survol), pas image par image, et recadrage a la souris. Les reglages ne sont appliques qu'a « Valider ».
-use crate::chapters_ui::{tc, tex_of};
+use crate::chapters_ui::{tcf, tex_of};
 use crate::i18n::{tr, trf};
 use crate::timeline_ui::{Timeline, TimelineCfg};
 use bdauthor_core::cover::CoverKind;
@@ -314,8 +314,8 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
         if btn(ui, tr("+10 s")) { fp.seek(fp.frame + 10 * s1); }
         if btn(ui, "▶|") { let n = fp.last_frame(); fp.seek(n); }
         ui.add_space(8.0);
-        ui.label(egui::RichText::new(tc(fp.t_of(fp.frame))).monospace().strong());
-        ui.label(egui::RichText::new(format!("/ {}", tc(fp.duration()))).monospace().weak());
+        ui.label(egui::RichText::new(tcf(fp.t_of(fp.frame), fp.fps())).monospace().strong());
+        ui.label(egui::RichText::new(format!("/ {}", tcf(fp.duration(), fp.fps()))).monospace().weak());
     });
     ui.add_space(4.0);
     timeline(ui, fp);
@@ -361,7 +361,7 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
 /// Barre de temps commune (vignettes, zoom, survol) ; clic ou glisser = aller a cet instant.
 fn timeline(ui: &mut egui::Ui, fp: &mut FramePicker) {
     let head_t = fp.t_of(fp.frame);
-    let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 4.0, follow: fp.playing.is_some() };
+    let cfg = TimelineCfg { hint: tr("Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time"), below: 4.0, follow: fp.playing.is_some(), fps: Some(fp.fps()) };
     let dur = fp.duration();
     let Some((resp, geo)) = fp.tl.show(ui, dur, head_t, &cfg, |_, _| {}) else { return };
     if let Some(q) = resp.interact_pointer_pos() {

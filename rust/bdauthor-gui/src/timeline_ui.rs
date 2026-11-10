@@ -75,6 +75,8 @@ pub struct TimelineCfg<'a> {
     pub below: f32,
     /// la vue suit la tete de lecture (lecture en cours)
     pub follow: bool,
+    /// cadence de la video : l'instant survole s'affiche en hh:mm:ss:ii ; sans cadence, en hh:mm:ss.cc
+    pub fps: Option<f64>,
 }
 
 /// Geometrie de la barre affichee : de quoi passer d'un instant a une abscisse et inversement.
@@ -264,7 +266,7 @@ impl Timeline {
                         let sz = tx.size_vec2();
                         ui.image((tx.id(), egui::vec2(240.0, 240.0 * sz.y / sz.x.max(1.0))));
                     }
-                    ui.label(egui::RichText::new(tc(t)).monospace());
+                    ui.label(egui::RichText::new(match cfg.fps { Some(f) => bdauthor_core::timecode::format(t, f), None => tc(t) }).monospace());
                 });
             }
         }
