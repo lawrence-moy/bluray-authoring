@@ -475,10 +475,6 @@ impl App {
                         let _ = ui.dnd_drag_source(egui::Id::new(("cal", l)), CoverRow::Layer(l), |ui| ui.label(egui::RichText::new("☰").strong().size(ICON)))
                             .response.on_hover_text(tr("Drag to move the layer (with its items)"));
                         if ui.small_button(ico(pm(open))).on_hover_text(if open { tr("Collapse the layer") } else { tr("Expand the layer") }).clicked() { toggle = Some(l); }
-                        let vis = layers[l].visible;
-                        if ui.small_button(if vis { ico("👁") } else { ico("👁").strikethrough().weak() }).on_hover_text(if vis { tr("Hide (a hidden layer is neither displayed nor exported)") } else { tr("Hidden layer: show") }).clicked() { layers[l].visible = !vis; }
-                        let locked = layers[l].locked;
-                        if ui.small_button(ico(if locked { "🔒" } else { "🔓" })).on_hover_text(if locked { tr("Locked: its items can no longer be selected with the mouse; unlock") } else { tr("Lock (no more selection or moving with the mouse)") }).clicked() { layers[l].locked = !locked; }
                         let editing = matches!(&self.cover_layer_edit, Some((e, _)) if *e == l);
                         if editing {
                             if let Some((_, text)) = &mut self.cover_layer_edit {
@@ -490,14 +486,21 @@ impl App {
                             let resp = ui.selectable_label(active == l, egui::RichText::new(format!("{}  ({count})", layers[l].name))).on_hover_text(tr("Active layer: receives new items. Double-click: rename"));
                             if resp.clicked() { activate = Some(l); }
                             if resp.double_clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
-                            if ui.small_button(ico("✏")).on_hover_text(tr("Rename the layer")).clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
+                        }
+                        // boutons alignes a droite (de gauche a droite : renommer, supprimer, cacher, verrouiller), en colonnes d'un calque a l'autre
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let locked = layers[l].locked;
+                            if ui.small_button(ico(if locked { "🔒" } else { "🔓" })).on_hover_text(if locked { tr("Locked: its items can no longer be selected with the mouse; unlock") } else { tr("Lock (no more selection or moving with the mouse)") }).clicked() { layers[l].locked = !locked; }
+                            let vis = layers[l].visible;
+                            if ui.small_button(if vis { ico("👁") } else { ico("👁").strikethrough().weak() }).on_hover_text(if vis { tr("Hide (a hidden layer is neither displayed nor exported)") } else { tr("Hidden layer: show") }).clicked() { layers[l].visible = !vis; }
                             if nl > 1 {
                                 let _ = ui.menu_button(ico("🗑"), |ui| {
                                     if ui.button(tr("Delete the layer (its items go to the neighboring layer)")).clicked() { op = Some(CoverOp::Remove(l, true)); ui.close_menu(); }
                                     if ui.button(tr("Delete the layer and its items")).clicked() { op = Some(CoverOp::Remove(l, false)); ui.close_menu(); }
                                 }).response.on_hover_text(tr("Delete the layer"));
                             }
-                        }
+                            if !editing && ui.small_button(ico("✏")).on_hover_text(tr("Rename the layer")).clicked() { self.cover_layer_edit = Some((l, layers[l].name.clone())); }
+                        });
                     }).response;
                     rows.push((CoverRow::Layer(l), r.rect));
                     if !open { continue; }
