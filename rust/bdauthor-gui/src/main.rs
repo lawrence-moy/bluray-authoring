@@ -504,6 +504,20 @@ impl App {
         if !files.is_empty() { bdauthor_core::framesrc::prefetch_strips(files); }
     }
 
+    /// Si le projet utilise un SVG avec du texte, ses polices (toutes celles du systeme) sont chargees en arriere-plan :
+    /// le premier dessin de la jaquette ou du menu n'attend plus.
+    fn preload_svg_fonts(&self) {
+        let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+        let json = self.model.to_json();
+        let paths: Vec<PathBuf> = json.split('"')
+            .skip(1).step_by(2)
+            .filter(|t| { let l = t.to_ascii_lowercase(); l.ends_with(".svg") || l.ends_with(".svgz") })
+            .map(|t| t.replace("\\\\", "\\").replace("\\/", "/"))
+            .map(|t| if Path::new(&t).is_absolute() { PathBuf::from(t) } else { base.join(t) })
+            .collect();
+        if !paths.is_empty() { bdauthor_render::preload_svg_fonts(paths); }
+    }
+
     fn open(&mut self) {
         let Some(p) = rfd::FileDialog::new().add_filter(tr("bdauthor project"), &["json"]).pick_file() else { return };
         self.open_path(p);
@@ -520,6 +534,7 @@ impl App {
                 self.reset_editor();
                 self.notice = tr("Project opened.").into();
                 self.prefetch_strips(&[]);
+                self.preload_svg_fonts();
                 self.restore_offer = None;
                 self.check_recovery();
             }

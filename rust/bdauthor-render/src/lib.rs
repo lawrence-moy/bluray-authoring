@@ -24,19 +24,45 @@ pub fn is_svg(path: &Path) -> bool {
     path.extension().and_then(|e| e.to_str()).map_or(false, |e| e.eq_ignore_ascii_case("svg") || e.eq_ignore_ascii_case("svgz"))
 }
 
+/// Polices du systeme pour les textes des SVG : leur chargement lit toutes les polices installees (une a plusieurs secondes sous
+/// Windows), une seule fois, et seulement pour un SVG qui contient du texte.
+static SVG_FONTS: std::sync::OnceLock<Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
+
+fn svg_fonts() -> Arc<resvg::usvg::fontdb::Database> {
+    SVG_FONTS.get_or_init(|| {
+        let mut db = resvg::usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        Arc::new(db)
+    }).clone()
+}
+
+/// Le SVG (contenu du fichier) a-t-il du texte a dessiner ? Un SVG compresse (svgz) est suppose en avoir.
+fn svg_data_has_text(data: &[u8]) -> bool {
+    if data.starts_with(&[0x1f, 0x8b]) { return true; }
+    data.windows(5).any(|w| w == b"<text") || data.windows(5).any(|w| w == b":text")
+}
+
+/// Le fichier SVG `path` a-t-il besoin des polices du systeme (il contient du texte) ?
+pub fn svg_needs_fonts(path: &Path) -> bool {
+    is_svg(path) && std::fs::read(path).is_ok_and(|d| svg_data_has_text(&d))
+}
+
+/// Charge en arriere-plan les polices du systeme si l'un des SVG de `paths` contient du texte : le premier dessin de ce SVG
+/// n'attend plus. Sans SVG a texte, rien n'est charge.
+pub fn preload_svg_fonts(paths: Vec<PathBuf>) {
+    std::thread::spawn(move || {
+        if SVG_FONTS.get().is_none() && paths.iter().any(|p| svg_needs_fonts(p)) { svg_fonts(); }
+    });
+}
+
 /// Dessine un SVG (bibliotheque resvg) a la taille `max_side` pour son plus grand cote, fond transparent.
 pub fn load_svg(path: &Path, max_side: u32) -> Result<RgbaImage> {
     use resvg::{tiny_skia, usvg};
-    static FONTS: std::sync::OnceLock<Arc<usvg::fontdb::Database>> = std::sync::OnceLock::new();
     let data = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
     let mut opt = usvg::Options::default();
     opt.resources_dir = path.parent().map(Path::to_path_buf);
-    // polices du systeme pour les textes du SVG (chargees une seule fois)
-    opt.fontdb = FONTS.get_or_init(|| {
-        let mut db = usvg::fontdb::Database::new();
-        db.load_system_fonts();
-        Arc::new(db)
-    }).clone();
+    // polices du systeme seulement pour un SVG qui a du texte (un logo n'est souvent fait que de traces)
+    if svg_data_has_text(&data) { opt.fontdb = svg_fonts(); }
     let tree = usvg::Tree::from_data(&data, &opt).map_err(|e| format!("{} : SVG illisible ({e})", path.display()))?;
     let size = tree.size();
     let (sw, sh) = (size.width().max(1.0), size.height().max(1.0));
