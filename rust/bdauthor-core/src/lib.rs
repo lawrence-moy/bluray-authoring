@@ -36,5 +36,6 @@ pub mod png;
 pub mod reader;
 pub mod style;
 pub mod subtitle;
+pub mod timecode;
 pub mod tsclip;
 pub mod vmux;

@@ -1178,5 +1178,6 @@
   "Custom ({} x {})": "Personnalisée ({} x {})",
   "Drag to change the order of the languages (the rank is the track number)": "Glisser pour changer l'ordre des langues (le rang est le numéro de piste)",
   "Remove this language": "Retirer cette langue",
-  "warning: menu size {}x{} is not a standard Blu-ray format (1920x1080 or 1280x720): some players may refuse the menu": "attention : la taille de menu {}x{} n'est pas un format Blu-ray standard (1920x1080 ou 1280x720) : certains lecteurs peuvent refuser le menu"
+  "warning: menu size {}x{} is not a standard Blu-ray format (1920x1080 or 1280x720): some players may refuse the menu": "attention : la taille de menu {}x{} n'est pas un format Blu-ray standard (1920x1080 ou 1280x720) : certains lecteurs peuvent refuser le menu",
+  "Time of the chapter: hh:mm:ss:ff (ff = frame number in the second). Drag, or type a timecode or a number of seconds.": "Instant du chapitre : hh:mm:ss:ii (ii = numéro de l'image dans la seconde). Glissez, ou saisissez un timecode ou un nombre de secondes."
 }

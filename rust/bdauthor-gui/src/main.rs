@@ -1246,6 +1246,8 @@ impl eframe::App for App {
                     let chapter_uses: Vec<(u32, usize)> = self.sel.and_then(|i| self.model.videos.get(i).map(|v| v.chapters.iter().map(|c| (c.id, self.model.designs.chapter_uses(i, c.id))).collect::<Vec<_>>())).unwrap_or_default();
                     // duree de la video selectionnee (si connue) : borne des instants de chapitre et de vignette
                     let max_t: f64 = self.sel.and_then(|i| self.model.videos.get(i)).and_then(|v| self.durations.get(&v.file).copied()).filter(|d| *d > 0.0).unwrap_or(1.0e6);
+                    // cadence de la video selectionnee (25 i/s tant qu'elle n'est pas connue) : timecode hh:mm:ss:ii des chapitres
+                    let fps: f64 = self.sel.and_then(|i| self.model.videos.get(i)).and_then(|v| self.video_sizes.get(&v.file)).map(|x| x.1).filter(|f| *f >= 1.0).unwrap_or(bdauthor_core::timecode::DEFAULT_FPS);
                     if let Some(v) = self.sel.and_then(|i| self.model.videos.get_mut(i)) {
                         ui.heading(tr("Selected video"));
                         ui.label(egui::RichText::new(&v.file).weak());
@@ -1275,8 +1277,11 @@ impl eframe::App for App {
                         let mut del = None;
                         for (k, c) in v.chapters.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
-                                changed |= ui.add(egui::DragValue::new(&mut c.t).speed(1.0).range(0.0..=max_t).suffix(" s")).changed();
-                                if max_t < 1.0e6 { ui.label(egui::RichText::new(format!("/ {}", duration_text(max_t))).weak()).on_hover_text(tr("Total duration of the video")); }
+                                changed |= ui.add(egui::DragValue::new(&mut c.t).speed(1.0).range(0.0..=max_t)
+                                    .custom_formatter(move |t, _| bdauthor_core::timecode::format(t, fps))
+                                    .custom_parser(move |s| bdauthor_core::timecode::parse(s, fps)))
+                                    .on_hover_text(tr("Time of the chapter: hh:mm:ss:ff (ff = frame number in the second). Drag, or type a timecode or a number of seconds.")).changed();
+                                if max_t < 1.0e6 { ui.label(egui::RichText::new(format!("/ {}", bdauthor_core::timecode::format(max_t, fps))).monospace().weak()).on_hover_text(tr("Total duration of the video")); }
                                 changed |= ui.add(egui::TextEdit::singleline(&mut c.title).hint_text(tr("name (optional)"))).changed();
                                 if let Some(n) = chapter_uses.iter().find(|u| u.0 == c.id).map(|u| u.1).filter(|n| *n > 0) {
                                     ui.label(egui::RichText::new(trf!("{} thumbnail{}", n, if n > 1 { "s" } else { "" })).weak()).on_hover_text(tr("Page thumbnails linked to this chapter: they follow its time. If you remove the chapter, they keep their time."));
