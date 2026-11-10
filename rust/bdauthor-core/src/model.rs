@@ -402,12 +402,28 @@ impl ProjectModel {
     pub fn swap_videos(&mut self, a: usize, b: usize) {
         self.videos.swap(a, b);
         self.designs.swap_videos(a, b);
+        self.remap_cover_videos(|v| if v == a { b } else if v == b { a } else { v });
     }
 
-    /// Retire une video (ses vignettes restent, sans video).
+    /// Retire une video (ses vignettes et images de jaquette/etiquette restent, sans video).
     pub fn remove_video(&mut self, i: usize) {
         self.videos.remove(i);
         self.designs.remove_video(i);
+        self.remap_cover_videos(|v| if v == i { usize::MAX } else if v > i { v - 1 } else { v });
+        for it in self.cover.items.iter_mut().chain(self.label.items.iter_mut()) {
+            if let crate::cover::CoverKind::VideoImage { frame } = &mut it.kind {
+                if frame.video == Some(usize::MAX) { frame.video = None; }
+            }
+        }
+    }
+
+    /// Applique `f` au rang de video de chaque image de video de la jaquette et de l'etiquette.
+    fn remap_cover_videos(&mut self, mut f: impl FnMut(usize) -> usize) {
+        for it in self.cover.items.iter_mut().chain(self.label.items.iter_mut()) {
+            if let crate::cover::CoverKind::VideoImage { frame } = &mut it.kind {
+                if let Some(v) = frame.video { frame.video = Some(f(v)); }
+            }
+        }
     }
 
     /// Problemes bloquants ou suspects (chemins relatifs resolus depuis `base`, le dossier du fichier de projet).

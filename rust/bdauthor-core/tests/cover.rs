@@ -381,3 +381,19 @@ fn video_frame_png_is_written_cropped() {
     assert_eq!(dim(&png2), (960, 540));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn cover_video_images_follow_video_removal_and_swap() {
+    use bdauthor_core::cover::{CoverItem, CoverKind};
+    let mut m = ProjectModel::from_json(r#"{"videos":[{"file":"a.mkv"},{"file":"b.mkv"},{"file":"c.mkv"}]}"#).unwrap();
+    for v in [0usize, 1, 2] {
+        let mut it = CoverItem::video_image(0.0, 0.0, 10.0, 10.0);
+        if let CoverKind::VideoImage { frame } = &mut it.kind { frame.video = Some(v); }
+        m.cover.items.push(it);
+    }
+    let vids = |m: &ProjectModel| m.cover.items.iter().map(|i| match &i.kind { CoverKind::VideoImage { frame } => frame.video, _ => unreachable!() }).collect::<Vec<_>>();
+    m.swap_videos(0, 2);
+    assert_eq!(vids(&m), vec![Some(2), Some(1), Some(0)]);
+    m.remove_video(1);
+    assert_eq!(vids(&m), vec![Some(1), None, Some(0)]);
+}
