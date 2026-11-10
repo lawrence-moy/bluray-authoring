@@ -1,0 +1,8 @@
+# Espace de travail : les trois crates partagent un seul dossier `target` et un seul `Cargo.lock`,
+# chaque crate (et chaque dependance) n'est donc compilee qu'une fois.
+[workspace]
+members = ["bdauthor-core", "bdauthor-render", "bdauthor-gui"]
+resolver = "2"
+
+[profile.release]
+opt-level = 3

@@ -2,7 +2,7 @@
 rem Lance l'interface bdauthor (la compile d'abord si le programme n'existe pas encore).
 setlocal
 cd /d "%~dp0"
-set "EXE=%~dp0bdauthor-gui\target\release\bdauthor.exe"
+set "EXE=%~dp0target\release\bdauthor.exe"
 
 if not exist "%EXE%" (
   echo Programme absent : compilation...

@@ -1,5 +1,5 @@
 @echo off
-rem Recompile tout bdauthor (coeur, rendu, interface) en mode release.
+rem Recompile tout bdauthor (coeur, rendu, interface) en mode release, en une seule commande (espace de travail Cargo).
 rem   recompiler.bat           : compile les trois crates
 rem   recompiler.bat tests     : compile puis lance les tests du coeur
 rem   ajouter "nopause" pour ne pas attendre une touche a la fin (ex. : recompiler.bat tests nopause)
@@ -23,34 +23,18 @@ for %%a in (%*) do (
 )
 
 echo.
-echo === [1/3] bdauthor-core ===
-pushd bdauthor-core
+echo === Compilation : coeur, rendu, interface (espace de travail, un seul dossier target) ===
 cargo build --release
-if errorlevel 1 ( popd & goto :echec )
+if errorlevel 1 goto :echec
 if "%TESTS%"=="1" (
   echo.
   echo === tests de bdauthor-core ===
-  cargo test --release
-  if errorlevel 1 ( popd & goto :echec )
+  cargo test --release -p bdauthor-core
+  if errorlevel 1 goto :echec
 )
-popd
 
 echo.
-echo === [2/3] bdauthor-render ===
-pushd bdauthor-render
-cargo build --release
-if errorlevel 1 ( popd & goto :echec )
-popd
-
-echo.
-echo === [3/3] bdauthor-gui ===
-pushd bdauthor-gui
-cargo build --release
-if errorlevel 1 ( popd & goto :echec )
-popd
-
-echo.
-echo Compilation reussie : bdauthor-gui\target\release\bdauthor.exe
+echo Compilation reussie : target\release\bdauthor.exe
 if "%PAUSE%"=="1" pause
 exit /b 0
 
