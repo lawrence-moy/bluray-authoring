@@ -58,6 +58,8 @@ struct Config {
     /// editeur de jaquette : couleur du fond autour de la feuille, et des reperes (bords, plis du dos / tranche / face), RGBA
     cover_bg: [u8; 4],
     cover_guide: [u8; 4],
+    /// dossier du cache des frises de vignettes (vide : emplacement par defaut)
+    cache_dir: String,
     /// projets recents (le plus recent d'abord)
     recent: Vec<String>,
 }
@@ -193,12 +195,13 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, recent: Vec::new() };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), recent: Vec::new() };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
                     Some(("adaptive_preview", v)) => c.adaptive_preview = v.trim() != "false",
                     Some(("ffmpeg_path", v)) => c.ffmpeg_path = v.trim().to_string(),
+                    Some(("cache_dir", v)) => c.cache_dir = v.trim().to_string(),
                     Some(("autosave", v)) => c.autosave = v.trim() != "false",
                     Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
                     Some(("recent", v)) => if !v.trim().is_empty() && c.recent.len() < MAX_RECENT { c.recent.push(v.trim().to_string()) },
@@ -211,6 +214,7 @@ impl Config {
             }
         }
         Tools::set_custom_path(&c.ffmpeg_path);
+        bdauthor_core::framesrc::set_strip_cache_dir(&c.cache_dir);
         crate::i18n::set_language(&c.lang);
         c
     }
@@ -220,6 +224,7 @@ impl Config {
                 let _ = std::fs::create_dir_all(d);
             }
             let mut t = format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\ncover_bg={}\ncover_guide={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang, rgba_text(self.cover_bg), rgba_text(self.cover_guide));
+            t.push_str(&format!("cache_dir={}\n", self.cache_dir));
             for r in &self.recent { t.push_str(&format!("recent={}\n", r)); }
             let _ = std::fs::write(p, t);
         }
@@ -861,6 +866,30 @@ impl eframe::App for App {
                 Some(p) => { ui.label(egui::RichText::new(trf!("Used: {}", p)).weak()); }
                 None => { ui.colored_label(egui::Color32::from_rgb(220, 90, 90), tr("ffmpeg/ffprobe not found with this setting.")); }
             }
+            ui.separator();
+            ui.label(tr("Thumbnail cache folder (timelines of the video windows):"));
+            ui.horizontal(|ui| {
+                let def = bdauthor_core::framesrc::default_strip_cache_dir().map(|d| d.display().to_string()).unwrap_or_default();
+                ui.add(egui::TextEdit::singleline(&mut self.cfg.cache_dir).hint_text(trf!("(default: {})", def)).desired_width(320.0));
+                if ui.button(tr("Folder…")).clicked() {
+                    if let Some(d) = rfd::FileDialog::new().set_title(tr("Thumbnail cache folder")).pick_folder() { self.cfg.cache_dir = clean(&d); }
+                }
+                if !self.cfg.cache_dir.is_empty() && ui.button(tr("Default")).clicked() { self.cfg.cache_dir.clear(); }
+            });
+            bdauthor_core::framesrc::set_strip_cache_dir(&self.cfg.cache_dir);
+            ui.horizontal(|ui| {
+                let (n, bytes) = bdauthor_core::framesrc::strip_cache_usage();
+                ui.label(egui::RichText::new(trf!("{} strip(s), {} MB (300 MB at most: the oldest are deleted)", n, format!("{:.1}", bytes as f64 / 1048576.0))).weak());
+                if ui.add_enabled(n > 0, egui::Button::new(tr("Clear the cache"))).clicked() { bdauthor_core::framesrc::clear_strip_cache(); }
+                if let Some(d) = bdauthor_core::framesrc::strip_cache_dir() {
+                    if ui.button(tr("Open the folder")).clicked() {
+                        let _ = std::fs::create_dir_all(&d);
+                        let opener = if cfg!(windows) { "explorer" } else if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+                        let _ = std::process::Command::new(opener).arg(&d).spawn();
+                    }
+                }
+            });
+            crate::help(ui, tr("The thumbnails of a video's timeline are kept there once computed: the editors then show them at once. Deleting them is harmless (they are computed again)."));
             ui.separator();
             if ui.checkbox(&mut self.model.cache, tr("Reuse already-encoded videos (cache)")).changed() { self.dirty = true; }
             ui.label(egui::RichText::new(tr("Setting saved with the project.")).weak());

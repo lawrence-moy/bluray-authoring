@@ -186,8 +186,36 @@ const STRIP_MAGIC: &[u8; 8] = b"BDASTRP1";
 /// Taille des vignettes de la frise pour des images d'apercu de taille `view`.
 pub fn strip_thumb_size(view: (u32, u32)) -> (u32, u32) { (STRIP_THUMB_W, scaled_height(view, STRIP_THUMB_W)) }
 
-/// Dossier du cache des frises : `BDAUTHOR_CACHE_DIR`, sinon le cache de l'utilisateur (LOCALAPPDATA, XDG_CACHE_HOME, ~/.cache).
+/// Dossier du cache choisi dans les reglages (rien : emplacement par defaut).
+static CACHE_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Choisit le dossier du cache des frises ; vide : emplacement par defaut (`default_strip_cache_dir`).
+pub fn set_strip_cache_dir(dir: &str) {
+    let d = dir.trim();
+    if let Ok(mut c) = CACHE_DIR.lock() { *c = if d.is_empty() { None } else { Some(PathBuf::from(d)) }; }
+}
+
+/// Dossier du cache des frises : celui des reglages, sinon l'emplacement par defaut.
 pub fn strip_cache_dir() -> Option<PathBuf> {
+    if let Some(d) = CACHE_DIR.lock().ok().and_then(|c| c.clone()) { return Some(d); }
+    default_strip_cache_dir()
+}
+
+/// Les frises du cache : nombre de fichiers et taille totale (octets).
+pub fn strip_cache_usage() -> (usize, u64) {
+    let Some(rd) = strip_cache_dir().and_then(|d| std::fs::read_dir(d).ok()) else { return (0, 0) };
+    rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "frise"))
+        .fold((0, 0), |(n, b), e| (n + 1, b + e.metadata().map_or(0, |m| m.len())))
+}
+
+/// Efface les frises du cache (seulement elles : le dossier peut contenir autre chose). Rend le nombre de fichiers effaces.
+pub fn clear_strip_cache() -> usize {
+    let Some(rd) = strip_cache_dir().and_then(|d| std::fs::read_dir(d).ok()) else { return 0 };
+    rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "frise")).filter(|e| std::fs::remove_file(e.path()).is_ok()).count()
+}
+
+/// Emplacement par defaut du cache des frises : `BDAUTHOR_CACHE_DIR`, sinon le cache de l'utilisateur (LOCALAPPDATA, XDG_CACHE_HOME, ~/.cache).
+pub fn default_strip_cache_dir() -> Option<PathBuf> {
     if let Some(d) = std::env::var_os("BDAUTHOR_CACHE_DIR") { return Some(PathBuf::from(d).join("frises")); }
     let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
         .or_else(|| std::env::var_os("XDG_CACHE_HOME").map(PathBuf::from))

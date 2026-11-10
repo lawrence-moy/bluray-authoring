@@ -1182,5 +1182,13 @@
   "Time of the chapter: hh:mm:ss:ff (ff = frame number in the second). Drag, or type a timecode or a number of seconds.": "Instant du chapitre : hh:mm:ss:ii (ii = numéro de l'image dans la seconde). Glissez, ou saisissez un timecode ou un nombre de secondes.",
   "Recent projects": "Projets récents",
   "Clear the list": "Effacer la liste",
-  "Loading thumbnails": "Chargement des vignettes"
+  "Loading thumbnails": "Chargement des vignettes",
+  "Thumbnail cache folder (timelines of the video windows):": "Dossier du cache des vignettes (frises des fenêtres vidéo) :",
+  "(default: {})": "(par défaut : {})",
+  "Thumbnail cache folder": "Dossier du cache des vignettes",
+  "Default": "Par défaut",
+  "{} strip(s), {} MB (300 MB at most: the oldest are deleted)": "{} frise(s), {} Mo (300 Mo au plus : les plus anciennes sont effacées)",
+  "Clear the cache": "Vider le cache",
+  "Open the folder": "Ouvrir le dossier",
+  "The thumbnails of a video's timeline are kept there once computed: the editors then show them at once. Deleting them is harmless (they are computed again).": "Les vignettes de la frise d'une vidéo y sont gardées une fois calculées : les éditeurs les affichent alors aussitôt. Les effacer est sans risque (elles sont recalculées)."
 }
