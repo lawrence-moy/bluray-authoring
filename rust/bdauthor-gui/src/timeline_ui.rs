@@ -162,7 +162,8 @@ impl Timeline {
         let (a, b) = ((t0 - span * 0.5).max(0.0), (t0 + span * 1.5).min(dur));
         let n = (((b - a) / cell_dt).ceil() as usize).clamp(1, 80);
         let size = (THUMB_W, scaled_height(self.view, THUMB_W));
-        let strip = Strip::start_range(&file, a, b, n, size, ((b - a) / n as f64) < 10.0);
+        // images cles : une seule passe de ffmpeg ; images exactes : plusieurs ffmpeg en parallele, la vue visible d'abord
+        let strip = Strip::start_range_focus(&file, a, b, n, size, ((b - a) / n as f64) < 10.0, Some(t0 + span * 0.5));
         self.loading = Some(Detail { a, b, n, strip: Some(strip), tex: vec![None; n] });
         ctx.request_repaint_after(Duration::from_millis(100));
     }

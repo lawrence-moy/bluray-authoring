@@ -144,3 +144,51 @@ fn ffmpeg_reports_detailed_progress() {
     std::thread::spawn(move || make_still_ts(&tools, &img, &dir.join("p.ts"), 1.0, (320, 180), "25", &EncodeOpts { preset: "ultrafast".into(), ..Default::default() }, &std::sync::atomic::AtomicBool::new(false)).unwrap()).join().unwrap();
     assert_eq!(got.lock().unwrap().len(), v.len());
 }
+
+#[test]
+fn strip_order_is_a_permutation_serving_the_focus_or_spreading() {
+    use bdauthor_core::framesrc::strip_order;
+    for n in [0usize, 1, 2, 5, 8, 48, 80] {
+        for focus in [None, Some(3.0)] {
+            let mut o = strip_order(n, 0.0, 10.0, focus);
+            o.sort();
+            assert_eq!(o, (0..n).collect::<Vec<_>>(), "n={n} focus={focus:?}");
+        }
+    }
+    // vers la vue : la vignette sous `focus` d'abord, puis ses voisines
+    let o = strip_order(10, 0.0, 10.0, Some(5.2));
+    assert_eq!(o[0], 5);
+    assert!(o[1] == 4 || o[1] == 6);
+    // sans vue : debut, milieu, quarts...
+    assert_eq!(strip_order(8, 0.0, 8.0, None), vec![0, 4, 2, 6, 1, 3, 5, 7]);
+}
+
+#[test]
+fn keyframe_range_is_read_in_one_pass() {
+    let Some(tools) = Tools::locate().ok() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_framesrc_onepass_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src.mp4");
+    // une image cle par seconde pendant 8 s
+    assert!(Command::new(&tools.ffmpeg)
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=8", "-c:v", "libx264", "-g", "25", "-pix_fmt", "yuv420p"])
+        .arg(&src).status().unwrap().success());
+    let mut got: Vec<(usize, Vec<u8>)> = Vec::new();
+    let n = bdauthor_core::ffmpeg::stream_range_keyframes(&tools, &src, 0.0, 8.0, 8, (64, 36), |i, im| { assert_eq!(im.data.len(), 64 * 36 * 4); got.push((i, im.data)); true }).unwrap();
+    assert!(n >= 1, "au moins une image recue");
+    assert_eq!(got.iter().map(|g| g.0).collect::<Vec<_>>(), (0..8).collect::<Vec<_>>(), "toujours 8 vignettes numerotees dans l'ordre");
+    assert!(got.windows(2).any(|w| w[0].1 != w[1].1), "des images differentes");
+    // par la frise : memes numeros, rien en double
+    let mut st = Strip::start_range(&src, 0.0, 8.0, 8, (64, 36), false);
+    let mut seen = Vec::new();
+    assert!(wait(|| { let (v, busy) = st.poll(); seen.extend(v.into_iter().map(|x| x.0)); !busy }));
+    seen.sort();
+    assert_eq!(seen, (0..8).collect::<Vec<_>>());
+    // images exactes : plusieurs ffmpeg en parallele, toutes les vignettes arrivent une seule fois
+    let mut ex = Strip::start_range_focus(&src, 0.0, 8.0, 8, (64, 36), true, Some(5.0));
+    let mut seen = Vec::new();
+    assert!(wait(|| { let (v, busy) = ex.poll(); seen.extend(v.into_iter().map(|x| x.0)); !busy }));
+    seen.sort();
+    assert_eq!(seen, (0..8).collect::<Vec<_>>());
+    let _ = std::fs::remove_dir_all(&dir);
+}

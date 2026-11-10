@@ -1,11 +1,12 @@
 //! Images d'une video pour les fenetres d'apercu (editeur de chapitres, selecteur d'image du widget « Image de la video »,
 //! apercu des sous-titres) : sondage de la video, extraction d'images en arriere-plan avec memoire, vignettes d'une frise.
 //! Rien ici ne depend de l'interface : les fenetres ne font que dessiner ce que ce module leur rend.
-use crate::ffmpeg::{extract_frame_rgba, extract_thumbnail_rgba, probe, Tools};
+use crate::ffmpeg::{extract_frame_rgba, extract_thumbnail_rgba, probe, stream_range_keyframes, Tools};
 use crate::palette::RgbaImage;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 
 /// Ce qu'une fenetre doit savoir de la video : duree, cadence et taille des images affichees.
@@ -149,6 +150,27 @@ pub struct Strip {
     pub n: usize,
 }
 
+/// Ordre de calcul des `n` vignettes de la plage [`from`, `to`] : en partant de `focus` (la vue visible) vers les bords, ou, sans
+/// `focus`, de proche en proche sur toute la plage (debut, milieu, quarts, huitiemes...) pour que la frise se precise partout a la fois.
+pub fn strip_order(n: usize, from: f64, to: f64, focus: Option<f64>) -> Vec<usize> {
+    if let Some(f) = focus {
+        let t = |i: usize| from + (i as f64 + 0.5) * (to - from) / n.max(1) as f64;
+        let mut v: Vec<usize> = (0..n).collect();
+        v.sort_by(|a, b| (t(*a) - f).abs().total_cmp(&(t(*b) - f).abs()));
+        return v;
+    }
+    let mut seen = vec![false; n];
+    let mut out = Vec::with_capacity(n);
+    let mut stride = n.next_power_of_two().max(1);
+    loop {
+        let mut i = 0;
+        while i < n { if !seen[i] { seen[i] = true; out.push(i); } i += stride; }
+        if stride == 1 { break; }
+        stride /= 2;
+    }
+    out
+}
+
 impl Strip {
     /// `n` vignettes de taille `size`, prises au milieu de `n` tranches egales de `duration` (images cles, rapide).
     pub fn start(file: &Path, duration: f64, n: usize, size: (u32, u32)) -> Strip {
@@ -159,16 +181,39 @@ impl Strip {
     /// (plus lent, pour une echelle ou deux vignettes voisines tombent sur des images cles differentes) ; sinon images cles.
     /// La frise s'arrete d'elle-meme quand on la laisse tomber.
     pub fn start_range(file: &Path, from: f64, to: f64, n: usize, size: (u32, u32), exact: bool) -> Strip {
+        Strip::start_range_focus(file, from, to, n, size, exact, None)
+    }
+
+    /// Comme `start_range`. Images cles : toute la plage est lue en une seule passe de ffmpeg (bien plus rapide que `n` extractions) ;
+    /// si cette passe ne donne rien, et pour les images exactes, les vignettes sont extraites une a une par plusieurs ffmpeg en
+    /// parallele, dans l'ordre de `strip_order` (`focus` : instant a servir en premier).
+    pub fn start_range_focus(file: &Path, from: f64, to: f64, n: usize, size: (u32, u32), exact: bool, focus: Option<f64>) -> Strip {
         let (tx, rx) = channel();
         let src = file.to_path_buf();
+        let order = Arc::new(strip_order(n, from, to, focus));
         std::thread::spawn(move || {
             let Ok(tools) = Tools::locate() else { return };
-            for i in 0..n {
-                let t = from + (i as f64 + 0.5) * (to - from) / n as f64;
-                if let Ok(img) = extract_frame_rgba(&tools, &src, t, size, exact) {
-                    if tx.send((i, img)).is_err() { return; }
-                }
+            if !exact {
+                let mut alive = true;
+                let got = stream_range_keyframes(&tools, &src, from, to, n, size, |i, img| { alive = tx.send((i, img)).is_ok(); alive });
+                if !alive { return; }
+                if matches!(got, Ok(g) if g > 0) { return; }
             }
+            let next = Arc::new(AtomicUsize::new(0));
+            let workers = std::thread::available_parallelism().map_or(2, |p| p.get()).clamp(1, 4);
+            let mut handles = Vec::new();
+            for _ in 0..workers {
+                let (tx, src, tools, next, order) = (tx.clone(), src.clone(), tools.clone(), next.clone(), order.clone());
+                handles.push(std::thread::spawn(move || loop {
+                    let k = next.fetch_add(1, Ordering::Relaxed);
+                    let Some(&i) = order.get(k) else { return };
+                    let t = from + (i as f64 + 0.5) * (to - from) / n as f64;
+                    if let Ok(img) = extract_frame_rgba(&tools, &src, t, size, exact) {
+                        if tx.send((i, img)).is_err() { next.store(usize::MAX / 2, Ordering::Relaxed); return; }
+                    }
+                }));
+            }
+            for h in handles { let _ = h.join(); }
         });
         Strip { rx: Some(rx), n }
     }

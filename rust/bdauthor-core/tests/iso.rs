@@ -176,7 +176,6 @@ fn big_files_split_and_cancel() {
 #[test]
 fn project_settings() {
     common::fr();
-    use bdauthor_core::json::parse;
     use bdauthor_core::model::ProjectModel;
     // par defaut : rien n'est ecrit dans le projet
     let mut m = ProjectModel::default();

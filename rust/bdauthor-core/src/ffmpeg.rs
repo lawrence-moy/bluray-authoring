@@ -765,6 +765,48 @@ pub fn extract_frame_rgba(tools: &Tools, src: &Path, t: f64, size: (u32, u32), e
     crate::palette::RgbaImage::from_raw(size.0, size.1, data).map_err(|_| Error::Format(tr("thumbnail: unexpected size (video too short?)").into()))
 }
 
+/// Arguments ffmpeg pour `n` images regulieres de la plage [`from`, `to`] en une seule passe, en ne decodant que les images cles
+/// (la plage n'est lue qu'une fois) : une image par tranche de `(to - from) / n` secondes, la premiere au milieu de la premiere
+/// tranche. Les tranches sans image cle propre reprennent l'image cle precedente (filtre `fps` : `start_time=0` complete le debut).
+pub fn range_keyframes_args(src: &Path, from: f64, to: f64, n: usize, size: (u32, u32)) -> Vec<String> {
+    let cell = ((to - from) / n.max(1) as f64).max(0.001);
+    let mut a: Vec<String> = vec!["-v".into(), "error".into(), "-nostdin".into(), "-skip_frame".into(), "nokey".into(), "-ss".into(), format!("{:.4}", (from + cell / 2.0).max(0.0))];
+    a.extend(["-i".to_string(), s(src), "-an".into(), "-sn".into(), "-frames:v".into(), n.to_string(), "-vf".into(),
+        format!("fps=fps={:.9}:start_time=0:round=near,scale={}:{}", 1.0 / cell, size.0, size.1)]);
+    a.extend(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"].iter().map(|x| x.to_string()));
+    a
+}
+
+/// Images regulieres d'une plage en une seule passe (voir `range_keyframes_args`), envoyees a `on_frame(rang, image)` des qu'elles
+/// sont pretes ; `on_frame` rend faux pour arreter (ffmpeg est alors interrompu). Si ffmpeg s'arrete avant `n` images (fin de la
+/// video), les rangs manquants reprennent la derniere image. Rend le nombre d'images recues de ffmpeg.
+pub fn stream_range_keyframes(tools: &Tools, src: &Path, from: f64, to: f64, n: usize, size: (u32, u32), mut on_frame: impl FnMut(usize, crate::palette::RgbaImage) -> bool) -> Result<usize> {
+    let mut c = Command::new(&tools.ffmpeg);
+    c.args(range_keyframes_args(src, from, to, n, size)).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    no_window(&mut c);
+    let mut child = c.spawn()?;
+    let mut out = child.stdout.take().expect("stdout");
+    let need = size.0 as usize * size.1 as usize * 4;
+    let mut got = 0usize;
+    let mut last: Option<crate::palette::RgbaImage> = None;
+    let mut stop = false;
+    while got < n {
+        let mut buf = vec![0u8; need];
+        if out.read_exact(&mut buf).is_err() { break; }
+        let Ok(img) = crate::palette::RgbaImage::from_raw(size.0, size.1, buf) else { break };
+        last = Some(img.clone());
+        if !on_frame(got, img) { stop = true; break; }
+        got += 1;
+    }
+    drop(out);
+    let _ = child.kill();
+    let _ = child.wait();
+    if !stop && got > 0 {
+        if let Some(l) = last { for i in got..n { if !on_frame(i, l.clone()) { break; } } }
+    }
+    Ok(got)
+}
+
 /// Lecture d'une video en temps reel, sans le son : images RGBA de `size` envoyees au fil de l'eau. Arretee a la destruction.
 pub struct FrameStream {
     child: Child,
