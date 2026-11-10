@@ -359,11 +359,12 @@ fn side_panel(ui: &mut egui::Ui, ed: &mut ChapterEditor, action: &mut Option<boo
         if ed.chapters.is_empty() {
             ui.label(egui::RichText::new(tr("No chapter yet: place the image and press “+ Chapter here”.")).weak());
         }
+        let fps = ed.fps();
         for (k, c) in ed.chapters.iter_mut().enumerate() {
             ui.horizontal(|ui| {
                 let selected = ed.sel == Some(c.id);
                 if ui.selectable_label(selected, egui::RichText::new(format!("{:>2}", k + 1)).color(MARK).strong()).clicked() { ed.sel = Some(c.id); go = Some(c.t); }
-                if ui.link(egui::RichText::new(tcf(c.t, ed.fps())).monospace()).on_hover_text(tr("Go to this chapter")).clicked() { ed.sel = Some(c.id); go = Some(c.t); }
+                if ui.link(egui::RichText::new(tcf(c.t, fps)).monospace()).on_hover_text(tr("Go to this chapter")).clicked() { ed.sel = Some(c.id); go = Some(c.t); }
                 ui.add(egui::TextEdit::singleline(&mut c.title).hint_text(tr("name (optional)")).desired_width(170.0));
                 if crate::delete_button(ui, tr("Remove this chapter")) { del = Some(c.id); }
             });
