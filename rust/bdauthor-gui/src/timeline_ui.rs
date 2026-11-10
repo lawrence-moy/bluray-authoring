@@ -185,8 +185,12 @@ impl Timeline {
         for (i, img) in new {
             if let Some(s) = self.tex.get_mut(i) { *s = Some(tex_of(ctx, &format!("{}_{i}", self.name), &img)); }
         }
+        if !more { self.strip = None; }
         more
     }
+
+    /// Des vignettes sont en cours de calcul (toute la video, ou la vue zoomee).
+    pub fn loading(&self) -> bool { self.strip.is_some() || self.loading.is_some() }
 
     /// Dessine la barre pour une video de `dur` secondes dont la tete de lecture est a `head_t`. `overlay` dessine les reperes de
     /// l'appelant par-dessus les vignettes. Rend la reponse de la souris et la geometrie (rien si la duree est inconnue).
@@ -253,6 +257,17 @@ impl Timeline {
             x += cell_w;
         }
         overlay(&p, &geo);
+        // calcul en cours : message en surimpression au milieu de la bande de vignettes
+        if self.loading() {
+            let dots = ".".repeat(1 + (ui.input(|i| i.time) * 2.0) as usize % 3);
+            let galley = p.layout_no_wrap(format!("{}{dots}", tr("Loading thumbnails")), egui::FontId::proportional(13.0), Color32::WHITE);
+            // largeur fixe (celle des trois points) : le cadre ne bouge pas avec l'animation
+            let full = p.layout_no_wrap(format!("{}...", tr("Loading thumbnails")), egui::FontId::proportional(13.0), Color32::WHITE);
+            let bg = Rect::from_center_size(geo.strip.center(), full.size() + egui::vec2(20.0, 10.0));
+            p.rect_filled(bg, 4.0, Color32::from_black_alpha(170));
+            p.galley(egui::pos2(bg.min.x + 10.0, bg.center().y - galley.size().y / 2.0), galley, Color32::WHITE);
+            ui.ctx().request_repaint_after(Duration::from_millis(250));
+        }
         // tete de lecture
         let hx = geo.x_of(head_t);
         p.line_segment([egui::pos2(hx, rect.min.y + 8.0), egui::pos2(hx, rect.max.y - 4.0)], Stroke::new(2.0_f32, HEAD));
