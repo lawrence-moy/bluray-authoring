@@ -34,6 +34,8 @@ fn frame_arguments() {
     let b = frame_args(Path::new("v.mkv"), 12.0, (160, 90), false);
     let ss = b.iter().position(|x| x == "-noaccurate_seek").unwrap();
     assert!(ss < b.iter().position(|x| x == "-i").unwrap(), "option d'entree avant -i");
+    // image cle : seule la premiere image decodee sort (sans tout decoder jusqu'a l'instant demande)
+    assert!(b.windows(2).any(|w| w[0] == "-vf" && w[1].starts_with("setpts=PTS-STARTPTS,")));
 }
 
 #[test]

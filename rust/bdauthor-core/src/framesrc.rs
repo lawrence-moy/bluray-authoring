@@ -1,7 +1,7 @@
 //! Images d'une video pour les fenetres d'apercu (editeur de chapitres, selecteur d'image du widget « Image de la video »,
 //! apercu des sous-titres) : sondage de la video, extraction d'images en arriere-plan avec memoire, vignettes d'une frise.
 //! Rien ici ne depend de l'interface : les fenetres ne font que dessiner ce que ce module leur rend.
-use crate::ffmpeg::{extract_frame_rgba, extract_thumbnail_rgba, probe, stream_range_keyframes, Tools};
+use crate::ffmpeg::{extract_frame_rgba, extract_frames_rgba, extract_thumbnail_rgba, probe, stream_range_keyframes, Tools};
 use crate::palette::RgbaImage;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -179,6 +179,8 @@ pub const STRIP_THUMB_W: u32 = 160;
 pub const VIEW_W: u32 = 960;
 /// Taille maximale du cache disque des frises : au-dela, les plus anciennes sont effacees.
 const STRIP_CACHE_MAX: u64 = 300 << 20;
+/// Vignettes extraites par un meme ffmpeg.
+const STRIP_BATCH: usize = 6;
 const STRIP_MAGIC: &[u8; 8] = b"BDASTRP1";
 
 /// Taille des vignettes de la frise pour des images d'apercu de taille `view`.
@@ -304,16 +306,23 @@ fn run_strip(src: PathBuf, from: f64, to: f64, n: usize, size: (u32, u32), exact
         });
         if !alive || matches!(got, Ok(g) if g > 0) { save(&have); return; }
     }
-    let todo = Arc::new(todo);
+    // lots de quelques vignettes par ffmpeg (dans l'ordre de service), repartis entre plusieurs ffmpeg en parallele
+    let batches: Arc<Vec<Vec<usize>>> = Arc::new(todo.chunks(STRIP_BATCH).map(|c| c.to_vec()).collect());
     let next = Arc::new(AtomicUsize::new(0));
     let mut handles = Vec::new();
     for _ in 0..workers.max(1) {
-        let (tx, src, tools, next, todo, have, added) = (tx.clone(), src.clone(), tools.clone(), next.clone(), todo.clone(), have.clone(), added.clone());
+        let (tx, src, tools, next, batches, have, added) = (tx.clone(), src.clone(), tools.clone(), next.clone(), batches.clone(), have.clone(), added.clone());
         handles.push(std::thread::spawn(move || loop {
             let k = next.fetch_add(1, Ordering::Relaxed);
-            let Some(&i) = todo.get(k) else { return };
-            let t = from + (i as f64 + 0.5) * (to - from) / n as f64;
-            if let Ok(img) = extract_frame_rgba(&tools, &src, t, size, exact) {
+            let Some(batch) = batches.get(k) else { return };
+            let time = |i: usize| from + (i as f64 + 0.5) * (to - from) / n as f64;
+            let times: Vec<f64> = batch.iter().map(|&i| time(i)).collect();
+            // un seul ffmpeg pour le lot ; s'il ne rend pas toutes les images, elles sont extraites une a une
+            let imgs: Vec<(usize, RgbaImage)> = match extract_frames_rgba(&tools, &src, &times, size, exact) {
+                Ok(v) => batch.iter().copied().zip(v).collect(),
+                Err(_) => batch.iter().filter_map(|&i| extract_frame_rgba(&tools, &src, time(i), size, exact).ok().map(|im| (i, im))).collect(),
+            };
+            for (i, img) in imgs {
                 if let Ok(mut h) = have.lock() { if let Some(s) = h.get_mut(i) { *s = Some(img.clone()); added.fetch_add(1, Ordering::Relaxed); } }
                 if tx.send((i, img)).is_err() { next.store(usize::MAX / 2, Ordering::Relaxed); return; }
             }

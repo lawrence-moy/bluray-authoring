@@ -256,3 +256,34 @@ fn prefetch_fills_the_cache_used_by_the_windows() {
     }));
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn batch_extraction_matches_single_extraction() {
+    let Some(tools) = Tools::locate().ok() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_framesrc_batch_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let src = dir.join("src.mp4");
+    // images cles espacees de 4 s : l'image cle n'est pas l'image a l'instant demande
+    assert!(Command::new(&tools.ffmpeg)
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=10", "-c:v", "libx264", "-g", "100", "-sc_threshold", "0", "-pix_fmt", "yuv420p"])
+        .arg(&src).status().unwrap().success());
+    let times = [1.3, 2.9, 5.5, 7.1, 9.0];
+    for exact in [false, true] {
+        let batch = bdauthor_core::ffmpeg::extract_frames_rgba(&tools, &src, &times, (64, 36), exact).unwrap();
+        assert_eq!(batch.len(), times.len());
+        for (t, b) in times.iter().zip(&batch) {
+            let one = bdauthor_core::ffmpeg::extract_frame_rgba(&tools, &src, *t, (64, 36), exact).unwrap();
+            assert_eq!(one.data.len(), b.data.len());
+            if !exact { assert_eq!(one.data, b.data, "image cle de {t} s : la meme par lot ou seule"); }
+        }
+        if !exact {
+            // images cles : 1,3 et 2,9 s tombent sur l'image cle de 0 s, 5,5 et 7,1 sur celle de 4 s
+            assert_eq!(batch[0].data, batch[1].data);
+            assert_eq!(batch[2].data, batch[3].data);
+            assert_ne!(batch[1].data, batch[2].data);
+        } else {
+            assert_ne!(batch[0].data, batch[1].data, "images exactes : differentes");
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

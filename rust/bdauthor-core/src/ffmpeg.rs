@@ -746,8 +746,10 @@ pub fn frame_args(src: &Path, t: f64, size: (u32, u32), exact: bool) -> Vec<Stri
     // vignette : un seul fil de decodage par ffmpeg (plusieurs tournent en parallele) et mise a l'echelle rapide
     let thumb = size.0 <= 320;
     if thumb { a.extend(["-threads".to_string(), "1".into()]); }
+    // image cle : sans `setpts`, la sortie jette les images d'avant l'instant demande (horodatees en negatif) et ffmpeg decode tout
+    // le groupe d'images jusqu'a cet instant ; avec, la premiere image decodee (l'image cle) sort aussitot
     a.extend(["-i".to_string(), s(src), "-frames:v".into(), "1".into(), "-an".into(), "-sn".into(), "-vf".into(),
-        format!("scale={}:{}{}", size.0, size.1, if thumb { ":flags=fast_bilinear" } else { "" })]);
+        format!("{}scale={}:{}{}", if exact { "" } else { "setpts=PTS-STARTPTS," }, size.0, size.1, if thumb { ":flags=fast_bilinear" } else { "" })]);
     a.extend(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"].iter().map(|x| x.to_string()));
     a
 }
@@ -767,6 +769,42 @@ pub fn extract_frame_rgba(tools: &Tools, src: &Path, t: f64, size: (u32, u32), e
     let mut data = out.stdout;
     data.truncate(need);
     crate::palette::RgbaImage::from_raw(size.0, size.1, data).map_err(|_| Error::Format(tr("thumbnail: unexpected size (video too short?)").into()))
+}
+
+/// Arguments ffmpeg de plusieurs images de la video (une par instant de `times`, dans cet ordre) en un seul processus : la video est
+/// ouverte une fois par instant (chaque entree saute directement a son instant), puis la premiere image de chaque entree est gardee
+/// et les images mises bout a bout. Evite le lancement d'un ffmpeg par vignette (couteux, surtout sous Windows).
+pub fn frames_batch_args(src: &Path, times: &[f64], size: (u32, u32), exact: bool) -> Vec<String> {
+    let mut a: Vec<String> = vec!["-v".into(), "error".into(), "-nostdin".into()];
+    let mut fc = String::new();
+    for (k, t) in times.iter().enumerate() {
+        a.extend(["-ss".to_string(), format!("{:.4}", t.max(0.0))]);
+        if !exact { a.push("-noaccurate_seek".into()); }
+        a.extend(["-threads".to_string(), "1".into(), "-i".into(), s(src)]);
+        fc.push_str(&format!("[{k}:v]setpts=PTS-STARTPTS,trim=end_frame=1,scale={}:{}:flags=fast_bilinear[v{k}];", size.0, size.1));
+    }
+    for k in 0..times.len() { fc.push_str(&format!("[v{k}]")); }
+    fc.push_str(&format!("concat=n={}:v=1:a=0[o]", times.len()));
+    a.extend(["-filter_complex".to_string(), fc, "-map".into(), "[o]".into(), "-fps_mode".into(), "passthrough".into(), "-an".into(), "-sn".into()]);
+    a.extend(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"].iter().map(|x| x.to_string()));
+    a
+}
+
+/// Les images de `times` en un seul ffmpeg (voir `frames_batch_args`) : exactement une image par instant, sinon une erreur
+/// (instant au-dela de la fin, ffmpeg trop ancien...) et l'appelant les extrait une a une.
+pub fn extract_frames_rgba(tools: &Tools, src: &Path, times: &[f64], size: (u32, u32), exact: bool) -> Result<Vec<crate::palette::RgbaImage>> {
+    if times.is_empty() { return Ok(Vec::new()); }
+    let mut c = Command::new(&tools.ffmpeg);
+    c.args(frames_batch_args(src, times, size, exact)).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    no_window(&mut c);
+    let out = c.output()?;
+    let need = size.0 as usize * size.1 as usize * 4;
+    if !out.status.success() || out.stdout.len() != need * times.len() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(Error::Ffmpeg { code: out.status.code(), stderr: err.lines().rev().take(4).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join("\n") });
+    }
+    out.stdout.chunks_exact(need).map(|d| crate::palette::RgbaImage::from_raw(size.0, size.1, d.to_vec())
+        .map_err(|_| Error::Format(tr("thumbnail: unexpected size (video too short?)").into()))).collect()
 }
 
 /// Arguments ffmpeg pour `n` images regulieres de la plage [`from`, `to`] en une seule passe, en ne decodant que les images cles
