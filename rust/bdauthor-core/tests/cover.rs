@@ -579,7 +579,7 @@ fn barcode_bars_stay_inside_the_frame_with_whole_pixel_modules() {
     let spec = BarcodeSpec::default();
     let vars = std::collections::BTreeMap::new();
     let r = (100, 50, 1000, 300);
-    let d = spec.decors(r, 300, &vars, Path::new("."));
+    let d = spec.decors(r, 300, 84.667, &vars, Path::new("."));
     // fond blanc d'abord
     assert!(matches!(&d[0], CoverDecor::Shape { fill: Some([255, 255, 255]), x: 100, y: 50, w: 1000, h: 300, .. }));
     let mut widths = std::collections::BTreeSet::new();
@@ -594,11 +594,52 @@ fn barcode_bars_stay_inside_the_frame_with_whole_pixel_modules() {
     assert!(widths.iter().all(|w| w % module == 0), "{widths:?}");
     // valeur impossible : seul le fond reste
     let bad = BarcodeSpec { kind: BarcodeKind::Ean13, value: "abc".into(), ..BarcodeSpec::default() };
-    assert_eq!(bad.decors(r, 300, &vars, Path::new(".")).len(), 1);
+    assert_eq!(bad.decors(r, 300, 84.667, &vars, Path::new(".")).len(), 1);
     // les variables sont remplacees
     let mut v2 = std::collections::BTreeMap::new();
     v2.insert("ref".to_string(), "AB12".to_string());
     let s2 = BarcodeSpec { value: "{ref}".into(), ..BarcodeSpec::default() };
     assert_eq!(s2.resolved(&v2), "AB12");
-    assert!(s2.decors(r, 300, &v2, Path::new(".")).len() > 5);
+    assert!(s2.decors(r, 300, 84.667, &v2, Path::new(".")).len() > 5);
+}
+
+#[test]
+fn barcode_keeps_its_proportions_at_any_resolution() {
+    let spec = BarcodeSpec::default();
+    let vars = std::collections::BTreeMap::new();
+    let w_mm = 50.0;
+    // positions relatives des barres a 96, 144, 192, 300 et 600 dpi
+    let rel = |dpi: u32| -> Vec<f64> {
+        let w = (w_mm / 25.4 * dpi as f64).round() as i32;
+        spec.decors((0, 0, w, 100), dpi, w_mm, &vars, Path::new("."))
+            .iter().skip(1).filter_map(|d| match d { CoverDecor::Shape { x, w: bw, .. } => Some((*x as f64 + *bw as f64 / 2.0) / w as f64), _ => None }).collect()
+    };
+    let base = rel(600);
+    for dpi in [96, 144, 192, 300] {
+        let r = rel(dpi);
+        assert_eq!(r.len(), base.len(), "{dpi} dpi : meme nombre de barres");
+        let err = r.iter().zip(&base).map(|(a, b)| (a - b).abs()).fold(0.0f64, f64::max);
+        // a 96 dpi un pixel vaut 1/189 de la largeur
+        assert!(err < 2.0 / (w_mm / 25.4 * dpi as f64), "{dpi} dpi : ecart {err}");
+    }
+    // a 300 dpi, modules entiers
+    let w = (w_mm / 25.4 * 300.0).round() as i32;
+    let widths: std::collections::BTreeSet<i32> = spec.decors((0, 0, w, 100), 300, w_mm, &vars, Path::new(".")).iter().skip(1).filter_map(|d| match d { CoverDecor::Shape { w, .. } => Some(*w), _ => None }).collect();
+    let m = *widths.iter().next().unwrap();
+    assert!(widths.iter().all(|x| x % m == 0), "{widths:?}");
+}
+
+#[test]
+fn text_decor_carries_exact_size_and_width() {
+    let mut c = Cover::default();
+    c.items.push(CoverItem::text("Bonjour", 10.0, 10.0, 80.0, 20.0, 11.0));
+    for dpi in [96u32, 144, 192, 300] {
+        match &c.layout(dpi, Path::new(".")).items[0].0 {
+            CoverDecor::Text { size_f, w_f, .. } => {
+                assert!((*size_f as f64 - 11.0 / 72.0 * dpi as f64).abs() < 1e-3);
+                assert!((*w_f as f64 - 80.0 / 25.4 * dpi as f64).abs() < 1e-2);
+            }
+            _ => panic!(),
+        }
+    }
 }

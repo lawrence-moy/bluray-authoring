@@ -632,15 +632,17 @@ impl FontRenderer {
     /// Texte de jaquette : interligne, alignement vertical, ajustement a la taille du cadre, contour et ombre.
     fn draw_cover_text(&self, im: &mut RgbaImage, d: &bdauthor_core::cover::CoverDecor) {
         use bdauthor_core::cover::{CoverDecor as D, VAlign};
-        let D::Text { text, x, y, w, h, size, color, align, font, valign, spacing, outline, outline_color, shadow, shadow_color, autofit, bold, italic, justify } = d else { return };
+        let D::Text { text, x, y, w, h, size, size_f, w_f, color, align, font, valign, spacing, outline, outline_color, shadow, shadow_color, autofit, bold, italic, justify } = d else { return };
         let custom = self.custom_font(font, Path::new(""));
         let f: &FontVec = custom.as_deref().unwrap_or(&self.font);
         let lines: Vec<&str> = text.split('\n').collect();
-        let mut sz = *size as f32;
+        // justifie : taille et largeur exactes, pour que la coupe des lignes ne depende pas de la resolution
+        let mut sz = if *justify { *size_f } else { *size as f32 };
+        let wf = if *justify { *w_f } else { *w as f32 };
         let line_h = |s: f32| text_extent(f, "Ag", s).1 * 1.1 * *spacing;
         let measure = |s: &str, z: f32| text_extent(f, s, z).0 + if *bold { bold_off(z) } else { 0.0 };
         // justifie : le texte est coupe en lignes de la largeur du cadre (a la taille `z`)
-        let wrapped = |z: f32| bdauthor_core::cover::wrap_words(&lines, *w as f32, &|s| measure(s, z), text_extent(f, " ", z).0);
+        let wrapped = |z: f32| bdauthor_core::cover::wrap_words(&lines, wf, &|s| measure(s, z), text_extent(f, " ", z).0);
         if *autofit {
             if *justify {
                 // la hauteur du texte coupe croit comme le carre de la taille
@@ -670,7 +672,7 @@ impl FontRenderer {
             for (k, l) in jl.iter().enumerate() {
                 if !l.last && l.words.len() >= 2 {
                     let ws: Vec<f32> = l.words.iter().map(|s| measure(s, sz)).collect();
-                    let gap = ((*w as f32 - ws.iter().sum::<f32>()) / (l.words.len() - 1) as f32).max(0.0);
+                    let gap = ((wf - ws.iter().sum::<f32>()) / (l.words.len() - 1) as f32).max(0.0);
                     let mut cx = 0.0f32;
                     for (s, ww) in l.words.iter().zip(&ws) {
                         parts.push((k, s.clone(), cx, *ww, Align::Left));

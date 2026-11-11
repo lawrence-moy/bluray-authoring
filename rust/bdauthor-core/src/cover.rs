@@ -100,6 +100,9 @@ pub enum CoverKind {
     Barcode { code: BarcodeSpec },
 }
 
+/// Resolution de reference du code-barres (dpi) : voir `BarcodeSpec::decors`.
+const REF_DPI: f64 = 300.0;
+
 /// Reglages d'un code-barres de jaquette.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BarcodeSpec {
@@ -128,7 +131,11 @@ impl BarcodeSpec {
 
     /// Dessins du code dans le cadre `r` (x, y, largeur, hauteur en pixels) : fond, une barre par suite de modules noirs, texte.
     /// Une valeur impossible a coder ne laisse que le fond. Les barres tombent au pixel pres quand le cadre le permet (module entier).
-    pub fn decors(&self, r: (i32, i32, i32, i32), dpi: u32, vars: &BTreeMap<String, String>, base: &Path) -> Vec<CoverDecor> {
+    ///
+    /// `w_mm` : largeur exacte du cadre en mm. Le module est arrondi a un nombre entier de pixels a `REF_DPI` (resolution d'export
+    /// courante) puis mis a l'echelle : le dessin garde les memes proportions a toute resolution (zoom de l'apercu), et tombe au
+    /// pixel pres a l'export en `REF_DPI` (ou un multiple).
+    pub fn decors(&self, r: (i32, i32, i32, i32), dpi: u32, w_mm: f64, vars: &BTreeMap<String, String>, base: &Path) -> Vec<CoverDecor> {
         let (x, y, w, h) = r;
         let mut out = Vec::new();
         let rect = |x: i32, y: i32, w: i32, h: i32, c: [u8; 3]| CoverDecor::Shape { shape: ShapeKind::Rect, x, y, w, h, fill: Some(c), stroke: None, stroke_px: 0, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None };
@@ -136,9 +143,12 @@ impl BarcodeSpec {
         let Ok(code) = barcode::encode(self.kind, &self.resolved(vars)) else { return out };
         let total = code.modules.len() + 2 * barcode::QUIET_MODULES;
         // module entier de pixels si possible (barres nettes), centre dans le cadre ; sinon module fractionnaire
-        let fit = w as f64 / total as f64;
-        let (mw, off) = if fit >= 1.0 { let m = fit.floor(); (m, ((w as f64 - m * total as f64) / 2.0).floor()) } else { (fit, 0.0) };
-        let xpos = |m: usize| x + (off + (m as f64 * mw).round()) as i32;
+        let w_ref = w_mm / 25.4 * REF_DPI;
+        let fit = w_ref / total as f64;
+        let (mw_ref, off_ref) = if fit >= 1.0 { let m = fit.floor(); (m, ((w_ref - m * total as f64) / 2.0).floor()) } else { (fit, 0.0) };
+        let k = dpi as f64 / REF_DPI;
+        let mw = mw_ref * k;
+        let xpos = |m: usize| x + ((off_ref + m as f64 * mw_ref) * k).round() as i32;
         let size = ((self.size_pt / 72.0 * dpi as f64).round() as i32).max(1);
         let text_h = if self.show_text { ((size as f64 * 1.35).round() as i32).min(h / 2).max(0) } else { 0 };
         let top = (mw.ceil() as i32).min(h / 4);
@@ -149,7 +159,7 @@ impl BarcodeSpec {
         }
         if self.show_text && text_h > 0 {
             let font = if self.font.is_empty() || Path::new(&self.font).is_absolute() { self.font.clone() } else if base.join(&self.font).is_file() { base.join(&self.font).to_string_lossy().into_owned() } else { self.font.clone() };
-            out.push(CoverDecor::Text { text: code.text, x, y: y + h - text_h, w, h: text_h, size, color: self.color, align: Align::Center, font, valign: VAlign::Middle, spacing: 1.0,
+            out.push(CoverDecor::Text { text: code.text, x, y: y + h - text_h, w, h: text_h, size, size_f: size as f32, w_f: w as f32, color: self.color, align: Align::Center, font, valign: VAlign::Middle, spacing: 1.0,
                 outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: false, italic: false, justify: false });
         }
         out
@@ -271,7 +281,7 @@ impl InfoTable {
                 if text.is_empty() { continue; }
                 let (cw, ch) = (xs[c + 1] - xs[c] - 2 * pad, ys[r + 1] - ys[r]);
                 if cw < 1 || ch < 1 { continue; }
-                out.push(CoverDecor::Text { text: text.clone(), x: xs[c] + pad, y: ys[r], w: cw, h: ch, size, color: if *head { self.header_color } else { self.color }, align: self.align, font: font.clone(),
+                out.push(CoverDecor::Text { text: text.clone(), x: xs[c] + pad, y: ys[r], w: cw, h: ch, size, size_f: size as f32, w_f: cw as f32, color: if *head { self.header_color } else { self.color }, align: self.align, font: font.clone(),
                     valign: VAlign::Middle, spacing: 1.0, outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: *head && self.header_bold, italic: false, justify: false });
             }
         }
@@ -439,7 +449,9 @@ pub struct CoverLayout {
 /// Element pose, en pixels (cadre et contenu).
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoverDecor {
-    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool, bold: bool, italic: bool, justify: bool },
+    /// `size_f` et `w_f` : taille et largeur exactes en pixels (sans arrondi) ; le texte justifie coupe ses lignes d'apres elles pour que
+    /// les retours a la ligne ne changent pas avec la resolution de l'apercu
+    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, size_f: f32, w_f: f32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool, bold: bool, italic: bool, justify: bool },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
     Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, flip: bool, style: LineStyle, arrow: LineArrow },
 }
@@ -513,7 +525,7 @@ impl Cover {
                     let text = apply_vars(text, vars);
                     if text.is_empty() { return None; }
                     let font = if font.is_empty() || Path::new(font).is_absolute() { font.clone() } else if base.join(font).is_file() { base.join(font).to_string_lossy().into_owned() } else { font.clone() };
-                    CoverDecor::Text { text, x, y, w: iw, h: ih, size: ((size_pt / 72.0 * dpi as f64).round() as i32).max(1), color: *color, align: *align, font, valign: fx.valign,
+                    CoverDecor::Text { text, x, y, w: iw, h: ih, size: ((size_pt / 72.0 * dpi as f64).round() as i32).max(1), size_f: (size_pt / 72.0 * dpi as f64).max(1.0) as f32, w_f: (it.w / 25.4 * dpi as f64) as f32, color: *color, align: *align, font, valign: fx.valign,
                         spacing: fx.spacing as f32, outline: if fx.outline_mm > 0.0 { mm_px(fx.outline_mm, dpi).max(1) } else { 0 }, outline_color: fx.outline_color,
                         shadow: if fx.shadow_mm > 0.0 { mm_px(fx.shadow_mm, dpi).max(1) } else { 0 }, shadow_color: fx.shadow_color, autofit: fx.autofit, bold: fx.bold, italic: fx.italic, justify: fx.justify }
                 }
@@ -545,7 +557,7 @@ impl Cover {
                 // un code-barres : fond, barres et texte, toujours a l'horizontale
                 CoverKind::Barcode { code } => {
                     let r = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi), mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
-                    items.extend(code.decors(r, dpi, vars, base).into_iter().map(|d| (d, 0)));
+                    items.extend(code.decors(r, dpi, it.w, vars, base).into_iter().map(|d| (d, 0)));
                 }
                 _ => items.extend(one(it)),
             }
