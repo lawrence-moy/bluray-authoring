@@ -1620,14 +1620,14 @@ impl App {
                         changed |= ui.color_edit_button_srgb(color).changed();
                     });
                     let shown = if font.is_empty() { tr("Default font").to_string() } else {
-                        bdauthor_render::common_fonts().into_iter().find(|(_, f)| f == font).map(|(l, _)| l.to_string()).unwrap_or_else(|| font.clone())
+                        bdauthor_render::font_choices().into_iter().find(|(_, f)| f.as_str() == font.as_str()).map(|(l, _)| l).unwrap_or_else(|| font.clone())
                     };
                     ui.horizontal(|ui| {
                         ui.label(tr("Font:"));
                         egui::ComboBox::from_id_salt("police_texte").selected_text(shown).show_ui(ui, |ui| {
                             if ui.selectable_label(font.is_empty(), tr("Default font")).clicked() { font.clear(); changed = true; }
-                            for (label, file) in bdauthor_render::common_fonts() {
-                                if ui.selectable_label(font == file, label).clicked() { *font = file.to_string(); changed = true; }
+                            for (label, file) in bdauthor_render::font_choices() {
+                                if ui.selectable_label(font.as_str() == file, label).clicked() { *font = file; changed = true; }
                             }
                             if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
                         });

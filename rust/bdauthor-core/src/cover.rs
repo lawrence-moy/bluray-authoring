@@ -131,6 +131,8 @@ pub struct InfoTable {
     pub header_bold: bool,
     /// fond des intitules ; `None` : transparent
     pub header_fill: Option<[u8; 3]>,
+    /// fond des autres cases (hors intitules) ; `None` : transparent
+    pub fill: Option<[u8; 3]>,
     /// traits de la grille ; `None` : sans grille
     pub grid: Option<[u8; 3]>,
     pub grid_mm: f64,
@@ -141,7 +143,7 @@ pub struct InfoTable {
 impl Default for InfoTable {
     fn default() -> Self {
         InfoTable { videos: vec![], fields: InfoField::ALL[1..].to_vec(), header: true, transpose: false, size_pt: 7.0, color: [255, 255, 255],
-            header_color: [255, 255, 255], header_bold: true, header_fill: None, grid: Some([255, 255, 255]), grid_mm: 0.15, font: String::new(), align: Align::Left }
+            header_color: [255, 255, 255], header_bold: true, header_fill: None, fill: None, grid: Some([255, 255, 255]), grid_mm: 0.15, font: String::new(), align: Align::Left }
     }
 }
 
@@ -191,11 +193,11 @@ impl InfoTable {
         let font = if self.font.is_empty() || Path::new(&self.font).is_absolute() { self.font.clone() } else if base.join(&self.font).is_file() { base.join(&self.font).to_string_lossy().into_owned() } else { self.font.clone() };
         let mut out = Vec::new();
         let stroke_px = mm_px(self.grid_mm, dpi).max(1);
-        if let Some(fill) = self.header_fill {
-            for (r, row) in cells.iter().enumerate() {
-                for (c, (_, head)) in row.iter().enumerate() {
-                    if *head { out.push(CoverDecor::Shape { shape: ShapeKind::Rect, x: xs[c], y: ys[r], w: xs[c + 1] - xs[c], h: ys[r + 1] - ys[r], fill: Some(fill), stroke: None, stroke_px: 0, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None }); }
-                }
+        // fonds : intitules et autres cases ont chacun le leur
+        for (r, row) in cells.iter().enumerate() {
+            for (c, (_, head)) in row.iter().enumerate() {
+                let Some(fill) = (if *head { self.header_fill } else { self.fill }) else { continue };
+                out.push(CoverDecor::Shape { shape: ShapeKind::Rect, x: xs[c], y: ys[r], w: xs[c + 1] - xs[c], h: ys[r + 1] - ys[r], fill: Some(fill), stroke: None, stroke_px: 0, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None });
             }
         }
         for (r, row) in cells.iter().enumerate() {
@@ -867,6 +869,7 @@ fn item_to_value(it: &CoverItem) -> Value {
             e.push(("header_color".into(), color_hex(t.header_color)));
             e.push(("header_bold".into(), Value::Bool(t.header_bold)));
             if let Some(c) = t.header_fill { e.push(("header_fill".into(), color_hex(c))); }
+            if let Some(c) = t.fill { e.push(("fill".into(), color_hex(c))); }
             if let Some(c) = t.grid { e.push(("grid".into(), color_hex(c))); }
             e.push(("grid_mm".into(), n(t.grid_mm)));
             if !t.font.is_empty() { e.push(("font".into(), Value::Str(t.font.clone()))); }
@@ -947,6 +950,7 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
                 header_color: color_from(e.get("header_color"), d.header_color),
                 header_bold: b("header_bold", d.header_bold),
                 header_fill: e.get("header_fill").map(|v| color_from(Some(v), [0, 0, 0])),
+                fill: e.get("fill").map(|v| color_from(Some(v), [0, 0, 0])),
                 grid: e.get("grid").map(|v| color_from(Some(v), [255, 255, 255])),
                 grid_mm: g("grid_mm", d.grid_mm).clamp(0.05, 5.0),
                 font: e.get("font").and_then(Value::as_str).unwrap_or("").to_string(),

@@ -761,12 +761,12 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label(tr("Font"));
                     let shown = if font.is_empty() { tr("Default font").to_string() } else {
-                        bdauthor_render::common_fonts().into_iter().find(|(_, f)| f == font).map(|(l, _)| l.to_string()).unwrap_or_else(|| font.clone())
+                        bdauthor_render::font_choices().into_iter().find(|(_, f)| f.as_str() == font.as_str()).map(|(l, _)| l).unwrap_or_else(|| font.clone())
                     };
                     egui::ComboBox::from_id_salt("jaquette_police").selected_text(shown).width(200.0).show_ui(ui, |ui| {
                         if ui.selectable_label(font.is_empty(), tr("Default font")).clicked() { font.clear(); changed = true; }
-                        for (label, file) in bdauthor_render::common_fonts() {
-                            if ui.selectable_label(font == file, label).clicked() { *font = file.to_string(); changed = true; }
+                        for (label, file) in bdauthor_render::font_choices() {
+                            if ui.selectable_label(font.as_str() == file, label).clicked() { *font = file; changed = true; }
                         }
                         if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
                     });
@@ -866,6 +866,11 @@ impl App {
                     if let Some(c) = &mut t.header_fill { changed |= ui.color_edit_button_srgb(c).changed(); }
                 });
                 ui.horizontal(|ui| {
+                    let mut on = t.fill.is_some();
+                    if ui.checkbox(&mut on, tr("Cells background")).on_hover_text(tr("Background of the cells other than the headings")).changed() { t.fill = if on { Some([20, 20, 20]) } else { None }; changed = true; }
+                    if let Some(c) = &mut t.fill { changed |= ui.color_edit_button_srgb(c).changed(); }
+                });
+                ui.horizontal(|ui| {
                     let mut on = t.grid.is_some();
                     if ui.checkbox(&mut on, tr("Grid")).changed() { t.grid = if on { Some(t.color) } else { None }; changed = true; }
                     if let Some(c) = &mut t.grid {
@@ -876,12 +881,12 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label(tr("Font"));
                     let shown = if t.font.is_empty() { tr("Default font").to_string() } else {
-                        bdauthor_render::common_fonts().into_iter().find(|(_, f)| *f == t.font).map(|(l, _)| l.to_string()).unwrap_or_else(|| t.font.clone())
+                        bdauthor_render::font_choices().into_iter().find(|(_, f)| *f == t.font).map(|(l, _)| l).unwrap_or_else(|| t.font.clone())
                     };
                     egui::ComboBox::from_id_salt("jaquette_tableau_police").selected_text(shown).width(200.0).show_ui(ui, |ui| {
                         if ui.selectable_label(t.font.is_empty(), tr("Default font")).clicked() { t.font.clear(); changed = true; }
-                        for (label, file) in bdauthor_render::common_fonts() {
-                            if ui.selectable_label(t.font == file, label).clicked() { t.font = file.to_string(); changed = true; }
+                        for (label, file) in bdauthor_render::font_choices() {
+                            if ui.selectable_label(t.font == file, label).clicked() { t.font = file; changed = true; }
                         }
                         if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
                     });

@@ -198,7 +198,7 @@
   "None": "Aucun",
   "Background duration:": "Durée du fond :",
   "Background video (animated):": "Vidéo de fond (animée) :",
-  "(none)": "(aucune)",
+  "(none)": "(aucun)",
   "Keep the background video's sound (if there is no music)": "Garder le son de la vidéo de fond (s'il n'y a pas de musique)",
   "Menu music:": "Musique des menus :",
   "Audio": "Audio",
@@ -1208,5 +1208,12 @@
   "{}. Info table": "{}. Tableau d'infos",
   "+ Info table": "+ Tableau d'infos",
   "Swaps rows and columns: one column per video (handy for a single video: heading | value)": "Échange lignes et colonnes : une colonne par vidéo (pratique pour une seule vidéo : intitulé | valeur)",
-  "Information (in this order)": "Informations (dans cet ordre)"
+  "Information (in this order)": "Informations (dans cet ordre)",
+  "Additional fonts folder:": "Dossier de polices supplémentaires :",
+  "Additional fonts folder": "Dossier de polices supplémentaires",
+  "Fonts of this folder (and of its sub-folders, one level) are added to the font lists of the text widgets, subtitles and cover. Supported formats: TrueType (.ttf) and OpenType (.otf). Not supported: font collections (.ttc, .otc), web fonts (.woff, .woff2) and old PostScript fonts (.pfb). In a project, a font is saved by its file name: on another computer, put the same fonts in its additional fonts folder.": "Les polices de ce dossier (et de ses sous-dossiers, sur un niveau) s'ajoutent aux listes de polices des widgets texte, des sous-titres et de la jaquette. Formats pris en charge : TrueType (.ttf) et OpenType (.otf). Non pris en charge : collections de polices (.ttc, .otc), polices web (.woff, .woff2) et anciennes polices PostScript (.pfb). Dans un projet, une police est enregistrée par son nom de fichier : sur un autre ordinateur, mets les mêmes polices dans son dossier de polices supplémentaires.",
+  "{} font(s) found": "{} police(s) trouvée(s)",
+  "Folder not found.": "Dossier introuvable.",
+  "Cells background": "Fond des cases",
+  "Background of the cells other than the headings": "Fond des cases autres que les intitulés"
 }

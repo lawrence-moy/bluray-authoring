@@ -265,13 +265,13 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
         });
     });
     let shown = if s.font.is_empty() { tr("Default font").to_string() } else {
-        bdauthor_render::common_fonts().into_iter().find(|(_, f)| *f == s.font).map(|(l, _)| l.to_string()).unwrap_or_else(|| s.font.clone())
+        bdauthor_render::font_choices().into_iter().find(|(_, f)| *f == s.font).map(|(l, _)| l).unwrap_or_else(|| s.font.clone())
     };
     let mut pick = false;
     egui::ComboBox::from_label(tr("Font")).selected_text(shown).show_ui(ui, |ui| {
         if ui.selectable_label(s.font.is_empty(), tr("Default font")).clicked() { s.font.clear(); *changed = true; }
-        for (label, file) in bdauthor_render::common_fonts() {
-            if ui.selectable_label(s.font == file, label).clicked() { s.font = file.to_string(); *changed = true; }
+        for (label, file) in bdauthor_render::font_choices() {
+            if ui.selectable_label(s.font == file, label).clicked() { s.font = file; *changed = true; }
         }
         if ui.button(tr("Other file…")).clicked() { pick = true; ui.close_menu(); }
     });

@@ -60,6 +60,8 @@ struct Config {
     cover_guide: [u8; 4],
     /// dossier du cache des frises de vignettes (vide : emplacement par defaut)
     cache_dir: String,
+    /// dossier de polices supplementaires (vide : aucun)
+    fonts_dir: String,
     /// projets recents (le plus recent d'abord)
     recent: Vec<String>,
 }
@@ -195,13 +197,14 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), recent: Vec::new() };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), fonts_dir: String::new(), recent: Vec::new() };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
                     Some(("adaptive_preview", v)) => c.adaptive_preview = v.trim() != "false",
                     Some(("ffmpeg_path", v)) => c.ffmpeg_path = v.trim().to_string(),
                     Some(("cache_dir", v)) => c.cache_dir = v.trim().to_string(),
+                    Some(("fonts_dir", v)) => c.fonts_dir = v.trim().to_string(),
                     Some(("autosave", v)) => c.autosave = v.trim() != "false",
                     Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
                     Some(("recent", v)) => if !v.trim().is_empty() && c.recent.len() < MAX_RECENT { c.recent.push(v.trim().to_string()) },
@@ -215,6 +218,7 @@ impl Config {
         }
         Tools::set_custom_path(&c.ffmpeg_path);
         bdauthor_core::framesrc::set_strip_cache_dir(&c.cache_dir);
+        bdauthor_render::set_extra_font_dir(&c.fonts_dir);
         crate::i18n::set_language(&c.lang);
         c
     }
@@ -224,7 +228,7 @@ impl Config {
                 let _ = std::fs::create_dir_all(d);
             }
             let mut t = format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\ncover_bg={}\ncover_guide={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang, rgba_text(self.cover_bg), rgba_text(self.cover_guide));
-            t.push_str(&format!("cache_dir={}\n", self.cache_dir));
+            t.push_str(&format!("cache_dir={}\nfonts_dir={}\n", self.cache_dir, self.fonts_dir));
             for r in &self.recent { t.push_str(&format!("recent={}\n", r)); }
             let _ = std::fs::write(p, t);
         }
@@ -880,6 +884,27 @@ impl eframe::App for App {
             match found {
                 Some(p) => { ui.label(egui::RichText::new(trf!("Used: {}", p)).weak()); }
                 None => { ui.colored_label(egui::Color32::from_rgb(220, 90, 90), tr("ffmpeg/ffprobe not found with this setting.")); }
+            }
+            ui.separator();
+            ui.horizontal(|ui| {
+                ui.label(tr("Additional fonts folder:"));
+                crate::help(ui, tr("Fonts of this folder (and of its sub-folders, one level) are added to the font lists of the text widgets, subtitles and cover. Supported formats: TrueType (.ttf) and OpenType (.otf). Not supported: font collections (.ttc, .otc), web fonts (.woff, .woff2) and old PostScript fonts (.pfb). In a project, a font is saved by its file name: on another computer, put the same fonts in its additional fonts folder."));
+            });
+            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.cfg.fonts_dir).hint_text(tr("(none)")).desired_width(320.0));
+                if ui.button(tr("Folder…")).clicked() {
+                    if let Some(d) = rfd::FileDialog::new().set_title(tr("Additional fonts folder")).pick_folder() { self.cfg.fonts_dir = clean(&d); }
+                }
+                if !self.cfg.fonts_dir.is_empty() && ui.button(tr("None")).clicked() { self.cfg.fonts_dir.clear(); }
+            });
+            bdauthor_render::set_extra_font_dir(&self.cfg.fonts_dir);
+            if !self.cfg.fonts_dir.trim().is_empty() {
+                let dir = std::path::Path::new(self.cfg.fonts_dir.trim());
+                if dir.is_dir() {
+                    ui.label(egui::RichText::new(trf!("{} font(s) found", bdauthor_render::extra_fonts().len())).weak());
+                } else {
+                    ui.colored_label(egui::Color32::from_rgb(220, 90, 90), tr("Folder not found."));
+                }
             }
             ui.separator();
             ui.label(tr("Thumbnail cache folder (timelines of the video windows):"));

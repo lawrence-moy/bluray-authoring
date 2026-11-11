@@ -32,6 +32,7 @@ fn svg_fonts() -> Arc<resvg::usvg::fontdb::Database> {
     SVG_FONTS.get_or_init(|| {
         let mut db = resvg::usvg::fontdb::Database::new();
         db.load_system_fonts();
+        if let Some(d) = extra_font_dir() { db.load_fonts_dir(d); }
         Arc::new(db)
     }).clone()
 }
@@ -1268,6 +1269,54 @@ fn placeholder_thumb(w: u32, h: u32, n: usize, font: &FontVec) -> RgbaImage {
     im
 }
 
+/// Dossier de polices supplementaires choisi dans les reglages (rien : aucun).
+static EXTRA_FONT_DIR: std::sync::Mutex<Option<PathBuf>> = std::sync::Mutex::new(None);
+
+/// Choisit le dossier de polices supplementaires ; vide : aucun.
+pub fn set_extra_font_dir(dir: &str) {
+    let d = dir.trim();
+    if let Ok(mut c) = EXTRA_FONT_DIR.lock() { *c = if d.is_empty() { None } else { Some(PathBuf::from(d)) }; }
+}
+
+/// Dossier de polices supplementaires choisi dans les reglages.
+pub fn extra_font_dir() -> Option<PathBuf> { EXTRA_FONT_DIR.lock().ok().and_then(|c| c.clone()) }
+
+/// Extensions des polices lues : TrueType et OpenType (les collections .ttc/.otc, les polices web .woff/.woff2 et les anciennes
+/// polices PostScript ne le sont pas).
+pub const FONT_EXTENSIONS: [&str; 2] = ["ttf", "otf"];
+
+/// Polices lisibles du dossier supplementaire : (libelle = nom du fichier sans extension, chemin relatif au dossier). Les
+/// sous-dossiers sont parcourus sur deux niveaux ; resultat trie, limite a 500 polices.
+pub fn extra_fonts() -> Vec<(String, String)> {
+    let Some(root) = extra_font_dir() else { return vec![] };
+    fn walk(root: &Path, dir: &Path, depth: u32, out: &mut Vec<(String, String)>) {
+        let Ok(rd) = std::fs::read_dir(dir) else { return };
+        let mut entries: Vec<_> = rd.flatten().collect();
+        entries.sort_by_key(|e| e.file_name());
+        for e in entries {
+            if out.len() >= 500 { return; }
+            let p = e.path();
+            if p.is_dir() { if depth < 2 { walk(root, &p, depth + 1, out); } continue; }
+            let ext_ok = p.extension().and_then(|x| x.to_str()).is_some_and(|x| FONT_EXTENSIONS.iter().any(|f| f.eq_ignore_ascii_case(x)));
+            if !ext_ok { continue; }
+            let (Some(stem), Ok(rel)) = (p.file_stem().and_then(|s| s.to_str()), p.strip_prefix(root)) else { continue };
+            out.push((stem.to_string(), rel.to_string_lossy().replace('\\', "/")));
+        }
+    }
+    let mut out = Vec::new();
+    walk(&root, &root, 1, &mut out);
+    out.sort_by(|a, b| a.0.to_lowercase().cmp(&b.0.to_lowercase()));
+    out
+}
+
+/// Polices proposees dans les listes de l'interface : (libelle, fichier) ; les polices usuelles installees, puis celles du dossier
+/// supplementaire.
+pub fn font_choices() -> Vec<(String, String)> {
+    let mut v: Vec<(String, String)> = common_fonts().into_iter().map(|(l, f)| (l.to_string(), f.to_string())).collect();
+    for (l, f) in extra_fonts() { if !v.iter().any(|(_, g)| *g == f) { v.push((l, f)); } }
+    v
+}
+
 /// Dossiers ou chercher les polices installees.
 fn system_font_dirs() -> Vec<PathBuf> {
     let mut v = vec![PathBuf::from("C:\\Windows\\Fonts"), "/usr/share/fonts/truetype/dejavu".into(), "/usr/share/fonts/TTF".into(), "/Library/Fonts".into(), "/System/Library/Fonts/Supplemental".into()];
@@ -1277,6 +1326,8 @@ fn system_font_dirs() -> Vec<PathBuf> {
     if let Ok(l) = std::env::var("LOCALAPPDATA") {
         v.push(Path::new(&l).join("Microsoft\\Windows\\Fonts"));
     }
+    // le dossier choisi dans les reglages passe en premier
+    if let Some(d) = extra_font_dir() { v.insert(0, d); }
     v
 }
 
@@ -1307,7 +1358,7 @@ impl FontRenderer {
         if name.is_empty() {
             return None;
         }
-        let key = format!("{}|{}", project_dir.display(), name);
+        let key = format!("{}|{}|{}", project_dir.display(), name, extra_font_dir().map(|d| d.display().to_string()).unwrap_or_default());
         if let Some(f) = self.fonts.lock().unwrap().get(&key) {
             return f.clone();
         }

@@ -491,3 +491,19 @@ fn info_table_videos_follow_swaps_and_removals() {
     m.remove_video(1);
     assert_eq!(vids(&m), vec![1]);
 }
+
+#[test]
+fn info_table_body_background_is_separate_from_headings() {
+    use bdauthor_core::cover::{info_key, InfoField, InfoTable, CoverDecor, INFO_COUNT_KEY};
+    let t = InfoTable { fields: vec![InfoField::Duration], header_fill: Some([1, 2, 3]), fill: Some([200, 100, 50]), grid: None, ..InfoTable::default() };
+    let mut c = Cover::default();
+    c.items.push(CoverItem { kind: CoverKind::InfoTable { table: t.clone() }, x: 0.0, y: 0.0, w: 40.0, h: 30.0, rot: 0, name: String::new(), layer: 0 });
+    let back = Cover::from_value(Some(&c.to_value().unwrap())).unwrap();
+    assert_eq!(back.items[0].kind, CoverKind::InfoTable { table: t });
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert(INFO_COUNT_KEY.to_string(), "2".to_string());
+    for v in 0..2 { vars.insert(info_key(v, InfoField::Duration), format!("{} min", 10 + v)); }
+    let lay = c.layout_with(100, std::path::Path::new("."), &vars);
+    let n = |col: [u8; 3]| lay.items.iter().filter(|(d, _)| matches!(d, CoverDecor::Shape { fill: Some(f), .. } if *f == col)).count();
+    assert_eq!((n([1, 2, 3]), n([200, 100, 50])), (1, 2), "1 intitule, 2 cases de valeurs");
+}
