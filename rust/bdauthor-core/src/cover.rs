@@ -150,7 +150,11 @@ impl Default for InfoTable {
 impl InfoTable {
     /// Videos montrees (rangs valides parmi `count`), dans l'ordre.
     pub fn shown_videos(&self, count: usize) -> Vec<usize> {
-        if self.videos.is_empty() { (0..count).collect() } else { self.videos.iter().copied().filter(|&v| v < count).collect() }
+        if self.videos.is_empty() { return (0..count).collect(); }
+        // dans l'ordre de la liste, sans doublon
+        let mut out: Vec<usize> = Vec::new();
+        for &v in &self.videos { if v < count && !out.contains(&v) { out.push(v); } }
+        out
     }
 
     /// Cellules du tableau, ligne par ligne, avec pour chacune son type (intitule ?). Les valeurs inconnues sont vides.

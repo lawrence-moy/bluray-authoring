@@ -104,6 +104,10 @@ enum CoverRow {
     Item(usize),
 }
 
+/// Video glissee dans la liste des videos d'un tableau d'informations (rang de la video).
+#[derive(Clone, Copy)]
+struct TableVideo(usize);
+
 /// Modification demandee par la liste, appliquee apres son dessin.
 enum CoverOp {
     Add,
@@ -801,23 +805,65 @@ impl App {
                 }
             }
             CoverKind::InfoTable { table: t } => {
-                // videos montrees
-                ui.label(tr("Videos"));
-                ui.horizontal_wrapped(|ui| {
-                    if ui.selectable_label(t.videos.is_empty(), tr("All")).on_hover_text(tr("All the project's videos, in their order (videos added later included)")).clicked() { t.videos.clear(); changed = true; }
-                    for (v, name) in vlabels.iter().enumerate() {
-                        let mut on = t.videos.is_empty() || t.videos.contains(&v);
-                        if ui.checkbox(&mut on, format!("{}. {}", v + 1, name)).changed() {
-                            if t.videos.is_empty() { t.videos = (0..vlabels.len()).collect(); }
-                            if on { if !t.videos.contains(&v) { t.videos.push(v); t.videos.sort_unstable(); } } else { t.videos.retain(|&x| x != v); }
-                            // toutes cochees : « Toutes » (les videos ajoutees ensuite y entreront aussi)
-                            if t.videos.len() == vlabels.len() { t.videos.clear(); }
-                            changed = true;
-                        }
+                // videos montrees, dans l'ordre des lignes : liste a reordonner par glisser-deposer (cochees d'abord, puis les autres)
+                ui.horizontal(|ui| {
+                    ui.label(tr("Videos (drag ☰ to change the order)"));
+                    if ui.small_button(tr("All")).on_hover_text(tr("Back to all the project's videos in their own order (videos added later included)")).clicked() { t.videos.clear(); changed = true; }
+                });
+                let count = vlabels.len();
+                let mut disp: Vec<(usize, bool)> = Vec::new();
+                if t.videos.is_empty() {
+                    disp.extend((0..count).map(|v| (v, true)));
+                } else {
+                    for &v in &t.videos { if v < count && !disp.iter().any(|d| d.0 == v) { disp.push((v, true)); } }
+                    for v in 0..count { if !disp.iter().any(|d| d.0 == v) { disp.push((v, false)); } }
+                }
+                let checked = disp.iter().filter(|d| d.1).count();
+                let mut rows: Vec<Rect> = Vec::new();
+                let mut toggle_video: Option<usize> = None;
+                let frame = egui::Frame::group(ui.style()).inner_margin(4.0).show(ui, |ui| {
+                    ui.set_min_width(ui.available_width());
+                    for &(v, on) in &disp {
+                        let r = ui.horizontal(|ui| {
+                            if on {
+                                let _ = ui.dnd_drag_source(egui::Id::new(("cinfo_video", v)), TableVideo(v), |ui| ui.label(egui::RichText::new("☰").strong().size(ICON)))
+                                    .response.on_hover_text(tr("Drag to change the order"));
+                            } else {
+                                ui.add_space(ICON);
+                            }
+                            let mut chk = on;
+                            // au moins une video reste cochee (une liste vide voudrait dire « toutes »)
+                            if ui.add_enabled(!(on && checked == 1), egui::Checkbox::new(&mut chk, format!("{}. {}", v + 1, vlabels[v]))).changed() { toggle_video = Some(v); }
+                        }).response;
+                        if on { rows.push(r.rect); }
                     }
                 });
-                if !t.videos.is_empty() && t.shown_videos(vlabels.len()).is_empty() {
-                    ui.colored_label(Color32::from_rgb(230, 100, 90), tr("No video selected: the table is empty."));
+                let mut reorder = false;
+                if let (Some(drag), Some(pos)) = (egui::DragAndDrop::payload::<TableVideo>(ui.ctx()), ui.ctx().pointer_hover_pos()) {
+                    let area = frame.response.rect;
+                    if area.expand(8.0).contains(pos) && !rows.is_empty() {
+                        // trait bleu a l'endroit de depot, parmi les videos cochees
+                        let k = rows.iter().filter(|rc| rc.center().y < pos.y).count();
+                        let y = if k < rows.len() { rows[k].top() } else { rows[rows.len() - 1].bottom() };
+                        ui.painter().hline(area.x_range(), y, Stroke::new(2.5_f32, Color32::from_rgb(90, 170, 255)));
+                        if ui.input(|i| i.pointer.any_released()) {
+                            egui::DragAndDrop::clear_payload(ui.ctx());
+                            if let Some(a) = disp.iter().position(|d| d.0 == drag.0) {
+                                let item = disp.remove(a);
+                                disp.insert(if k > a { k - 1 } else { k }, item);
+                                reorder = true;
+                            }
+                        }
+                    }
+                }
+                if let Some(v) = toggle_video {
+                    if let Some(e) = disp.iter_mut().find(|e| e.0 == v) { e.1 = !e.1; reorder = true; }
+                }
+                if reorder {
+                    // les videos cochees, dans l'ordre de la liste ; toutes cochees dans leur ordre naturel : « Toutes »
+                    let on: Vec<usize> = disp.iter().filter(|e| e.1).map(|e| e.0).collect();
+                    t.videos = if on.len() == count && on.iter().enumerate().all(|(i, v)| i == *v) { vec![] } else { on };
+                    changed = true;
                 }
                 // informations, dans l'ordre des colonnes
                 ui.label(tr("Information (in this order)"));

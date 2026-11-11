@@ -1196,12 +1196,10 @@
   "Move down": "Descendre",
   "All": "Toutes",
   "Headings": "Intitulés",
-  "No video selected: the table is empty.": "Aucune vidéo choisie : le tableau est vide.",
   "Duration": "Durée",
   "Sound": "Son",
   "Languages": "Langues",
   "Format": "Format",
-  "All the project's videos, in their order (videos added later included)": "Toutes les vidéos du projet, dans leur ordre (y compris celles ajoutées plus tard)",
   "Table of the videos' information: duration, languages, subtitles, format, sound": "Tableau des informations des vidéos : durée, langues, sous-titres, format, son",
   "Row (or column) with the name of each information": "Ligne (ou colonne) avec le nom de chaque information",
   "The values come from the project: duration and format once the video has been read, languages of the audio tracks and of the subtitles, sound of the disc (Dolby Digital 2.0). Column widths follow their content; a text that is too long is reduced to fit its cell.": "Les valeurs viennent du projet : durée et format dès que la vidéo a été lue, langues des pistes audio et des sous-titres, son du disque (Dolby Digital 2.0). La largeur des colonnes suit leur contenu ; un texte trop long est réduit pour tenir dans sa case.",
@@ -1215,5 +1213,8 @@
   "{} font(s) found": "{} police(s) trouvée(s)",
   "Folder not found.": "Dossier introuvable.",
   "Cells background": "Fond des cases",
-  "Background of the cells other than the headings": "Fond des cases autres que les intitulés"
+  "Background of the cells other than the headings": "Fond des cases autres que les intitulés",
+  "Videos (drag ☰ to change the order)": "Vidéos (glisser ☰ pour changer l'ordre)",
+  "Back to all the project's videos in their own order (videos added later included)": "Revenir à toutes les vidéos du projet, dans leur ordre (y compris celles ajoutées plus tard)",
+  "Drag to change the order": "Glisser pour changer l'ordre"
 }

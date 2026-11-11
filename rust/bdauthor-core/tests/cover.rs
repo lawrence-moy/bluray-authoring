@@ -507,3 +507,18 @@ fn info_table_body_background_is_separate_from_headings() {
     let n = |col: [u8; 3]| lay.items.iter().filter(|(d, _)| matches!(d, CoverDecor::Shape { fill: Some(f), .. } if *f == col)).count();
     assert_eq!((n([1, 2, 3]), n([200, 100, 50])), (1, 2), "1 intitule, 2 cases de valeurs");
 }
+
+#[test]
+fn info_table_rows_follow_the_chosen_video_order() {
+    use bdauthor_core::cover::{info_key, InfoField, InfoTable, INFO_COUNT_KEY};
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert(INFO_COUNT_KEY.to_string(), "3".to_string());
+    for v in 0..3 { vars.insert(info_key(v, InfoField::Duration), format!("{} min", 10 * (v + 1))); }
+    let t = InfoTable { videos: vec![2, 0, 2, 7], fields: vec![InfoField::Duration], header: false, ..InfoTable::default() };
+    // doublons et videos inexistantes ignores ; l'ordre de la liste est celui des lignes
+    assert_eq!(t.shown_videos(3), vec![2, 0]);
+    let cells = t.cells(&vars);
+    assert_eq!(cells.iter().map(|r| r[0].0.clone()).collect::<Vec<_>>(), vec!["30 min", "10 min"]);
+    // liste vide : toutes, dans l'ordre naturel
+    assert_eq!(InfoTable::default().shown_videos(3), vec![0, 1, 2]);
+}
