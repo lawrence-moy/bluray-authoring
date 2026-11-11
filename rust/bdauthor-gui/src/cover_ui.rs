@@ -785,6 +785,7 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     changed |= ui.checkbox(&mut fx.autofit, tr("Fit to frame")).on_hover_text(tr("Reduces the text size if it overflows the frame")).changed();
+                    changed |= ui.checkbox(&mut fx.justify, tr("Justify")).on_hover_text(tr("The text is cut into lines as wide as the frame and the words are spaced to fill each line, except the last line of each paragraph, which follows the alignment.")).changed();
                     changed |= ui.toggle_value(&mut fx.bold, egui::RichText::new(tr("Bold")).strong()).changed();
                     changed |= ui.toggle_value(&mut fx.italic, egui::RichText::new(tr("Italic")).italics()).changed();
                 });

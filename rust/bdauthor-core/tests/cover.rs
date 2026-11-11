@@ -522,3 +522,35 @@ fn info_table_rows_follow_the_chosen_video_order() {
     // liste vide : toutes, dans l'ordre naturel
     assert_eq!(InfoTable::default().shown_videos(3), vec![0, 1, 2]);
 }
+
+#[test]
+fn wrap_words_breaks_paragraphs_at_spaces() {
+    // chaque lettre vaut 10, l'espace 10 : « aaa bbb » = 70
+    let w = |s: &str| s.chars().count() as f32 * 10.0;
+    let lines = wrap_words(&["aaa bbb ccc dd", "", "xx"], 75.0, &w, 10.0);
+    let txt: Vec<(String, bool)> = lines.iter().map(|l| (l.words.join(" "), l.last)).collect();
+    assert_eq!(txt, vec![("aaa bbb".to_string(), false), ("ccc dd".to_string(), true), (String::new(), true), ("xx".to_string(), true)]);
+    // un mot trop long reste seul sur sa ligne
+    let lines = wrap_words(&["a bbbbbbbbbb c"], 50.0, &w, 10.0);
+    let txt: Vec<String> = lines.iter().map(|l| l.words.join(" ")).collect();
+    assert_eq!(txt, vec!["a", "bbbbbbbbbb", "c"]);
+    // plusieurs espaces et retours : un seul separateur
+    assert_eq!(wrap_words(&["  a   b  "], 100.0, &w, 10.0)[0].words, vec!["a", "b"]);
+}
+
+#[test]
+fn justify_option_is_saved_and_reaches_the_layout() {
+    let mut c = Cover::default();
+    let mut it = CoverItem::text("Un long texte a justifier", 10.0, 10.0, 80.0, 30.0, 12.0);
+    if let CoverKind::Text { fx, .. } = &mut it.kind { fx.justify = true; }
+    c.items.push(it);
+    let json = c.to_value().unwrap().to_pretty();
+    assert!(json.contains("\"justify\": true"), "{json}");
+    let back = Cover::from_value(Some(&c.to_value().unwrap())).unwrap();
+    assert_eq!(back.items[0].kind, c.items[0].kind);
+    match &back.layout(100, std::path::Path::new(".")).items[0].0 { CoverDecor::Text { justify, .. } => assert!(*justify), _ => panic!() }
+    // absent par defaut : rien d'ecrit
+    let mut d = Cover::default();
+    d.items.push(CoverItem::text("x", 0.0, 0.0, 10.0, 10.0, 12.0));
+    assert!(!d.to_value().unwrap().to_pretty().contains("justify"));
+}

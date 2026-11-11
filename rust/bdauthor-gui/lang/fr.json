@@ -1216,5 +1216,7 @@
   "Background of the cells other than the headings": "Fond des cases autres que les intitulés",
   "Videos (drag ☰ to change the order)": "Vidéos (glisser ☰ pour changer l'ordre)",
   "Back to all the project's videos in their own order (videos added later included)": "Revenir à toutes les vidéos du projet, dans leur ordre (y compris celles ajoutées plus tard)",
-  "Drag to change the order": "Glisser pour changer l'ordre"
+  "Drag to change the order": "Glisser pour changer l'ordre",
+  "Justify": "Justifier",
+  "The text is cut into lines as wide as the frame and the words are spaced to fill each line, except the last line of each paragraph, which follows the alignment.": "Le texte est coupé en lignes de la largeur du cadre et les mots sont espacés pour remplir chaque ligne, sauf la dernière ligne de chaque paragraphe, qui suit l'alignement."
 }

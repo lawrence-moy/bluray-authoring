@@ -632,28 +632,63 @@ impl FontRenderer {
     /// Texte de jaquette : interligne, alignement vertical, ajustement a la taille du cadre, contour et ombre.
     fn draw_cover_text(&self, im: &mut RgbaImage, d: &bdauthor_core::cover::CoverDecor) {
         use bdauthor_core::cover::{CoverDecor as D, VAlign};
-        let D::Text { text, x, y, w, h, size, color, align, font, valign, spacing, outline, outline_color, shadow, shadow_color, autofit, bold, italic } = d else { return };
+        let D::Text { text, x, y, w, h, size, color, align, font, valign, spacing, outline, outline_color, shadow, shadow_color, autofit, bold, italic, justify } = d else { return };
         let custom = self.custom_font(font, Path::new(""));
         let f: &FontVec = custom.as_deref().unwrap_or(&self.font);
         let lines: Vec<&str> = text.split('\n').collect();
         let mut sz = *size as f32;
         let line_h = |s: f32| text_extent(f, "Ag", s).1 * 1.1 * *spacing;
+        let measure = |s: &str, z: f32| text_extent(f, s, z).0 + if *bold { bold_off(z) } else { 0.0 };
+        // justifie : le texte est coupe en lignes de la largeur du cadre (a la taille `z`)
+        let wrapped = |z: f32| bdauthor_core::cover::wrap_words(&lines, *w as f32, &|s| measure(s, z), text_extent(f, " ", z).0);
         if *autofit {
-            let widest = |s: f32| lines.iter().map(|l| text_extent(f, l, s).0 + if *bold { bold_off(s) } else { 0.0 }).fold(0.0f32, f32::max);
-            for _ in 0..3 {
-                let (tw, th) = (widest(sz), line_h(sz) * lines.len() as f32);
-                let k = (*w as f32 / tw.max(1.0)).min(*h as f32 / th.max(1.0));
-                if k >= 0.999 { break; }
-                sz = (sz * k * 0.995).max(4.0);
+            if *justify {
+                // la hauteur du texte coupe croit comme le carre de la taille
+                for _ in 0..6 {
+                    let th = line_h(sz) * wrapped(sz).len() as f32;
+                    if th <= *h as f32 + 0.5 || sz <= 4.0 { break; }
+                    sz = (sz * (*h as f32 / th).sqrt() * 0.98).max(4.0);
+                }
+            } else {
+                let widest = |s: f32| lines.iter().map(|l| measure(l, s)).fold(0.0f32, f32::max);
+                for _ in 0..3 {
+                    let (tw, th) = (widest(sz), line_h(sz) * lines.len() as f32);
+                    let k = (*w as f32 / tw.max(1.0)).min(*h as f32 / th.max(1.0));
+                    if k >= 0.999 { break; }
+                    sz = (sz * k * 0.995).max(4.0);
+                }
             }
         }
         let lh = line_h(sz);
-        let total = lh * lines.len() as f32;
+        // morceaux a dessiner : (ligne, texte, decalage x, largeur, alignement) ; en justifie, chaque mot d'une ligne etiree est
+        // pose a part, l'ecart entre les mots remplissant la largeur du cadre
+        let mut parts: Vec<(usize, String, f32, f32, Align)> = Vec::new();
+        let mut nlines = lines.len();
+        if *justify {
+            let jl = wrapped(sz);
+            nlines = jl.len();
+            for (k, l) in jl.iter().enumerate() {
+                if !l.last && l.words.len() >= 2 {
+                    let ws: Vec<f32> = l.words.iter().map(|s| measure(s, sz)).collect();
+                    let gap = ((*w as f32 - ws.iter().sum::<f32>()) / (l.words.len() - 1) as f32).max(0.0);
+                    let mut cx = 0.0f32;
+                    for (s, ww) in l.words.iter().zip(&ws) {
+                        parts.push((k, s.clone(), cx, *ww, Align::Left));
+                        cx += *ww + gap;
+                    }
+                } else {
+                    parts.push((k, l.words.join(" "), 0.0, *w as f32, *align));
+                }
+            }
+        } else {
+            for (k, l) in lines.iter().enumerate() { parts.push((k, l.to_string(), 0.0, *w as f32, *align)); }
+        }
+        let total = lh * nlines as f32;
         let top = match valign { VAlign::Top => 0.0, VAlign::Middle => (*h as f32 - total) / 2.0, VAlign::Bottom => *h as f32 - total };
         let paint = |img: &mut RgbaImage, ox: f32, oy: f32, col: [u8; 3]| {
-            for (k, l) in lines.iter().enumerate() {
-                let rect = (ox, oy + top + lh * k as f32, *w as f32, lh);
-                if *bold || *italic { draw_line_styled(img, f, l, sz, col, rect, *align, *bold, *italic); } else { draw_line_f(img, f, l, sz, col, rect, *align); }
+            for (k, t, xo, ww, al) in &parts {
+                let rect = (ox + *xo, oy + top + lh * *k as f32, *ww, lh);
+                if *bold || *italic { draw_line_styled(img, f, t, sz, col, rect, *al, *bold, *italic); } else { draw_line_f(img, f, t, sz, col, rect, *al); }
             }
         };
         if *outline == 0 && *shadow == 0 {

@@ -35,11 +35,14 @@ pub struct TextFx {
     /// gras et italique (synthetiques, comme pour les sous-titres)
     pub bold: bool,
     pub italic: bool,
+    /// texte justifie : coupe en lignes de la largeur du cadre, les mots etant espaces pour remplir chaque ligne (sauf la derniere
+    /// de chaque paragraphe, qui suit l'alignement)
+    pub justify: bool,
 }
 
 impl Default for TextFx {
     fn default() -> TextFx {
-        TextFx { outline_mm: 0.0, outline_color: [0, 0, 0], shadow_mm: 0.0, shadow_color: [0, 0, 0], spacing: 1.0, valign: VAlign::Middle, autofit: false, bold: false, italic: false }
+        TextFx { outline_mm: 0.0, outline_color: [0, 0, 0], shadow_mm: 0.0, shadow_color: [0, 0, 0], spacing: 1.0, valign: VAlign::Middle, autofit: false, bold: false, italic: false, justify: false }
     }
 }
 
@@ -210,7 +213,7 @@ impl InfoTable {
                 let (cw, ch) = (xs[c + 1] - xs[c] - 2 * pad, ys[r + 1] - ys[r]);
                 if cw < 1 || ch < 1 { continue; }
                 out.push(CoverDecor::Text { text: text.clone(), x: xs[c] + pad, y: ys[r], w: cw, h: ch, size, color: if *head { self.header_color } else { self.color }, align: self.align, font: font.clone(),
-                    valign: VAlign::Middle, spacing: 1.0, outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: *head && self.header_bold, italic: false });
+                    valign: VAlign::Middle, spacing: 1.0, outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: *head && self.header_bold, italic: false, justify: false });
             }
         }
         if let Some(g) = self.grid {
@@ -295,6 +298,35 @@ impl CoverItem {
     }
 }
 
+/// Ligne d'un texte justifie : ses mots, et si c'est la derniere de son paragraphe (elle n'est alors pas etiree).
+#[derive(Debug, Clone, PartialEq)]
+pub struct JustLine {
+    pub words: Vec<String>,
+    pub last: bool,
+}
+
+/// Coupe des paragraphes en lignes de largeur `avail` au plus (glouton, aux espaces). `width` mesure un mot, `space` est la largeur
+/// d'une espace. Un mot plus large que `avail` occupe seul sa ligne. Un paragraphe vide donne une ligne vide ; chaque paragraphe
+/// finit par une ligne `last`.
+pub fn wrap_words(paragraphs: &[&str], avail: f32, width: &dyn Fn(&str) -> f32, space: f32) -> Vec<JustLine> {
+    let mut out = Vec::new();
+    for p in paragraphs {
+        let mut cur: Vec<String> = Vec::new();
+        let mut cur_w = 0.0f32;
+        for word in p.split_whitespace() {
+            let ww = width(word);
+            if !cur.is_empty() && cur_w + space + ww > avail {
+                out.push(JustLine { words: std::mem::take(&mut cur), last: false });
+                cur_w = 0.0;
+            }
+            cur_w += if cur.is_empty() { ww } else { space + ww };
+            cur.push(word.to_string());
+        }
+        out.push(JustLine { words: cur, last: true });
+    }
+    out
+}
+
 /// Zone de la jaquette.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Zone { Back, Spine, Front }
@@ -348,7 +380,7 @@ pub struct CoverLayout {
 /// Element pose, en pixels (cadre et contenu).
 #[derive(Debug, Clone, PartialEq)]
 pub enum CoverDecor {
-    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool, bold: bool, italic: bool },
+    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool, bold: bool, italic: bool, justify: bool },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
     Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, flip: bool, style: LineStyle, arrow: LineArrow },
 }
@@ -424,7 +456,7 @@ impl Cover {
                     let font = if font.is_empty() || Path::new(font).is_absolute() { font.clone() } else if base.join(font).is_file() { base.join(font).to_string_lossy().into_owned() } else { font.clone() };
                     CoverDecor::Text { text, x, y, w: iw, h: ih, size: ((size_pt / 72.0 * dpi as f64).round() as i32).max(1), color: *color, align: *align, font, valign: fx.valign,
                         spacing: fx.spacing as f32, outline: if fx.outline_mm > 0.0 { mm_px(fx.outline_mm, dpi).max(1) } else { 0 }, outline_color: fx.outline_color,
-                        shadow: if fx.shadow_mm > 0.0 { mm_px(fx.shadow_mm, dpi).max(1) } else { 0 }, shadow_color: fx.shadow_color, autofit: fx.autofit, bold: fx.bold, italic: fx.italic }
+                        shadow: if fx.shadow_mm > 0.0 { mm_px(fx.shadow_mm, dpi).max(1) } else { 0 }, shadow_color: fx.shadow_color, autofit: fx.autofit, bold: fx.bold, italic: fx.italic, justify: fx.justify }
                 }
                 CoverKind::Image { path } => {
                     if path.is_empty() { return None; }
@@ -844,6 +876,7 @@ fn item_to_value(it: &CoverItem) -> Value {
             if fx.spacing != d.spacing { e.push(("line_spacing".into(), n(fx.spacing))); }
             if fx.valign != d.valign { e.push(("valign".into(), Value::Str(fx.valign.name().into()))); }
             if fx.autofit { e.push(("autofit".into(), Value::Bool(true))); }
+            if fx.justify { e.push(("justify".into(), Value::Bool(true))); }
             if fx.bold { e.push(("bold".into(), Value::Bool(true))); }
             if fx.italic { e.push(("italic".into(), Value::Bool(true))); }
         }
@@ -913,6 +946,7 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
                     spacing: g("line_spacing", d.spacing).clamp(0.3, 5.0),
                     valign: e.get("valign").and_then(Value::as_str).and_then(VAlign::from_name).unwrap_or(d.valign),
                     autofit: e.get("autofit").and_then(Value::as_bool).unwrap_or(false),
+                    justify: e.get("justify").and_then(Value::as_bool).unwrap_or(false),
                     bold: e.get("bold").and_then(Value::as_bool).unwrap_or(false),
                     italic: e.get("italic").and_then(Value::as_bool).unwrap_or(false),
                 }
