@@ -1,3 +1,4 @@
+use bdauthor_core::barcode::BarcodeKind;
 use bdauthor_core::cover::*;
 use bdauthor_core::deflate::{zlib_compress, zlib_decompress_fixed};
 use bdauthor_core::model::ProjectModel;
@@ -553,4 +554,51 @@ fn justify_option_is_saved_and_reaches_the_layout() {
     let mut d = Cover::default();
     d.items.push(CoverItem::text("x", 0.0, 0.0, 10.0, 10.0, 12.0));
     assert!(!d.to_value().unwrap().to_pretty().contains("justify"));
+}
+
+#[test]
+fn barcode_round_trips_and_lays_out() {
+    let mut c = Cover::default();
+    let spec = BarcodeSpec { kind: BarcodeKind::Ean13, value: "5901234123457".into(), color: [10, 20, 30], background: None, show_text: true, size_pt: 9.0, font: String::new() };
+    c.items.push(CoverItem { kind: CoverKind::Barcode { code: spec.clone() }, x: 10.0, y: 10.0, w: 40.0, h: 20.0, rot: 0, name: String::new(), layer: 0 });
+    let v = c.to_value().unwrap();
+    let json = v.to_pretty();
+    assert!(json.contains("\"code_barres\"") && json.contains("\"ean13\""), "{json}");
+    let back = Cover::from_value(Some(&v)).unwrap();
+    assert_eq!(back.items[0].kind, c.items[0].kind);
+    // transparent : pas de fond ; 30 barres au plus pour un EAN-13 (59 barres noires environ), texte au centre
+    let lay = back.layout(300, Path::new("."));
+    let bars = lay.items.iter().filter(|(d, _)| matches!(d, CoverDecor::Shape { fill: Some(f), .. } if *f == [10, 20, 30])).count();
+    assert!(bars >= 25 && bars <= 40, "{bars} barres");
+    assert!(lay.items.iter().any(|(d, _)| matches!(d, CoverDecor::Text { text, .. } if text == "5 901234 123457")));
+    assert!(!lay.items.iter().any(|(d, _)| matches!(d, CoverDecor::Shape { fill: Some([255, 255, 255]), .. })), "pas de fond");
+}
+
+#[test]
+fn barcode_bars_stay_inside_the_frame_with_whole_pixel_modules() {
+    let spec = BarcodeSpec::default();
+    let vars = std::collections::BTreeMap::new();
+    let r = (100, 50, 1000, 300);
+    let d = spec.decors(r, 300, &vars, Path::new("."));
+    // fond blanc d'abord
+    assert!(matches!(&d[0], CoverDecor::Shape { fill: Some([255, 255, 255]), x: 100, y: 50, w: 1000, h: 300, .. }));
+    let mut widths = std::collections::BTreeSet::new();
+    for dec in &d[1..] {
+        if let CoverDecor::Shape { x, y, w, h, .. } = dec {
+            assert!(*x >= r.0 && x + w <= r.0 + r.2 && *y >= r.1 && y + h <= r.1 + r.3, "barre hors du cadre : {x} {y} {w} {h}");
+            widths.insert(*w);
+        }
+    }
+    // Code 128 : largeurs de barres multiples du module entier
+    let module = *widths.iter().next().unwrap();
+    assert!(widths.iter().all(|w| w % module == 0), "{widths:?}");
+    // valeur impossible : seul le fond reste
+    let bad = BarcodeSpec { kind: BarcodeKind::Ean13, value: "abc".into(), ..BarcodeSpec::default() };
+    assert_eq!(bad.decors(r, 300, &vars, Path::new(".")).len(), 1);
+    // les variables sont remplacees
+    let mut v2 = std::collections::BTreeMap::new();
+    v2.insert("ref".to_string(), "AB12".to_string());
+    let s2 = BarcodeSpec { value: "{ref}".into(), ..BarcodeSpec::default() };
+    assert_eq!(s2.resolved(&v2), "AB12");
+    assert!(s2.decors(r, 300, &v2, Path::new(".")).len() > 5);
 }

@@ -2,6 +2,7 @@
 //! mise en page en pixels (pour le rendu) et export PDF. Le dessin des textes et des images est fait par `bdauthor-render`.
 use crate::i18n::tr;
 use crate::trf;
+use crate::barcode::{self, BarcodeKind};
 use crate::design::{Align, VideoFrame};
 use crate::json::Value;
 use crate::palette::RgbaImage;
@@ -95,6 +96,64 @@ pub enum CoverKind {
     /// tableau des informations d'une ou plusieurs videos (duree, langues, sous-titres, format, son) ; les valeurs viennent de
     /// `vars` (cles `info_key`, voir `ProjectModel::cover_info_vars`)
     InfoTable { table: InfoTable },
+    /// code-barres lineaire (voir `barcode`) : une barre = un rectangle
+    Barcode { code: BarcodeSpec },
+}
+
+/// Reglages d'un code-barres de jaquette.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BarcodeSpec {
+    pub kind: BarcodeKind,
+    /// valeur codee ; les variables `{...}` de la jaquette y sont remplacees
+    pub value: String,
+    /// couleur des barres et du texte
+    pub color: [u8; 3],
+    /// fond (zones de silence comprises) ; `None` : transparent
+    pub background: Option<[u8; 3]>,
+    /// texte lisible sous les barres
+    pub show_text: bool,
+    pub size_pt: f64,
+    pub font: String,
+}
+
+impl Default for BarcodeSpec {
+    fn default() -> Self {
+        BarcodeSpec { kind: BarcodeKind::Code128, value: BarcodeKind::Code128.sample().to_string(), color: [0, 0, 0], background: Some([255, 255, 255]), show_text: true, size_pt: 8.0, font: String::new() }
+    }
+}
+
+impl BarcodeSpec {
+    /// Valeur codee une fois les variables remplacees.
+    pub fn resolved(&self, vars: &BTreeMap<String, String>) -> String { apply_vars(&self.value, vars).trim().to_string() }
+
+    /// Dessins du code dans le cadre `r` (x, y, largeur, hauteur en pixels) : fond, une barre par suite de modules noirs, texte.
+    /// Une valeur impossible a coder ne laisse que le fond. Les barres tombent au pixel pres quand le cadre le permet (module entier).
+    pub fn decors(&self, r: (i32, i32, i32, i32), dpi: u32, vars: &BTreeMap<String, String>, base: &Path) -> Vec<CoverDecor> {
+        let (x, y, w, h) = r;
+        let mut out = Vec::new();
+        let rect = |x: i32, y: i32, w: i32, h: i32, c: [u8; 3]| CoverDecor::Shape { shape: ShapeKind::Rect, x, y, w, h, fill: Some(c), stroke: None, stroke_px: 0, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None };
+        if let Some(bg) = self.background { out.push(rect(x, y, w, h, bg)); }
+        let Ok(code) = barcode::encode(self.kind, &self.resolved(vars)) else { return out };
+        let total = code.modules.len() + 2 * barcode::QUIET_MODULES;
+        // module entier de pixels si possible (barres nettes), centre dans le cadre ; sinon module fractionnaire
+        let fit = w as f64 / total as f64;
+        let (mw, off) = if fit >= 1.0 { let m = fit.floor(); (m, ((w as f64 - m * total as f64) / 2.0).floor()) } else { (fit, 0.0) };
+        let xpos = |m: usize| x + (off + (m as f64 * mw).round()) as i32;
+        let size = ((self.size_pt / 72.0 * dpi as f64).round() as i32).max(1);
+        let text_h = if self.show_text { ((size as f64 * 1.35).round() as i32).min(h / 2).max(0) } else { 0 };
+        let top = (mw.ceil() as i32).min(h / 4);
+        let bar_h = (h - text_h - top).max(1);
+        for (s, n) in barcode::bar_runs(&code.modules) {
+            let (x0, x1) = (xpos(barcode::QUIET_MODULES + s), xpos(barcode::QUIET_MODULES + s + n));
+            out.push(rect(x0, y + top, (x1 - x0).max(1), bar_h, self.color));
+        }
+        if self.show_text && text_h > 0 {
+            let font = if self.font.is_empty() || Path::new(&self.font).is_absolute() { self.font.clone() } else if base.join(&self.font).is_file() { base.join(&self.font).to_string_lossy().into_owned() } else { self.font.clone() };
+            out.push(CoverDecor::Text { text: code.text, x, y: y + h - text_h, w, h: text_h, size, color: self.color, align: Align::Center, font, valign: VAlign::Middle, spacing: 1.0,
+                outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: false, italic: false, justify: false });
+        }
+        out
+    }
 }
 
 /// Information d'une video affichee par un tableau de jaquette.
@@ -467,7 +526,7 @@ impl Cover {
                     let p = vars.get(&frame_key(frame)?)?;
                     CoverDecor::Image { path: PathBuf::from(p), x, y, w: iw, h: ih }
                 }
-                CoverKind::InfoTable { .. } => return None,
+                CoverKind::InfoTable { .. } | CoverKind::Barcode { .. } => return None,
                 CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
                     CoverDecor::Shape { flip: *flip, style: *style, arrow: *arrow, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0) }
                 }
@@ -482,6 +541,11 @@ impl Cover {
                 CoverKind::InfoTable { table } => {
                     let r = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi), mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
                     items.extend(table.decors(r, dpi, vars, base).into_iter().map(|d| (d, 0)));
+                }
+                // un code-barres : fond, barres et texte, toujours a l'horizontale
+                CoverKind::Barcode { code } => {
+                    let r = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi), mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
+                    items.extend(code.decors(r, dpi, vars, base).into_iter().map(|d| (d, 0)));
                 }
                 _ => items.extend(one(it)),
             }
@@ -895,6 +959,16 @@ fn item_to_value(it: &CoverItem) -> Value {
             e.push(("type".into(), Value::Str("image".into())));
             e.push(("file".into(), Value::Str(path.clone())));
         }
+        CoverKind::Barcode { code: c } => {
+            e.push(("type".into(), Value::Str("code_barres".into())));
+            e.push(("kind".into(), Value::Str(c.kind.name().into())));
+            e.push(("value".into(), Value::Str(c.value.clone())));
+            e.push(("color".into(), color_hex(c.color)));
+            if let Some(bg) = c.background { e.push(("background".into(), color_hex(bg))); }
+            e.push(("show_text".into(), Value::Bool(c.show_text)));
+            e.push(("size_pt".into(), n(c.size_pt)));
+            if !c.font.is_empty() { e.push(("font".into(), Value::Str(c.font.clone()))); }
+        }
         CoverKind::InfoTable { table: t } => {
             e.push(("type".into(), Value::Str("tableau_infos".into())));
             if !t.videos.is_empty() { e.push(("videos".into(), Value::Arr(t.videos.iter().map(|v| n(*v as f64 + 1.0)).collect()))); }
@@ -973,6 +1047,20 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
                 }
                 _ => None,
             },
+        } },
+        Some("code_barres") => CoverKind::Barcode { code: {
+            let d = BarcodeSpec::default();
+            let kind = e.get("kind").and_then(Value::as_str).and_then(BarcodeKind::from_name).unwrap_or(d.kind);
+            BarcodeSpec {
+                kind,
+                value: e.get("value").and_then(Value::as_str).map(str::to_string).unwrap_or_else(|| kind.sample().to_string()),
+                color: color_from(e.get("color"), d.color),
+                // « background » absent : transparent (le fond par defaut n'est que celui d'un nouvel element)
+                background: e.get("background").map(|v| color_from(Some(v), [255, 255, 255])),
+                show_text: e.get("show_text").and_then(Value::as_bool).unwrap_or(true),
+                size_pt: e.get("size_pt").and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(d.size_pt).clamp(1.0, 200.0),
+                font: e.get("font").and_then(Value::as_str).unwrap_or("").to_string(),
+            }
         } },
         Some("tableau_infos") => CoverKind::InfoTable { table: {
             let d = InfoTable::default();

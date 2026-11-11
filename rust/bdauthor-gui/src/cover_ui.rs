@@ -2,6 +2,7 @@
 //! annuler / refaire, champs automatiques et export PDF en arriere-plan.
 use crate::i18n::{tr, trf};
 use crate::App;
+use bdauthor_core::barcode::{self, BarcodeKind};
 use bdauthor_core::cover::{InfoField, InfoTable, LineArrow, LineStyle, ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
 use bdauthor_core::design::Align;
 use bdauthor_core::editor::ItemAlign;
@@ -124,6 +125,7 @@ fn item_label(it: &CoverItem, i: usize) -> String {
         CoverKind::VideoImage { frame } => trf!("{}. Video image {}", i + 1, frame.video.map_or("?".to_string(), |v| format!("V{}", v + 1))),
         CoverKind::Shape { shape, .. } => format!("{}. {}", i + 1, shape.label()),
         CoverKind::InfoTable { .. } => trf!("{}. Info table", i + 1),
+        CoverKind::Barcode { code } => trf!("{}. Barcode {}", i + 1, code.kind.label()),
     }
 }
 
@@ -681,6 +683,14 @@ impl App {
                 self.cover_select_only(Some(doc.items().len() - 1));
                 changed = true;
             }
+            if ui.button(tr("+ Barcode")).on_hover_text(tr("Barcode (Code 128, EAN-13, EAN-8 or UPC-A), drawn as vector bars")).clicked() {
+                let w = (tw * 0.3).min(60.0);
+                let mut it = CoverItem { kind: CoverKind::Barcode { code: Default::default() }, x: (tw - w) / 2.0, y: (th * 0.7).min((th - 20.0).max(0.0)), w, h: w * 0.5, rot: 0, name: String::new(), layer: active };
+                it.layer = active;
+                doc.items_mut().push(it);
+                self.cover_select_only(Some(doc.items().len() - 1));
+                changed = true;
+            }
             for kind in [ShapeKind::Rect, ShapeKind::Ellipse, ShapeKind::Line] {
                 if ui.button(format!("+ {}", kind.label())).clicked() {
                     let w = (tw * 0.3).min(80.0);
@@ -940,6 +950,60 @@ impl App {
                 });
                 crate::help(ui, tr("The values come from the project: duration and format once the video has been read, languages of the audio tracks and of the subtitles, sound of the disc (Dolby Digital 2.0). Column widths follow their content; a text that is too long is reduced to fit its cell."));
             }
+            CoverKind::Barcode { code: c } => {
+                ui.horizontal(|ui| {
+                    ui.label(tr("Type"));
+                    egui::ComboBox::from_id_salt("jaquette_codebarres_type").selected_text(c.kind.label()).show_ui(ui, |ui| {
+                        for k in BarcodeKind::ALL {
+                            if ui.selectable_label(c.kind == k, k.label()).clicked() && c.kind != k {
+                                // une valeur d'exemple suit le type
+                                if c.value == c.kind.sample() { c.value = k.sample().to_string(); }
+                                c.kind = k;
+                                changed = true;
+                            }
+                        }
+                    });
+                });
+                ui.label(tr("Value"));
+                changed |= ui.add(egui::TextEdit::singleline(&mut c.value).desired_width(f32::INFINITY)).changed();
+                // verification (sauf si la valeur contient des variables, connues seulement a l'export)
+                if !c.value.contains('{') {
+                    match barcode::encode(c.kind, c.value.trim()) {
+                        Ok(b) => { ui.weak(trf!("Readable text: {}", b.text)); }
+                        Err(e) => { ui.colored_label(Color32::from_rgb(230, 100, 90), e); }
+                    }
+                }
+                ui.horizontal(|ui| {
+                    ui.label(tr("Color"));
+                    changed |= ui.color_edit_button_srgb(&mut c.color).changed();
+                    let mut on = c.background.is_some();
+                    if ui.checkbox(&mut on, tr("Background")).on_hover_text(tr("Background of the code, quiet zones included (white by default: dark bars on a dark cover cannot be read)")).changed() { c.background = if on { Some([255, 255, 255]) } else { None }; changed = true; }
+                    if let Some(bg) = &mut c.background { changed |= ui.color_edit_button_srgb(bg).changed(); }
+                });
+                ui.horizontal(|ui| {
+                    changed |= ui.checkbox(&mut c.show_text, tr("Readable text")).on_hover_text(tr("Digits (or characters) printed under the bars")).changed();
+                    if c.show_text {
+                        ui.label(tr("Size"));
+                        changed |= ui.add(egui::DragValue::new(&mut c.size_pt).range(3.0..=72.0).speed(0.2).suffix(" pt")).changed();
+                    }
+                });
+                if c.show_text {
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Font"));
+                        let shown = if c.font.is_empty() { tr("Default font").to_string() } else {
+                            bdauthor_render::font_choices().into_iter().find(|(_, f)| *f == c.font).map(|(l, _)| l).unwrap_or_else(|| c.font.clone())
+                        };
+                        egui::ComboBox::from_id_salt("jaquette_codebarres_police").selected_text(shown).width(200.0).show_ui(ui, |ui| {
+                            if ui.selectable_label(c.font.is_empty(), tr("Default font")).clicked() { c.font.clear(); changed = true; }
+                            for (label, file) in bdauthor_render::font_choices() {
+                                if ui.selectable_label(c.font == file, label).clicked() { c.font = file; changed = true; }
+                            }
+                            if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
+                        });
+                    });
+                }
+                crate::help(ui, tr("EAN-13, EAN-8 and UPC-A: type the digits without the check digit (it is added) or with it (it is verified). Code 128: any text (letters, digits, punctuation, no accents). Variables such as {title} are replaced. Leave the quiet zones empty around the code and keep a sufficient size so that it can be scanned."));
+            }
             CoverKind::Image { path } => {
                 ui.horizontal(|ui| {
                     changed |= ui.add(egui::TextEdit::singleline(path).desired_width(220.0)).changed();
@@ -1012,6 +1076,7 @@ impl App {
                 match &mut doc.items_mut()[i].kind {
                     CoverKind::Text { font, .. } => { *font = rel; changed = true; }
                     CoverKind::InfoTable { table } => { table.font = rel; changed = true; }
+                    CoverKind::Barcode { code } => { code.font = rel; changed = true; }
                     _ => {}
                 }
             }
@@ -1056,7 +1121,7 @@ impl App {
             ui.end_row();
         });
         // un tableau reste a l'horizontale
-        let is_table = matches!(it.kind, CoverKind::InfoTable { .. });
+        let is_table = matches!(it.kind, CoverKind::InfoTable { .. } | CoverKind::Barcode { .. });
         if !is_table { ui.horizontal(|ui| {
             ui.label(tr("Rotation"));
             for (r, t) in [(0u16, "0°"), (90, "90°"), (270, "270°")] {

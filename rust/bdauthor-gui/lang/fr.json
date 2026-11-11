@@ -1218,5 +1218,20 @@
   "Back to all the project's videos in their own order (videos added later included)": "Revenir à toutes les vidéos du projet, dans leur ordre (y compris celles ajoutées plus tard)",
   "Drag to change the order": "Glisser pour changer l'ordre",
   "Justify": "Justifier",
-  "The text is cut into lines as wide as the frame and the words are spaced to fill each line, except the last line of each paragraph, which follows the alignment.": "Le texte est coupé en lignes de la largeur du cadre et les mots sont espacés pour remplir chaque ligne, sauf la dernière ligne de chaque paragraphe, qui suit l'alignement."
+  "The text is cut into lines as wide as the frame and the words are spaced to fill each line, except the last line of each paragraph, which follows the alignment.": "Le texte est coupé en lignes de la largeur du cadre et les mots sont espacés pour remplir chaque ligne, sauf la dernière ligne de chaque paragraphe, qui suit l'alignement.",
+  "{}. Barcode {}": "{}. Code-barres {}",
+  "+ Barcode": "+ Code-barres",
+  "Barcode (Code 128, EAN-13, EAN-8 or UPC-A), drawn as vector bars": "Code-barres (Code 128, EAN-13, EAN-8 ou UPC-A), dessiné en barres nettes",
+  "Value": "Valeur",
+  "Readable text: {}": "Texte lisible : {}",
+  "Background of the code, quiet zones included (white by default: dark bars on a dark cover cannot be read)": "Fond du code, zones de silence comprises (blanc par défaut : des barres sombres sur une jaquette sombre ne se lisent pas)",
+  "Readable text": "Texte lisible",
+  "Digits (or characters) printed under the bars": "Chiffres (ou caractères) imprimés sous les barres",
+  "EAN-13, EAN-8 and UPC-A: type the digits without the check digit (it is added) or with it (it is verified). Code 128: any text (letters, digits, punctuation, no accents). Variables such as {title} are replaced. Leave the quiet zones empty around the code and keep a sufficient size so that it can be scanned.": "EAN-13, EAN-8 et UPC-A : saisir les chiffres sans le chiffre de contrôle (il est ajouté) ou avec (il est vérifié). Code 128 : tout texte (lettres, chiffres, ponctuation, sans accents). Les variables comme {title} sont remplacées. Garder le fond autour du code (zones de silence) et une taille suffisante pour qu'il puisse être lu.",
+  "The value is empty.": "La valeur est vide.",
+  "Code 128 cannot encode the character “{}” (printable ASCII only).": "Le Code 128 ne peut pas coder le caractère « {} » (ASCII imprimable uniquement).",
+  "Only digits are allowed (found “{}”).": "Seuls les chiffres sont permis (« {} » trouvé).",
+  "Wrong check digit: it should be {}.": "Chiffre de contrôle incorrect : il devrait être {}.",
+  "{} or {} digits expected (found {}).": "{} ou {} chiffres attendus ({} trouvés).",
+  "Type": "Type"
 }
