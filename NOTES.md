@@ -72,7 +72,6 @@ bdauthor/
   tests/        roundtrip.py, roundtrip_mobj.py, roundtrip_mpls.py,
                 roundtrip_clpi.py, inspect_ig.py, remux_ig.py, build_menu.py, build_disc.py, build_disc_accueil.py,
                 build_always_on.py, build_bisect.py, gen_clpi.py, build_disc_complet.py, build_menu_png.py, film_mux_check.py, build_project.py, build_chapters.py
-  refs/         rendus PNG du menu (80002_page1/2/3.png)
   examples/     boutons PNG d'exemple (dégradés, bords adoucis, 3 états)
   out/          menu généré (80002.m2ts, 80002.clpi, apercu_menu.png) ; bdmv_overlay/ et bdmv_overlay.zip = fichiers à superposer au disque de référence
   NOTES.md
