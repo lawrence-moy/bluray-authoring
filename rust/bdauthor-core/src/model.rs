@@ -317,6 +317,46 @@ impl ProjectModel {
         m
     }
 
+    /// Valeurs des tableaux d'informations de la jaquette (voir `cover::InfoTable`), pour chaque video : titre, duree (en minutes),
+    /// langues audio, sous-titres, format de l'image sur le disque et son. `durations` et `sizes` (hauteur, images/s) : ce que
+    /// l'on sait de chaque fichier video ; une valeur inconnue reste vide. Sans langue ni sous-titre : « — ».
+    pub fn cover_info_vars(&self, durations: &std::collections::HashMap<String, f64>, sizes: &std::collections::HashMap<String, (u32, f64)>) -> std::collections::BTreeMap<String, String> {
+        use crate::cover::{info_key, InfoField as F, INFO_COUNT_KEY};
+        let mut m = std::collections::BTreeMap::new();
+        m.insert(INFO_COUNT_KEY.to_string(), self.videos.len().to_string());
+        // nom d'une langue : celle de la liste du projet, sinon son code
+        let lang = |id: u32, code: &str| -> Option<String> {
+            if let Some(l) = self.language(id) { return Some(l.name.clone()); }
+            let code = code.trim();
+            if code.is_empty() { return None; }
+            Some(self.languages.iter().find(|l| l.code.eq_ignore_ascii_case(code)).map_or_else(|| code.to_string(), |l| l.name.clone()))
+        };
+        let list = |names: Vec<String>| {
+            let mut v: Vec<String> = Vec::new();
+            for n in names { if !v.contains(&n) { v.push(n); } }
+            if v.is_empty() { "—".to_string() } else { v.join(", ") }
+        };
+        for (i, v) in self.videos.iter().enumerate() {
+            m.insert(info_key(i, F::Title), crate::editor::video_title(self, i));
+            if let Some(d) = durations.get(&v.file) {
+                let d = d.max(0.0);
+                m.insert(info_key(i, F::Duration), if d >= 60.0 { format!("{} min", (d / 60.0).round()) } else { format!("{} s", d.round()) });
+            }
+            // sans piste choisie : la premiere piste du fichier, dans la langue du disque
+            let audio: Vec<String> = if v.audio.is_empty() { lang(0, &self.lang).into_iter().collect() } else { v.audio.iter().filter_map(|t| lang(t.lang_id, &t.lang)).collect() };
+            m.insert(info_key(i, F::Languages), list(audio));
+            m.insert(info_key(i, F::Subtitles), list(v.subs.iter().filter_map(|t| lang(t.lang_id, &t.lang)).collect()));
+            if let Some(&(h, fps)) = sizes.get(&v.file) {
+                let t = crate::ffmpeg::pick_target(0, h, fps);
+                let scan = if matches!(t.scan, crate::ffmpeg::Scan::Tff | crate::ffmpeg::Scan::Bff) { "i" } else { "p" };
+                m.insert(info_key(i, F::Format), format!("HD {}{scan} · 16/9", t.height));
+            }
+            // l'audio du disque est toujours en Dolby Digital (AC3) stereo
+            m.insert(info_key(i, F::Sound), "Dolby Digital 2.0".to_string());
+        }
+        m
+    }
+
     /// Aligne les vignettes liees a un chapitre sur l'instant de ce chapitre (a appeler apres toute modification des chapitres ou
     /// de la video d'une vignette). Rend vrai si une vignette a change.
     pub fn sync_chapters(&mut self) -> bool {
@@ -420,8 +460,14 @@ impl ProjectModel {
     /// Applique `f` au rang de video de chaque image de video de la jaquette et de l'etiquette.
     fn remap_cover_videos(&mut self, mut f: impl FnMut(usize) -> usize) {
         for it in self.cover.items.iter_mut().chain(self.label.items.iter_mut()) {
-            if let crate::cover::CoverKind::VideoImage { frame } = &mut it.kind {
-                if let Some(v) = frame.video { frame.video = Some(f(v)); }
+            match &mut it.kind {
+                crate::cover::CoverKind::VideoImage { frame } => { if let Some(v) = frame.video { frame.video = Some(f(v)); } }
+                // tableau d'informations : ses videos suivent, une video retiree disparait de la liste
+                crate::cover::CoverKind::InfoTable { table } => {
+                    let vids: Vec<usize> = table.videos.iter().map(|&v| f(v)).collect();
+                    table.videos = vids.into_iter().filter(|&v| v != usize::MAX).collect();
+                }
+                _ => {}
             }
         }
     }

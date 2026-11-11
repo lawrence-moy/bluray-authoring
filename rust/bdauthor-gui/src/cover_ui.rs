@@ -2,7 +2,7 @@
 //! annuler / refaire, champs automatiques et export PDF en arriere-plan.
 use crate::i18n::{tr, trf};
 use crate::App;
-use bdauthor_core::cover::{LineArrow, LineStyle, ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
+use bdauthor_core::cover::{InfoField, InfoTable, LineArrow, LineStyle, ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
 use bdauthor_core::design::Align;
 use bdauthor_core::editor::ItemAlign;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Key, Rect, Sense, Stroke};
@@ -119,6 +119,19 @@ fn item_label(it: &CoverItem, i: usize) -> String {
         CoverKind::Image { path } => trf!("{}. Image {}", i + 1, std::path::Path::new(path).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()),
         CoverKind::VideoImage { frame } => trf!("{}. Video image {}", i + 1, frame.video.map_or("?".to_string(), |v| format!("V{}", v + 1))),
         CoverKind::Shape { shape, .. } => format!("{}. {}", i + 1, shape.label()),
+        CoverKind::InfoTable { .. } => trf!("{}. Info table", i + 1),
+    }
+}
+
+/// Intitule d'une information de tableau (en-tete et reglages).
+fn info_label(f: InfoField) -> &'static str {
+    match f {
+        InfoField::Title => tr("Title"),
+        InfoField::Duration => tr("Duration"),
+        InfoField::Languages => tr("Languages"),
+        InfoField::Subtitles => tr("Subtitles"),
+        InfoField::Format => tr("Format"),
+        InfoField::Sound => tr("Sound"),
     }
 }
 
@@ -297,6 +310,9 @@ impl App {
     /// Champs automatiques, plus les fichiers des images de video deja extraites.
     fn cover_vars(&self) -> BTreeMap<String, String> {
         let mut v = self.model.cover_vars(&self.durations, current_year());
+        // tableaux d'informations : valeurs de chaque video et intitules dans la langue de l'interface
+        v.extend(self.model.cover_info_vars(&self.durations, &self.video_sizes));
+        for f in InfoField::ALL { v.insert(bdauthor_core::cover::info_label_key(f), info_label(f).to_string()); }
         for (k, (_, p)) in &self.cover_frames.ready { v.insert(k.clone(), p.to_string_lossy().into_owned()); }
         v
     }
@@ -652,6 +668,15 @@ impl App {
                 self.cover_select_only(Some(doc.items().len() - 1));
                 changed = true;
             }
+            if ui.add_enabled(!self.model.videos.is_empty(), egui::Button::new(tr("+ Info table"))).on_hover_text(tr("Table of the videos' information: duration, languages, subtitles, format, sound")).clicked() {
+                let w = (tw * 0.4).min(110.0);
+                let h = (8.0 * (self.model.videos.len() as f64 + 1.0)).clamp(12.0, 60.0);
+                let mut it = CoverItem { kind: CoverKind::InfoTable { table: InfoTable::default() }, x: 8.0, y: (th - h - 10.0).max(0.0), w, h, rot: 0, name: String::new(), layer: active };
+                it.layer = active;
+                doc.items_mut().push(it);
+                self.cover_select_only(Some(doc.items().len() - 1));
+                changed = true;
+            }
             for kind in [ShapeKind::Rect, ShapeKind::Ellipse, ShapeKind::Line] {
                 if ui.button(format!("+ {}", kind.label())).clicked() {
                     let w = (tw * 0.3).min(80.0);
@@ -775,6 +800,94 @@ impl App {
                     }
                 }
             }
+            CoverKind::InfoTable { table: t } => {
+                // videos montrees
+                ui.label(tr("Videos"));
+                ui.horizontal_wrapped(|ui| {
+                    if ui.selectable_label(t.videos.is_empty(), tr("All")).on_hover_text(tr("All the project's videos, in their order (videos added later included)")).clicked() { t.videos.clear(); changed = true; }
+                    for (v, name) in vlabels.iter().enumerate() {
+                        let mut on = t.videos.is_empty() || t.videos.contains(&v);
+                        if ui.checkbox(&mut on, format!("{}. {}", v + 1, name)).changed() {
+                            if t.videos.is_empty() { t.videos = (0..vlabels.len()).collect(); }
+                            if on { if !t.videos.contains(&v) { t.videos.push(v); t.videos.sort_unstable(); } } else { t.videos.retain(|&x| x != v); }
+                            // toutes cochees : « Toutes » (les videos ajoutees ensuite y entreront aussi)
+                            if t.videos.len() == vlabels.len() { t.videos.clear(); }
+                            changed = true;
+                        }
+                    }
+                });
+                if !t.videos.is_empty() && t.shown_videos(vlabels.len()).is_empty() {
+                    ui.colored_label(Color32::from_rgb(230, 100, 90), tr("No video selected: the table is empty."));
+                }
+                // informations, dans l'ordre des colonnes
+                ui.label(tr("Information (in this order)"));
+                let mut order: Vec<InfoField> = t.fields.clone();
+                order.extend(InfoField::ALL.into_iter().filter(|f| !t.fields.contains(f)));
+                let mut fields_op: Option<(usize, bool)> = None;
+                for f in order {
+                    ui.horizontal(|ui| {
+                        let pos = t.fields.iter().position(|x| *x == f);
+                        let mut on = pos.is_some();
+                        if ui.checkbox(&mut on, info_label(f)).changed() {
+                            if on { t.fields.push(f); } else { t.fields.retain(|x| *x != f); }
+                            changed = true;
+                        }
+                        if let Some(k) = pos {
+                            if ui.add_enabled(k > 0, egui::Button::new(ico("⬆")).small()).on_hover_text(tr("Move up")).clicked() { fields_op = Some((k, true)); }
+                            if ui.add_enabled(k + 1 < t.fields.len(), egui::Button::new(ico("⬇")).small()).on_hover_text(tr("Move down")).clicked() { fields_op = Some((k, false)); }
+                        }
+                    });
+                }
+                if let Some((k, up)) = fields_op {
+                    if up { t.fields.swap(k, k - 1); } else { t.fields.swap(k, k + 1); }
+                    changed = true;
+                }
+                ui.horizontal(|ui| {
+                    changed |= ui.checkbox(&mut t.header, tr("Headings")).on_hover_text(tr("Row (or column) with the name of each information")).changed();
+                    changed |= ui.checkbox(&mut t.transpose, tr("One row per information")).on_hover_text(tr("Swaps rows and columns: one column per video (handy for a single video: heading | value)")).changed();
+                });
+                ui.horizontal(|ui| {
+                    ui.label(tr("Size"));
+                    changed |= ui.add(egui::DragValue::new(&mut t.size_pt).range(3.0..=72.0).speed(0.2).suffix(" pt")).changed();
+                    ui.label(tr("Color"));
+                    changed |= ui.color_edit_button_srgb(&mut t.color).changed();
+                    egui::ComboBox::from_id_salt("jaquette_tableau_align").selected_text(t.align.name()).show_ui(ui, |ui| {
+                        for a in [Align::Left, Align::Center, Align::Right] {
+                            if ui.selectable_label(t.align == a, a.name()).clicked() { t.align = a; changed = true; }
+                        }
+                    });
+                });
+                ui.horizontal(|ui| {
+                    ui.label(tr("Headings"));
+                    changed |= ui.color_edit_button_srgb(&mut t.header_color).changed();
+                    changed |= ui.toggle_value(&mut t.header_bold, egui::RichText::new(tr("Bold")).strong()).changed();
+                    let mut on = t.header_fill.is_some();
+                    if ui.checkbox(&mut on, tr("Background")).changed() { t.header_fill = if on { Some([40, 40, 40]) } else { None }; changed = true; }
+                    if let Some(c) = &mut t.header_fill { changed |= ui.color_edit_button_srgb(c).changed(); }
+                });
+                ui.horizontal(|ui| {
+                    let mut on = t.grid.is_some();
+                    if ui.checkbox(&mut on, tr("Grid")).changed() { t.grid = if on { Some(t.color) } else { None }; changed = true; }
+                    if let Some(c) = &mut t.grid {
+                        changed |= ui.color_edit_button_srgb(c).changed();
+                        changed |= ui.add(egui::DragValue::new(&mut t.grid_mm).range(0.05..=2.0).speed(0.01).suffix(" mm")).changed();
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label(tr("Font"));
+                    let shown = if t.font.is_empty() { tr("Default font").to_string() } else {
+                        bdauthor_render::common_fonts().into_iter().find(|(_, f)| *f == t.font).map(|(l, _)| l.to_string()).unwrap_or_else(|| t.font.clone())
+                    };
+                    egui::ComboBox::from_id_salt("jaquette_tableau_police").selected_text(shown).width(200.0).show_ui(ui, |ui| {
+                        if ui.selectable_label(t.font.is_empty(), tr("Default font")).clicked() { t.font.clear(); changed = true; }
+                        for (label, file) in bdauthor_render::common_fonts() {
+                            if ui.selectable_label(t.font == file, label).clicked() { t.font = file.to_string(); changed = true; }
+                        }
+                        if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
+                    });
+                });
+                crate::help(ui, tr("The values come from the project: duration and format once the video has been read, languages of the audio tracks and of the subtitles, sound of the disc (Dolby Digital 2.0). Column widths follow their content; a text that is too long is reduced to fit its cell."));
+            }
             CoverKind::Image { path } => {
                 ui.horizontal(|ui| {
                     changed |= ui.add(egui::TextEdit::singleline(path).desired_width(220.0)).changed();
@@ -844,7 +957,11 @@ impl App {
         if pick_font {
             if let Some(f) = rfd::FileDialog::new().add_filter(tr("Fonts"), &["ttf", "otf"]).pick_file() {
                 let rel = self.relative(&f);
-                if let CoverKind::Text { font, .. } = &mut doc.items_mut()[i].kind { *font = rel; changed = true; }
+                match &mut doc.items_mut()[i].kind {
+                    CoverKind::Text { font, .. } => { *font = rel; changed = true; }
+                    CoverKind::InfoTable { table } => { table.font = rel; changed = true; }
+                    _ => {}
+                }
             }
         }
         let it = &mut doc.items_mut()[i];
@@ -886,19 +1003,21 @@ impl App {
             ui.label(tr("Height")); changed |= ui.add(egui::DragValue::new(&mut it.h).range(1.0..=sh).speed(0.5).suffix(" mm")).changed();
             ui.end_row();
         });
-        ui.horizontal(|ui| {
+        // un tableau reste a l'horizontale
+        let is_table = matches!(it.kind, CoverKind::InfoTable { .. });
+        if !is_table { ui.horizontal(|ui| {
             ui.label(tr("Rotation"));
             for (r, t) in [(0u16, "0°"), (90, "90°"), (270, "270°")] {
                 if ui.selectable_label(it.rot == r, t).on_hover_text(if r == 0 { tr("Horizontal") } else if r == 90 { tr("Text reading from top to bottom (spine)") } else { tr("Text reading from bottom to top") }).clicked() { it.rot = r; changed = true; }
             }
-        });
+        }); }
         ui.horizontal_wrapped(|ui| {
             ui.label(tr("Place on"));
             for (name, z) in &zones {
                 if ui.button(zone_label(*name)).clicked() {
                     let m = match *name { "la tranche" => 1.0, "le disque" => 0.0, "le haut" | "le bas" => 2.0, _ => 8.0 };
                     (it.x, it.y, it.w, it.h) = (z.0 + m, z.1 + m, (z.2 - 2.0 * m).max(1.0), (z.3 - 2.0 * m).max(1.0));
-                    if *name == "la tranche" { it.rot = 90; }
+                    if *name == "la tranche" && !is_table { it.rot = 90; }
                     changed = true;
                 }
             }

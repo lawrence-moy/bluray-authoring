@@ -89,6 +89,139 @@ pub enum CoverKind {
     /// (tourne par `rot`) ; `fill` et `stroke` : couleurs, `None` = absent ; la bordure est a l'interieur du cadre
     /// `flip` (lignes) : la ligne va du coin bas gauche au coin haut droit du cadre au lieu de haut gauche -> bas droit
     Shape { shape: ShapeKind, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_mm: f64, radius_mm: f64, flip: bool, style: LineStyle, arrow: LineArrow },
+    /// tableau des informations d'une ou plusieurs videos (duree, langues, sous-titres, format, son) ; les valeurs viennent de
+    /// `vars` (cles `info_key`, voir `ProjectModel::cover_info_vars`)
+    InfoTable { table: InfoTable },
+}
+
+/// Information d'une video affichee par un tableau de jaquette.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InfoField { Title, Duration, Languages, Subtitles, Format, Sound }
+
+impl InfoField {
+    pub const ALL: [InfoField; 6] = [InfoField::Title, InfoField::Duration, InfoField::Languages, InfoField::Subtitles, InfoField::Format, InfoField::Sound];
+    /// Nom dans le fichier de projet et dans les cles de `vars`.
+    pub fn name(self) -> &'static str {
+        match self { InfoField::Title => "title", InfoField::Duration => "duration", InfoField::Languages => "languages", InfoField::Subtitles => "subtitles", InfoField::Format => "format", InfoField::Sound => "sound" }
+    }
+    pub fn from_name(s: &str) -> Option<InfoField> { InfoField::ALL.into_iter().find(|f| f.name() == s) }
+}
+
+/// Cle de `vars` de la valeur de `field` pour la video de rang `video`.
+pub fn info_key(video: usize, field: InfoField) -> String { format!("@info:{video}:{}", field.name()) }
+/// Cle de `vars` de l'intitule de `field` (en-tete du tableau, dans la langue de l'interface).
+pub fn info_label_key(field: InfoField) -> String { format!("@info:label:{}", field.name()) }
+/// Cle de `vars` du nombre de videos du projet.
+pub const INFO_COUNT_KEY: &str = "@info:count";
+
+/// Tableau d'informations : une ligne par video et une colonne par information (ou l'inverse avec `transpose`).
+#[derive(Debug, Clone, PartialEq)]
+pub struct InfoTable {
+    /// videos montrees (rangs) ; vide : toutes
+    pub videos: Vec<usize>,
+    /// informations montrees, dans l'ordre des colonnes
+    pub fields: Vec<InfoField>,
+    /// ligne (ou colonne) des intitules
+    pub header: bool,
+    /// une ligne par information et une colonne par video (pratique pour une seule video : intitule | valeur)
+    pub transpose: bool,
+    pub size_pt: f64,
+    pub color: [u8; 3],
+    pub header_color: [u8; 3],
+    pub header_bold: bool,
+    /// fond des intitules ; `None` : transparent
+    pub header_fill: Option<[u8; 3]>,
+    /// traits de la grille ; `None` : sans grille
+    pub grid: Option<[u8; 3]>,
+    pub grid_mm: f64,
+    pub font: String,
+    pub align: Align,
+}
+
+impl Default for InfoTable {
+    fn default() -> Self {
+        InfoTable { videos: vec![], fields: InfoField::ALL[1..].to_vec(), header: true, transpose: false, size_pt: 7.0, color: [255, 255, 255],
+            header_color: [255, 255, 255], header_bold: true, header_fill: None, grid: Some([255, 255, 255]), grid_mm: 0.15, font: String::new(), align: Align::Left }
+    }
+}
+
+impl InfoTable {
+    /// Videos montrees (rangs valides parmi `count`), dans l'ordre.
+    pub fn shown_videos(&self, count: usize) -> Vec<usize> {
+        if self.videos.is_empty() { (0..count).collect() } else { self.videos.iter().copied().filter(|&v| v < count).collect() }
+    }
+
+    /// Cellules du tableau, ligne par ligne, avec pour chacune son type (intitule ?). Les valeurs inconnues sont vides.
+    pub fn cells(&self, vars: &BTreeMap<String, String>) -> Vec<Vec<(String, bool)>> {
+        let count = vars.get(INFO_COUNT_KEY).and_then(|c| c.parse().ok()).unwrap_or(0);
+        let vids = self.shown_videos(count);
+        let label = |f: InfoField| vars.get(&info_label_key(f)).cloned().unwrap_or_else(|| f.name().to_string());
+        let val = |v: usize, f: InfoField| vars.get(&info_key(v, f)).cloned().unwrap_or_default();
+        if self.fields.is_empty() || vids.is_empty() { return vec![]; }
+        if self.transpose {
+            self.fields.iter().map(|&f| {
+                let mut row = Vec::new();
+                if self.header { row.push((label(f), true)); }
+                row.extend(vids.iter().map(|&v| (val(v, f), false)));
+                row
+            }).collect()
+        } else {
+            let mut rows = Vec::new();
+            if self.header { rows.push(self.fields.iter().map(|&f| (label(f), true)).collect()); }
+            rows.extend(vids.iter().map(|&v| self.fields.iter().map(|&f| (val(v, f), false)).collect()));
+            rows
+        }
+    }
+
+    /// Dessin du tableau dans le cadre (x, y, w, h) en pixels : fonds des intitules, textes, puis grille. Les colonnes sont
+    /// proportionnelles a leur texte le plus long ; un texte trop long est reduit pour tenir dans sa case.
+    fn decors(&self, (x, y, w, h): (i32, i32, i32, i32), dpi: u32, vars: &BTreeMap<String, String>, base: &Path) -> Vec<CoverDecor> {
+        let cells = self.cells(vars);
+        let (nr, nc) = (cells.len(), cells.first().map_or(0, |r| r.len()));
+        if nr == 0 || nc == 0 || w < 2 || h < 2 { return vec![]; }
+        let weight: Vec<f64> = (0..nc).map(|c| cells.iter().map(|r| r[c].0.chars().count()).max().unwrap_or(0).max(3) as f64 + 2.0).collect();
+        let total: f64 = weight.iter().sum();
+        // bords des colonnes et des lignes, au pixel pres et sans trou
+        let mut xs = vec![x];
+        let mut acc = 0.0;
+        for wt in &weight { acc += wt; xs.push(x + (w as f64 * acc / total).round() as i32); }
+        let ys: Vec<i32> = (0..=nr).map(|r| y + (h as f64 * r as f64 / nr as f64).round() as i32).collect();
+        let size = ((self.size_pt / 72.0 * dpi as f64).round() as i32).max(1);
+        let pad = (size / 3).max(1);
+        let font = if self.font.is_empty() || Path::new(&self.font).is_absolute() { self.font.clone() } else if base.join(&self.font).is_file() { base.join(&self.font).to_string_lossy().into_owned() } else { self.font.clone() };
+        let mut out = Vec::new();
+        let stroke_px = mm_px(self.grid_mm, dpi).max(1);
+        if let Some(fill) = self.header_fill {
+            for (r, row) in cells.iter().enumerate() {
+                for (c, (_, head)) in row.iter().enumerate() {
+                    if *head { out.push(CoverDecor::Shape { shape: ShapeKind::Rect, x: xs[c], y: ys[r], w: xs[c + 1] - xs[c], h: ys[r + 1] - ys[r], fill: Some(fill), stroke: None, stroke_px: 0, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None }); }
+                }
+            }
+        }
+        for (r, row) in cells.iter().enumerate() {
+            for (c, (text, head)) in row.iter().enumerate() {
+                if text.is_empty() { continue; }
+                let (cw, ch) = (xs[c + 1] - xs[c] - 2 * pad, ys[r + 1] - ys[r]);
+                if cw < 1 || ch < 1 { continue; }
+                out.push(CoverDecor::Text { text: text.clone(), x: xs[c] + pad, y: ys[r], w: cw, h: ch, size, color: if *head { self.header_color } else { self.color }, align: self.align, font: font.clone(),
+                    valign: VAlign::Middle, spacing: 1.0, outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: *head && self.header_bold, italic: false });
+            }
+        }
+        if let Some(g) = self.grid {
+            let line = |x: i32, y: i32, w: i32, h: i32| CoverDecor::Shape { shape: ShapeKind::Line, x, y, w, h, fill: None, stroke: Some(g), stroke_px, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None };
+            // traits a l'interieur du cadre : les bords exterieurs sont decales d'un demi-trait
+            let half = stroke_px / 2;
+            for (k, &yy) in ys.iter().enumerate() {
+                let yy = if k == 0 { yy + half } else if k == nr { yy - half - stroke_px % 2 } else { yy };
+                out.push(line(x, yy, w, 0));
+            }
+            for (k, &xx) in xs.iter().enumerate() {
+                let xx = if k == 0 { xx + half } else if k == nc { xx - half - stroke_px % 2 } else { xx };
+                out.push(line(xx, y, 0, h));
+            }
+        }
+        out
+    }
 }
 
 /// Element de jaquette. Position et taille en millimetres depuis le coin haut gauche de la jaquette *rognee* (le fond perdu a
@@ -273,7 +406,7 @@ impl Cover {
             ((b + fw + sp, 0, w - (b + fw + sp), h), self.colors[2]),
         ];
         let abs = |p: &str| -> PathBuf { let q = Path::new(p); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
-        let items = draw_order(&self.items, &self.layers).into_iter().map(|i| &self.items[i]).filter_map(|it| {
+        let one = |it: &CoverItem| -> Option<(CoverDecor, u16)> {
             let (x, y) = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi));
             let is_line = matches!(&it.kind, CoverKind::Shape { shape: ShapeKind::Line, .. });
             // une ligne peut etre exactement horizontale ou verticale (cadre de largeur ou hauteur nulle)
@@ -296,12 +429,25 @@ impl Cover {
                     let p = vars.get(&frame_key(frame)?)?;
                     CoverDecor::Image { path: PathBuf::from(p), x, y, w: iw, h: ih }
                 }
+                CoverKind::InfoTable { .. } => return None,
                 CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
                     CoverDecor::Shape { flip: *flip, style: *style, arrow: *arrow, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0) }
                 }
             };
             Some((d, if is_line { 0 } else { it.rot }))
-        }).collect();
+        };
+        let mut items = Vec::new();
+        for i in draw_order(&self.items, &self.layers) {
+            let it = &self.items[i];
+            match &it.kind {
+                // un tableau : plusieurs dessins, toujours a l'horizontale
+                CoverKind::InfoTable { table } => {
+                    let r = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi), mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
+                    items.extend(table.decors(r, dpi, vars, base).into_iter().map(|d| (d, 0)));
+                }
+                _ => items.extend(one(it)),
+            }
+        }
         CoverLayout { size, fills, bg_image: if self.bg_image.is_empty() { None } else { Some(abs(&self.bg_image)) }, items }
     }
 
@@ -423,7 +569,7 @@ pub fn rotate_quarters(img: &RgbaImage, q: u32) -> RgbaImage {
 // ------------------------------------------------------------------ champs automatiques
 /// Champs remplis depuis le projet : (nom, description).
 pub const FIELDS: [(&str, &str); 6] = [
-    ("title", "disc title"),
+    ("titre", "disc title"),
     ("liste_videos", "one line per video: number, title and duration"),
     ("nb_videos", "number of videos"),
     ("duree_totale", "total duration of the videos"),
@@ -710,6 +856,22 @@ fn item_to_value(it: &CoverItem) -> Value {
             e.push(("type".into(), Value::Str("image".into())));
             e.push(("file".into(), Value::Str(path.clone())));
         }
+        CoverKind::InfoTable { table: t } => {
+            e.push(("type".into(), Value::Str("tableau_infos".into())));
+            if !t.videos.is_empty() { e.push(("videos".into(), Value::Arr(t.videos.iter().map(|v| n(*v as f64 + 1.0)).collect()))); }
+            e.push(("fields".into(), Value::Arr(t.fields.iter().map(|f| Value::Str(f.name().into())).collect())));
+            e.push(("header".into(), Value::Bool(t.header)));
+            if t.transpose { e.push(("transpose".into(), Value::Bool(true))); }
+            e.push(("size_pt".into(), n(t.size_pt)));
+            e.push(("color".into(), color_hex(t.color)));
+            e.push(("header_color".into(), color_hex(t.header_color)));
+            e.push(("header_bold".into(), Value::Bool(t.header_bold)));
+            if let Some(c) = t.header_fill { e.push(("header_fill".into(), color_hex(c))); }
+            if let Some(c) = t.grid { e.push(("grid".into(), color_hex(c))); }
+            e.push(("grid_mm".into(), n(t.grid_mm)));
+            if !t.font.is_empty() { e.push(("font".into(), Value::Str(t.font.clone()))); }
+            e.push(("align".into(), Value::Str(t.align.name().into())));
+        }
         CoverKind::VideoImage { frame } => {
             e.push(("type".into(), Value::Str("image_video".into())));
             if let Some(v) = frame.video { e.push(("video".into(), n(v as f64 + 1.0))); }
@@ -770,6 +932,26 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
                 }
                 _ => None,
             },
+        } },
+        Some("tableau_infos") => CoverKind::InfoTable { table: {
+            let d = InfoTable::default();
+            let g = |k: &str, dv: f64| e.get(k).and_then(Value::as_f64).filter(|v| v.is_finite()).unwrap_or(dv);
+            let b = |k: &str, dv: bool| e.get(k).and_then(Value::as_bool).unwrap_or(dv);
+            InfoTable {
+                videos: match e.get("videos") { Some(Value::Arr(a)) => a.iter().filter_map(Value::as_f64).filter(|v| *v >= 1.0).map(|v| v as usize - 1).collect(), _ => vec![] },
+                fields: match e.get("fields") { Some(Value::Arr(a)) => a.iter().filter_map(Value::as_str).filter_map(InfoField::from_name).collect(), _ => d.fields.clone() },
+                header: b("header", d.header),
+                transpose: b("transpose", false),
+                size_pt: g("size_pt", d.size_pt).clamp(1.0, 200.0),
+                color: color_from(e.get("color"), d.color),
+                header_color: color_from(e.get("header_color"), d.header_color),
+                header_bold: b("header_bold", d.header_bold),
+                header_fill: e.get("header_fill").map(|v| color_from(Some(v), [0, 0, 0])),
+                grid: e.get("grid").map(|v| color_from(Some(v), [255, 255, 255])),
+                grid_mm: g("grid_mm", d.grid_mm).clamp(0.05, 5.0),
+                font: e.get("font").and_then(Value::as_str).unwrap_or("").to_string(),
+                align: e.get("align").and_then(Value::as_str).and_then(Align::from_name).unwrap_or(d.align),
+            }
         } },
         t => return Err(trf!("{}, item {}: unknown type {}", what, k + 1, format!("{:?}", t))),
     };

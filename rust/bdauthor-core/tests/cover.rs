@@ -397,3 +397,97 @@ fn cover_video_images_follow_video_removal_and_swap() {
     m.remove_video(1);
     assert_eq!(vids(&m), vec![Some(1), None, Some(0)]);
 }
+
+#[test]
+fn info_table_round_trips_and_lays_out() {
+    use bdauthor_core::cover::{info_key, InfoField, InfoTable, CoverDecor, INFO_COUNT_KEY};
+    let mut c = Cover::default();
+    let t = InfoTable { videos: vec![1], fields: vec![InfoField::Duration, InfoField::Languages], header: true, transpose: false, header_fill: Some([10, 20, 30]), grid: None, ..InfoTable::default() };
+    c.items.push(CoverItem { kind: CoverKind::InfoTable { table: t.clone() }, x: 10.0, y: 20.0, w: 80.0, h: 20.0, rot: 0, name: String::new(), layer: 0 });
+    let v = c.to_value().unwrap();
+    let back = Cover::from_value(Some(&v)).unwrap();
+    assert_eq!(back.items[0].kind, CoverKind::InfoTable { table: t });
+    // valeurs : la video 2 seulement ; en-tete avec fond
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert(INFO_COUNT_KEY.to_string(), "2".to_string());
+    vars.insert(info_key(0, InfoField::Duration), "10 min".to_string());
+    vars.insert(info_key(1, InfoField::Duration), "95 min".to_string());
+    vars.insert(info_key(1, InfoField::Languages), "Français, English".to_string());
+    vars.insert("@info:label:duration".to_string(), "Durée".to_string());
+    let lay = c.layout_with(300, std::path::Path::new("."), &vars);
+    let texts: Vec<String> = lay.items.iter().filter_map(|(d, _)| match d { CoverDecor::Text { text, .. } => Some(text.clone()), _ => None }).collect();
+    assert_eq!(texts, vec!["Durée", "languages", "95 min", "Français, English"]);
+    let fills = lay.items.iter().filter(|(d, _)| matches!(d, CoverDecor::Shape { fill: Some([10, 20, 30]), .. })).count();
+    assert_eq!(fills, 2, "fond des deux intitules");
+    // les cases restent dans le cadre de l'element
+    let (x0, y0) = (((3.0 + 10.0) / 25.4 * 300.0) as i32, ((3.0 + 20.0) / 25.4 * 300.0) as i32);
+    for (d, rot) in &lay.items {
+        assert_eq!(*rot, 0);
+        let (x, y, w, h) = d.rect();
+        assert!(x >= x0 - 1 && y >= y0 - 1 && x + w <= x0 + 946 + 2 && y + h <= y0 + 237 + 2, "{:?}", d.rect());
+    }
+}
+
+#[test]
+fn info_table_transposed_with_grid() {
+    use bdauthor_core::cover::{info_key, InfoField, InfoTable, CoverDecor, INFO_COUNT_KEY};
+    let t = InfoTable { fields: vec![InfoField::Format, InfoField::Sound], transpose: true, ..InfoTable::default() };
+    let mut vars = std::collections::BTreeMap::new();
+    vars.insert(INFO_COUNT_KEY.to_string(), "1".to_string());
+    vars.insert(info_key(0, InfoField::Format), "HD 1080p · 16/9".to_string());
+    vars.insert(info_key(0, InfoField::Sound), "Dolby Digital 2.0".to_string());
+    let cells = t.cells(&vars);
+    assert_eq!(cells.len(), 2);
+    assert_eq!(cells[0], vec![("format".to_string(), true), ("HD 1080p · 16/9".to_string(), false)]);
+    let mut c = Cover::default();
+    c.items.push(CoverItem { kind: CoverKind::InfoTable { table: t }, x: 0.0, y: 0.0, w: 60.0, h: 12.0, rot: 90, name: String::new(), layer: 0 });
+    let lay = c.layout_with(150, std::path::Path::new("."), &vars);
+    // grille : 3 traits horizontaux et 3 verticaux (2 lignes, 2 colonnes) ; le tableau reste a l'horizontale
+    let lines = lay.items.iter().filter(|(d, _)| matches!(d, CoverDecor::Shape { shape: ShapeKind::Line, .. })).count();
+    assert_eq!(lines, 6);
+    assert!(lay.items.iter().all(|(_, r)| *r == 0));
+    // sans video : rien
+    let mut none = vars.clone();
+    none.insert(INFO_COUNT_KEY.to_string(), "0".to_string());
+    assert!(c.layout_with(150, std::path::Path::new("."), &none).items.is_empty());
+}
+
+#[test]
+fn info_vars_describe_each_video() {
+    use bdauthor_core::cover::{info_key, InfoField};
+    let mut m = ProjectModel::default();
+    m.videos.push(bdauthor_core::model::VideoEntry::new("a.mkv"));
+    m.videos[0].title = "Film".into();
+    let fr = m.add_language("Français", "fra");
+    let mut d = std::collections::HashMap::new();
+    d.insert("a.mkv".to_string(), 5730.0);
+    let mut s = std::collections::HashMap::new();
+    s.insert("a.mkv".to_string(), (1080u32, 25.0));
+    let mut a = bdauthor_core::audio::AudioTrackCfg { source: bdauthor_core::audio::AudioSource::Embedded(0), lang_id: 0, lang: String::new(), offset_ms: 0 };
+    a.lang_id = fr;
+    m.videos[0].audio.push(a.clone());
+    m.videos[0].audio.push(a);
+    let v = m.cover_info_vars(&d, &s);
+    assert_eq!(v[&info_key(0, InfoField::Title)], "Film");
+    assert_eq!(v[&info_key(0, InfoField::Duration)], "96 min");
+    assert_eq!(v[&info_key(0, InfoField::Languages)], "Français");
+    assert_eq!(v[&info_key(0, InfoField::Subtitles)], "—");
+    assert_eq!(v[&info_key(0, InfoField::Format)], "HD 1080p · 16/9");
+    assert_eq!(v[&info_key(0, InfoField::Sound)], "Dolby Digital 2.0");
+    // duree et format inconnus : vides
+    let v = m.cover_info_vars(&Default::default(), &Default::default());
+    assert!(!v.contains_key(&info_key(0, InfoField::Duration)) && !v.contains_key(&info_key(0, InfoField::Format)));
+}
+
+#[test]
+fn info_table_videos_follow_swaps_and_removals() {
+    use bdauthor_core::cover::InfoTable;
+    let mut m = ProjectModel::default();
+    for f in ["a.mkv", "b.mkv", "c.mkv"] { m.videos.push(bdauthor_core::model::VideoEntry::new(f)); }
+    m.cover.items.push(CoverItem { kind: CoverKind::InfoTable { table: InfoTable { videos: vec![0, 2], ..InfoTable::default() } }, x: 0.0, y: 0.0, w: 50.0, h: 10.0, rot: 0, name: String::new(), layer: 0 });
+    let vids = |m: &ProjectModel| match &m.cover.items[0].kind { CoverKind::InfoTable { table } => table.videos.clone(), _ => unreachable!() };
+    m.swap_videos(0, 1);
+    assert_eq!(vids(&m), vec![1, 2]);
+    m.remove_video(1);
+    assert_eq!(vids(&m), vec![1]);
+}
