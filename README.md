@@ -62,7 +62,7 @@ The application is organized in tabs: **Videos** (content of the disc), **Layout
 - **Guides**: safe margin, snapping, rulers in **mm or inches**, optional grid, adjustable background and guide colors, panning with the right mouse button, wheel zoom.
 - **Automatic fields** in texts: disc title, list of videos (number, title, duration), number of videos, total duration, number of chapters, current year.
 - Alignment of one or several items (to each other or to the back / spine / front / disc), distribution, duplicate, copy / paste, rotation (0°, 90°, 270°), undo / redo.
-- Export to **PDF** (actual size, or tiled on A4 with cut marks), **PNG** (optionally trimmed to the finished format, without bleed) or an **A4 print sheet**.
+- Export to **PDF** (actual size) or **PNG** (optionally trimmed to the finished format, without bleed), or **Print on A4**: an A4 PDF with the cover at actual size, centered, with crop marks, to print at 100 % and cut out.
 
 ### Disc output
 - Complete **`BDMV`** folder or **ISO image** (UDF 2.50), with a volume name, owner, organization and contact fields, a chosen or automatic date, and layout options (alignment on 64 KB, files ordered by playback, maximum compatibility, mirrored metadata).
@@ -90,7 +90,7 @@ The application is organized in tabs: **Videos** (content of the disc), **Layout
 - preview refresh pace while dragging;
 - list of recent projects.
 
-**Project settings** (*File › Project…*, saved with the project):
+**Project settings** (*Edit › Project…*, saved with the project):
 
 | Section | What you set |
 |---|---|

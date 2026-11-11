@@ -26,7 +26,7 @@ bdauthor prend vos fichiers vidéo, vos pistes audio et vos sous-titres, vous la
 
 ## Fonctionnalités
 
-L'application est organisée en onglets : **Vidéos** (contenu du disque), **Menus** (éditeur de menus, onglet *Layout*) et **Jaquette** (jaquette et étiquette), plus les menus **Fichier**, **Édition** et **À propos**.
+L'application est organisée en onglets : **Vidéos** (contenu du disque), **Mise en page** (éditeur de menus) et **Jaquette** (jaquette et étiquette), plus les menus **Fichier**, **Édition** et **À propos**.
 
 ### Menus
 - **Éditeur visuel de menus** : placez, déplacez et redimensionnez les éléments à la souris, avec aimantation, guides et ordre de superposition (devant / derrière). Plusieurs éléments peuvent être sélectionnés ensemble, alignés, centrés et répartis.
@@ -62,7 +62,7 @@ L'application est organisée en onglets : **Vidéos** (contenu du disque), **Men
 - **Repères** : marge de sécurité, aimantation, règles en **mm ou en pouces**, grille optionnelle, couleurs de fond et de repères réglables, déplacement au clic droit, zoom à la molette.
 - **Champs automatiques** dans les textes : titre du disque, liste des vidéos (numéro, titre, durée), nombre de vidéos, durée totale, nombre de chapitres, année en cours.
 - Alignement d'un ou plusieurs éléments (entre eux ou sur le dos / la tranche / la face / le disque), répartition, duplication, copier-coller, rotation (0°, 90°, 270°), annuler / rétablir.
-- Export en **PDF** (taille réelle, ou découpé sur A4 avec traits de coupe), en **PNG** (rogné au format fini, sans fond perdu, en option) ou en **feuille d'impression A4**.
+- Export en **PDF** (taille réelle) ou en **PNG** (rogné au format fini, sans fond perdu, en option), ou **Imprimer sur A4** : un PDF A4 avec la jaquette à sa taille réelle, centrée, avec des repères de coupe, à imprimer à 100 % puis à découper.
 
 ### Disque
 - Génération d'un dossier **`BDMV`** complet ou d'une **image ISO** (UDF 2.50), avec nom de volume, propriétaire, organisation et contact, date choisie ou automatique, et options d'agencement (alignement sur 64 Ko, fichiers ordonnés par lecture, compatibilité maximale, copie miroir des métadonnées).
@@ -81,7 +81,7 @@ L'application est organisée en onglets : **Vidéos** (contenu du disque), **Men
 
 ## Réglages
 
-**Réglages généraux** (*Fichier › Réglages*, conservés sur l'ordinateur, pas dans le projet) :
+**Réglages généraux** (*Fichier › Configuration…*, conservés sur l'ordinateur, pas dans le projet) :
 - **langue** de l'interface ;
 - dossier **ffmpeg** (sinon : à côté du programme, puis le `PATH`) ;
 - **dossier de polices supplémentaires** (`.ttf` et `.otf` ; ajoutées à toutes les listes de polices ; un « ? » indique les formats pris en charge) ;
@@ -90,7 +90,7 @@ L'application est organisée en onglets : **Vidéos** (contenu du disque), **Men
 - cadence de rafraîchissement de l'aperçu pendant le glissement ;
 - liste des projets récents.
 
-**Réglages du projet** (*Fichier › Projet…*, enregistrés avec le projet) :
+**Réglages du projet** (*Édition › Projet…*, enregistrés avec le projet) :
 
 | Section | Ce qu'on règle |
 |---|---|
@@ -179,7 +179,7 @@ cargo test -p bdauthor-core
 
 1. **Fichier › Nouveau projet**, puis ajoutez vos vidéos.
 2. Pour chaque vidéo : titre, pistes audio (langue), sous-titres, chapitres, image de vignette.
-3. Ouvrez l'onglet **Menus** : composez la page (textes, images, boutons, formes), testez avec le simulateur.
+3. Ouvrez l'onglet **Mise en page** : composez la page (textes, images, boutons, formes), testez avec le simulateur.
 4. Réglez la qualité d'encodage et le disque visé dans les réglages du projet.
 5. Ouvrez l'onglet **Jaquette** pour dessiner la jaquette et l'étiquette ; exportez-les en PDF ou en PNG.
 6. **Générer le disque** : suivez la progression, puis consultez le rapport de vérification.
