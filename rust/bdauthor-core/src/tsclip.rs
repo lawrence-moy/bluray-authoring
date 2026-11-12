@@ -4,7 +4,7 @@ use crate::m2ts::*;
 use crate::reader::*;
 
 pub const VIDEO_TYPES: [u8; 3] = [0x1B, 0x02, 0xEA];
-pub const AUDIO_TYPES: [u8; 1] = [0x81];
+pub const AUDIO_TYPES: [u8; 2] = [0x81, crate::lpcm::STREAM_TYPE];
 /// (cadence, duree d'image en ticks 90 kHz, code de cadence du .clpi), dans l'ordre du dictionnaire Python
 pub const FRAME_RATES: [(f64, f64, u8); 6] =
     [(23.976, 3753.75, 1), (24.0, 3750.0, 2), (25.0, 3600.0, 3), (29.97, 3003.0, 4), (50.0, 1800.0, 6), (59.94, 1501.5, 7)];
@@ -257,7 +257,7 @@ pub fn scan_clip(data: &[u8]) -> PResult<ClipScan> {
             firsts.push(m);
         }
         let first = a.first().ok_or_else(|| ParseError("flux audio vide".into()))?;
-        let (fmt, rate) = ac3_attrs(&first.data)?;
+        let (fmt, rate) = if t == crate::lpcm::STREAM_TYPE { crate::lpcm::attrs(&first.data)? } else { ac3_attrs(&first.data)? };
         audio_codes.push((pid, t, (fmt << 4) | rate));
     }
     let rate_code = FRAME_RATES.iter().find(|r| r.0 == fps).unwrap().2;

@@ -464,7 +464,7 @@ fn info_vars_describe_each_video() {
     d.insert("a.mkv".to_string(), 5730.0);
     let mut s = std::collections::HashMap::new();
     s.insert("a.mkv".to_string(), (1080u32, 25.0));
-    let mut a = bdauthor_core::audio::AudioTrackCfg { source: bdauthor_core::audio::AudioSource::Embedded(0), lang_id: 0, lang: String::new(), offset_ms: 0 };
+    let mut a = bdauthor_core::audio::AudioTrackCfg { source: bdauthor_core::audio::AudioSource::Embedded(0), lang_id: 0, lang: String::new(), offset_ms: 0, format: bdauthor_core::audio::AudioFormat::Ac3 };
     a.lang_id = fr;
     m.videos[0].audio.push(a.clone());
     m.videos[0].audio.push(a);

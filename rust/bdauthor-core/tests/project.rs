@@ -935,3 +935,47 @@ fn menu_size_option_is_saved_and_applied() {
     assert_eq!(info.menu_size, (1280, 720));
     if std::env::var_os("BDAUTHOR_TEST_OUT").is_none() { let _ = std::fs::remove_dir_all(&dir); }
 }
+
+#[test]
+fn lossless_lpcm_track_goes_through_the_whole_disc() {
+    common::fr();
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_lpcm_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
+    // a.mkv : piste 0 en 5.1, piste 1 en stereo
+    run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i", "sine=frequency=440:duration=3:sample_rate=48000,aformat=channel_layouts=5.1(side)",
+          "-f", "lavfi", "-i", "sine=frequency=880:duration=3:sample_rate=48000,aformat=channel_layouts=stereo", "-map", "0", "-map", "1", "-map", "2",
+          "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "flac", dir.join("a.mkv").to_str().unwrap()]);
+    let proj = r##"{ "title": "LPCM", "language": "eng",
+      "languages": [ {"id":1,"name":"English","code":"eng"}, {"id":2,"name":"Francais","code":"fra"} ],
+      "videos": [ {"file": "a.mkv", "audio_tracks": [ {"track":0,"language":"eng","language_id":1,"format":"lpcm24"}, {"track":1,"language":"fra","language_id":2} ]} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2} }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let (info, _) = build_in(&tools, &dir, "out");
+    // le verificateur du disque accepte le LPCM
+    assert!(info.report.ok(), "{}", info.report.render());
+    let root = dir.join("out/BDMV");
+    let clpi = bdauthor_core::clpi::Clpi::parse(&std::fs::read(root.join("CLIPINF/00000.clpi")).unwrap()).unwrap();
+    let st: Vec<(u16, u8, u8)> = clpi.program.programs[0].streams.iter().filter(|s| matches!(s.coding_type, 0x80 | 0x81)).map(|s| (s.pid, s.coding_type, s.attrs[0])).collect();
+    assert_eq!(st, vec![(0x1100, 0x80, 0x61), (0x1101, 0x81, 0x31)]);
+    // la playlist declare les deux flux avec le meme type et les memes attributs
+    let mpls = std::fs::read(root.join("PLAYLIST/00000.mpls")).unwrap();
+    let has = |coding: u8, attr: u8, lang: &[u8; 3]| { let mut n = vec![5u8, coding, attr]; n.extend_from_slice(lang); mpls.windows(6).any(|w| w == &n[..]) };
+    assert!(has(0x80, 0x61, b"eng") && has(0x81, 0x31, b"fra"));
+    // ffprobe reconnait le flux LPCM Blu-ray (6 canaux, 24 bits) et l'AC-3
+    let pr = Command::new(&tools.ffprobe).args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name,channels", "-of", "csv=p=0"]).arg(root.join("STREAM/00000.m2ts")).output().unwrap();
+    let out = String::from_utf8_lossy(&pr.stdout).to_string();
+    assert!(out.contains("pcm_bluray,6") && out.contains("ac3,2"), "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn lossless_audio_signature_differs_from_ac3() {
+    use bdauthor_core::audio::AudioFormat;
+    assert_eq!(AudioFormat::Lpcm24.kbps(6, 192), 6 * 24 * 48);
+    assert_eq!(AudioFormat::Lpcm16.kbps(2, 192), 2 * 16 * 48);
+    assert_eq!(AudioFormat::Ac3.kbps(6, 192), 192);
+    assert!(bdauthor_core::vmux::MUX_BUDGET_KBPS < 35_500);
+}

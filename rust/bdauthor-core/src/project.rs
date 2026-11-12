@@ -581,6 +581,20 @@ pub fn parse_chapters(v: &Value, sc: &ClipScan) -> Result<Vec<Chapter>> {
 
 // ------------------------------------------------------------------ cache d'encodage
 /// Resume des reglages audio d'une video pour la cle du cache d'encodage.
+/// Debit (kb/s) du flux audio d'une piste sur le disque : AC-3 au debit du projet, LPCM selon les canaux de la source (6 si la
+/// source est illisible : estimation prudente). `src` : la video (pistes numerotees) ; une piste en fichier a son propre chemin.
+fn track_kbps(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg, ac3_kbps: u32) -> u32 {
+    if !t.format.is_lpcm() { return ac3_kbps; }
+    let (path, index) = match &t.source {
+        crate::audio::AudioSource::Embedded(n) => (src.to_path_buf(), *n),
+        crate::audio::AudioSource::File(f) => (PathBuf::from(f), 0),
+    };
+    let channels = ffmpeg::list_audio_streams(tools, &path).ok()
+        .and_then(|v| v.into_iter().find(|s| s.index == index))
+        .map_or(6, |s| s.channels.clamp(1, 8));
+    t.format.kbps(channels, ac3_kbps)
+}
+
 fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) -> String {
     let mut s = String::new();
     for t in tracks {
@@ -593,6 +607,8 @@ fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) ->
             }
         }
         s.push_str(&format!("@{};", t.offset_ms));
+        // l'AC-3 garde la signature d'avant (les caches existants restent valables)
+        if t.format.is_lpcm() { s.push_str(&format!("#{}", t.format.name())); }
     }
     for l in langs { s.push_str(&String::from_utf8_lossy(l)); s.push(','); }
     s
@@ -867,8 +883,17 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             let (mut audio, mut copied, mut secs) = (0u64, 0u64, 0.0f64);
             for (i, info) in infos.iter().enumerate() {
                 let d = info.as_ref().map_or(0.0, |x| x.duration_s);
-                let tracks = audio_plan.as_ref().map_or(1, |pl| pl.videos[i].tracks.len().max(1));
-                audio += crate::fill::audio_bytes(abr, tracks, d);
+                match audio_plan.as_ref().map(|pl| &pl.videos[i].tracks).filter(|t| !t.is_empty()) {
+                    Some(tracks) => {
+                        let src = vfile(&vids[i]).map(|f| p(&f)).unwrap_or_default();
+                        for t in tracks {
+                            let mut t = t.clone();
+                            if let crate::audio::AudioSource::File(f) = &mut t.source { *f = p(f).to_string_lossy().into_owned(); }
+                            audio += crate::fill::audio_bytes(track_kbps(env.tools, &src, &t, abr), 1, d);
+                        }
+                    }
+                    None => audio += crate::fill::audio_bytes(abr, 1, d),
+                }
                 match &copy_rate[i] { Some(r) => copied += r.bytes, None => secs += d }
             }
             let plan = crate::fill::fill_bitrate(&crate::fill::FillInput {
@@ -916,6 +941,17 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             _ => eopts.clone(),
         };
         if copy_rate[i].is_some() { eopts.copy_video = true; } else { eopts.video_kbps = target_kbps; }
+        // audio sans perte : le debit du clip (video + audio) ne doit pas depasser ce que le multiplexage sait porter
+        if a_tracks.iter().any(|t| t.format.is_lpcm()) {
+            let abr = crate::fill::parse_kbps(&eopts.audio_bitrate);
+            let audio_kbps: u32 = a_tracks.iter().map(|t| track_kbps(env.tools, &src, t, abr)).sum();
+            let room = crate::vmux::MUX_BUDGET_KBPS.saturating_sub(audio_kbps);
+            if room < 8000 { return bad(trf!("video {}: the audio tracks ({} kb/s) leave too little room for the video; use fewer or lighter lossless tracks", i + 1, audio_kbps)); }
+            if eopts.maxrate > room && eopts.video_kbps.map_or(true, |k| k > room) {
+                (env.log)(&trf!("   video {}: audio {} kb/s, so the video peak rate is limited to {} kb/s", i + 1, audio_kbps, room));
+                eopts.maxrate = room;
+            }
+        }
         let cached = match &cache_dir {
             Some(d) => {
                 let f = d.join(format!("{}.m2ts", cache_key_with(&src, lang, &eopts, &info, &a_sig)?));

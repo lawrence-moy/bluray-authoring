@@ -1233,5 +1233,11 @@
   "Only digits are allowed (found “{}”).": "Seuls les chiffres sont permis (« {} » trouvé).",
   "Wrong check digit: it should be {}.": "Chiffre de contrôle incorrect : il devrait être {}.",
   "{} or {} digits expected (found {}).": "{} ou {} chiffres attendus ({} trouvés).",
-  "Type": "Type"
+  "Type": "Type",
+  "Format:": "Format :",
+  "Dolby Digital is compact (a few hundred kb/s). LPCM is lossless but heavy: about 4.6 Mb/s for 5.1 in 16 bits, 6.9 Mb/s in 24 bits; the video bitrate is lowered accordingly.": "Le Dolby Digital est compact (quelques centaines de kb/s). Le LPCM est sans perte mais lourd : environ 4,6 Mb/s en 5.1 et 16 bits, 6,9 Mb/s en 24 bits ; le débit de la vidéo est réduit en conséquence.",
+  "Lossless audio: not every player accepts it; test the disc on yours.": "Audio sans perte : tous les lecteurs ne l’acceptent pas ; essaie le disque sur le tien.",
+  "audio tracks: unknown format “{}”": "pistes audio : format inconnu « {} »",
+  "video {}: the audio tracks ({} kb/s) leave too little room for the video; use fewer or lighter lossless tracks": "vidéo {} : les pistes audio ({} kb/s) laissent trop peu de place à la vidéo ; utilise moins de pistes sans perte, ou plus légères",
+  "   video {}: audio {} kb/s, so the video peak rate is limited to {} kb/s": "   vidéo {} : audio {} kb/s, le débit de pointe de la vidéo est donc limité à {} kb/s"
 }

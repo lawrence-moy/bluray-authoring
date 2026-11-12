@@ -551,11 +551,29 @@ fn encode_args_full(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tr
         a.extend(force_keys_args(&o.force_keys));
         if let Some((n, log)) = pass { a.extend(["-pass".to_string(), n.to_string(), "-passlogfile".into(), s(log)]); }
     }
-    a.extend(["-c:a", "ac3", "-b:a"].iter().map(|x| x.to_string()));
-    a.push(o.audio_bitrate.clone());
-    a.extend(["-ar", "48000", "-ac", "2", "-f", "mpegts", "-pes_payload_size", "0"].iter().map(|x| x.to_string()));
+    a.extend(audio_codec_args(&o.audio_bitrate, tracks));
+    a.extend(["-f", "mpegts", "-pes_payload_size", "0"].iter().map(|x| x.to_string()));
     a.push(s(dst));
     (a, tg)
+}
+
+/// Options de codage audio de la sortie : AC-3 stereo au debit `bitrate` pour toutes les pistes, sauf celles demandees en LPCM
+/// (`pcm_bluray` : 16 bits ou 24 bits, canaux de la source, 48 kHz). Sans piste LPCM, les memes options qu'avant pour toutes.
+pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -> Vec<String> {
+    let st = |x: &str| x.to_string();
+    if !tracks.iter().any(|t| t.format.is_lpcm()) {
+        return vec![st("-c:a"), st("ac3"), st("-b:a"), bitrate.to_string(), st("-ar"), st("48000"), st("-ac"), st("2")];
+    }
+    let mut a = vec![st("-ar"), st("48000")];
+    for (k, t) in tracks.iter().enumerate() {
+        use crate::audio::AudioFormat::*;
+        match t.format {
+            Ac3 => a.extend([format!("-c:a:{k}"), st("ac3"), format!("-b:a:{k}"), bitrate.to_string(), format!("-ac:a:{k}"), st("2")]),
+            Lpcm16 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s16")]),
+            Lpcm24 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s32")]),
+        }
+    }
+    a
 }
 
 /// Video quelconque -> MPEG-TS Blu-ray (H.264 + AC3). Retourne la cible choisie.

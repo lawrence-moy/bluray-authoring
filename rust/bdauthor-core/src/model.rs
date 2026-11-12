@@ -351,8 +351,14 @@ impl ProjectModel {
                 let scan = if matches!(t.scan, crate::ffmpeg::Scan::Tff | crate::ffmpeg::Scan::Bff) { "i" } else { "p" };
                 m.insert(info_key(i, F::Format), format!("HD {}{scan} · 16/9", t.height));
             }
-            // l'audio du disque est toujours en Dolby Digital (AC3) stereo
-            m.insert(info_key(i, F::Sound), "Dolby Digital 2.0".to_string());
+            // Dolby Digital stereo, sauf pistes choisies en LPCM (sans perte)
+            let mut sound: Vec<String> = Vec::new();
+            for t in &v.audio {
+                let n = match t.format { crate::audio::AudioFormat::Ac3 => "Dolby Digital 2.0".to_string(), f => format!("LPCM {} bits", f.bits()) };
+                if !sound.contains(&n) { sound.push(n); }
+            }
+            if sound.is_empty() { sound.push("Dolby Digital 2.0".to_string()); }
+            m.insert(info_key(i, F::Sound), sound.join(" · "));
         }
         m
     }

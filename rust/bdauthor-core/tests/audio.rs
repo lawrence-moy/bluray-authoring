@@ -7,7 +7,7 @@ use bdauthor_core::subtitle::Language;
 fn langs(codes: &[&str]) -> Vec<Language> {
     codes.iter().enumerate().map(|(i, c)| Language { id: i as u32 + 1, name: c.to_uppercase(), code: c.to_string() }).collect()
 }
-fn tr(id: u32) -> AudioTrackCfg { AudioTrackCfg { source: AudioSource::Embedded(id), lang_id: id, lang: "und".into(), offset_ms: 0 } }
+fn tr(id: u32) -> AudioTrackCfg { AudioTrackCfg { source: AudioSource::Embedded(id), lang_id: id, lang: "und".into(), offset_ms: 0, format: AudioFormat::Ac3 } }
 
 #[test]
 fn plan_orders_tracks_by_language() {

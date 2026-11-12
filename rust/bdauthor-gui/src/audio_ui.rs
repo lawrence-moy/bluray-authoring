@@ -1,7 +1,7 @@
 //! Panneau « Pistes audio » d'une video : pistes de la video ou fichiers audio separes, chacune avec sa langue du projet.
 use crate::i18n::{tr, trf};
 use crate::subs_ui::language_for_code;
-use bdauthor_core::audio::{AudioSource, AudioTrackCfg, MAX_AUDIO_TRACKS};
+use bdauthor_core::audio::{AudioFormat, AudioSource, AudioTrackCfg, MAX_AUDIO_TRACKS};
 use bdauthor_core::ffmpeg::{audio_peaks, list_audio_streams, probe_duration, AudioPlayback, AudioStreamInfo, Tools};
 use bdauthor_core::model::VideoEntry;
 use bdauthor_core::subtitle::Language;
@@ -89,6 +89,17 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     ui.label(tr("Offset:"));
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
                 });
+                ui.horizontal(|ui| {
+                    ui.label(tr("Format:"));
+                    egui::ComboBox::from_id_salt("format_piste_audio").selected_text(t.format.label()).show_ui(ui, |ui| {
+                        for f in AudioFormat::ALL {
+                            if ui.selectable_label(t.format == f, f.label()).clicked() { t.format = f; changed = true; }
+                        }
+                    }).response.on_hover_text(tr("Dolby Digital is compact (a few hundred kb/s). LPCM is lossless but heavy: about 4.6 Mb/s for 5.1 in 16 bits, 6.9 Mb/s in 24 bits; the video bitrate is lowered accordingly."));
+                });
+                if t.format.is_lpcm() {
+                    ui.colored_label(egui::Color32::from_rgb(230, 170, 70), tr("Lossless audio: not every player accepts it; test the disc on yours."));
+                }
             }); }
         });
     }

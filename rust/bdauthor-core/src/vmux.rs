@@ -134,6 +134,10 @@ fn schedule(items: &[Item], dt: f64, lead: f64, pcr_i: f64, psi_i: f64, margin: 
     Sched { out, late, finish }
 }
 
+/// Debit total (video + audio, kb/s) qu'un clip peut porter avec les parametres par defaut du multiplexage (`peak_rate`), avec une
+/// marge de 5 % pour les paquets de service (PCR, tables).
+pub const MUX_BUDGET_KBPS: u32 = 33_700;
+
 #[derive(Debug, Clone, Copy)]
 pub struct MuxParams {
     pub video_pid: u16,
