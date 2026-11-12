@@ -90,7 +90,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
                 });
                 ui.horizontal(|ui| {
-                    ui.label(tr("Format:"));
+                    ui.label(tr("Convert to format:"));
                     egui::ComboBox::from_id_salt("format_piste_audio").selected_text(t.format.label()).show_ui(ui, |ui| {
                         for f in AudioFormat::ALL {
                             if ui.selectable_label(t.format == f, f.label()).clicked() { t.format = f; changed = true; }

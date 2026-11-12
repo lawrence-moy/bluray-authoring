@@ -1239,5 +1239,6 @@
   "Lossless audio: not every player accepts it; test the disc on yours.": "Audio sans perte : tous les lecteurs ne l’acceptent pas ; essaie le disque sur le tien.",
   "audio tracks: unknown format “{}”": "pistes audio : format inconnu « {} »",
   "video {}: the audio tracks ({} kb/s) leave too little room for the video; use fewer or lighter lossless tracks": "vidéo {} : les pistes audio ({} kb/s) laissent trop peu de place à la vidéo ; utilise moins de pistes sans perte, ou plus légères",
-  "   video {}: audio {} kb/s, so the video peak rate is limited to {} kb/s": "   vidéo {} : audio {} kb/s, le débit de pointe de la vidéo est donc limité à {} kb/s"
+  "   video {}: audio {} kb/s, so the video peak rate is limited to {} kb/s": "   vidéo {} : audio {} kb/s, le débit de pointe de la vidéo est donc limité à {} kb/s",
+  "Convert to format:": "Convertir au format :"
 }
