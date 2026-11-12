@@ -262,3 +262,12 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - **A verifier sur materiel** (non confirme, aucun lecteur ici) : octets du descripteur d'enregistrement HDMV, et trames de 7,5 ms
   (360 echantillons) en 24 bits. Test prevu : BD-RE avec une piste LPCM 16 bits et une 24 bits.
 - Non fait : TrueHD / DTS-HD (sources deja encodees, copie directe), 96 / 192 kHz.
+
+### Audio AC-3 par piste : 5.1, debit manuel, copie
+- Formats de piste : `ac3` (2.0, defaut), `ac3_51` (5.1, 448 kb/s par defaut ; au-dela de 6 canaux, mixage en 5.1 ; une source stereo
+  ne remplit que l'avant), `ac3_copy` (flux AC-3 de la source recopie), `lpcm16`, `lpcm24`.
+- Debit manuel (`bitrate_kbps`, debits AC-3 32 a 640) pour `ac3` et `ac3_51` ; absent = debit du projet (2.0) ou 448 (5.1).
+  Le LPCM n'a pas de reglage de debit (canaux x profondeur x 48) ; la copie garde celui de la source.
+- Copie : refusee avant l'encodage si la source n'est pas de l'AC-3, pas a 48 kHz, a plus de 6 canaux ou a plus de 640 kb/s
+  (message explicite). Le decalage de piste (`-itsoffset`) fonctionne aussi avec la copie.
+- Le cache d'encodage tient compte du format et du debit des pistes (les pistes AC-3 par defaut gardent leur ancienne cle).

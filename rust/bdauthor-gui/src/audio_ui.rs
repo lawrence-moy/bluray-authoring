@@ -1,7 +1,7 @@
 //! Panneau « Pistes audio » d'une video : pistes de la video ou fichiers audio separes, chacune avec sa langue du projet.
 use crate::i18n::{tr, trf};
 use crate::subs_ui::language_for_code;
-use bdauthor_core::audio::{AudioFormat, AudioSource, AudioTrackCfg, MAX_AUDIO_TRACKS};
+use bdauthor_core::audio::{AudioFormat, AudioSource, AC3_RATES, AC3_SURROUND_KBPS, AudioTrackCfg, MAX_AUDIO_TRACKS};
 use bdauthor_core::ffmpeg::{audio_peaks, list_audio_streams, probe_duration, AudioPlayback, AudioStreamInfo, Tools};
 use bdauthor_core::model::VideoEntry;
 use bdauthor_core::subtitle::Language;
@@ -91,12 +91,32 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("Convert to format:"));
-                    egui::ComboBox::from_id_salt("format_piste_audio").selected_text(t.format.label()).show_ui(ui, |ui| {
+                    egui::ComboBox::from_id_salt("format_piste_audio").selected_text(tr(t.format.label())).show_ui(ui, |ui| {
                         for f in AudioFormat::ALL {
-                            if ui.selectable_label(t.format == f, f.label()).clicked() { t.format = f; changed = true; }
+                            if ui.selectable_label(t.format == f, tr(f.label())).clicked() {
+                                t.format = f;
+                                if !f.is_encoded_ac3() { t.bitrate = 0; }
+                                changed = true;
+                            }
                         }
-                    }).response.on_hover_text(tr("Dolby Digital is compact (a few hundred kb/s). LPCM is lossless but heavy: about 4.6 Mb/s for 5.1 in 16 bits, 6.9 Mb/s in 24 bits; the video bitrate is lowered accordingly."));
+                    }).response.on_hover_text(tr("Dolby Digital is compact. The copy keeps the source's own Dolby Digital track untouched (it must be 48 kHz, 5.1 at most, 640 kb/s at most). LPCM is lossless but heavy: about 4.6 Mb/s for 5.1 in 16 bits, 6.9 Mb/s in 24 bits; the video bitrate is lowered accordingly."));
                 });
+                if t.format.is_encoded_ac3() {
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Bitrate:"));
+                        let default = if t.format == AudioFormat::Ac3Surround { format!("{} kb/s ({})", AC3_SURROUND_KBPS, tr("default")) } else { tr("project default").to_string() };
+                        let cur = if t.bitrate == 0 { default.clone() } else { format!("{} kb/s", t.bitrate) };
+                        egui::ComboBox::from_id_salt("debit_piste_audio").selected_text(cur).show_ui(ui, |ui| {
+                            if ui.selectable_label(t.bitrate == 0, &default).clicked() { t.bitrate = 0; changed = true; }
+                            for r in AC3_RATES {
+                                if ui.selectable_label(t.bitrate == r, format!("{r} kb/s")).clicked() { t.bitrate = r; changed = true; }
+                            }
+                        }).response.on_hover_text(tr("Bitrate of this Dolby Digital track. A higher rate is a little better and takes more room on the disc."));
+                    });
+                }
+                if t.format == AudioFormat::Ac3Surround {
+                    ui.label(egui::RichText::new(tr("Sources with more than 6 channels are mixed down to 5.1; a stereo source would only fill the front channels.")).weak());
+                }
                 if t.format.is_lpcm() {
                     ui.colored_label(egui::Color32::from_rgb(230, 170, 70), tr("Lossless audio: not every player accepts it; test the disc on yours."));
                 }

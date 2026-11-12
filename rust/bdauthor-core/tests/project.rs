@@ -979,3 +979,56 @@ fn lossless_audio_signature_differs_from_ac3() {
     assert_eq!(AudioFormat::Ac3.kbps(6, 192), 192);
     assert!(bdauthor_core::vmux::MUX_BUDGET_KBPS < 35_500);
 }
+
+#[test]
+fn dolby_digital_51_manual_bitrate_and_copy_go_through_the_whole_disc() {
+    common::fr();
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_ac3opts_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
+    // a.mkv : piste 0 = AC-3 5.1 a 384 kb/s, piste 1 = AC-3 stereo, piste 2 = FLAC
+    run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i", "sine=frequency=440:duration=3:sample_rate=48000,aformat=channel_layouts=5.1(side)",
+          "-f", "lavfi", "-i", "sine=frequency=880:duration=3:sample_rate=48000,aformat=channel_layouts=stereo", "-f", "lavfi", "-i", "sine=frequency=660:duration=3:sample_rate=48000,aformat=channel_layouts=stereo",
+          "-map", "0", "-map", "1", "-map", "2", "-map", "3", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a:0", "ac3", "-b:a:0", "384k", "-c:a:1", "ac3", "-b:a:1", "192k", "-c:a:2", "flac",
+          dir.join("a.mkv").to_str().unwrap()]);
+    let proj = r##"{ "title": "AC3", "language": "eng",
+      "languages": [ {"id":1,"name":"English","code":"eng"}, {"id":2,"name":"Francais","code":"fra"}, {"id":3,"name":"Espanol","code":"spa"} ],
+      "videos": [ {"file": "a.mkv", "audio_tracks": [
+          {"track":0,"language":"eng","language_id":1,"format":"ac3_copy"},
+          {"track":0,"language":"spa","language_id":3,"format":"ac3_51","bitrate_kbps":320},
+          {"track":1,"language":"fra","language_id":2,"bitrate_kbps":128} ]} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2} }"##;
+    std::fs::write(dir.join("projet.json"), proj).unwrap();
+    let (info, _) = build_in(&tools, &dir, "out");
+    assert!(info.report.ok(), "{}", info.report.render());
+    let root = dir.join("out/BDMV");
+    let clpi = bdauthor_core::clpi::Clpi::parse(&std::fs::read(root.join("CLIPINF/00000.clpi")).unwrap()).unwrap();
+    let st: Vec<(u16, u8, u8)> = clpi.program.programs[0].streams.iter().filter(|s| matches!(s.coding_type, 0x80 | 0x81)).map(|s| (s.pid, s.coding_type, s.attrs[0])).collect();
+    assert_eq!(st, vec![(0x1100, 0x81, 0x61), (0x1101, 0x81, 0x61), (0x1102, 0x81, 0x31)]);
+    // debits reels : copie 384, 5.1 a 320, stereo a 128
+    let pr = Command::new(&tools.ffprobe).args(["-v", "error", "-select_streams", "a", "-show_entries", "stream=codec_name,channels,bit_rate", "-of", "csv=p=0"]).arg(root.join("STREAM/00000.m2ts")).output().unwrap();
+    let out = String::from_utf8_lossy(&pr.stdout).to_string();
+    let rates: Vec<&str> = out.lines().take(3).collect();
+    assert_eq!(rates, vec!["ac3,6,384000", "ac3,6,320000", "ac3,2,128000"], "{out}");
+    let _ = std::fs::remove_dir_all(&dir);
+
+    // copie d'une piste qui n'est pas de l'AC-3 : refusee avec une explication
+    let dir = std::env::temp_dir().join(format!("bdauthor_ac3copy_bad_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    run(&["-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=2", "-f", "lavfi", "-i", "sine=duration=2:sample_rate=48000", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "flac", dir.join("a.mkv").to_str().unwrap()]);
+    std::fs::write(dir.join("projet.json"), r##"{ "title": "X", "language": "eng", "languages": [ {"id":1,"name":"English","code":"eng"} ],
+      "videos": [ {"file": "a.mkv", "audio_tracks": [ {"track":0,"language":"eng","language_id":1,"format":"ac3_copy"} ]} ], "encoding": {"preset": "ultrafast"} }"##).unwrap();
+    let mut logs = Vec::new();
+    let res = {
+        let (mut log, mut prog) = (|m: &str| logs.push(m.to_string()), |_f: f64| {});
+        let cancel = AtomicBool::new(false);
+        let mut env = BuildEnv { tools: &tools, renderer: &Flat, cancel: &cancel, log: &mut log, progress: &mut prog };
+        build_project(&dir.join("projet.json"), &dir.join("out"), &mut env)
+    };
+    let err = res.err().expect("la copie d'une piste FLAC doit etre refusee").to_string();
+    assert!(err.contains("flac"), "{err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

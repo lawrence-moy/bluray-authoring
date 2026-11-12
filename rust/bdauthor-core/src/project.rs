@@ -581,18 +581,35 @@ pub fn parse_chapters(v: &Value, sc: &ClipScan) -> Result<Vec<Chapter>> {
 
 // ------------------------------------------------------------------ cache d'encodage
 /// Resume des reglages audio d'une video pour la cle du cache d'encodage.
-/// Debit (kb/s) du flux audio d'une piste sur le disque : AC-3 au debit du projet, LPCM selon les canaux de la source (6 si la
-/// source est illisible : estimation prudente). `src` : la video (pistes numerotees) ; une piste en fichier a son propre chemin.
-fn track_kbps(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg, ac3_kbps: u32) -> u32 {
-    if !t.format.is_lpcm() { return ac3_kbps; }
+/// Piste source d'une piste du disque, d'apres ffprobe (`None` si illisible). `src` : la video (pistes numerotees) ; une piste en
+/// fichier a son propre chemin.
+fn probe_track(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg) -> Option<ffmpeg::AudioStreamInfo> {
     let (path, index) = match &t.source {
         crate::audio::AudioSource::Embedded(n) => (src.to_path_buf(), *n),
         crate::audio::AudioSource::File(f) => (PathBuf::from(f), 0),
     };
-    let channels = ffmpeg::list_audio_streams(tools, &path).ok()
-        .and_then(|v| v.into_iter().find(|s| s.index == index))
-        .map_or(6, |s| s.channels.clamp(1, 8));
-    t.format.kbps(channels, ac3_kbps)
+    ffmpeg::list_audio_streams(tools, &path).ok()?.into_iter().find(|s| s.index == index)
+}
+
+/// Debit (kb/s) du flux audio d'une piste sur le disque : AC-3 au debit de la piste ou du projet, LPCM selon les canaux de la
+/// source (6 si la source est illisible : estimation prudente), copie au debit de la source.
+fn track_kbps(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg, ac3_kbps: u32) -> u32 {
+    use crate::audio::AudioFormat::*;
+    if matches!(t.format, Ac3 | Ac3Surround) { return t.kbps(2, 0, ac3_kbps); }
+    let info = probe_track(tools, src, t);
+    let channels = info.as_ref().map_or(6, |s| s.channels.clamp(1, 8));
+    let source_kbps = info.as_ref().map_or(0, |s| (s.bit_rate + 500) / 1000);
+    t.kbps(channels, source_kbps, ac3_kbps)
+}
+
+/// Une piste en « copie » doit etre de l'AC-3 acceptable sur un disque Blu-ray : renvoie la raison du refus sinon.
+fn check_ac3_copy(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg) -> std::result::Result<(), String> {
+    let Some(s) = probe_track(tools, src, t) else { return Err(tr("the source audio track cannot be read").to_string()) };
+    if s.codec != "ac3" { return Err(trf!("the source track is “{}”, not Dolby Digital (AC-3)", s.codec)); }
+    if s.sample_rate != 0 && s.sample_rate != 48000 { return Err(trf!("the source track is at {} Hz; 48000 Hz is required", s.sample_rate)); }
+    if s.channels > 6 { return Err(trf!("the source track has {} channels; 6 at most", s.channels)); }
+    if s.bit_rate > crate::audio::AC3_MAX_KBPS * 1000 { return Err(trf!("the source track is at {} kb/s; {} kb/s at most", (s.bit_rate + 500) / 1000, crate::audio::AC3_MAX_KBPS)); }
+    Ok(())
 }
 
 fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) -> String {
@@ -608,7 +625,8 @@ fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) ->
         }
         s.push_str(&format!("@{};", t.offset_ms));
         // l'AC-3 garde la signature d'avant (les caches existants restent valables)
-        if t.format.is_lpcm() { s.push_str(&format!("#{}", t.format.name())); }
+        if t.format != crate::audio::AudioFormat::Ac3 { s.push_str(&format!("#{}", t.format.name())); }
+        if t.bitrate != 0 { s.push_str(&format!("~{}", t.bitrate)); }
     }
     for l in langs { s.push_str(&String::from_utf8_lossy(l)); s.push(','); }
     s
@@ -941,6 +959,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             _ => eopts.clone(),
         };
         if copy_rate[i].is_some() { eopts.copy_video = true; } else { eopts.video_kbps = target_kbps; }
+        for t in a_tracks.iter().filter(|t| t.format == crate::audio::AudioFormat::Ac3Copy) {
+            if let Err(why) = check_ac3_copy(env.tools, &src, t) { return bad(trf!("video {}: an audio track cannot be copied: {}", i + 1, why)); }
+        }
         // audio sans perte : le debit du clip (video + audio) ne doit pas depasser ce que le multiplexage sait porter
         if a_tracks.iter().any(|t| t.format.is_lpcm()) {
             let abr = crate::fill::parse_kbps(&eopts.audio_bitrate);

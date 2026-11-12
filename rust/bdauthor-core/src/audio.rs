@@ -16,9 +16,13 @@ pub enum AudioSource {
 /// Format d'une piste audio sur le disque.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AudioFormat {
-    /// Dolby Digital (AC-3) stereo, au debit choisi pour le projet
+    /// Dolby Digital (AC-3) stereo, au debit choisi pour la piste (sinon celui du projet)
     #[default]
     Ac3,
+    /// Dolby Digital (AC-3) 5.1 (sources a plus de canaux mixees en 5.1), 448 kb/s par defaut
+    Ac3Surround,
+    /// la piste AC-3 de la source, recopiee telle quelle (48 kHz, 640 kb/s au plus, 5.1 au plus)
+    Ac3Copy,
     /// LPCM sans perte, 16 bits, nombre de canaux de la source (48 kHz)
     Lpcm16,
     /// LPCM sans perte, 24 bits, nombre de canaux de la source (48 kHz)
@@ -26,27 +30,43 @@ pub enum AudioFormat {
 }
 
 impl AudioFormat {
-    pub const ALL: [AudioFormat; 3] = [AudioFormat::Ac3, AudioFormat::Lpcm16, AudioFormat::Lpcm24];
+    pub const ALL: [AudioFormat; 5] = [AudioFormat::Ac3, AudioFormat::Ac3Surround, AudioFormat::Ac3Copy, AudioFormat::Lpcm16, AudioFormat::Lpcm24];
     /// Nom dans le fichier de projet.
     pub fn name(self) -> &'static str {
-        match self { AudioFormat::Ac3 => "ac3", AudioFormat::Lpcm16 => "lpcm16", AudioFormat::Lpcm24 => "lpcm24" }
+        match self {
+            AudioFormat::Ac3 => "ac3", AudioFormat::Ac3Surround => "ac3_51", AudioFormat::Ac3Copy => "ac3_copy",
+            AudioFormat::Lpcm16 => "lpcm16", AudioFormat::Lpcm24 => "lpcm24",
+        }
     }
     pub fn from_name(s: &str) -> Option<AudioFormat> { AudioFormat::ALL.into_iter().find(|f| f.name() == s) }
     pub fn label(self) -> &'static str {
-        match self { AudioFormat::Ac3 => "Dolby Digital (AC-3)", AudioFormat::Lpcm16 => "LPCM 16 bits", AudioFormat::Lpcm24 => "LPCM 24 bits" }
+        match self {
+            AudioFormat::Ac3 => "Dolby Digital 2.0", AudioFormat::Ac3Surround => "Dolby Digital 5.1", AudioFormat::Ac3Copy => "Copy of the source AC-3 track",
+            AudioFormat::Lpcm16 => "LPCM 16 bits", AudioFormat::Lpcm24 => "LPCM 24 bits",
+        }
     }
-    pub fn is_lpcm(self) -> bool { self != AudioFormat::Ac3 }
+    pub fn is_lpcm(self) -> bool { matches!(self, AudioFormat::Lpcm16 | AudioFormat::Lpcm24) }
+    /// AC-3 encode par le programme (le debit est alors un reglage de la piste).
+    pub fn is_encoded_ac3(self) -> bool { matches!(self, AudioFormat::Ac3 | AudioFormat::Ac3Surround) }
     /// Profondeur d'un echantillon LPCM (0 pour AC-3).
-    pub fn bits(self) -> u32 { match self { AudioFormat::Ac3 => 0, AudioFormat::Lpcm16 => 16, AudioFormat::Lpcm24 => 24 } }
+    pub fn bits(self) -> u32 { match self { AudioFormat::Lpcm16 => 16, AudioFormat::Lpcm24 => 24, _ => 0 } }
     /// Debit du flux audio en kb/s pour `channels` canaux de la source ; `ac3_kbps` : debit AC-3 du projet. Le LPCM de Blu-ray
     /// range les canaux par paires (5 canaux : 6 places) et 48 kHz.
     pub fn kbps(self, channels: u32, ac3_kbps: u32) -> u32 {
         match self {
-            AudioFormat::Ac3 => ac3_kbps,
+            AudioFormat::Ac3 | AudioFormat::Ac3Copy => ac3_kbps,
+            AudioFormat::Ac3Surround => AC3_SURROUND_KBPS,
             _ => (channels.max(1) + 1) / 2 * 2 * self.bits() * 48,
         }
     }
 }
+
+/// Debits AC-3 permis (kb/s).
+pub const AC3_RATES: [u32; 19] = [32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512, 576, 640];
+/// Debit AC-3 5.1 par defaut (kb/s).
+pub const AC3_SURROUND_KBPS: u32 = 448;
+/// Debit maximal d'un flux AC-3 sur Blu-ray (kb/s).
+pub const AC3_MAX_KBPS: u32 = 640;
 
 /// Une piste audio d'une video.
 #[derive(Debug, Clone, PartialEq)]
@@ -60,6 +80,8 @@ pub struct AudioTrackCfg {
     pub offset_ms: i64,
     /// Format sur le disque (AC-3 par defaut).
     pub format: AudioFormat,
+    /// Debit AC-3 (kb/s) des formats encodes ; 0 : celui du projet (stereo) ou 448 (5.1).
+    pub bitrate: u32,
 }
 
 /// Nombre maximal de pistes audio par video.
@@ -67,10 +89,21 @@ pub const MAX_AUDIO_TRACKS: usize = 8;
 
 impl AudioTrackCfg {
     pub fn embedded(index: u32, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3 }
+        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0 }
     }
     pub fn from_file(path: &str, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3 }
+        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0 }
+    }
+
+    /// Debit du flux sur le disque (kb/s) ; `channels` / `source_kbps` : canaux et debit de la piste source (0 si inconnus),
+    /// `project_kbps` : debit AC-3 du projet.
+    pub fn kbps(&self, channels: u32, source_kbps: u32, project_kbps: u32) -> u32 {
+        match self.format {
+            AudioFormat::Ac3 => if self.bitrate != 0 { self.bitrate } else { project_kbps },
+            AudioFormat::Ac3Surround => if self.bitrate != 0 { self.bitrate } else { AC3_SURROUND_KBPS },
+            AudioFormat::Ac3Copy => if source_kbps != 0 { source_kbps } else { AC3_MAX_KBPS },
+            f => f.kbps(channels, project_kbps),
+        }
     }
 
     pub fn from_value(v: &Value) -> Result<Self, String> {
@@ -88,6 +121,7 @@ impl AudioTrackCfg {
                 None => AudioFormat::Ac3,
                 Some(s) => AudioFormat::from_name(s).ok_or_else(|| trf!("audio tracks: unknown format “{}”", s))?,
             },
+            bitrate: v.get("bitrate_kbps").and_then(Value::as_f64).map_or(0, |x| x.round().max(0.0) as u32),
         })
     }
 
@@ -100,6 +134,7 @@ impl AudioTrackCfg {
         if self.lang_id != 0 { o.push(("language_id".into(), Value::Num(self.lang_id as f64))); }
         if self.offset_ms != 0 { o.push(("offset_ms".into(), Value::Num(self.offset_ms as f64))); }
         if self.format != AudioFormat::Ac3 { o.push(("format".into(), Value::Str(self.format.name().into()))); }
+        if self.bitrate != 0 { o.push(("bitrate_kbps".into(), Value::Num(self.bitrate as f64))); }
         Value::Obj(o)
     }
 
@@ -113,6 +148,9 @@ impl AudioTrackCfg {
         let mut p = Vec::new();
         if self.lang.len() != 3 || !self.lang.is_ascii() { p.push(tr("language: 3 letters expected (e.g. fra)").to_string()); }
         if let AudioSource::File(f) = &self.source { if f.trim().is_empty() { p.push(tr("audio file not chosen").to_string()); } }
+        if self.bitrate != 0 && (!self.format.is_encoded_ac3() || !AC3_RATES.contains(&self.bitrate)) {
+            p.push(tr("audio bitrate: only the Dolby Digital rates 32 to 640 kb/s are allowed, and only for encoded Dolby Digital").to_string());
+        }
         p
     }
 }

@@ -354,7 +354,12 @@ impl ProjectModel {
             // Dolby Digital stereo, sauf pistes choisies en LPCM (sans perte)
             let mut sound: Vec<String> = Vec::new();
             for t in &v.audio {
-                let n = match t.format { crate::audio::AudioFormat::Ac3 => "Dolby Digital 2.0".to_string(), f => format!("LPCM {} bits", f.bits()) };
+                let n = match t.format {
+                    crate::audio::AudioFormat::Ac3 => "Dolby Digital 2.0".to_string(),
+                    crate::audio::AudioFormat::Ac3Surround => "Dolby Digital 5.1".to_string(),
+                    crate::audio::AudioFormat::Ac3Copy => "Dolby Digital".to_string(),
+                    f => format!("LPCM {} bits", f.bits()),
+                };
                 if !sound.contains(&n) { sound.push(n); }
             }
             if sound.is_empty() { sound.push("Dolby Digital 2.0".to_string()); }

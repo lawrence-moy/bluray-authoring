@@ -557,18 +557,20 @@ fn encode_args_full(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tr
     (a, tg)
 }
 
-/// Options de codage audio de la sortie : AC-3 stereo au debit `bitrate` pour toutes les pistes, sauf celles demandees en LPCM
+/// Options de codage audio de la sortie : AC-3 stereo au debit `bitrate` pour toutes les pistes, sauf celles qui ont un autre format ou debit (AC-3 5.1, copie de l'AC-3 source, LPCM)
 /// (`pcm_bluray` : 16 bits ou 24 bits, canaux de la source, 48 kHz). Sans piste LPCM, les memes options qu'avant pour toutes.
 pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -> Vec<String> {
     let st = |x: &str| x.to_string();
-    if !tracks.iter().any(|t| t.format.is_lpcm()) {
+    if tracks.iter().all(|t| t.format == crate::audio::AudioFormat::Ac3 && t.bitrate == 0) {
         return vec![st("-c:a"), st("ac3"), st("-b:a"), bitrate.to_string(), st("-ar"), st("48000"), st("-ac"), st("2")];
     }
     let mut a = vec![st("-ar"), st("48000")];
     for (k, t) in tracks.iter().enumerate() {
         use crate::audio::AudioFormat::*;
         match t.format {
-            Ac3 => a.extend([format!("-c:a:{k}"), st("ac3"), format!("-b:a:{k}"), bitrate.to_string(), format!("-ac:a:{k}"), st("2")]),
+            Ac3 => a.extend([format!("-c:a:{k}"), st("ac3"), format!("-b:a:{k}"), if t.bitrate != 0 { format!("{}k", t.bitrate) } else { bitrate.to_string() }, format!("-ac:a:{k}"), st("2")]),
+            Ac3Surround => a.extend([format!("-c:a:{k}"), st("ac3"), format!("-b:a:{k}"), format!("{}k", t.kbps(6, 0, 0)), format!("-ac:a:{k}"), st("6")]),
+            Ac3Copy => a.extend([format!("-c:a:{k}"), st("copy")]),
             Lpcm16 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s16")]),
             Lpcm24 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s32")]),
         }
@@ -1100,6 +1102,9 @@ pub fn convert_subtitle_file_to_srt(tools: &Tools, src: &Path, dst: &Path) -> Re
 /// Piste audio d'un fichier video.
 #[derive(Debug, Clone, PartialEq)]
 pub struct AudioStreamInfo {
+    /// frequence d'echantillonnage (Hz) et debit (b/s), 0 si inconnus
+    pub sample_rate: u32,
+    pub bit_rate: u32,
     /// Numero parmi les pistes audio (0 = la premiere), celui de `-map 0:a:N`.
     pub index: u32,
     pub codec: String,
@@ -1125,14 +1130,14 @@ pub fn parse_audio_streams_flat(text: &str) -> Vec<AudioStreamInfo> {
         .values()
         .filter(|s| s.get("codec_type").map(String::as_str) == Some("audio"))
         .enumerate()
-        .map(|(n, s)| AudioStreamInfo { index: n as u32, codec: get(s, "codec_name"), lang: get(s, "tags.language"), title: get(s, "tags.title"), channels: get(s, "channels").parse().unwrap_or(0) })
+        .map(|(n, s)| AudioStreamInfo { index: n as u32, codec: get(s, "codec_name"), lang: get(s, "tags.language"), title: get(s, "tags.title"), channels: get(s, "channels").parse().unwrap_or(0), sample_rate: get(s, "sample_rate").parse().unwrap_or(0), bit_rate: get(s, "bit_rate").parse().unwrap_or(0) })
         .collect()
 }
 
 /// Pistes audio d'un fichier (video ou audio).
 pub fn list_audio_streams(tools: &Tools, src: &Path) -> Result<Vec<AudioStreamInfo>> {
     let mut c = Command::new(&tools.ffprobe);
-    c.args(["-v", "error", "-of", "flat", "-show_entries", "stream=index,codec_type,codec_name,channels:stream_tags=language,title"]).arg(src);
+    c.args(["-v", "error", "-of", "flat", "-show_entries", "stream=index,codec_type,codec_name,channels,sample_rate,bit_rate:stream_tags=language,title"]).arg(src);
     no_window(&mut c);
     let out = c.output()?;
     if !out.status.success() {
