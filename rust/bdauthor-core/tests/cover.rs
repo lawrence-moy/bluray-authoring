@@ -643,3 +643,22 @@ fn text_decor_carries_exact_size_and_width() {
         }
     }
 }
+
+#[test]
+fn edge_handles_resize_one_axis_and_snap_only_that_edge() {
+    use bdauthor_core::cover::{handle_edges, is_edge_handle, snap_rect, Edges};
+    assert_eq!(handle_edges(8), (Edges::Far, Edges::None));
+    assert_eq!(handle_edges(9), (Edges::None, Edges::Near));
+    assert!(is_edge_handle(7) && is_edge_handle(10) && !is_edge_handle(4) && !is_edge_handle(0));
+    // bord droit tire vers un repere a 60 : seule la largeur change
+    let (r, gx, gy) = snap_rect(8, (10.0, 10.0, 49.0, 29.0), &[60.0], &[40.0], 2.0);
+    assert_eq!(r, (10.0, 10.0, 50.0, 29.0));
+    assert_eq!((gx, gy), (Some(60.0), None));
+    // bord haut : seule la hauteur change, le repere vertical proche est ignore
+    let (r, gx, gy) = snap_rect(9, (10.0, 11.0, 30.0, 29.0), &[11.5], &[10.0], 2.0);
+    assert_eq!(r, (10.0, 10.0, 30.0, 30.0));
+    assert_eq!((gx, gy), (None, Some(10.0)));
+    // bord gauche : x avance, la largeur diminue du meme montant
+    let (r, ..) = snap_rect(7, (9.0, 5.0, 30.0, 10.0), &[10.0], &[], 2.0);
+    assert_eq!(r, (10.0, 5.0, 29.0, 10.0));
+}

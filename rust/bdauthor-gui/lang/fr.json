@@ -1257,5 +1257,7 @@
   "the source track has {} channels; 6 at most": "la piste source a {} canaux ; 6 au plus",
   "the source track is at {} kb/s; {} kb/s at most": "la piste source est à {} kb/s ; {} kb/s au plus",
   "video {}: an audio track cannot be copied: {}": "vidéo {} : une piste audio ne peut pas être copiée : {}",
-  "Offset +/- (ms):": "Décalage +/- (ms) :"
+  "Offset +/- (ms):": "Décalage +/- (ms) :",
+  "Show the full ffmpeg commands in the build log": "Afficher les commandes ffmpeg complètes dans le journal de génération",
+  "Each time the disc build starts ffmpeg (encodings, extracted frames, subtitle conversions), its complete command line is written in the log, after a » sign, ready to be copied and run in a console.": "À chaque lancement de ffmpeg pendant la génération du disque (encodages, images extraites, conversions de sous-titres), sa ligne de commande complète est écrite dans le journal, après un signe », prête à être copiée et exécutée dans une console."
 }

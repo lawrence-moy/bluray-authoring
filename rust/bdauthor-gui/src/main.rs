@@ -62,6 +62,8 @@ struct Config {
     cache_dir: String,
     /// dossier de polices supplementaires (vide : aucun)
     fonts_dir: String,
+    /// journal de generation : ecrit la ligne de commande complete de chaque lancement de ffmpeg
+    log_ffmpeg: bool,
     /// projets recents (le plus recent d'abord)
     recent: Vec<String>,
 }
@@ -197,7 +199,7 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), fonts_dir: String::new(), recent: Vec::new() };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), fonts_dir: String::new(), log_ffmpeg: false, recent: Vec::new() };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
@@ -206,6 +208,7 @@ impl Config {
                     Some(("cache_dir", v)) => c.cache_dir = v.trim().to_string(),
                     Some(("fonts_dir", v)) => c.fonts_dir = v.trim().to_string(),
                     Some(("autosave", v)) => c.autosave = v.trim() != "false",
+                    Some(("log_ffmpeg", v)) => c.log_ffmpeg = v.trim() == "true",
                     Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
                     Some(("recent", v)) => if !v.trim().is_empty() && c.recent.len() < MAX_RECENT { c.recent.push(v.trim().to_string()) },
                     Some(("lang", v)) => c.lang = v.trim().to_string(),
@@ -228,7 +231,7 @@ impl Config {
                 let _ = std::fs::create_dir_all(d);
             }
             let mut t = format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\ncover_bg={}\ncover_guide={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang, rgba_text(self.cover_bg), rgba_text(self.cover_guide));
-            t.push_str(&format!("cache_dir={}\nfonts_dir={}\n", self.cache_dir, self.fonts_dir));
+            t.push_str(&format!("cache_dir={}\nfonts_dir={}\nlog_ffmpeg={}\n", self.cache_dir, self.fonts_dir, self.log_ffmpeg));
             for r in &self.recent { t.push_str(&format!("recent={}\n", r)); }
             let _ = std::fs::write(p, t);
         }
@@ -625,10 +628,16 @@ impl App {
         let (tx, rx) = channel();
         self.rx = Some(rx);
         let (cancel, ctx) = (self.cancel.clone(), ctx.clone());
+        let log_commands = self.cfg.log_ffmpeg;
         std::thread::spawn(move || {
             // avancement detaille de chaque encodage ffmpeg de ce fil
             let (tx2, ctx2) = (tx.clone(), ctx.clone());
             bdauthor_core::ffmpeg::set_progress_detail(Some(Box::new(move |d| { let _ = tx2.send(Msg::Detail(d)); ctx2.request_repaint(); })));
+            // option des reglages : chaque lancement de ffmpeg est ecrit en entier dans le journal
+            if log_commands {
+                let (tx3, ctx3) = (tx.clone(), ctx.clone());
+                bdauthor_core::ffmpeg::set_command_trace(Some(Box::new(move |c| { let _ = tx3.send(Msg::Log(format!("» {c}"))); ctx3.request_repaint(); })));
+            }
             let send = |m: Msg| {
                 let _ = tx.send(m);
                 ctx.request_repaint();
@@ -857,6 +866,9 @@ impl eframe::App for App {
                 ui.add_enabled(self.cfg.autosave, egui::DragValue::new(&mut self.cfg.autosave_min).range(1..=60).suffix(" min"));
             });
             crate::help(ui, tr("Written to a file next to the project (name.autosave.json), only if the project has changed; the project itself is only modified by “Save”. Offered for restoration after an unexpected stop."));
+            ui.separator();
+            ui.checkbox(&mut self.cfg.log_ffmpeg, tr("Show the full ffmpeg commands in the build log"));
+            crate::help(ui, tr("Each time the disc build starts ffmpeg (encodings, extracted frames, subtitle conversions), its complete command line is written in the log, after a » sign, ready to be copied and run in a console."));
             ui.separator();
             ui.label(tr("ffmpeg path (folder containing ffmpeg and ffprobe, or ffmpeg itself):"));
             ui.horizontal(|ui| {

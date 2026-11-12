@@ -19,6 +19,8 @@ const MIN_MM: f64 = 2.0;
 const ICON: f32 = 17.0;
 fn ico(s: &str) -> egui::RichText { egui::RichText::new(s).size(ICON) }
 const HANDLE_PX: f32 = 9.0;
+/// Longueur minimale (pixels) d'un cote pour que sa poignee du milieu soit proposee (sinon elle gene les poignees de coin).
+const EDGE_HANDLE_MIN: f32 = 40.0;
 /// Epaisseur des regles (pixels) : largeur de celle de gauche, hauteur de celle du haut.
 const RULER_W: f32 = 30.0;
 const RULER_H: f32 = 18.0;
@@ -77,7 +79,7 @@ fn draw_ruler(p: &egui::Painter, area: Rect, horizontal: bool, origin: f32, ppmm
     if horizontal { p.line_segment([area.left_bottom(), area.right_bottom()], edge); } else { p.line_segment([area.right_top(), area.right_bottom()], edge); }
 }
 
-/// Deplacement ou redimensionnement a la souris en cours : `handle` 0 = deplacer, 1..4 = coins haut gauche, haut droit, bas gauche, bas droit.
+/// Deplacement ou redimensionnement a la souris en cours : `handle` 0 = deplacer, 1..4 = coins haut gauche, haut droit, bas gauche, bas droit, 5 et 6 = bouts d'une ligne, 7..10 = bords gauche, droit, haut, bas (un seul axe).
 #[derive(Clone)]
 pub(crate) struct CoverDrag {
     item: usize,
@@ -1161,11 +1163,11 @@ impl App {
         if let Some((mut p, mut q)) = it.line_ends() {
             let before = (p, q);
             egui::Grid::new("jaquette_line").num_columns(4).show(ui, |ui| {
-                ui.label(tr("Start X")); ui.add(egui::DragValue::new(&mut p.0).range(-bleed..=sw).speed(0.5).suffix(" mm"));
-                ui.label(tr("Y")); ui.add(egui::DragValue::new(&mut p.1).range(-bleed..=sh).speed(0.5).suffix(" mm"));
+                ui.label(tr("Start X")); ui.add(egui::DragValue::new(&mut p.0).range(-sw..=2.0 * sw).speed(0.5).suffix(" mm"));
+                ui.label(tr("Y")); ui.add(egui::DragValue::new(&mut p.1).range(-sh..=2.0 * sh).speed(0.5).suffix(" mm"));
                 ui.end_row();
-                ui.label(tr("End X")); ui.add(egui::DragValue::new(&mut q.0).range(-bleed..=sw).speed(0.5).suffix(" mm"));
-                ui.label(tr("Y")); ui.add(egui::DragValue::new(&mut q.1).range(-bleed..=sh).speed(0.5).suffix(" mm"));
+                ui.label(tr("End X")); ui.add(egui::DragValue::new(&mut q.0).range(-sw..=2.0 * sw).speed(0.5).suffix(" mm"));
+                ui.label(tr("Y")); ui.add(egui::DragValue::new(&mut q.1).range(-sh..=2.0 * sh).speed(0.5).suffix(" mm"));
                 ui.end_row();
             });
             if p != before.0 { it.move_line_end(true, q, p); changed = true; }
@@ -1188,11 +1190,11 @@ impl App {
             return changed;
         }
         egui::Grid::new("jaquette_geom").num_columns(4).show(ui, |ui| {
-            ui.label(tr("X")); changed |= ui.add(egui::DragValue::new(&mut it.x).range(-bleed..=sw).speed(0.5).suffix(" mm")).changed();
-            ui.label(tr("Y")); changed |= ui.add(egui::DragValue::new(&mut it.y).range(-bleed..=sh).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("X")); changed |= ui.add(egui::DragValue::new(&mut it.x).range(-sw..=2.0 * sw).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("Y")); changed |= ui.add(egui::DragValue::new(&mut it.y).range(-sh..=2.0 * sh).speed(0.5).suffix(" mm")).changed();
             ui.end_row();
-            ui.label(tr("Width")); changed |= ui.add(egui::DragValue::new(&mut it.w).range(1.0..=sw).speed(0.5).suffix(" mm")).changed();
-            ui.label(tr("Height")); changed |= ui.add(egui::DragValue::new(&mut it.h).range(1.0..=sh).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("Width")); changed |= ui.add(egui::DragValue::new(&mut it.w).range(1.0..=3.0 * sw).speed(0.5).suffix(" mm")).changed();
+            ui.label(tr("Height")); changed |= ui.add(egui::DragValue::new(&mut it.h).range(1.0..=3.0 * sh).speed(0.5).suffix(" mm")).changed();
             ui.end_row();
         });
         // un tableau reste a l'horizontale
@@ -1409,7 +1411,12 @@ impl App {
                 } else {
                     painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
                 }
-                let corners: Vec<egui::Pos2> = if is_line { pts.clone() } else { vec![r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] };
+                let mut corners: Vec<egui::Pos2> = if is_line { pts.clone() } else { vec![r.left_top(), r.right_top(), r.left_bottom(), r.right_bottom()] };
+                // poignees du milieu des bords : redimensionnement pur, horizontal ou vertical (si le cote est assez long)
+                if !is_line {
+                    if r.height() >= EDGE_HANDLE_MIN { corners.extend([r.left_center(), r.right_center()]); }
+                    if r.width() >= EDGE_HANDLE_MIN { corners.extend([r.center_top(), r.center_bottom()]); }
+                }
                 for c in corners {
                     painter.rect_filled(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Color32::WHITE);
                     painter.rect_stroke(Rect::from_center_size(c, vec2(9.0, 9.0)), 1.0, Stroke::new(1.0_f32, Color32::BLACK));
@@ -1434,6 +1441,12 @@ impl App {
             for (h, c) in [(1u8, r.left_top()), (2, r.right_top()), (3, r.left_bottom()), (4, r.right_bottom())] {
                 if c.distance(p) <= HANDLE_PX { return h; }
             }
+            if r.height() >= EDGE_HANDLE_MIN {
+                for (h, c) in [(7u8, r.left_center()), (8, r.right_center())] { if c.distance(p) <= HANDLE_PX { return h; } }
+            }
+            if r.width() >= EDGE_HANDLE_MIN {
+                for (h, c) in [(9u8, r.center_top()), (10, r.center_bottom())] { if c.distance(p) <= HANDLE_PX { return h; } }
+            }
             0
         };
         let hit = |p: egui::Pos2, items: &[CoverItem]| -> Option<usize> {
@@ -1452,12 +1465,12 @@ impl App {
             }).max_by_key(|&i| (items[i].layer, i))
         };
         // curseur
-        let icon_of = |h: u8| if h == 1 || h == 4 { CursorIcon::ResizeNwSe } else { CursorIcon::ResizeNeSw };
+        let icon_of = |h: u8| match h { 7 | 8 => CursorIcon::ResizeHorizontal, 9 | 10 => CursorIcon::ResizeVertical, 1 | 4 => CursorIcon::ResizeNwSe, _ => CursorIcon::ResizeNeSw };
         if let Some(d) = &self.cover_drag {
-            ctx.set_cursor_icon(if d.handle == 0 { CursorIcon::Grabbing } else if d.handle >= 5 { CursorIcon::Crosshair } else { icon_of(d.handle) });
+            ctx.set_cursor_icon(if d.handle == 0 { CursorIcon::Grabbing } else if d.handle == 5 || d.handle == 6 { CursorIcon::Crosshair } else { icon_of(d.handle) });
         } else if let Some(p) = hover_vp {
             let h = sel.filter(|&i| usable(&doc.items()[i])).map(|i| handle_at(p, &doc.items()[i])).unwrap_or(0);
-            if h >= 5 { ctx.set_cursor_icon(CursorIcon::Crosshair); }
+            if h == 5 || h == 6 { ctx.set_cursor_icon(CursorIcon::Crosshair); }
             else if h != 0 { ctx.set_cursor_icon(icon_of(h)); }
             else if hit(p, doc.items()).is_some() { ctx.set_cursor_icon(CursorIcon::Grab); }
         }
@@ -1514,7 +1527,7 @@ impl App {
         let mut snapped: (Option<f64>, Option<f64>) = (None, None);
         if resp.dragged() && !skip_input {
             if let (Some(d), Some(p)) = (self.cover_drag.clone(), resp.interact_pointer_pos()) {
-                if d.item < len && d.handle < 5 {
+                if d.item < len && (d.handle < 5 || d.handle >= 7) {
                     let (mx, my) = to_mm(p);
                     let (dx, dy) = (mx - d.start.0, my - d.start.1);
                     let (x, y, w, h) = d.orig;
@@ -1523,10 +1536,14 @@ impl App {
                         1 => { let nw = (w - dx).max(MIN_MM); let nh = (h - dy).max(MIN_MM); (x + w - nw, y + h - nh, nw, nh) }
                         2 => { let nw = (w + dx).max(MIN_MM); let nh = (h - dy).max(MIN_MM); (x, y + h - nh, nw, nh) }
                         3 => { let nw = (w - dx).max(MIN_MM); let nh = (h + dy).max(MIN_MM); (x + w - nw, y, nw, nh) }
+                        7 => { let nw = (w - dx).max(MIN_MM); (x + w - nw, y, nw, h) }
+                        8 => (x, y, (w + dx).max(MIN_MM), h),
+                        9 => { let nh = (h - dy).max(MIN_MM); (x, y + h - nh, w, nh) }
+                        10 => (x, y, w, (h + dy).max(MIN_MM)),
                         _ => (x, y, (w + dx).max(MIN_MM), (h + dy).max(MIN_MM)),
                     };
                     // Maj : coin tire en gardant les proportions d'origine (le coin oppose reste fixe)
-                    let proportional = d.handle != 0 && ctx.input(|i| i.modifiers.shift) && w > 0.0 && h > 0.0;
+                    let proportional = (1..=4).contains(&d.handle) && ctx.input(|i| i.modifiers.shift) && w > 0.0 && h > 0.0;
                     let (mut nx, mut ny, mut nw, mut nh) = if proportional {
                         let s = (nw / w).max(nh / h).max(MIN_MM / w).max(MIN_MM / h);
                         let (rw, rh) = (w * s, h * s);
@@ -1549,11 +1566,13 @@ impl App {
                         let st = self.cover_grid_mm.max(0.1);
                         let g = |v: f64| (v / st).round() * st;
                         let (left, right, top, bottom) = (nx, nx + nw, ny, ny + nh);
+                        use bdauthor_core::cover::Edges;
+                        let (ex, ey) = bdauthor_core::cover::handle_edges(d.handle);
                         if snapped.0.is_none() {
-                            match d.handle { 0 => nx = g(nx), 1 | 3 => { nx = g(left); nw = (right - nx).max(MIN_MM); } _ => { nw = (g(right) - nx).max(MIN_MM); } }
+                            match ex { Edges::Both => nx = g(nx), Edges::Near => { nx = g(left); nw = (right - nx).max(MIN_MM); } Edges::Far => { nw = (g(right) - nx).max(MIN_MM); } Edges::None => {} }
                         }
                         if snapped.1.is_none() {
-                            match d.handle { 0 => ny = g(ny), 1 | 2 => { ny = g(top); nh = (bottom - ny).max(MIN_MM); } _ => { nh = (g(bottom) - ny).max(MIN_MM); } }
+                            match ey { Edges::Both => ny = g(ny), Edges::Near => { ny = g(top); nh = (bottom - ny).max(MIN_MM); } Edges::Far => { nh = (g(bottom) - ny).max(MIN_MM); } Edges::None => {} }
                         }
                     }
                     let r = |v: f64| (v * 100.0).round() / 100.0;
@@ -1574,7 +1593,7 @@ impl App {
         // extremite d'une ligne deplacee : libre, aimantee (Alt : non) ou, avec Maj, par pas de 45 degres autour de l'autre extremite
         if resp.dragged() && !skip_input {
             if let (Some(d), Some(p)) = (self.cover_drag.clone(), resp.interact_pointer_pos()) {
-                if d.item < len && d.handle >= 5 {
+                if d.item < len && (d.handle == 5 || d.handle == 6) {
                     let (mut mx, mut my) = to_mm(p);
                     let (fx, fy) = d.fixed;
                     if ctx.input(|i| i.modifiers.shift) {

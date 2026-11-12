@@ -1170,9 +1170,33 @@ fn a4_page(tw: f64, th: f64, what: &str) -> Result<(f64, f64), String> {
 /// Marge de securite : le texte important reste a au moins cette distance (mm) des bords.
 pub const SAFE_MM: f64 = 3.0;
 
-/// Aimante un rectangle (x, y, w, h) en mm sur des lignes verticales `xs` et horizontales `ys` a moins de `thr` mm. `handle` : 0 =
-/// deplacement (bords et centre), 1..4 = coin tire (haut gauche, haut droit, bas gauche, bas droit : seuls les bords qui bougent
-/// s'aimantent). Renvoie le rectangle corrige et les lignes (abscisse, ordonnee) sur lesquelles il s'est aimante.
+/// Bords qu'une poignee fait bouger : (horizontal, vertical), chacun `Edges::Both` (deplacement), `Near` (bord gauche ou haut),
+/// `Far` (bord droit ou bas) ou `None`. Poignees : 0 = deplacement, 1..4 = coins (haut gauche, haut droit, bas gauche, bas droit),
+/// 7 = bord gauche, 8 = bord droit, 9 = bord haut, 10 = bord bas (redimensionnements purs, un seul axe).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Edges { Both, Near, Far, None }
+
+pub fn handle_edges(handle: u8) -> (Edges, Edges) {
+    use Edges::*;
+    match handle {
+        0 => (Both, Both),
+        1 => (Near, Near),
+        2 => (Far, Near),
+        3 => (Near, Far),
+        7 => (Near, None),
+        8 => (Far, None),
+        9 => (None, Near),
+        10 => (None, Far),
+        _ => (Far, Far),
+    }
+}
+
+/// Poignee de bord (7..10) : un seul axe change.
+pub fn is_edge_handle(handle: u8) -> bool { (7..=10).contains(&handle) }
+
+/// Aimante un rectangle (x, y, w, h) en mm sur des lignes verticales `xs` et horizontales `ys` a moins de `thr` mm. `handle` : voir
+/// `handle_edges` (seuls les bords qui bougent s'aimantent). Renvoie le rectangle corrige et les lignes (abscisse, ordonnee) sur
+/// lesquelles il s'est aimante.
 pub fn snap_rect(handle: u8, r: (f64, f64, f64, f64), xs: &[f64], ys: &[f64], thr: f64) -> ((f64, f64, f64, f64), Option<f64>, Option<f64>) {
     let (mut x, mut y, mut w, mut h) = r;
     let best = |edges: &[f64], lines: &[f64]| -> Option<(f64, f64)> {
@@ -1180,15 +1204,16 @@ pub fn snap_rect(handle: u8, r: (f64, f64, f64, f64), xs: &[f64], ys: &[f64], th
         for &e in edges { for &l in lines { let d = l - e; if d.abs() <= thr && b.map_or(true, |(bd, _)| d.abs() < (bd).abs()) { b = Some((d, l)); } } }
         b
     };
-    let xe: Vec<f64> = match handle { 0 => vec![x, x + w / 2.0, x + w], 1 | 3 => vec![x], _ => vec![x + w] };
-    let ye: Vec<f64> = match handle { 0 => vec![y, y + h / 2.0, y + h], 1 | 2 => vec![y], _ => vec![y + h] };
+    let (mx, my) = handle_edges(handle);
+    let xe: Vec<f64> = match mx { Edges::Both => vec![x, x + w / 2.0, x + w], Edges::Near => vec![x], Edges::Far => vec![x + w], Edges::None => vec![] };
+    let ye: Vec<f64> = match my { Edges::Both => vec![y, y + h / 2.0, y + h], Edges::Near => vec![y], Edges::Far => vec![y + h], Edges::None => vec![] };
     let (mut gx, mut gy) = (None, None);
     if let Some((d, l)) = best(&xe, xs) {
-        match handle { 0 => x += d, 1 | 3 => { x += d; w -= d } _ => w += d }
+        match mx { Edges::Both => x += d, Edges::Near => { x += d; w -= d } _ => w += d }
         gx = Some(l);
     }
     if let Some((d, l)) = best(&ye, ys) {
-        match handle { 0 => y += d, 1 | 2 => { y += d; h -= d } _ => h += d }
+        match my { Edges::Both => y += d, Edges::Near => { y += d; h -= d } _ => h += d }
         gy = Some(l);
     }
     if handle != 0 && (w < 1.0 || h < 1.0) { return (r, None, None); }

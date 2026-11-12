@@ -406,6 +406,32 @@ pub fn set_progress_detail(f: Option<Box<dyn FnMut(FfmpegProgress)>>) {
     DETAIL.with(|d| *d.borrow_mut() = f);
 }
 
+thread_local! {
+    static TRACE: std::cell::RefCell<Option<Box<dyn FnMut(&str)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Recoit, dans le fil qui appelle ffmpeg, la ligne de commande complete de chaque lancement de ffmpeg (encodages, images extraites,
+/// sous-titres) ; `None` pour arreter. Propre au fil appelant, comme `set_progress_detail`.
+pub fn set_command_trace(f: Option<Box<dyn FnMut(&str)>>) {
+    TRACE.with(|t| *t.borrow_mut() = f);
+}
+
+/// La commande telle qu'on la taperait dans une console : programme et arguments, ceux qui contiennent un espace ou un caractere
+/// special entre guillemets.
+pub fn format_command(c: &Command) -> String {
+    let quote = |s: &std::ffi::OsStr| {
+        let s = s.to_string_lossy();
+        if !s.is_empty() && !s.chars().any(|ch| ch.is_whitespace() || "\"'&|<>^();,".contains(ch)) { s.into_owned() } else { format!("\"{}\"", s.replace('"', "\\\"")) }
+    };
+    let mut out = quote(c.get_program());
+    for a in c.get_args() { out.push(' '); out.push_str(&quote(a)); }
+    out
+}
+
+fn trace_command(c: &Command) {
+    TRACE.with(|t| { if let Some(f) = t.borrow_mut().as_mut() { f(&format_command(c)); } });
+}
+
 /// Analyse une ligne de `-progress` ; rend vrai a la fin d'un bloc (ligne `progress=`).
 fn parse_progress_line(line: &str, cur: &mut FfmpegProgress) -> bool {
     let Some((k, v)) = line.split_once('=') else { return false };
@@ -431,6 +457,7 @@ fn run_ffmpeg(
     c.args(["-y", "-v", "error", "-nostats", "-progress", "pipe:1"]).args(args);
     c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     no_window(&mut c);
+    trace_command(&c);
     let mut child: Child = c.spawn()?;
     let mut stderr = child.stderr.take().expect("stderr");
     let err_thread = std::thread::spawn(move || {
@@ -779,6 +806,7 @@ pub fn extract_frame_rgba(tools: &Tools, src: &Path, t: f64, size: (u32, u32), e
     let mut c = Command::new(&tools.ffmpeg);
     c.args(frame_args(src, t, size, exact)).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     no_window(&mut c);
+    trace_command(&c);
     let out = c.output()?;
     let need = size.0 as usize * size.1 as usize * 4;
     if !out.status.success() || out.stdout.len() < need {
@@ -817,6 +845,7 @@ pub fn extract_frames_rgba(tools: &Tools, src: &Path, times: &[f64], size: (u32,
     let mut c = Command::new(&tools.ffmpeg);
     c.args(frames_batch_args(src, times, size, exact)).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     no_window(&mut c);
+    trace_command(&c);
     let out = c.output()?;
     let need = size.0 as usize * size.1 as usize * 4;
     if !out.status.success() || out.stdout.len() != need * times.len() {
@@ -1078,6 +1107,7 @@ pub fn extract_subtitle_srt(tools: &Tools, src: &Path, index: u32, dst: &Path) -
     let mut c = Command::new(&tools.ffmpeg);
     c.args(["-y", "-v", "error", "-i"]).arg(src).args(["-map", &format!("0:s:{index}"), "-f", "srt"]).arg(dst);
     no_window(&mut c);
+    trace_command(&c);
     let out = c.output()?;
     if !out.status.success() {
         return Err(Error::Format(trf!("cannot extract subtitle track {} (only text subtitles are supported): {}", index + 1, String::from_utf8_lossy(&out.stderr).trim())));
@@ -1090,6 +1120,7 @@ pub fn convert_subtitle_file_to_srt(tools: &Tools, src: &Path, dst: &Path) -> Re
     let mut c = Command::new(&tools.ffmpeg);
     c.args(["-y", "-v", "error", "-i"]).arg(src).args(["-f", "srt"]).arg(dst);
     no_window(&mut c);
+    trace_command(&c);
     let out = c.output()?;
     if !out.status.success() {
         return Err(Error::Format(trf!("subtitle conversion failed ({}): {}", src.display(), String::from_utf8_lossy(&out.stderr).trim())));
