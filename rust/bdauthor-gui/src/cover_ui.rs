@@ -313,6 +313,13 @@ fn font_entry(ui: &mut egui::Ui, r: Option<&bdauthor_render::FontRenderer>, base
             if size.x > room { size *= room / size.x; }
             let pos = egui::pos2(rect.min.x + 5.0, rect.center().y - size.y / 2.0);
             ui.painter().image(t.id(), egui::Rect::from_min_size(pos, size), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), color);
+            // a cote : le nom en police de l'interface, discret, tant qu'il reste de la place
+            let x = pos.x + size.x + 12.0;
+            if x + 40.0 < rect.max.x {
+                let plain = ui.painter().layout_no_wrap(label.to_string(), egui::FontId::proportional(12.0), color.gamma_multiply(0.6));
+                let clip = ui.painter().with_clip_rect(egui::Rect::from_min_max(egui::pos2(x, rect.min.y), rect.max));
+                clip.galley(egui::pos2(x, rect.center().y - plain.size().y / 2.0), plain, color);
+            }
         }
         None => { ui.painter().text(egui::pos2(rect.min.x + 5.0, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(14.0), color); }
     }
