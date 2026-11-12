@@ -262,6 +262,13 @@ enum ExportKind {
     Png { trim: bool },
 }
 
+/// Largeur minimale (points) des listes de polices : de quoi lire l'exemple et le nom a cote.
+pub(crate) const FONT_LIST_WIDTH: f32 = 380.0;
+
+thread_local! {
+    static FALLBACK_RENDERER: Option<bdauthor_render::FontRenderer> = bdauthor_render::FontRenderer::new().ok();
+}
+
 /// Images des noms de polices ecrits avec leur propre police, gardees entre deux images de l'interface.
 #[derive(Default, Clone)]
 struct FontSamples(std::sync::Arc<std::sync::Mutex<FontSamplesInner>>);
@@ -274,10 +281,10 @@ struct FontSamplesInner {
 
 /// Une ligne d'une liste de polices : le nom ecrit avec la police elle-meme (image creee a la demande, quelques-unes par image pour
 /// que l'ouverture de la liste reste fluide), ou en texte courant tant que l'image n'est pas prete ou si la police n'a pas les lettres.
-fn font_entry(ui: &mut egui::Ui, r: Option<&bdauthor_render::FontRenderer>, base: &std::path::Path, label: &str, file: &str, selected: bool) -> egui::Response {
-    const ROW: f32 = 24.0;
+pub(crate) fn font_entry(ui: &mut egui::Ui, r: Option<&bdauthor_render::FontRenderer>, base: &std::path::Path, label: &str, file: &str, selected: bool) -> egui::Response {
+    const ROW: f32 = 26.0;
     const SCALE: f32 = 2.0; // l'image est calculee au double de sa taille d'affichage
-    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width().max(160.0), ROW), egui::Sense::click());
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width().max(FONT_LIST_WIDTH), ROW), egui::Sense::click());
     if !ui.is_rect_visible(rect) { return resp; }
     let vis = ui.style().interact_selectable(&resp, selected);
     if selected || resp.hovered() || resp.has_focus() {
@@ -293,7 +300,11 @@ fn font_entry(ui: &mut egui::Ui, r: Option<&bdauthor_render::FontRenderer>, base
             Some(t) => t.clone(),
             None if c.made < 4 => {
                 c.made += 1;
-                let img = r.and_then(|r| r.font_sample(file, base, label, 15.0 * SCALE, 400));
+                // sans moteur de rendu fourni (fenetres sans acces a celui de l'application), un moteur propre au fil de l'interface
+                let img = match r {
+                    Some(r) => r.font_sample(file, base, label, 16.0 * SCALE, 460),
+                    None => FALLBACK_RENDERER.with(|f| f.as_ref().and_then(|r| r.font_sample(file, base, label, 16.0 * SCALE, 460))),
+                };
                 let t = img.map(|im| ui.ctx().load_texture(
                     format!("police {file}"),
                     egui::ColorImage::from_rgba_unmultiplied([im.width as usize, im.height as usize], &im.data),

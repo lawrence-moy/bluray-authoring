@@ -1627,7 +1627,7 @@ impl App {
                         egui::ComboBox::from_id_salt("police_texte").selected_text(shown).show_ui(ui, |ui| {
                             if ui.selectable_label(font.is_empty(), tr("Default font")).clicked() { font.clear(); changed = true; }
                             for (label, file) in bdauthor_render::font_choices() {
-                                if ui.selectable_label(font.as_str() == file, label).clicked() { *font = file; changed = true; }
+                                if crate::cover_ui::font_entry(ui, font_check.ok(), &base_dir, &label, &file, font.as_str() == file).clicked() { *font = file; changed = true; }
                             }
                             if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
                         });

@@ -208,7 +208,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
     changed
 }
 
-fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
+fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, base: &Path, changed: &mut bool) {
     ui.horizontal(|ui| {
         ui.label(tr("Size:"));
         *changed |= ui.add(egui::DragValue::new(&mut s.size).range(8..=400).suffix(" px")).changed();
@@ -271,7 +271,7 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, changed: &mut bool) {
     egui::ComboBox::from_label(tr("Font")).selected_text(shown).show_ui(ui, |ui| {
         if ui.selectable_label(s.font.is_empty(), tr("Default font")).clicked() { s.font.clear(); *changed = true; }
         for (label, file) in bdauthor_render::font_choices() {
-            if ui.selectable_label(s.font == file, label).clicked() { s.font = file; *changed = true; }
+            if crate::cover_ui::font_entry(ui, None, base, &label, &file, s.font == file).clicked() { s.font = file; *changed = true; }
         }
         if ui.button(tr("Other file…")).clicked() { pick = true; ui.close_menu(); }
     });
@@ -565,7 +565,7 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
         track_settings_ui(ui, t, base, auto_fps, changed);
         ui.separator();
         ui.label(egui::RichText::new(tr("Track style")).strong());
-        style_ui(ui, &mut t.style, changed);
+        style_ui(ui, &mut t.style, base, changed);
     };
     let mut detach = pv.style_detached;
     if detach {
