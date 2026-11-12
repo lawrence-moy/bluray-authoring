@@ -1406,6 +1406,26 @@ impl FontRenderer {
         f
     }
 
+    /// Le texte `text` ecrit avec la police `name` (voir `custom_font`), en blanc sur fond transparent, au corps `size` px (la largeur
+    /// est limitee a `max_w` px en reduisant le corps). `None` si la police est introuvable ou n'a pas tous les caracteres du texte
+    /// (police de symboles) : l'appelant affiche alors le texte avec la police de l'interface.
+    pub fn font_sample(&self, name: &str, project_dir: &Path, text: &str, size: f32, max_w: u32) -> Option<RgbaImage> {
+        let font = self.custom_font(name, project_dir)?;
+        if text.is_empty() || text.chars().any(|c| !c.is_whitespace() && font.glyph_id(c).0 == 0) {
+            return None;
+        }
+        let (mut w, mut h) = text_extent(&font, text, size);
+        let mut size = size;
+        if w > max_w as f32 {
+            size *= max_w as f32 / w;
+            (w, h) = text_extent(&font, text, size);
+        }
+        let (iw, ih) = ((w.ceil() as u32 + 4).max(1), (h.ceil() as u32 + 2).max(1));
+        let mut im = RgbaImage::new(iw, ih);
+        draw_line_f(&mut im, &font, text, size, [255, 255, 255], (2.0, 1.0, (iw - 4) as f32, (ih - 2) as f32), Align::Left);
+        Some(im)
+    }
+
     /// Retourne l'element en cache pour `key`, ou le dessine avec `make`. Le cache est vide quand il depasse 160 elements.
     fn cached_sprite(&self, key: u64, make: impl FnOnce() -> RgbaImage) -> Arc<RgbaImage> {
         if let Some(i) = self.sprites.lock().unwrap().get(&key) {

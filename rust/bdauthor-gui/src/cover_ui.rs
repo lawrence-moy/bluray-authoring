@@ -262,6 +262,63 @@ enum ExportKind {
     Png { trim: bool },
 }
 
+/// Images des noms de polices ecrits avec leur propre police, gardees entre deux images de l'interface.
+#[derive(Default, Clone)]
+struct FontSamples(std::sync::Arc<std::sync::Mutex<FontSamplesInner>>);
+#[derive(Default)]
+struct FontSamplesInner {
+    tex: std::collections::HashMap<String, Option<egui::TextureHandle>>,
+    time: f64,
+    made: u32,
+}
+
+/// Une ligne d'une liste de polices : le nom ecrit avec la police elle-meme (image creee a la demande, quelques-unes par image pour
+/// que l'ouverture de la liste reste fluide), ou en texte courant tant que l'image n'est pas prete ou si la police n'a pas les lettres.
+fn font_entry(ui: &mut egui::Ui, r: Option<&bdauthor_render::FontRenderer>, base: &std::path::Path, label: &str, file: &str, selected: bool) -> egui::Response {
+    const ROW: f32 = 24.0;
+    const SCALE: f32 = 2.0; // l'image est calculee au double de sa taille d'affichage
+    let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width().max(160.0), ROW), egui::Sense::click());
+    if !ui.is_rect_visible(rect) { return resp; }
+    let vis = ui.style().interact_selectable(&resp, selected);
+    if selected || resp.hovered() || resp.has_focus() {
+        ui.painter().rect(rect.expand(vis.expansion), vis.rounding, vis.weak_bg_fill, vis.bg_stroke);
+    }
+    let cache = ui.ctx().data_mut(|d| d.get_temp_mut_or_default::<FontSamples>(egui::Id::new("bd_font_samples")).clone());
+    let key = format!("{}|{}|{}", file, base.display(), bdauthor_render::extra_font_dir().map(|d| d.display().to_string()).unwrap_or_default());
+    let now = ui.input(|i| i.time);
+    let tex = {
+        let mut c = cache.0.lock().unwrap();
+        if c.time != now { c.time = now; c.made = 0; }
+        match c.tex.get(&key) {
+            Some(t) => t.clone(),
+            None if c.made < 4 => {
+                c.made += 1;
+                let img = r.and_then(|r| r.font_sample(file, base, label, 15.0 * SCALE, 400));
+                let t = img.map(|im| ui.ctx().load_texture(
+                    format!("police {file}"),
+                    egui::ColorImage::from_rgba_unmultiplied([im.width as usize, im.height as usize], &im.data),
+                    egui::TextureOptions::LINEAR,
+                ));
+                c.tex.insert(key, t.clone());
+                t
+            }
+            None => { ui.ctx().request_repaint(); None }
+        }
+    };
+    let color = vis.text_color();
+    match tex {
+        Some(t) => {
+            let mut size = t.size_vec2() / SCALE;
+            let room = rect.width() - 10.0;
+            if size.x > room { size *= room / size.x; }
+            let pos = egui::pos2(rect.min.x + 5.0, rect.center().y - size.y / 2.0);
+            ui.painter().image(t.id(), egui::Rect::from_min_size(pos, size), egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0)), color);
+        }
+        None => { ui.painter().text(egui::pos2(rect.min.x + 5.0, rect.center().y), egui::Align2::LEFT_CENTER, label, egui::FontId::proportional(14.0), color); }
+    }
+    resp
+}
+
 fn spawn_export<D: SheetDoc + Send + 'static>(doc: D, kind: ExportKind, what: &'static str, base: PathBuf, vars: BTreeMap<String, String>, path: PathBuf, tx: std::sync::mpsc::Sender<String>) {
     std::thread::spawn(move || {
         let run = || -> Result<String, String> {
@@ -780,7 +837,7 @@ impl App {
                     egui::ComboBox::from_id_salt("jaquette_police").selected_text(shown).width(200.0).show_ui(ui, |ui| {
                         if ui.selectable_label(font.is_empty(), tr("Default font")).clicked() { font.clear(); changed = true; }
                         for (label, file) in bdauthor_render::font_choices() {
-                            if ui.selectable_label(font.as_str() == file, label).clicked() { *font = file; changed = true; }
+                            if font_entry(ui, self.renderer.as_ref().ok(), &base_dir, &label, &file, font.as_str() == file).clicked() { *font = file; changed = true; }
                         }
                         if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
                     });
@@ -943,7 +1000,7 @@ impl App {
                     egui::ComboBox::from_id_salt("jaquette_tableau_police").selected_text(shown).width(200.0).show_ui(ui, |ui| {
                         if ui.selectable_label(t.font.is_empty(), tr("Default font")).clicked() { t.font.clear(); changed = true; }
                         for (label, file) in bdauthor_render::font_choices() {
-                            if ui.selectable_label(t.font == file, label).clicked() { t.font = file; changed = true; }
+                            if font_entry(ui, self.renderer.as_ref().ok(), &base_dir, &label, &file, t.font == file).clicked() { t.font = file; changed = true; }
                         }
                         if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
                     });
@@ -996,7 +1053,7 @@ impl App {
                         egui::ComboBox::from_id_salt("jaquette_codebarres_police").selected_text(shown).width(200.0).show_ui(ui, |ui| {
                             if ui.selectable_label(c.font.is_empty(), tr("Default font")).clicked() { c.font.clear(); changed = true; }
                             for (label, file) in bdauthor_render::font_choices() {
-                                if ui.selectable_label(c.font == file, label).clicked() { c.font = file; changed = true; }
+                                if font_entry(ui, self.renderer.as_ref().ok(), &base_dir, &label, &file, c.font == file).clicked() { c.font = file; changed = true; }
                             }
                             if ui.button(tr("Other file…")).clicked() { pick_font = true; ui.close_menu(); }
                         });
