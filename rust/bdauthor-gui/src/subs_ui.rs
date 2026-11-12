@@ -87,7 +87,7 @@ fn track_settings_ui(ui: &mut egui::Ui, t: &mut SubTrackCfg, base: &Path, auto_f
                 }
             }
             ui.horizontal(|ui| {
-                ui.label(tr("Offset:"));
+                ui.label(tr("Offset +/- (ms):"));
                 *changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
             });
             *changed |= ui.checkbox(&mut t.strip_notes, tr("Remove [bracketed] and (parenthesized) annotations"))
