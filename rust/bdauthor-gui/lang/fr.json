@@ -1257,5 +1257,6 @@
   "the source track is at {} Hz; 48000 Hz is required": "la piste source est à {} Hz ; 48000 Hz sont requis",
   "the source track has {} channels; 6 at most": "la piste source a {} canaux ; 6 au plus",
   "the source track is at {} kb/s; {} kb/s at most": "la piste source est à {} kb/s ; {} kb/s au plus",
-  "video {}: an audio track cannot be copied: {}": "vidéo {} : une piste audio ne peut pas être copiée : {}"
+  "video {}: an audio track cannot be copied: {}": "vidéo {} : une piste audio ne peut pas être copiée : {}",
+  "Offset +/- (ms):": "Décalage +/- (ms) :"
 }

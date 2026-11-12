@@ -86,7 +86,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     }
                 }
                 ui.horizontal(|ui| {
-                    ui.label(tr("Offset:"));
+                    ui.label(tr("Offset +/- (ms):"));
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
                 });
                 ui.horizontal(|ui| {
