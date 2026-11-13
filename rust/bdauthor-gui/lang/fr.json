@@ -1061,7 +1061,6 @@
   "center of the image in 16:9": "centre de l'image en 16/9",
   "A frame of the video at this time, fitted into the frame without distortion. “Choose the image…” lets you pick it image by image and crop it.": "Une image de la vidéo à cet instant, ajustée au cadre sans déformation. « Choisir l'image… » permet de la choisir image par image et de la recadrer.",
   "Wheel: zoom · Shift + wheel: scroll · click or drag: choose the time": "Molette : zoom · Maj + molette : défilement · clic ou glisser : choisir l'instant",
-  "Space: play / pause · playback without sound": "Espace : lecture / pause · lecture sans le son",
   "Language of this track": "Langue de cette piste",
   "Hide this track's settings": "Masquer les réglages de cette piste",
   "Show this track's settings": "Afficher les réglages de cette piste",
@@ -1259,5 +1258,14 @@
   "video {}: an audio track cannot be copied: {}": "vidéo {} : une piste audio ne peut pas être copiée : {}",
   "Offset +/- (ms):": "Décalage +/- (ms) :",
   "Show the full ffmpeg commands in the build log": "Afficher les commandes ffmpeg complètes dans le journal de génération",
-  "Each time the disc build starts ffmpeg (encodings, extracted frames, subtitle conversions), its complete command line is written in the log, after a » sign, ready to be copied and run in a console.": "À chaque lancement de ffmpeg pendant la génération du disque (encodages, images extraites, conversions de sous-titres), sa ligne de commande complète est écrite dans le journal, après un signe », prête à être copiée et exécutée dans une console."
+  "Each time the disc build starts ffmpeg (encodings, extracted frames, subtitle conversions), its complete command line is written in the log, after a » sign, ready to be copied and run in a console.": "À chaque lancement de ffmpeg pendant la génération du disque (encodages, images extraites, conversions de sous-titres), sa ligne de commande complète est écrite dans le journal, après un signe », prête à être copiée et exécutée dans une console.",
+  "no audio output found": "aucune sortie audio trouvée",
+  "audio output format not supported ({})": "format de sortie audio non pris en charge ({})",
+  "without sound: {}": "sans son : {}",
+  "without sound: the audio output does not respond": "sans son : la sortie audio ne répond pas",
+  "Track {}": "Piste {}",
+  "Mute": "Muet",
+  "Sound of the preview: mute, or one of the video's audio tracks. The image follows the sound.": "Son de l’aperçu : muet, ou l’une des pistes audio de la vidéo. L’image suit le son.",
+  "(no audio track)": "(aucune piste audio)",
+  "Space: play / pause": "Espace : lecture / pause"
 }

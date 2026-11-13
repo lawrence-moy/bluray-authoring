@@ -271,3 +271,15 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Copie : refusee avant l'encodage si la source n'est pas de l'AC-3, pas a 48 kHz, a plus de 6 canaux ou a plus de 640 kb/s
   (message explicite). Le decalage de piste (`-itsoffset`) fonctionne aussi avec la copie.
 - Le cache d'encodage tient compte du format et du debit des pistes (les pistes AC-3 par defaut gardent leur ancienne cle).
+
+## Son dans les apercus video
+- Lecteur commun `bdauthor-gui/src/player.rs` (fenetres : choix de l'image d'une video, chapitres, apercu des sous-titres).
+- Son decode par ffmpeg (`playback::PcmFeed`, flottants entrelaces au format de la sortie : frequence et canaux de la carte son,
+  ffmpeg reechantillonne / remixe) et joue par cpal (WASAPI / CoreAudio / ALSA). Tampon d'avance 0,4 s.
+- Le son donne le temps : echantillons joues moins le delai de la sortie (horodatage cpal). Les images (`FrameStream::start_paced`,
+  sans `-re`) sont montrees quand leur instant est atteint. Sans son (muet, piste absente, sortie absente ou muette 1,5 s, fin de la
+  piste), `PlayClock` continue sur le temps ecoule sans saut. Si le decodage video prend plus de 0,5 s de retard, le flux d'images
+  reprend a l'instant du son (au plus toutes les 2 s).
+- Choix du son (muet / piste N) commun a toutes les fenetres pour la session, applique tout de suite a la lecture en cours.
+- Linux : cpal demande ALSA (`libasound2-dev` / `alsa-lib-devel` pour compiler).
+- La fenetre d'ecoute des pistes audio utilise encore ffplay (a basculer sur `PcmFeed` + cpal plus tard).

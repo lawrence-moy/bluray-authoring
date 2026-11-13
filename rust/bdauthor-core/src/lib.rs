@@ -33,6 +33,7 @@ pub mod mux;
 pub mod nav;
 pub mod palette;
 pub mod pgs;
+pub mod playback;
 pub mod project;
 pub mod png;
 pub mod reader;

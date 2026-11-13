@@ -12,6 +12,7 @@ mod cover_ui;
 mod chapters_ui;
 mod frame_ui;
 mod timeline_ui;
+mod player;
 
 use crate::i18n::{tr, trf};
 use bdauthor_core::check::Kind;

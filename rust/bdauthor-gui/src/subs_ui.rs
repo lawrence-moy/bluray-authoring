@@ -1,6 +1,6 @@
 //! Panneau « Sous-titres » d'une video : pistes PGS issues de fichiers .srt/.ass ou de pistes texte integrees a la video.
 use crate::i18n::{tr, trf};
-use bdauthor_core::ffmpeg::{extract_subtitle_srt, list_subtitle_streams, FrameStream, SubStreamInfo, Tools};
+use bdauthor_core::ffmpeg::{extract_subtitle_srt, list_subtitle_streams, SubStreamInfo, Tools};
 use bdauthor_core::film::MAX_SUB_TRACKS;
 use bdauthor_core::framesrc::{probe_async, Fit, FrameLoader, VideoMeta};
 use crate::timeline_ui::{Timeline, TimelineCfg};
@@ -389,7 +389,7 @@ pub struct SubPreview {
     meta: Option<VideoMeta>,
     tl: Timeline,
     /// lecture : (flux, instant de depart en ms, images recues)
-    playing: Option<(FrameStream, i64, i64)>,
+    playing: Option<crate::player::Player>,
     /// instant affiche (ms) : libre (frise, lecture) ou lie a la replique choisie ; replique vue a l'image precedente
     t_ms: i64,
     free: bool,
@@ -439,13 +439,11 @@ impl SubPreview {
         if self.playing.is_some() { self.playing = None; return; }
         let Some(m) = &self.meta else { return };
         let start = if self.t_ms as f64 / 1000.0 >= m.duration - 0.2 { 0 } else { self.t_ms.max(0) };
-        if let Ok(tools) = Tools::locate() {
-            if let Ok(fs) = FrameStream::start_fit(&tools, &self.video_file, start as f64 / 1000.0, (vh * 16 / 9, vh), true) {
-                self.playing = Some((fs, start, 0));
-                self.bg = 3;
-                self.free = true;
-                self.last_img = None;
-            }
+        if let Ok(p) = crate::player::Player::start(&self.video_file, start as f64 / 1000.0, (vh * 16 / 9, vh), true, m.fps) {
+            self.playing = Some(p);
+            self.bg = 3;
+            self.free = true;
+            self.last_img = None;
         }
     }
 }
@@ -657,20 +655,15 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
             let m = { let c0 = &pv.shown[pv.cue]; c0.start_ms + ((c0.end_ms - c0.start_ms) / 2).min(300) };
             pv.t_ms = m;
         }
-        // lecture : la derniere image recue est affichee, l'instant suit le nombre d'images
+        // lecture : l'image due a l'instant du son (ou du temps ecoule, sans son) est affichee
         let mut play_img: Option<RgbaImage> = None;
         let mut ended = false;
-        if let Some((fs, start, got)) = &mut pv.playing {
-            loop {
-                match fs.rx.try_recv() {
-                    Ok(img) => { *got += 1; play_img = Some(img); }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                    Err(_) => { ended = true; break; }
-                }
-            }
-            if play_img.is_some() {
-                let fps = pv.meta.as_ref().map_or(25.0, |m| m.fps);
-                pv.t_ms = *start + ((*got - 1) as f64 * 1000.0 / fps).round() as i64;
+        if let Some(pl) = &mut pv.playing {
+            let (shown, end) = pl.poll();
+            ended = end;
+            if let Some(sh) = shown {
+                pv.t_ms = (sh.t * 1000.0).round() as i64;
+                play_img = Some(sh.img);
             }
         }
         if ended { pv.playing = None; }
@@ -772,7 +765,10 @@ pub fn preview_window(ctx: &egui::Context, pv: &mut SubPreview, v: &mut VideoEnt
                 if ui.add_enabled(ready, egui::Button::new(label).min_size(egui::vec2(70.0, 26.0)).fill(egui::Color32::from_rgb(44, 93, 135))).clicked() { pv.toggle_play(play_vh); }
                 let total = pv.meta.as_ref().map_or(String::new(), |m| format!(" / {}", clock((m.duration * 1000.0) as i64)));
                 ui.label(egui::RichText::new(format!("{}{}", clock(pv.t_ms), total)).monospace());
-                if ready { ui.label(egui::RichText::new(tr("Space: play / pause · playback without sound")).small().weak()); }
+                if ready {
+                    crate::player::sound_menu(ui, &pv.video_file, pv.playing.as_ref());
+                    ui.label(egui::RichText::new(tr("Space: play / pause")).small().weak());
+                }
                 else if pv.meta_rx.is_some() { ui.spinner(); ui.label(tr("Reading the video…")); }
             });
             if let Some(dur) = pv.meta.as_ref().map(|m| m.duration) {

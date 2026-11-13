@@ -13,3 +13,5 @@ bdauthor-core = { path = "../bdauthor-core" }
 bdauthor-render = { path = "../bdauthor-render" }
 eframe = "0.29"
 rfd = "0.15"
+# sortie audio des apercus video (WASAPI / CoreAudio / ALSA)
+cpal = "0.15"

@@ -120,12 +120,12 @@ impl Tools {
 }
 
 #[cfg(windows)]
-fn no_window(c: &mut Command) {
+pub(crate) fn no_window(c: &mut Command) {
     use std::os::windows::process::CommandExt;
     c.creation_flags(0x0800_0000); // CREATE_NO_WINDOW : pas de fenetre console qui clignote
 }
 #[cfg(not(windows))]
-fn no_window(_c: &mut Command) {}
+pub(crate) fn no_window(_c: &mut Command) {}
 
 // ---------------------------------------------------------------- sondage
 
@@ -912,8 +912,16 @@ impl FrameStream {
 
     /// Comme `start` ; `cover` : l'image remplit `size` et l'excedent est rogne (sans deformation), comme `extract_thumbnail_rgba`.
     pub fn start_fit(tools: &Tools, src: &Path, t: f64, size: (u32, u32), cover: bool) -> Result<FrameStream> {
+        FrameStream::start_paced(tools, src, t, size, cover, true)
+    }
+
+    /// Comme `start_fit` ; `realtime` faux : les images arrivent aussi vite que l'appelant les prend (file de 3 images), a lui
+    /// de les montrer au bon moment (lecture calee sur le son).
+    pub fn start_paced(tools: &Tools, src: &Path, t: f64, size: (u32, u32), cover: bool, realtime: bool) -> Result<FrameStream> {
         let vf = if cover { format!("scale={0}:{1}:force_original_aspect_ratio=increase,crop={0}:{1}", size.0, size.1) } else { format!("scale={}:{}", size.0, size.1) };
-        let mut a: Vec<String> = vec!["-v".into(), "error".into(), "-nostdin".into(), "-re".into(), "-ss".into(), format!("{:.4}", t.max(0.0))];
+        let mut a: Vec<String> = vec!["-v".into(), "error".into(), "-nostdin".into()];
+        if realtime { a.push("-re".into()); }
+        a.extend(["-ss".into(), format!("{:.4}", t.max(0.0))]);
         a.extend(["-i".to_string(), s(src), "-an".into(), "-sn".into(), "-vf".into(), vf]);
         a.extend(["-f", "rawvideo", "-pix_fmt", "rgba", "pipe:1"].iter().map(|x| x.to_string()));
         let mut c = Command::new(&tools.ffmpeg);

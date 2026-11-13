@@ -6,7 +6,6 @@ use crate::timeline_ui::{Timeline, TimelineCfg};
 use bdauthor_core::cover::CoverKind;
 use bdauthor_core::design::{Kind, VideoFrame};
 use bdauthor_core::editor::{crop_drag, crop_full};
-use bdauthor_core::ffmpeg::{FrameStream, Tools};
 use bdauthor_core::framesrc::{probe_async, Fit, FrameLoader, VideoMeta};
 use bdauthor_core::model::ProjectModel;
 use eframe::egui;
@@ -48,7 +47,7 @@ pub struct FramePicker {
     tex_frame: i64,
     tl: Timeline,
     /// lecture (sans le son) : (flux, image de depart, images recues)
-    playing: Option<(FrameStream, i64, i64)>,
+    playing: Option<crate::player::Player>,
     /// glissement du cadre : (poignee, cadre d'origine, point de depart en fractions)
     crop_drag: Option<(u8, [f64; 4], (f64, f64))>,
 }
@@ -118,12 +117,10 @@ impl FramePicker {
     fn toggle_play(&mut self) {
         if self.playing.is_some() { self.playing = None; return; }
         let Some(info) = &self.info else { return };
-        let size = info.size;
-        if let Ok(tools) = Tools::locate() {
-            let start = if self.frame >= self.last_frame() { 0 } else { self.frame + 1 };
-            if let Ok(fs) = FrameStream::start(&tools, &self.file, self.t_of(start), size) {
-                self.playing = Some((fs, start, 0));
-            }
+        let (size, fps) = (info.size, info.fps);
+        let start = if self.frame >= self.last_frame() { 0 } else { self.frame + 1 };
+        if let Ok(p) = crate::player::Player::start(&self.file, self.t_of(start), size, false, fps) {
+            self.playing = Some(p);
         }
     }
 
@@ -155,17 +152,13 @@ impl FramePicker {
         busy |= self.tl.poll(ctx);
         // lecture : la derniere image recue est affichee
         let mut ended = false;
-        if let Some((fs, start, got)) = &mut self.playing {
-            let mut last = None;
-            loop {
-                match fs.rx.try_recv() {
-                    Ok(img) => { *got += 1; last = Some(img); }
-                    Err(std::sync::mpsc::TryRecvError::Empty) => break,
-                    Err(_) => { ended = true; break; }
-                }
-            }
-            if let Some(img) = last {
-                let n = *start + *got - 1;
+        let (fps, last) = (self.fps(), self.last_frame());
+        if let Some(pl) = &mut self.playing {
+            let (shown, end) = pl.poll();
+            ended = end;
+            if let Some(sh) = shown {
+                let n = ((sh.t * fps).round() as i64).clamp(0, last);
+                let img = sh.img;
                 self.frame = n;
                 match &mut self.tex {
                     Some(t) => t.set(egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data), egui::TextureOptions::LINEAR),
@@ -316,6 +309,8 @@ fn picker_ui(ui: &mut egui::Ui, fp: &mut FramePicker, action: &mut Option<bool>)
         ui.add_space(8.0);
         ui.label(egui::RichText::new(tcf(fp.t_of(fp.frame), fp.fps())).monospace().strong());
         ui.label(egui::RichText::new(format!("/ {}", tcf(fp.duration(), fp.fps()))).monospace().weak());
+        ui.add_space(8.0);
+        crate::player::sound_menu(ui, &fp.file, fp.playing.as_ref());
     });
     ui.add_space(4.0);
     timeline(ui, fp);
