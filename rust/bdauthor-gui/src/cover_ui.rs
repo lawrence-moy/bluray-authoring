@@ -1521,6 +1521,14 @@ impl App {
                     Some(i) => self.cover_select_only(Some(i)),
                     None => if !extend && viewport.contains(p) { self.cover_select_only(None); },
                 }
+                // double clic sur une image de video : ouvre la fenetre de choix de l'image (comme « Choisir l'image… » du panneau)
+                if resp.double_clicked() && !extend {
+                    if let Some(i) = hit(p, doc.items()) {
+                        if matches!(&doc.items()[i].kind, CoverKind::VideoImage { frame } if frame.video.is_some()) {
+                            self.cover_frame_request = Some((self.cover_page as usize, i));
+                        }
+                    }
+                }
             }
         }
         // en cours : la position est toujours calculee depuis le point de depart, sans derive
