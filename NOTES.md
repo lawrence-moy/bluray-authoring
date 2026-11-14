@@ -3,6 +3,14 @@
 > À coller au début d'une nouvelle conversation, avec les fichiers de `bdauthor/` si besoin.
 > État au 21/10/2026 (mis à jour après validation des chapitres).
 
+## À faire
+
+- **Fenêtre d'écoute des pistes audio** (bouton 🔊 des pistes d'une vidéo) : la passer sur le moteur des aperçus vidéo
+  (`playback::PcmFeed` + cpal, voir « Son dans les aperçus vidéo ») au lieu de `ffplay`. Pause et déplacement instantanés,
+  position = son réellement joué, et `ffplay.exe` n'est plus nécessaire (seuls `ffmpeg` et `ffprobe` restent requis).
+- **Test sur lecteur de salon (BD-RE)** des pistes audio : copie AC-3, Dolby Digital 5.1, LPCM 16 et 24 bits (descripteur HDMV
+  et trames de 7,5 ms du LPCM 24 bits non confirmés).
+
 ## 1. Objectif et choix retenus
 
 Logiciel léger et multiplateforme qui crée des menus Blu-ray **HDMV** (graphiques IG, pas BD-J) pour des vidéos perso : menu principal, chapitres, éventuellement audio et sous-titres.
