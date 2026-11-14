@@ -13,6 +13,7 @@ mod chapters_ui;
 mod frame_ui;
 mod timeline_ui;
 mod player;
+mod coherence_ui;
 
 use crate::i18n::{tr, trf};
 use bdauthor_core::check::Kind;
@@ -311,6 +312,10 @@ struct App {
     show_about: bool,
     /// fenetre « Generer le disque » (journal de construction)
     show_build: bool,
+    /// fenetre « Verifier les menus » : ouverte, filtre de gravite, constat choisi
+    show_coherence: bool,
+    coherence_filter: Option<bdauthor_core::coherence::Severity>,
+    coherence_sel: Option<usize>,
     /// construction : avancement detaille de ffmpeg et heure de depart (temps ecoule, fin estimee)
     ffmpeg_detail: Option<bdauthor_core::ffmpeg::FfmpegProgress>,
     build_t0: Option<std::time::Instant>,
@@ -412,7 +417,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_grid: false, cover_grid_mm: 5.0, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, cover_frame_request: None, cover_frames: Default::default(), thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, snap_px: 10, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_grid: false, cover_grid_mm: 5.0, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, show_coherence: false, coherence_filter: None, coherence_sel: None, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, cover_frame_request: None, cover_frames: Default::default(), thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, snap_px: 10, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
     }
@@ -630,7 +635,13 @@ impl App {
         self.rx = Some(rx);
         let (cancel, ctx) = (self.cancel.clone(), ctx.clone());
         let log_commands = self.cfg.log_ffmpeg;
+        // verificateur de coherence des menus : ses erreurs et avertissements en tete du journal (sans bloquer)
+        let menu_notes: Vec<String> = self.coherence_report().findings.iter()
+            .filter(|f| f.severity != bdauthor_core::coherence::Severity::Info)
+            .map(|f| if f.severity == bdauthor_core::coherence::Severity::Error { trf!("menus: error: {}", f.msg) } else { trf!("menus: warning: {}", f.msg) })
+            .collect();
         std::thread::spawn(move || {
+            for l in menu_notes { let _ = tx.send(Msg::Log(l)); }
             // avancement detaille de chaque encodage ffmpeg de ce fil
             let (tx2, ctx2) = (tx.clone(), ctx.clone());
             bdauthor_core::ffmpeg::set_progress_detail(Some(Box::new(move |d| { let _ = tx2.send(Msg::Detail(d)); ctx2.request_repaint(); })));
@@ -761,6 +772,7 @@ impl eframe::App for App {
                 None => {}
             }
         }
+        self.coherence_window(ctx);
         if self.show_about {
             let mut open = true;
             egui::Window::new(tr("About bdauthor")).open(&mut open).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, egui::Vec2::ZERO).show(ctx, |ui| {
@@ -1162,6 +1174,10 @@ impl eframe::App for App {
                     }
                     if ui.button(tr("Build the disc")).on_hover_text(tr("Opens the window that builds the disc and shows its log")).clicked() {
                         self.show_build = true;
+                        ui.close_menu();
+                    }
+                    if ui.button(tr("Check the menus…")).on_hover_text(tr("Consistency of pages, buttons, videos and returns: unreachable pages, videos never played, loops, arrows, languages")).clicked() {
+                        self.show_coherence = true;
                         ui.close_menu();
                     }
                 });

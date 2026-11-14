@@ -283,3 +283,15 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 - Choix du son (muet / piste N) commun a toutes les fenetres pour la session, applique tout de suite a la lecture en cours.
 - Linux : cpal demande ALSA (`libasound2-dev` / `alsa-lib-devel` pour compiler).
 - La fenetre d'ecoute des pistes audio utilise encore ffplay (a basculer sur `PcmFeed` + cpal plus tard).
+
+## Verificateur de coherence des menus
+- Coeur : `coherence.rs`, `check(model, duree)` -> `Report` (constats tries par gravite + carte : pages, sorties, videos).
+  S'appuie sur `editor::sim_buttons` (memes boutons et memes voisins que le disque) et reproduit la logique de `project.rs`
+  pour les destinations et les retours apres lecture (vignette : origine / accueil / page ; autres boutons : page d'origine).
+- Regles : 1 pages inaccessibles depuis l'accueil ; 2 videos jamais lancees (ou seulement depuis des pages inaccessibles ;
+  « Tout lire » lance toutes les videos) ; 3 retour vers une page supprimee ; 4 boucles de lancement automatique (avertissement,
+  ou info si la boucle lit une video : boucle de demonstration) ; 5 boutons injoignables aux fleches depuis le premier bouton,
+  fleches manuelles a sens unique (info) ; 6 chapitre lie disparu (info), depart apres la fin de la video (erreur, si la duree
+  est connue) ; 7 reglage audio / sous-titres sans piste dans certaines videos ; 8 boutons identiques sur une page (info).
+- Interface : Edition > Verifier les menus… (`coherence_ui.rs`), recalcule a chaque image ; clic = page / element / video.
+  Les erreurs et avertissements sont aussi ecrits en tete du journal de generation (sans bloquer).
