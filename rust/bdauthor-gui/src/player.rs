@@ -177,9 +177,6 @@ impl Player {
         (shown, self.frames_done && self.pending.is_none())
     }
 
-    /// Instant de la lecture (secondes).
-    pub fn time(&self) -> f64 { self.clock.last() }
-
     /// Pourquoi la lecture est sans son, le cas echeant.
     pub fn note(&self) -> Option<&str> { self.note.as_deref() }
 }

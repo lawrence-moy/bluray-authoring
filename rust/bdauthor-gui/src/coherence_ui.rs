@@ -89,7 +89,7 @@ impl App {
                     let resp = ui.interact(resp.rect, egui::Id::new(("constat", k)), egui::Sense::click());
                     if sel || resp.hovered() {
                         let c = if sel { ui.visuals().selection.stroke.color } else { ui.visuals().widgets.hovered.bg_stroke.color };
-                        ui.painter().rect_stroke(resp.rect.expand(2.0), 4.0, egui::Stroke::new(1.0, c));
+                        ui.painter().rect_stroke(resp.rect.expand(2.0), 4.0, egui::Stroke::new(1.0_f32, c));
                     }
                     if resp.on_hover_text(tr("Click: show it in the editor")).clicked() {
                         self.coherence_sel = Some(k);
