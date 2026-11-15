@@ -49,8 +49,8 @@ impl App {
         p.rect_filled(fill, 3.0, col);
         // repere de la marge de securite
         let x = rect.left() + rect.width() * u.margin_pct as f32 / 100.0;
-        p.line_segment([egui::pos2(x, rect.top() - 2.0), egui::pos2(x, rect.bottom() + 2.0)], Stroke::new(1.0, ui.visuals().text_color()));
-        p.rect_stroke(rect, 3.0, Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color));
+        p.line_segment([egui::pos2(x, rect.top() - 2.0), egui::pos2(x, rect.bottom() + 2.0)], Stroke::new(1.0_f32, ui.visuals().text_color()));
+        p.rect_stroke(rect, 3.0, Stroke::new(1.0_f32, ui.visuals().widgets.noninteractive.bg_stroke.color));
         let label = trf!("{} · {} / {} GB", u.disc, gb(u.total), gb(u.capacity));
         let text = ui.label(RichText::new(label).small().color(if u.over_margin() { col } else { ui.visuals().text_color() }));
         let tip = |ui: &mut egui::Ui| {
