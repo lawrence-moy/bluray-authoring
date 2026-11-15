@@ -32,6 +32,7 @@ pub mod menu;
 pub mod sound;
 pub mod mux;
 pub mod nav;
+pub mod occupancy;
 pub mod palette;
 pub mod pgs;
 pub mod playback;

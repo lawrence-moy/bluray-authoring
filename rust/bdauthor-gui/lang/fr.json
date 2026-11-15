@@ -1328,5 +1328,16 @@
   "Drop shadow": "Ombre portée",
   "Shadow under the button, shifted down and to the right and blurred by this distance. Widens the button image.": "Ombre sous le bouton, décalée vers le bas à droite et floutée de cette distance. Élargit l’image du bouton.",
   "opacity": "opacité",
-  "Sizes given for a 1920 × 1080 menu. The glow, the shadow and the enlargement widen the button image: leave some space between buttons.": "Tailles données pour un menu 1920 × 1080. Le halo, l’ombre et l’agrandissement élargissent l’image des boutons : laissez de l’espace entre eux."
+  "Sizes given for a 1920 × 1080 menu. The glow, the shadow and the enlargement widen the button image: leave some space between buttons.": "Tailles données pour un menu 1920 × 1080. Le halo, l’ombre et l’agrandissement élargissent l’image des boutons : laissez de l’espace entre eux.",
+  "Menus and navigation": "Menus et navigation",
+  "Multiplexing": "Multiplexage",
+  "{} · {} / {} GB": "{} · {} / {} Go",
+  "Disc usage (estimate): {} GB of {} ({} %)": "Occupation du disque (estimation) : {} Go sur {} ({} %)",
+  "Safety margin: {} % of the disc ({} GB).": "Marge de sécurité : {} % du disque ({} Go).",
+  "“Aim for a bitrate that fills the disc” is on: the videos take the room left under the margin.": "« Viser un débit qui remplit le disque » est activé : les vidéos prennent la place restante sous la marge.",
+  "The size of the encoded videos is estimated from the quality (CRF) and the picture size; the real size is known only after encoding.": "La taille des vidéos encodées est estimée d’après la qualité (CRF) et la définition ; la taille réelle n’est connue qu’après l’encodage.",
+  "{} video(s) not read yet: not counted.": "{} vidéo(s) pas encore lue(s) : non comptée(s).",
+  "The content does not fit on this disc: raise the CRF, use “fill the disc”, choose a larger disc or remove content.": "Le contenu ne tient pas sur ce disque : augmentez le CRF, utilisez « remplir le disque », choisissez un disque plus grand ou retirez du contenu.",
+  "Beyond the safety margin: burning is less reliable at the edge of a disc.": "Au-delà de la marge de sécurité : la gravure est moins fiable au bord du disque.",
+  "Disc and margin: Edit › Project… › ISO generation.": "Disque et marge : Édition › Projet… › Génération ISO."
 }

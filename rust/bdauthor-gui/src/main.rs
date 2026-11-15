@@ -14,6 +14,7 @@ mod frame_ui;
 mod timeline_ui;
 mod player;
 mod coherence_ui;
+mod occupancy_ui;
 
 use crate::i18n::{tr, trf};
 use bdauthor_core::check::Kind;
@@ -733,6 +734,7 @@ impl App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        window_capture(ctx);
         self.poll();
         if self.worker.is_none() {
             self.worker = Some(editor_ui::Worker::start(ctx.clone()));
@@ -1194,6 +1196,10 @@ impl eframe::App for App {
                 if let (true, Some(t)) = (self.dirty, self.autosave_ok) {
                     ui.label(egui::RichText::new(trf!("(auto-save {} min ago)", t.elapsed().as_secs() / 60)).weak());
                 }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    ui.add_space(6.0);
+                    self.disc_gauge(ui);
+                });
             });
             if !self.notice.is_empty() {
                 ui.label(egui::RichText::new(&self.notice).weak());
@@ -1522,4 +1528,31 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     eframe::run_native("bdauthor", options, Box::new(|_cc| Ok(Box::new(App::default()))))
+}
+
+/// Capture de la fenetre de l'application (Ctrl+Maj+F12) : une image PNG exacte de la fenetre, fenetres internes et menus
+/// ouverts compris, enregistree dans le dossier `BDAUTHOR_CAPTURE_DIR` ou, sinon, dans `captures` a cote du programme.
+/// Sert aux captures d'ecran du manuel.
+fn window_capture(ctx: &egui::Context) {
+    if ctx.input(|i| i.modifiers.ctrl && i.modifiers.shift && i.key_pressed(egui::Key::F12)) {
+        ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+    }
+    let shots: Vec<std::sync::Arc<egui::ColorImage>> = ctx.input(|i| {
+        i.raw.events.iter().filter_map(|e| match e { egui::Event::Screenshot { image, .. } => Some(image.clone()), _ => None }).collect()
+    });
+    for img in shots {
+        let dir = std::env::var_os("BDAUTHOR_CAPTURE_DIR").map(std::path::PathBuf::from).unwrap_or_else(|| {
+            std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.join("captures"))).unwrap_or_else(|| std::path::PathBuf::from("captures"))
+        });
+        let [w, h] = img.size;
+        let mut im = bdauthor_core::palette::RgbaImage::new(w as u32, h as u32);
+        for (o, c) in im.data.chunks_exact_mut(4).zip(img.pixels.iter()) {
+            let [r, g, b, _] = c.to_srgba_unmultiplied();
+            o.copy_from_slice(&[r, g, b, 255]);
+        }
+        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_millis());
+        let path = dir.join(format!("capture-{stamp}.png"));
+        let ok = std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&path, bdauthor_core::png::write_png(&im)).is_ok();
+        eprintln!("capture {} : {}", if ok { "enregistree" } else { "impossible" }, path.display());
+    }
 }
