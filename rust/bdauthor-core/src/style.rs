@@ -49,6 +49,15 @@ pub struct ButtonStyle {
     pub sound_select: String,
     /// Son joue a l'appui sur OK (fichier audio ; vide = aucun).
     pub sound_activate: String,
+    /// Police du texte des boutons (libelles des vignettes, boutons de navigation) : vide = police par defaut, sinon fichier
+    /// .ttf/.otf (chemin, ou nom d'une police installee ou du dossier de polices supplementaires).
+    pub font: String,
+    pub bold: bool,
+    pub italic: bool,
+    /// Ombre portee des boutons : distance (px, 0 = aucune ; l'ombre est decalee vers le bas a droite et floutee d'autant).
+    pub shadow: i32,
+    /// Opacite de l'ombre (%).
+    pub shadow_opacity: i32,
 }
 
 impl Default for ButtonStyle {
@@ -59,6 +68,7 @@ impl Default for ButtonStyle {
             glow: 0, glow_color: [120, 180, 255], glow_pulse: false, zoom: 0, backdrop: 60, underline: false,
             activated: false, act_bg: [240, 150, 40], act_text: [255, 255, 255], act_border: [255, 230, 150],
             sound_select: String::new(), sound_activate: String::new(),
+            font: String::new(), bold: false, italic: false, shadow: 0, shadow_opacity: 50,
         }
     }
 }
@@ -84,6 +94,8 @@ impl ButtonStyle {
         s.glow = s.glow.clamp(0, 60);
         s.zoom = s.zoom.clamp(0, 20);
         s.backdrop = s.backdrop.clamp(0, 100);
+        s.shadow = s.shadow.clamp(0, 40);
+        s.shadow_opacity = s.shadow_opacity.clamp(0, 100);
         s
     }
 
@@ -95,13 +107,16 @@ impl ButtonStyle {
         s.sel_border_w = sc(s.sel_border_w);
         s.radius = sc(s.radius);
         s.glow = sc(s.glow);
+        s.shadow = sc(s.shadow);
         s
     }
 
     /// Marges (horizontale, verticale) a ajouter de chaque cote de l'image d'un bouton de `w` x `h` (halo et agrandissement).
     pub fn margins(&self, w: i32, h: i32) -> (i32, i32) {
         let z = |d: i32| (d.max(0) * self.zoom.clamp(0, 20) + 199) / 200;
-        (self.glow.max(0) + z(w), self.glow.max(0) + z(h))
+        // l'ombre deborde de sa distance plus son flou, soit deux fois sa distance
+        let m = self.glow.max(0).max(2 * self.shadow.max(0));
+        (m + z(w), m + z(h))
     }
 
     /// Nombre d'images differentes par bouton (images du halo anime comprises).
@@ -139,6 +154,10 @@ impl ButtonStyle {
         ];
         if !self.sound_select.is_empty() { o.push(("sound_select".into(), Value::Str(self.sound_select.clone()))); }
         if !self.sound_activate.is_empty() { o.push(("sound_activate".into(), Value::Str(self.sound_activate.clone()))); }
+        if !self.font.is_empty() { o.push(("font".into(), Value::Str(self.font.clone()))); }
+        if self.bold { o.push(("bold".into(), Value::Bool(true))); }
+        if self.italic { o.push(("italic".into(), Value::Bool(true))); }
+        if self.shadow > 0 { o.push(("shadow".into(), n(self.shadow))); o.push(("shadow_opacity".into(), n(self.shadow_opacity))); }
         Value::Obj(o)
     }
 
@@ -178,6 +197,11 @@ impl ButtonStyle {
         let text = |k: &str| v.get(k).and_then(Value::as_str).unwrap_or("").to_string();
         s.sound_select = text("sound_select");
         s.sound_activate = text("sound_activate");
+        s.font = text("font");
+        boolean("bold", &mut s.bold);
+        boolean("italic", &mut s.italic);
+        int("shadow", &mut s.shadow);
+        int("shadow_opacity", &mut s.shadow_opacity);
         Ok(s.clamped())
     }
 }

@@ -104,7 +104,6 @@
   "Clickable texts and images (selected)": "Textes et images cliquables (sélectionnés)",
   "Colored background (opacity)": "Fond coloré (opacité)",
   "Underline instead of framing": "Souligner au lieu d'encadrer",
-  "Sizes given for a 1920 × 1080 menu. The glow and the enlargement widen the button image: leave some space between buttons.": "Tailles données pour un menu 1920 × 1080. Le halo et l'agrandissement élargissent l'image des boutons : laissez de l'espace entre eux.",
   "Sounds": "Sons",
   "Default values": "Valeurs par défaut",
   "Colors, border, glow… (sounds are kept)": "Couleurs, cadre, halo… (les sons sont gardés)",
@@ -1323,5 +1322,11 @@
   "menus: error: {}": "menus : erreur : {}",
   "menus: warning: {}": "menus : avertissement : {}",
   "Check the menus…": "Vérifier les menus…",
-  "Consistency of pages, buttons, videos and returns: unreachable pages, videos never played, loops, arrows, languages": "Cohérence des pages, boutons, vidéos et retours : pages inaccessibles, vidéos jamais lancées, boucles, flèches, langues"
+  "Consistency of pages, buttons, videos and returns: unreachable pages, videos never played, loops, arrows, languages": "Cohérence des pages, boutons, vidéos et retours : pages inaccessibles, vidéos jamais lancées, boucles, flèches, langues",
+  "Button text": "Texte des boutons",
+  "Labels of the video thumbnails and text of the navigation buttons. Clickable texts keep their own font.": "Libellés des vignettes vidéo et texte des boutons de navigation. Les textes cliquables gardent leur propre police.",
+  "Drop shadow": "Ombre portée",
+  "Shadow under the button, shifted down and to the right and blurred by this distance. Widens the button image.": "Ombre sous le bouton, décalée vers le bas à droite et floutée de cette distance. Élargit l’image du bouton.",
+  "opacity": "opacité",
+  "Sizes given for a 1920 × 1080 menu. The glow, the shadow and the enlargement widen the button image: leave some space between buttons.": "Tailles données pour un menu 1920 × 1080. Le halo, l’ombre et l’agrandissement élargissent l’image des boutons : laissez de l’espace entre eux."
 }

@@ -989,28 +989,43 @@ fn finish_state(face: RgbaImage, st: &ButtonStyle, state: BtnState, framed: bool
         f = resize(&f, ((w * z + 50) / 100).max(1) as u32, ((h * z + 50) / 100).max(1) as u32);
     }
     let (fx, fy) = ((cw as i32 - f.width as i32) / 2, (ch as i32 - f.height as i32) / 2);
-    if lit && st.glow > 0 {
-        // halo : silhouette du bouton elargie puis floutee, dans la couleur du halo
+    // silhouette du bouton (opacite) placee en (dx, dy) sur le canevas, floutee de `r` px
+    let silhouette = |dx: i32, dy: i32, r: usize| -> Vec<f32> {
         let (ww, hh) = (cw as usize, ch as usize);
         let mut a = vec![0.0f32; ww * hh];
         for y in 0..f.height as i32 {
             for x in 0..f.width as i32 {
-                let (tx, ty) = (x + fx, y + fy);
+                let (tx, ty) = (x + dx, y + dy);
                 if tx >= 0 && ty >= 0 && (tx as usize) < ww && (ty as usize) < hh {
                     a[ty as usize * ww + tx as usize] = f.pixel(x as u32, y as u32)[3] as f32 / 255.0;
                 }
             }
         }
-        let r = (st.glow as usize / 2).max(1);
         box_blur(&mut a, ww, hh, r);
         box_blur(&mut a, ww, hh, r);
-        let c = st.glow_color;
+        a
+    };
+    let layer = |a: &[f32], c: [u8; 3], alpha: &dyn Fn(f32) -> f32| -> RgbaImage {
+        let mut l = RgbaImage::new(cw, ch);
         for (i, v) in a.iter().enumerate() {
-            let al = (v * 1.8).min(1.0) * 230.0;
+            let al = alpha(*v);
             if al >= 1.0 {
-                canvas.data[i * 4..i * 4 + 4].copy_from_slice(&[c[0], c[1], c[2], al.round() as u8]);
+                l.data[i * 4..i * 4 + 4].copy_from_slice(&[c[0], c[1], c[2], al.round().min(255.0) as u8]);
             }
         }
+        l
+    };
+    if framed && st.shadow > 0 {
+        // ombre portee : silhouette decalee vers le bas a droite, floutee, noire
+        let d = st.shadow;
+        let a = silhouette(fx + d, fy + d, (d as usize / 2).max(1));
+        let k = st.shadow_opacity.clamp(0, 100) as f32 / 100.0 * 255.0;
+        blit(&mut canvas, &layer(&a, [0, 0, 0], &|v| v * k), 0, 0, 1.0);
+    }
+    if lit && st.glow > 0 {
+        // halo : silhouette du bouton elargie puis floutee, dans la couleur du halo
+        let a = silhouette(fx, fy, (st.glow as usize / 2).max(1));
+        blit(&mut canvas, &layer(&a, st.glow_color, &|v| (v * 1.8).min(1.0) * 230.0), 0, 0, 1.0);
     }
     blit(&mut canvas, &f, fx, fy, 1.0);
     canvas
@@ -1034,6 +1049,19 @@ fn contain(src: &RgbaImage, w: u32, h: u32) -> RgbaImage {
 }
 
 impl FontRenderer {
+    /// Texte d'un bouton, centre dans `rect` : police, gras et italique du style ; la taille est reduite (puis le texte tronque)
+    /// pour tenir dans la largeur.
+    fn button_label(&self, im: &mut RgbaImage, label: &str, rect: (u32, u32, u32, u32), size: f32, fg: [u8; 3], st: &ButtonStyle) {
+        let custom = if st.font.is_empty() { None } else { self.custom_font(&st.font, Path::new("")) };
+        let f: &FontVec = custom.as_deref().unwrap_or(&self.font);
+        let (txt, sz) = fit_text(f, label, rect.2, size);
+        if st.bold || st.italic {
+            draw_line_styled(im, f, &txt, sz, fg, (rect.0 as f32, rect.1 as f32, rect.2 as f32, rect.3 as f32), Align::Center, st.bold, st.italic);
+        } else {
+            draw_line(im, f, &txt, sz, fg, rect, Align::Center);
+        }
+    }
+
     /// Face d'un texte ou d'une image cliquable : l'element seul a l'etat normal ; ensuite fond translucide, cadre ou soulignement.
     fn decor_face(&self, content: &RgbaImage, st: &ButtonStyle, state: BtnState) -> RgbaImage {
         let (w, h) = (content.width, content.height);
@@ -1075,8 +1103,7 @@ impl bdauthor_core::project::Renderer for FontRenderer {
                     im.set(x, y, thumb.pixel(x, y));
                 }
             }
-            let (txt, sz) = fit_text(&self.font, label, w, ((h_total - h_thumb) as f32 * 0.55).max(14.0));
-            draw_text_in(&mut im, &self.font, &txt, sz, fg, (0, h_thumb, w, h_total - h_thumb));
+            self.button_label(&mut im, label, (0, h_thumb, w, h_total - h_thumb), ((h_total - h_thumb) as f32 * 0.55).max(14.0), fg, st);
             finish_state(im, st, state, true)
         };
         three(&face, st, false)
@@ -1086,8 +1113,7 @@ impl bdauthor_core::project::Renderer for FontRenderer {
         let face = |state: BtnState| {
             let (bg, fg, _, _) = st.colors(state);
             let mut im = fill_rect(w, h, bg);
-            let (txt, sz) = fit_text(&self.font, label, w, (h as f32 * 0.5).max(14.0));
-            draw_text_centered(&mut im, &self.font, &txt, sz, fg);
+            self.button_label(&mut im, label, (0, 0, w, h), (h as f32 * 0.5).max(14.0), fg, st);
             finish_state(im, st, state, true)
         };
         three(&face, st, false)

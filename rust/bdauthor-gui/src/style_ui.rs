@@ -16,6 +16,22 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &
     let before = st.clone();
     let px = |ui: &mut egui::Ui, v: &mut i32, max: i32| { ui.add(egui::DragValue::new(v).range(0..=max).suffix(" px")); };
     let pct = |ui: &mut egui::Ui, v: &mut i32, max: i32| { ui.add(egui::DragValue::new(v).range(0..=max).suffix(" %")); };
+    ui.strong(tr("Button text"));
+    let shown = if st.font.is_empty() { tr("Default font").to_string() } else {
+        bdauthor_render::font_choices().into_iter().find(|(_, f)| *f == st.font).map(|(l, _)| l).unwrap_or_else(|| st.font.clone())
+    };
+    ui.horizontal(|ui| {
+        ui.label(tr("Font:"));
+        egui::ComboBox::from_id_salt(format!("{id}_police")).selected_text(shown).width(200.0).show_ui(ui, |ui| {
+            if ui.selectable_label(st.font.is_empty(), tr("Default font")).clicked() { st.font.clear(); }
+            for (label, file) in bdauthor_render::font_choices() {
+                if crate::cover_ui::font_entry(ui, None, std::path::Path::new(""), &label, &file, st.font == file).clicked() { st.font = file; }
+            }
+        });
+        ui.checkbox(&mut st.bold, tr("Bold"));
+        ui.checkbox(&mut st.italic, tr("Italic"));
+    });
+    ui.label(egui::RichText::new(tr("Labels of the video thumbnails and text of the navigation buttons. Clickable texts keep their own font.")).small().weak());
     ui.strong(tr("Unselected button"));
     egui::Grid::new(format!("{id}_normal")).num_columns(2).show(ui, |ui| {
         ui.label(tr("Background")); ui.color_edit_button_srgb(&mut st.normal_bg); ui.end_row();
@@ -38,6 +54,12 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &
     ui.strong(tr("Common"));
     egui::Grid::new(format!("{id}_commun")).num_columns(2).show(ui, |ui| {
         ui.label(tr("Corner rounding")); px(ui, &mut st.radius, 200); ui.end_row();
+        ui.label(tr("Drop shadow")).on_hover_text(tr("Shadow under the button, shifted down and to the right and blurred by this distance. Widens the button image."));
+        ui.horizontal(|ui| {
+            px(ui, &mut st.shadow, 40);
+            ui.add_enabled_ui(st.shadow > 0, |ui| { ui.label(tr("opacity")); pct(ui, &mut st.shadow_opacity, 100); });
+        });
+        ui.end_row();
     });
     ui.checkbox(&mut st.activated, tr("Distinct “activated” state (when OK is pressed)"));
     if st.activated {
@@ -52,7 +74,7 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &
         ui.label(tr("Colored background (opacity)")); pct(ui, &mut st.backdrop, 100); ui.end_row();
     });
     ui.checkbox(&mut st.underline, tr("Underline instead of framing"));
-    crate::help(ui, tr("Sizes given for a 1920 × 1080 menu. The glow and the enlargement widen the button image: leave some space between buttons."));
+    crate::help(ui, tr("Sizes given for a 1920 × 1080 menu. The glow, the shadow and the enlargement widen the button image: leave some space between buttons."));
     // sons : seulement dans le style du projet (un element a sa propre case « Sons propres a cet element », hors apparence)
     if id == "projet" {
         ui.strong(tr("Sounds"));

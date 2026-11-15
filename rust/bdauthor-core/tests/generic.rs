@@ -116,3 +116,18 @@ fn simulation_of_chapter_thumbnails() {
     assert_eq!(b[1].action, SimAction::Play(0));
     assert_eq!(b[1].ret, SlotReturn::Home);
 }
+
+#[test]
+fn button_font_and_shadow_round_trip_and_widen_the_image() {
+    use bdauthor_core::style::ButtonStyle;
+    let st = ButtonStyle { font: "Lato-Regular.ttf".into(), bold: true, italic: true, shadow: 8, shadow_opacity: 70, ..ButtonStyle::default() };
+    let back = ButtonStyle::from_value(&st.to_value()).unwrap();
+    assert_eq!(back, st);
+    // valeurs par defaut : rien d'ecrit (anciens projets inchanges)
+    let txt = ButtonStyle::default().to_value().to_pretty();
+    assert!(!txt.contains("font") && !txt.contains("shadow") && !txt.contains("bold"), "{txt}");
+    // l'ombre deborde de deux fois sa distance ; a l'echelle 720p elle est reduite comme les autres tailles
+    assert_eq!(st.margins(100, 50), (16, 16));
+    assert_eq!(st.scaled(2.0 / 3.0).shadow, 5);
+    assert_eq!(ButtonStyle { shadow: 99, ..ButtonStyle::default() }.clamped().shadow, 40);
+}
