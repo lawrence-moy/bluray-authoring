@@ -137,6 +137,29 @@ fn audio_peaks_follow_the_loudness_and_playback_starts() {
 }
 
 #[test]
+fn audio_peaks_of_a_long_track_are_decoded_in_parts() {
+    use bdauthor_core::ffmpeg::audio_peaks_with;
+    let Ok(tools) = Tools::locate() else { return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_audio_long_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p = dir.join("long.flac");
+    // 3 minutes : fort, faible, fort (une minute chacun) ; assez long pour etre decoupe
+    let ok = Command::new(&tools.ffmpeg)
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "sine=frequency=440:duration=60", "-f", "lavfi", "-i", "sine=frequency=440:duration=60,volume=0.1",
+               "-f", "lavfi", "-i", "sine=frequency=440:duration=60", "-filter_complex", "[0][1][2]concat=n=3:v=0:a=1"])
+        .arg(&p).status().unwrap().success();
+    assert!(ok);
+    let mut last = 0.0f32;
+    let peaks = audio_peaks_with(&tools, &p, None, 180.0, 180, &mut |f| { assert!(f >= last); last = f; true }).unwrap();
+    assert!((last - 1.0).abs() < 0.01, "{last}");
+    // chaque seconde a sa valeur (pas de trou aux raccords des morceaux), et le niveau suit le son
+    assert!(peaks.iter().all(|v| *v > 0.005), "{peaks:?}");
+    let (a, b, c) = (peaks[5..55].iter().cloned().fold(1.0, f32::min), peaks[65..115].iter().cloned().fold(0.0, f32::max), peaks[125..175].iter().cloned().fold(1.0, f32::min));
+    assert!(a > 0.1 && b < 0.03 && c > 0.1, "{a} {b} {c}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn ffmpeg_reports_detailed_progress() {
     use bdauthor_core::ffmpeg::{make_still_ts, set_progress_detail, EncodeOpts, FfmpegProgress};
     let Some((tools, _src, dir)) = source("detail") else { return };
@@ -289,3 +312,4 @@ fn batch_extraction_matches_single_extraction() {
     }
     let _ = std::fs::remove_dir_all(&dir);
 }
+

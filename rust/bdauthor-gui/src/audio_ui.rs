@@ -202,6 +202,19 @@ enum Loaded {
     Failed(String),
 }
 
+/// Formes d'onde deja calculees pendant la session (fichier, piste, taille et date du fichier) : rouvrir la meme piste est immediat.
+type PeaksKey = (PathBuf, Option<u32>, u64, Option<std::time::SystemTime>);
+static PEAKS_CACHE: std::sync::OnceLock<std::sync::Mutex<HashMap<PeaksKey, (f64, Vec<f32>)>>> = std::sync::OnceLock::new();
+
+fn peaks_key(file: &Path, stream: Option<u32>) -> Option<PeaksKey> {
+    let m = std::fs::metadata(file).ok()?;
+    Some((file.to_path_buf(), stream, m.len(), m.modified().ok()))
+}
+
+fn peaks_cache() -> std::sync::MutexGuard<'static, HashMap<PeaksKey, (f64, Vec<f32>)>> {
+    PEAKS_CACHE.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Lecture en cours de la fenetre d'ecoute.
 struct Playing {
     out: AudioOut,
@@ -244,6 +257,15 @@ fn clock(t: f64) -> String {
 impl AudioPreview {
     /// `file` : fichier audio, ou video dont on ecoute la piste audio numero `stream`.
     pub fn new(video: usize, track: usize, title: String, file: &Path, stream: Option<u32>) -> AudioPreview {
+        let key = peaks_key(file, stream);
+        let mut me = AudioPreview {
+            video, track, title, file: file.to_path_buf(), stream, duration: 0.0, peaks: Vec::new(), progress: 0.0, rx: None, error: None,
+            tools: None, play: None, pos: 0.0, scrub: None,
+        };
+        if let Some((d, p)) = key.as_ref().and_then(|k| peaks_cache().get(k).cloned()) {
+            (me.duration, me.peaks, me.progress) = (d, p, 1.0);
+            return me;
+        }
         let (tx, rx) = channel();
         let src = file.to_path_buf();
         std::thread::spawn(move || {
@@ -260,12 +282,16 @@ impl AudioPreview {
             };
             let r = audio_peaks_with(&tools, &src, stream, dur, 2000, &mut report);
             match r {
-                Ok(p) => { let _ = tx.send(Loaded::Peaks(p)); }
+                Ok(p) => {
+                    if let Some(k) = key { peaks_cache().insert(k, (dur, p.clone())); }
+                    let _ = tx.send(Loaded::Peaks(p));
+                }
                 Err(bdauthor_core::ffmpeg::Error::Cancelled) => {}
                 Err(e) => { let _ = tx.send(Loaded::Failed(e.to_string())); }
             }
         });
-        AudioPreview { video, track, title, file: file.to_path_buf(), stream, duration: 0.0, peaks: Vec::new(), progress: 0.0, rx: Some(rx), error: None, tools: None, play: None, pos: 0.0, scrub: None }
+        me.rx = Some(rx);
+        me
     }
 
     fn poll(&mut self) {

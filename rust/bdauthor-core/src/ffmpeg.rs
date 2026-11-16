@@ -1208,43 +1208,102 @@ pub fn audio_peaks(tools: &Tools, src: &Path, track: Option<u32>, duration: f64,
 
 /// Comme `audio_peaks`, en donnant l'avancement (0 a 1, d'apres la duree) a `progress` au fil de la lecture ; si `progress`
 /// rend faux, le calcul s'arrete (erreur `Cancelled`).
+///
+/// Le decodage audio n'occupe qu'un coeur : une piste longue est coupee en morceaux decodes en parallele (un ffmpeg par coeur,
+/// chacun positionne par `-ss`), dont on garde la plus forte valeur par tranche.
 pub fn audio_peaks_with(tools: &Tools, src: &Path, track: Option<u32>, duration: f64, bins: usize, progress: &mut dyn FnMut(f32) -> bool) -> Result<Vec<f32>> {
-    const RATE: u32 = 4000;
+    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     let bins = bins.max(1);
+    let total = (duration * PEAK_RATE as f64).max(1.0);
+    // au moins une minute par morceau, au plus un morceau par coeur (8 au plus)
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
+    let parts = if duration > 0.0 { cores.min((duration / 60.0).ceil() as usize).max(1) } else { 1 };
+    let len = duration / parts as f64;
+    let done = AtomicU64::new(0);
+    let stop = AtomicBool::new(false);
+    let results: Vec<Result<Vec<f32>>> = std::thread::scope(|sc| {
+        let handles: Vec<_> = (0..parts)
+            .map(|k| {
+                let (done, stop) = (&done, &stop);
+                // le dernier morceau va jusqu'a la fin (duree annoncee parfois un peu courte)
+                let seg = if parts == 1 { None } else { Some((k as f64 * len, if k + 1 == parts { None } else { Some(len) })) };
+                sc.spawn(move || peaks_segment(tools, src, track, seg, total, bins, done, stop))
+            })
+            .collect();
+        let mut cancelled = false;
+        while !handles.iter().all(|h| h.is_finished()) {
+            if !cancelled && !progress((done.load(Ordering::Relaxed) as f64 / total).min(1.0) as f32) {
+                cancelled = true;
+                stop.store(true, Ordering::Relaxed);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(40));
+        }
+        if !cancelled && !progress((done.load(Ordering::Relaxed) as f64 / total).min(1.0) as f32) {
+            stop.store(true, Ordering::Relaxed);
+        }
+        handles.into_iter().map(|h| h.join().unwrap_or_else(|_| Err(Error::Format("audio_peaks".into())))).collect()
+    });
+    if stop.load(Ordering::Relaxed) {
+        return Err(Error::Cancelled);
+    }
+    let mut peaks = vec![0.0f32; bins];
+    for r in results {
+        for (p, v) in peaks.iter_mut().zip(r?) { if v > *p { *p = v; } }
+    }
+    if done.load(Ordering::Relaxed) == 0 {
+        return Err(Error::Format(tr("no audio in this track").into()));
+    }
+    Ok(peaks)
+}
+
+/// Frequence a laquelle la piste est decodee pour l'enveloppe (Hz).
+const PEAK_RATE: u32 = 4000;
+
+/// Enveloppe d'un morceau de piste : `seg` = (debut, duree ou `None` jusqu'a la fin), `None` = toute la piste. Les valeurs sont
+/// rangees dans les `bins` tranches de la piste entiere (`total` echantillons) ; `done` compte les echantillons lus.
+fn peaks_segment(
+    tools: &Tools, src: &Path, track: Option<u32>, seg: Option<(f64, Option<f64>)>, total: f64, bins: usize,
+    done: &std::sync::atomic::AtomicU64, stop: &std::sync::atomic::AtomicBool,
+) -> Result<Vec<f32>> {
+    use std::sync::atomic::Ordering;
     let mut c = Command::new(&tools.ffmpeg);
-    c.args(["-v", "error", "-nostdin", "-i"]).arg(src).arg("-vn");
+    c.args(["-v", "error", "-nostdin"]);
+    if let Some((start, len)) = seg {
+        c.args(["-ss", &format!("{start:.3}")]);
+        if let Some(l) = len { c.args(["-t", &format!("{l:.3}")]); }
+    }
+    c.arg("-i").arg(src).arg("-vn");
     if let Some(n) = track { c.args(["-map", &format!("0:a:{n}")]); }
-    c.args(["-ac", "1", "-ar", &RATE.to_string(), "-f", "s16le", "-"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
+    c.args(["-ac", "1", "-ar", &PEAK_RATE.to_string(), "-f", "s16le", "-"]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
     no_window(&mut c);
     let mut child = c.spawn()?;
     let mut out = child.stdout.take().ok_or_else(|| Error::Format("stdout".into()))?;
-    let total = (duration * RATE as f64).max(1.0);
+    let first = seg.map_or(0.0, |s| s.0 * PEAK_RATE as f64);
     let mut peaks = vec![0.0f32; bins];
     let (mut buf, mut idx, mut odd) = (vec![0u8; 65536], 0u64, None::<u8>);
     loop {
+        if stop.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::Cancelled);
+        }
         let n = out.read(&mut buf)?;
         if n == 0 { break; }
+        let before = idx;
         for &b in &buf[..n] {
             match odd.take() {
                 None => odd = Some(b),
                 Some(lo) => {
                     let v = (i16::from_le_bytes([lo, b]) as f32 / 32768.0).abs();
-                    let k = ((idx as f64 / total * bins as f64) as usize).min(bins - 1);
+                    let k = (((first + idx as f64) / total * bins as f64) as usize).min(bins - 1);
                     if v > peaks[k] { peaks[k] = v; }
                     idx += 1;
                 }
             }
         }
-        if !progress((idx as f64 / total).min(1.0) as f32) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(Error::Cancelled);
-        }
+        done.fetch_add(idx - before, Ordering::Relaxed);
     }
-    let status = child.wait()?;
-    if idx == 0 || !status.success() && idx == 0 {
-        return Err(Error::Format(tr("no audio in this track").into()));
-    }
+    child.wait()?;
     Ok(peaks)
 }
 
