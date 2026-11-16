@@ -3,7 +3,7 @@ use crate::i18n::{tr, trf};
 use crate::subs_ui::language_for_code;
 use bdauthor_core::audio::{AudioFormat, AudioSource, AC3_RATES, AC3_SURROUND_KBPS, AudioTrackCfg, MAX_AUDIO_TRACKS};
 use crate::player::AudioOut;
-use bdauthor_core::ffmpeg::{audio_peaks, list_audio_streams, probe_duration, AudioStreamInfo, Tools};
+use bdauthor_core::ffmpeg::{audio_peaks_with, list_audio_streams, probe_duration, AudioStreamInfo, Tools};
 use bdauthor_core::model::VideoEntry;
 use bdauthor_core::subtitle::Language;
 use eframe::egui;
@@ -196,6 +196,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
 /// Message du fil de lecture de l'enveloppe.
 enum Loaded {
     Duration(f64),
+    /// avancement de la lecture de la forme d'onde (0 a 1)
+    Progress(f32),
     Peaks(Vec<f32>),
     Failed(String),
 }
@@ -222,6 +224,8 @@ pub struct AudioPreview {
     stream: Option<u32>,
     duration: f64,
     peaks: Vec<f32>,
+    /// avancement du calcul de la forme d'onde (0 a 1)
+    progress: f32,
     rx: Option<Receiver<Loaded>>,
     error: Option<String>,
     tools: Option<Tools>,
@@ -246,12 +250,22 @@ impl AudioPreview {
             let tools = match Tools::locate() { Ok(t) => t, Err(e) => { let _ = tx.send(Loaded::Failed(e.to_string())); return; } };
             let dur = match probe_duration(&tools, &src) { Ok(d) => d, Err(e) => { let _ = tx.send(Loaded::Failed(e.to_string())); return; } };
             let _ = tx.send(Loaded::Duration(dur));
-            match audio_peaks(&tools, &src, stream, dur, 2000) {
+            // avancement par pour-cent ; fenetre fermee (envoi impossible) : le calcul s'arrete
+            let mut last = -1i32;
+            let mut report = |f: f32| {
+                let pct = (f * 100.0) as i32;
+                if pct == last { return true; }
+                last = pct;
+                tx.send(Loaded::Progress(f)).is_ok()
+            };
+            let r = audio_peaks_with(&tools, &src, stream, dur, 2000, &mut report);
+            match r {
                 Ok(p) => { let _ = tx.send(Loaded::Peaks(p)); }
+                Err(bdauthor_core::ffmpeg::Error::Cancelled) => {}
                 Err(e) => { let _ = tx.send(Loaded::Failed(e.to_string())); }
             }
         });
-        AudioPreview { video, track, title, file: file.to_path_buf(), stream, duration: 0.0, peaks: Vec::new(), rx: Some(rx), error: None, tools: None, play: None, pos: 0.0, scrub: None }
+        AudioPreview { video, track, title, file: file.to_path_buf(), stream, duration: 0.0, peaks: Vec::new(), progress: 0.0, rx: Some(rx), error: None, tools: None, play: None, pos: 0.0, scrub: None }
     }
 
     fn poll(&mut self) {
@@ -260,6 +274,7 @@ impl AudioPreview {
         while let Ok(m) = rx.try_recv() {
             match m {
                 Loaded::Duration(d) => self.duration = d,
+                Loaded::Progress(f) => self.progress = f,
                 Loaded::Peaks(p) => { self.peaks = p; done = true; }
                 Loaded::Failed(e) => { self.error = Some(e); done = true; }
             }
@@ -337,7 +352,11 @@ impl AudioPreview {
             if ui.add_enabled(dur > 0.0, egui::Button::new(if running { tr("⏸ Pause") } else { tr("▶ Play") })).clicked() { toggle = true; }
             if ui.add_enabled(self.play.is_some() || self.pos > 0.0, egui::Button::new(tr("⏹ Stop"))).on_hover_text(tr("Stop and go back to the start")).clicked() { rewind = true; }
             ui.monospace(format!("{} / {}", clock(cur), clock(dur)));
-            if self.rx.is_some() && self.error.is_none() { ui.spinner(); ui.label(egui::RichText::new(tr("Reading the waveform…")).weak()); }
+            if self.rx.is_some() && self.error.is_none() {
+                let pct = (self.progress * 100.0).round() as u32;
+                ui.add(egui::ProgressBar::new(self.progress).desired_width(260.0).animate(true).text(format!("{} {} %", tr("Reading the waveform…"), pct)))
+                    .on_hover_text(tr("The waveform is read from the whole track; you can already play it."));
+            }
         });
         if let Some(e) = &self.error { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), e); }
 

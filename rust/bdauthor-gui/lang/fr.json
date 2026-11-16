@@ -1345,5 +1345,6 @@
   "the source track has {} channels; 8 at most": "la piste source a {} canaux ; 8 au plus",
   "⏸ Pause": "⏸ Pause",
   "Stop and go back to the start": "Arrêter et revenir au début",
-  "the audio output does not respond": "la sortie audio ne répond pas"
+  "the audio output does not respond": "la sortie audio ne répond pas",
+  "The waveform is read from the whole track; you can already play it.": "La forme d'onde est lue sur toute la piste ; vous pouvez déjà l'écouter."
 }

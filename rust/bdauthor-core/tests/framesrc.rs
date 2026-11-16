@@ -113,7 +113,7 @@ fn strip_range_covers_only_the_range() {
 
 #[test]
 fn audio_peaks_follow_the_loudness_and_playback_starts() {
-    use bdauthor_core::ffmpeg::audio_peaks;
+    use bdauthor_core::ffmpeg::{audio_peaks, audio_peaks_with, Error};
     let Ok(tools) = Tools::locate() else { return };
     let dir = std::env::temp_dir().join(format!("bdauthor_audio_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -126,6 +126,13 @@ fn audio_peaks_follow_the_loudness_and_playback_starts() {
     let peaks = audio_peaks(&tools, &p, None, 4.0, 8).unwrap();
     assert_eq!(peaks.len(), 8);
     assert!(peaks[1] > 0.1 && peaks[6] < 0.03 && peaks[6] > 0.005, "{peaks:?}");
+    // avancement croissant jusqu'a 1, et memes valeurs
+    let mut seen = Vec::new();
+    let p2 = audio_peaks_with(&tools, &p, None, 4.0, 8, &mut |f| { seen.push(f); true }).unwrap();
+    assert_eq!(p2, peaks);
+    assert!(!seen.is_empty() && seen.windows(2).all(|w| w[1] >= w[0]) && (seen.last().unwrap() - 1.0).abs() < 0.01, "{seen:?}");
+    // arret demande : erreur « annule »
+    assert!(matches!(audio_peaks_with(&tools, &p, None, 4.0, 8, &mut |_| false), Err(Error::Cancelled)));
     let _ = std::fs::remove_dir_all(&dir);
 }
 

@@ -1203,6 +1203,12 @@ pub fn list_audio_streams(tools: &Tools, src: &Path) -> Result<Vec<AudioStreamIn
 /// Enveloppe d'une piste audio : `bins` valeurs entre 0 et 1 (plus forte amplitude de chaque tranche egale de `duration`).
 /// `track` : numero de la piste audio du fichier (0 = la premiere) ; `None` : la meilleure piste (fichier audio).
 pub fn audio_peaks(tools: &Tools, src: &Path, track: Option<u32>, duration: f64, bins: usize) -> Result<Vec<f32>> {
+    audio_peaks_with(tools, src, track, duration, bins, &mut |_| true)
+}
+
+/// Comme `audio_peaks`, en donnant l'avancement (0 a 1, d'apres la duree) a `progress` au fil de la lecture ; si `progress`
+/// rend faux, le calcul s'arrete (erreur `Cancelled`).
+pub fn audio_peaks_with(tools: &Tools, src: &Path, track: Option<u32>, duration: f64, bins: usize, progress: &mut dyn FnMut(f32) -> bool) -> Result<Vec<f32>> {
     const RATE: u32 = 4000;
     let bins = bins.max(1);
     let mut c = Command::new(&tools.ffmpeg);
@@ -1228,6 +1234,11 @@ pub fn audio_peaks(tools: &Tools, src: &Path, track: Option<u32>, duration: f64,
                     idx += 1;
                 }
             }
+        }
+        if !progress((idx as f64 / total).min(1.0) as f32) {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(Error::Cancelled);
         }
     }
     let status = child.wait()?;
