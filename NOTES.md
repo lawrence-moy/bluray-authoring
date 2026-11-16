@@ -5,9 +5,6 @@
 
 ## À faire
 
-- **Fenêtre d'écoute des pistes audio** (bouton 🔊 des pistes d'une vidéo) : la passer sur le moteur des aperçus vidéo
-  (`playback::PcmFeed` + cpal, voir « Son dans les aperçus vidéo ») au lieu de `ffplay`. Pause et déplacement instantanés,
-  position = son réellement joué, et `ffplay.exe` n'est plus nécessaire (seuls `ffmpeg` et `ffprobe` restent requis).
 - **Test sur lecteur de salon (BD-RE)** des pistes audio : copie AC-3, Dolby Digital 5.1, LPCM 16 et 24 bits (descripteur HDMV
   et trames de 7,5 ms du LPCM 24 bits non confirmés), copie DTS / DTS-HD (PES 0xFD, extensions 0x71 / 0x72). L'AC-3 est
   écrit comme ffmpeg en mode m2ts : 0xFD + extension 0x71 (avant : flux privé 0xBD ; ffmpeg note que certains lecteurs exigent
@@ -309,7 +306,10 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   reprend a l'instant du son (au plus toutes les 2 s).
 - Choix du son (muet / piste N) commun a toutes les fenetres pour la session, applique tout de suite a la lecture en cours.
 - Linux : cpal demande ALSA (`libasound2-dev` / `alsa-lib-devel` pour compiler).
-- La fenetre d'ecoute des pistes audio utilise encore ffplay (a basculer sur `PcmFeed` + cpal plus tard).
+- La fenetre d'ecoute des pistes audio (`audio_ui::AudioPreview`) passe par la meme sortie (`player::AudioOut`) : position = son
+  entendu, pause qui fige la sortie cpal (reprise sans relancer ffmpeg ; si la sortie ne sait pas se mettre en pause, arret puis
+  reprise a la meme position), deplacement = nouveau flux a l'instant choisi. ffplay n'est plus utilise : seuls ffmpeg et ffprobe
+  sont requis.
 
 ## Verificateur de coherence des menus
 - Coeur : `coherence.rs`, `check(model, duree)` -> `Report` (constats tries par gravite + carte : pages, sorties, videos).

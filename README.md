@@ -150,7 +150,7 @@ Command-line tools: `bdauthor-build` (project → disc), `bdcheck` (verification
 
 ### Requirements
 - [Rust](https://rustup.rs/) (stable toolchain; on Windows, with the MSVC tools)
-- [ffmpeg](https://ffmpeg.org/) **with `libx264` and the `ac3` encoder**, plus `ffprobe` (and `ffplay` for audio track listening)
+- [ffmpeg](https://ffmpeg.org/) **with `libx264` and the `ac3` encoder**, plus `ffprobe`
 
 ffmpeg is looked up in this order: the folder set in the settings, next to the executable, the folder given by the `BDAUTHOR_FFMPEG_DIR` environment variable, then the `PATH`.
 

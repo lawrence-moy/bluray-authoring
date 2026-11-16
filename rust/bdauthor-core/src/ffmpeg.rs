@@ -1237,45 +1237,6 @@ pub fn audio_peaks(tools: &Tools, src: &Path, track: Option<u32>, duration: f64,
     Ok(peaks)
 }
 
-impl Tools {
-    /// ffplay (fourni avec ffmpeg) : a cote de ffmpeg, sinon dans le PATH.
-    pub fn ffplay(&self) -> Option<PathBuf> {
-        let next = self.ffmpeg.parent().filter(|p| !p.as_os_str().is_empty()).map(|d| d.join(exe_name("ffplay")));
-        next.filter(|p| works(p)).or_else(|| Some(PathBuf::from(exe_name("ffplay"))).filter(|p| works(p)))
-    }
-}
-
-/// Lecture du son d'une piste, sans fenetre, par ffplay. Arretee a la destruction.
-pub struct AudioPlayback {
-    child: Child,
-}
-
-impl AudioPlayback {
-    /// Joue `src` a partir de `from` secondes. `track` : numero de la piste audio du fichier (0 = la premiere) ; `None` : la
-    /// meilleure piste.
-    pub fn start(tools: &Tools, src: &Path, track: Option<u32>, from: f64) -> Result<AudioPlayback> {
-        let play = tools.ffplay().ok_or_else(|| Error::NotFound(tr("ffplay not found: put ffplay.exe next to ffmpeg.exe (it comes with ffmpeg) to listen to the tracks.").into()))?;
-        let mut c = Command::new(play);
-        c.args(["-nodisp", "-autoexit", "-loglevel", "quiet", "-vn", "-ss", &format!("{:.3}", from.max(0.0))]);
-        if let Some(n) = track { c.args(["-ast", &format!("a:{n}")]); }
-        c.arg("-i").arg(src).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
-        no_window(&mut c);
-        Ok(AudioPlayback { child: c.spawn()? })
-    }
-
-    /// Le son est termine (fin de la piste ou processus arrete).
-    pub fn finished(&mut self) -> bool { !matches!(self.child.try_wait(), Ok(None)) }
-
-    pub fn stop(&mut self) {
-        let _ = self.child.kill();
-        let _ = self.child.wait();
-    }
-}
-
-impl Drop for AudioPlayback {
-    fn drop(&mut self) { self.stop(); }
-}
-
 // ---------------------------------------------------------------- copie sans reencodage (source deja conforme)
 
 /// Raisons qui empechent de recopier tel quel le flux video de `info` dans un disque Blu-ray (liste vide : rien ne s'y oppose dans ce

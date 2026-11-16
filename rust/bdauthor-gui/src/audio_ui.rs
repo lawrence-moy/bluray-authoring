@@ -2,7 +2,8 @@
 use crate::i18n::{tr, trf};
 use crate::subs_ui::language_for_code;
 use bdauthor_core::audio::{AudioFormat, AudioSource, AC3_RATES, AC3_SURROUND_KBPS, AudioTrackCfg, MAX_AUDIO_TRACKS};
-use bdauthor_core::ffmpeg::{audio_peaks, list_audio_streams, probe_duration, AudioPlayback, AudioStreamInfo, Tools};
+use crate::player::AudioOut;
+use bdauthor_core::ffmpeg::{audio_peaks, list_audio_streams, probe_duration, AudioStreamInfo, Tools};
 use bdauthor_core::model::VideoEntry;
 use bdauthor_core::subtitle::Language;
 use eframe::egui;
@@ -199,7 +200,17 @@ enum Loaded {
     Failed(String),
 }
 
-/// Fenetre d'ecoute d'une piste audio : forme d'onde sur une frise, bouton lecture / arret, clic ou glisser pour se deplacer.
+/// Lecture en cours de la fenetre d'ecoute.
+struct Playing {
+    out: AudioOut,
+    /// position de depart (s) et moment du depart
+    from: f64,
+    t0: Instant,
+    paused: bool,
+}
+
+/// Fenetre d'ecoute d'une piste audio : forme d'onde sur une frise, lecture / pause / arret, clic ou glisser pour se deplacer.
+/// Le son passe par la sortie audio de l'application (comme les apercus video) : la position affichee est celle du son entendu.
 pub struct AudioPreview {
     #[allow(dead_code)]
     pub video: usize,
@@ -214,8 +225,7 @@ pub struct AudioPreview {
     rx: Option<Receiver<Loaded>>,
     error: Option<String>,
     tools: Option<Tools>,
-    /// lecture en cours : processus, instant du depart, position de depart (s)
-    play: Option<(AudioPlayback, Instant, f64)>,
+    play: Option<Playing>,
     /// position quand rien ne joue
     pos: f64,
     /// position visee pendant un glisser sur la frise
@@ -257,17 +267,18 @@ impl AudioPreview {
         if done { self.rx = None; }
     }
 
-    /// Position actuelle (s).
+    /// Position actuelle (s) : celle du son entendu.
     fn current(&self) -> f64 {
         match &self.play {
-            Some((_, t0, from)) => (from + t0.elapsed().as_secs_f64()).min(self.duration),
+            Some(p) => (p.from + p.out.position()).min(self.duration.max(p.from)),
             None => self.pos,
         }
     }
 
+    /// Arrete le son en gardant la position.
     fn stop(&mut self) {
         let cur = self.current();
-        if let Some((mut pb, _, _)) = self.play.take() { pb.stop(); self.pos = cur; }
+        if self.play.take().is_some() { self.pos = cur; }
     }
 
     fn start_at(&mut self, t: f64) {
@@ -276,9 +287,26 @@ impl AudioPreview {
             match Tools::locate() { Ok(t) => self.tools = Some(t), Err(e) => { self.error = Some(e.to_string()); return; } }
         }
         let Some(tools) = &self.tools else { return };
-        match AudioPlayback::start(tools, &self.file, self.stream, t) {
-            Ok(pb) => { self.play = Some((pb, Instant::now(), t)); self.pos = t; self.error = None; }
+        match AudioOut::start(tools, &self.file, self.stream, t) {
+            Ok(out) => { self.play = Some(Playing { out, from: t, t0: Instant::now(), paused: false }); self.pos = t; self.error = None; }
             Err(e) => self.error = Some(e.to_string()),
+        }
+    }
+
+    /// Lecture / pause : la pause fige la sortie audio (reprise immediate) ; si la sortie ne sait pas, le son s'arrete et
+    /// repartira de la meme position.
+    fn toggle(&mut self) {
+        match &mut self.play {
+            Some(p) if !p.paused => {
+                if p.out.pause() { p.paused = true; } else { self.stop(); }
+            }
+            Some(p) => {
+                if p.out.resume() { p.paused = false; } else { let t = self.current(); self.start_at(t); }
+            }
+            None => {
+                let from = if self.pos >= self.duration - 0.1 { 0.0 } else { self.pos };
+                self.start_at(from);
+            }
         }
     }
 
@@ -293,17 +321,21 @@ impl AudioPreview {
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.poll();
-        // fin de la piste : retour au debut
-        if self.play.as_mut().map_or(false, |(pb, _, _)| pb.finished()) {
+        // fin de la piste : retour au debut ; sortie audio muette (peripherique en defaut) : arret avec un message
+        if self.play.as_ref().is_some_and(|p| p.out.finished()) {
             self.play = None;
             self.pos = 0.0;
+        } else if self.play.as_ref().is_some_and(|p| !p.paused && !p.out.started() && p.t0.elapsed().as_millis() > 1500) {
+            self.play = None;
+            self.error = Some(tr("the audio output does not respond").to_string());
         }
         let dur = self.duration;
-        let playing = self.play.is_some();
+        let running = self.play.as_ref().is_some_and(|p| !p.paused);
         let cur = self.scrub.unwrap_or_else(|| self.current());
-        let mut toggle = false;
+        let (mut toggle, mut rewind) = (false, false);
         ui.horizontal(|ui| {
-            if ui.add_enabled(dur > 0.0, egui::Button::new(if playing { tr("⏹ Stop") } else { tr("▶ Play") })).clicked() { toggle = true; }
+            if ui.add_enabled(dur > 0.0, egui::Button::new(if running { tr("⏸ Pause") } else { tr("▶ Play") })).clicked() { toggle = true; }
+            if ui.add_enabled(self.play.is_some() || self.pos > 0.0, egui::Button::new(tr("⏹ Stop"))).on_hover_text(tr("Stop and go back to the start")).clicked() { rewind = true; }
             ui.monospace(format!("{} / {}", clock(cur), clock(dur)));
             if self.rx.is_some() && self.error.is_none() { ui.spinner(); ui.label(egui::RichText::new(tr("Reading the waveform…")).weak()); }
         });
@@ -357,12 +389,12 @@ impl AudioPreview {
             if resp.drag_stopped() || resp.clicked() {
                 let t = resp.interact_pointer_pos().map(at).or(self.scrub).unwrap_or(self.pos);
                 self.scrub = None;
-                if self.play.is_some() { self.start_at(t); } else { self.pos = t; }
+                // en lecture : le son repart de la; en pause ou a l'arret : la position change, Lecture repartira de la
+                if running { self.start_at(t); } else { self.play = None; self.pos = t; }
             }
         }
-        if toggle {
-            if playing { self.stop(); } else { let from = if self.pos >= dur - 0.1 { 0.0 } else { self.pos }; self.start_at(from); }
-        }
-        if self.play.is_some() || self.rx.is_some() { ui.ctx().request_repaint(); }
+        if toggle { self.toggle(); }
+        if rewind { self.play = None; self.pos = 0.0; }
+        if running || self.rx.is_some() { ui.ctx().request_repaint(); }
     }
 }

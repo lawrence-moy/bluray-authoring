@@ -150,7 +150,7 @@ Outils en ligne de commande fournis : `bdauthor-build` (projet → disque), `bdc
 
 ### Prérequis
 - [Rust](https://rustup.rs/) (toolchain stable ; sous Windows, avec les outils MSVC)
-- [ffmpeg](https://ffmpeg.org/) **avec `libx264` et l'encodeur `ac3`**, plus `ffprobe` (et `ffplay` pour l'écoute des pistes audio)
+- [ffmpeg](https://ffmpeg.org/) **avec `libx264` et l'encodeur `ac3`**, plus `ffprobe`
 
 ffmpeg est cherché dans cet ordre : le dossier indiqué dans les réglages, à côté de l'exécutable, le dossier indiqué par la variable `BDAUTHOR_FFMPEG_DIR`, puis le `PATH`.
 

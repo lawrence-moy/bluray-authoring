@@ -113,7 +113,7 @@ fn strip_range_covers_only_the_range() {
 
 #[test]
 fn audio_peaks_follow_the_loudness_and_playback_starts() {
-    use bdauthor_core::ffmpeg::{audio_peaks, AudioPlayback};
+    use bdauthor_core::ffmpeg::audio_peaks;
     let Ok(tools) = Tools::locate() else { return };
     let dir = std::env::temp_dir().join(format!("bdauthor_audio_{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -126,11 +126,6 @@ fn audio_peaks_follow_the_loudness_and_playback_starts() {
     let peaks = audio_peaks(&tools, &p, None, 4.0, 8).unwrap();
     assert_eq!(peaks.len(), 8);
     assert!(peaks[1] > 0.1 && peaks[6] < 0.03 && peaks[6] > 0.005, "{peaks:?}");
-    if tools.ffplay().is_some() {
-        let mut pb = AudioPlayback::start(&tools, &p, None, 1.0).unwrap();
-        pb.stop();
-        assert!(pb.finished());
-    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 

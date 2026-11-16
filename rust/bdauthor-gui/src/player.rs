@@ -20,19 +20,21 @@ fn sound_choice() -> Option<u32> {
     (v >= 0).then_some(v as u32)
 }
 
-/// Son en cours : flux decode par ffmpeg et sortie audio qui le joue.
-struct AudioOut {
+/// Son en cours : flux decode par ffmpeg et sortie audio qui le joue. Sert aussi a la fenetre d'ecoute des pistes.
+pub(crate) struct AudioOut {
     feed: PcmFeed,
-    _stream: cpal::Stream,
+    stream: cpal::Stream,
 }
 
 impl AudioOut {
-    fn start(tools: &Tools, file: &Path, track: u32, t: f64) -> Result<AudioOut, String> {
+    /// Joue `file` a partir de `t` secondes ; `track` : numero de la piste audio (0 = la premiere), `None` : celle que ffmpeg
+    /// choisit (fichier audio).
+    pub(crate) fn start(tools: &Tools, file: &Path, track: Option<u32>, t: f64) -> Result<AudioOut, String> {
         let host = cpal::default_host();
         let dev = host.default_output_device().ok_or_else(|| tr("no audio output found").to_string())?;
         let sup = dev.default_output_config().map_err(|e| e.to_string())?;
         let (rate, ch) = (sup.sample_rate().0, sup.channels());
-        let feed = PcmFeed::start(tools, file, Some(track), t, rate, ch as u32).map_err(|e| e.to_string())?;
+        let feed = PcmFeed::start(tools, file, track, t, rate, ch as u32).map_err(|e| e.to_string())?;
         let cfg: cpal::StreamConfig = sup.config();
         let src = feed.source();
         let stream = match sup.sample_format() {
@@ -44,8 +46,19 @@ impl AudioOut {
         }
         .map_err(|e| e.to_string())?;
         stream.play().map_err(|e| e.to_string())?;
-        Ok(AudioOut { feed, _stream: stream })
+        Ok(AudioOut { feed, stream })
     }
+
+    /// Temps entendu depuis le depart (secondes).
+    pub(crate) fn position(&self) -> f64 { self.feed.position() }
+    /// Le son a commence a sortir.
+    pub(crate) fn started(&self) -> bool { self.feed.started() }
+    /// Tout le son a ete joue.
+    pub(crate) fn finished(&self) -> bool { self.feed.finished() }
+    /// Fige la sortie (le decodage attend, tampon plein) ; faux si la sortie ne sait pas se mettre en pause.
+    pub(crate) fn pause(&self) -> bool { self.stream.pause().is_ok() }
+    /// Reprend apres `pause`.
+    pub(crate) fn resume(&self) -> bool { self.stream.play().is_ok() }
 }
 
 fn build<T>(dev: &cpal::Device, cfg: &cpal::StreamConfig, src: PcmSource) -> Result<cpal::Stream, cpal::BuildStreamError>
@@ -113,7 +126,7 @@ impl Player {
         self.track = sound_choice();
         self.note = None;
         if let Some(n) = self.track {
-            match AudioOut::start(tools, &self.file, n, t) {
+            match AudioOut::start(tools, &self.file, Some(n), t) {
                 Ok(a) => self.audio = Some(a),
                 Err(e) => self.note = Some(trf!("without sound: {}", e)),
             }
