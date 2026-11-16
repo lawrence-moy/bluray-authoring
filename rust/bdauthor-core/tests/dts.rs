@@ -155,6 +155,10 @@ fn dts_hd_copy_makes_a_valid_clip() {
         assert_eq!((w[0].data.len(), w[1].data.len()), (2012, 400));
     }
 
+    // la piste AC-3 : paquets 0xFD + extension 0x71, comme ffmpeg en mode m2ts
+    let ac3 = bdauthor_core::m2ts::reassemble(&m2ts, sc.audio[1].0).unwrap();
+    assert!(ac3.len() > 50 && ac3.iter().all(|p| p.stream_id == 0xFD && dts::pes_extension_id(&p.header) == Some(0x71)));
+
     // relecture : la piste DTS retrouve ses trames entieres, espacees de 512 echantillons
     let enc = load_encoded_m2ts(&m2ts).unwrap();
     assert_eq!(enc.codecs, vec![0x86, 0x81]);

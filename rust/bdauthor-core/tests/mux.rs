@@ -1,5 +1,5 @@
 //! Muxage : les octets produits par Rust doivent etre identiques a ceux de la version Python (empreinte FNV-1a 64 bits + longueur,
-//! `tests/data/mux_hashes.txt`). Le test du film de reference a besoin du fichier 00000.m2ts (variable BDAUTHOR_REF_M2TS) ; sans lui il est ignore.
+//! `tests/data/mux_hashes.txt`) ; depuis, seuls les paquets AC-3 different (0xFD + extension 0x71, comme ffmpeg en mode m2ts). Le test du film de reference a besoin du fichier 00000.m2ts (variable BDAUTHOR_REF_M2TS) ; sans lui il est ignore.
 use bdauthor_core::film::*;
 use bdauthor_core::m2ts::*;
 use bdauthor_core::mux::*;

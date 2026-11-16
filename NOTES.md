@@ -9,9 +9,9 @@
   (`playback::PcmFeed` + cpal, voir « Son dans les aperçus vidéo ») au lieu de `ffplay`. Pause et déplacement instantanés,
   position = son réellement joué, et `ffplay.exe` n'est plus nécessaire (seuls `ffmpeg` et `ffprobe` restent requis).
 - **Test sur lecteur de salon (BD-RE)** des pistes audio : copie AC-3, Dolby Digital 5.1, LPCM 16 et 24 bits (descripteur HDMV
-  et trames de 7,5 ms du LPCM 24 bits non confirmés), copie DTS / DTS-HD (PES 0xFD, extensions 0x71 / 0x72). Notre AC-3 est
-  écrit en flux privé 0xBD ; ffmpeg (mode m2ts) l'écrit en 0xFD + extension 0x71 en notant que certains lecteurs l'exigent :
-  à basculer si un lecteur ne joue pas l'AC-3.
+  et trames de 7,5 ms du LPCM 24 bits non confirmés), copie DTS / DTS-HD (PES 0xFD, extensions 0x71 / 0x72). L'AC-3 est
+  écrit comme ffmpeg en mode m2ts : 0xFD + extension 0x71 (avant : flux privé 0xBD ; ffmpeg note que certains lecteurs exigent
+  la forme étendue). LPCM et DTS simple restent en 0xBD.
 - **Copie TrueHD** : sur Blu-ray, une piste TrueHD doit embarquer un flux AC-3 dans le même PID (PES 0xFD extension 0x76 pour
   l'AC-3, 0x72 pour le TrueHD). Les MKV n'ont presque jamais ce cœur : il faudra encoder un AC-3 640 kb/s à partir de la piste
   et l'entrelacer avec les unités TrueHD recopiées (type 0x83).

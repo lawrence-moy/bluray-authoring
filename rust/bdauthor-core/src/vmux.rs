@@ -4,6 +4,8 @@ use crate::mux::*;
 
 pub const STREAM_ID_VIDEO: u8 = 0xE0;
 pub const STREAM_ID_AUDIO: u8 = 0xBD;
+/// Identifiant d'extension des paquets AC-3 (stream_id 0xFD), celui qu'ecrit ffmpeg pour les Blu-ray.
+pub const AC3_PES_EXT: u8 = 0x71;
 pub const AC3_FRAME_TICKS: u64 = 2880; // 1536 echantillons a 48 kHz en ticks de 90 kHz
 pub const AC3_WORDS_48K: [u16; 38] = [64, 64, 80, 80, 96, 96, 112, 112, 128, 128, 160, 160, 192, 192, 224, 224, 256, 256, 320, 320,
                                       384, 384, 448, 448, 512, 512, 640, 640, 768, 768, 896, 896, 1024, 1024, 1152, 1152, 1280, 1280];
@@ -224,8 +226,13 @@ pub fn mux_film_audios(
         raw.push((v.dts.unwrap_or(v.pts) * 300, Kind::Video, p.video_pid, build_pes(STREAM_ID_VIDEO, v.pts, v.dts, &v.data)?, v.data.len()));
     }
     for (apid, audio) in audios {
+        // AC-3 : paquets « etendus » 0xFD + extension 0x71, comme ffmpeg en mode m2ts (certains lecteurs l'exigent) ;
+        // LPCM et DTS simple : flux prive 1 (0xBD)
+        let ac3 = pmt_streams.iter().any(|s| s.pid == *apid && s.stream_type == 0x81);
         for a in audio.iter() {
-            if a.ext.is_empty() {
+            if ac3 && a.ext.is_empty() {
+                raw.push((a.pts * 300, Kind::Audio, *apid, build_pes_ext(AC3_PES_EXT, a.pts, &a.data)?, a.data.len()));
+            } else if a.ext.is_empty() {
                 raw.push((a.pts * 300, Kind::Audio, *apid, build_pes(STREAM_ID_AUDIO, a.pts, None, &a.data)?, a.data.len()));
             } else {
                 raw.push((a.pts * 300, Kind::Audio, *apid, build_pes_ext(crate::dts::PES_EXT_CORE, a.pts, &a.data)?, a.data.len()));
