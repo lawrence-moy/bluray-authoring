@@ -597,7 +597,7 @@ pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -
         match t.format {
             Ac3 => a.extend([format!("-c:a:{k}"), st("ac3"), format!("-b:a:{k}"), if t.bitrate != 0 { format!("{}k", t.bitrate) } else { bitrate.to_string() }, format!("-ac:a:{k}"), st("2")]),
             Ac3Surround => a.extend([format!("-c:a:{k}"), st("ac3"), format!("-b:a:{k}"), format!("{}k", t.kbps(6, 0, 0)), format!("-ac:a:{k}"), st("6")]),
-            Ac3Copy => a.extend([format!("-c:a:{k}"), st("copy")]),
+            Ac3Copy | DtsCopy => a.extend([format!("-c:a:{k}"), st("copy")]),
             Lpcm16 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s16")]),
             Lpcm24 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s32")]),
         }
@@ -1147,9 +1147,22 @@ pub struct AudioStreamInfo {
     /// Numero parmi les pistes audio (0 = la premiere), celui de `-map 0:a:N`.
     pub index: u32,
     pub codec: String,
+    /// profil du codec selon ffprobe (« DTS-HD MA », « DTS-HD HRA »…), vide si absent
+    pub profile: String,
     pub lang: String,
     pub title: String,
     pub channels: u32,
+}
+
+impl AudioStreamInfo {
+    /// Debit probable (kb/s) d'une piste DTS recopiee : celui annonce par ffprobe ne compte souvent que le coeur (ou manque),
+    /// on prend donc une valeur prudente selon le profil pour les pistes haute definition.
+    pub fn dts_kbps(&self) -> u32 {
+        let declared = (self.bit_rate + 500) / 1000;
+        let p = self.profile.to_ascii_uppercase();
+        let hd = if p.contains("MA") { crate::audio::DTS_HD_KBPS } else if p.contains("HRA") || p.contains("HI RES") { 3000 } else { 0 };
+        declared.max(hd).max(if declared == 0 { 1536 } else { 0 })
+    }
 }
 
 pub fn parse_audio_streams_flat(text: &str) -> Vec<AudioStreamInfo> {
@@ -1169,14 +1182,14 @@ pub fn parse_audio_streams_flat(text: &str) -> Vec<AudioStreamInfo> {
         .values()
         .filter(|s| s.get("codec_type").map(String::as_str) == Some("audio"))
         .enumerate()
-        .map(|(n, s)| AudioStreamInfo { index: n as u32, codec: get(s, "codec_name"), lang: get(s, "tags.language"), title: get(s, "tags.title"), channels: get(s, "channels").parse().unwrap_or(0), sample_rate: get(s, "sample_rate").parse().unwrap_or(0), bit_rate: get(s, "bit_rate").parse().unwrap_or(0) })
+        .map(|(n, s)| AudioStreamInfo { index: n as u32, codec: get(s, "codec_name"), profile: get(s, "profile"), lang: get(s, "tags.language"), title: get(s, "tags.title"), channels: get(s, "channels").parse().unwrap_or(0), sample_rate: get(s, "sample_rate").parse().unwrap_or(0), bit_rate: get(s, "bit_rate").parse().unwrap_or(0) })
         .collect()
 }
 
 /// Pistes audio d'un fichier (video ou audio).
 pub fn list_audio_streams(tools: &Tools, src: &Path) -> Result<Vec<AudioStreamInfo>> {
     let mut c = Command::new(&tools.ffprobe);
-    c.args(["-v", "error", "-of", "flat", "-show_entries", "stream=index,codec_type,codec_name,channels,sample_rate,bit_rate:stream_tags=language,title"]).arg(src);
+    c.args(["-v", "error", "-of", "flat", "-show_entries", "stream=index,codec_type,codec_name,profile,channels,sample_rate,bit_rate:stream_tags=language,title"]).arg(src);
     no_window(&mut c);
     let out = c.output()?;
     if !out.status.success() {

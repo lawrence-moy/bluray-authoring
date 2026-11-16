@@ -598,7 +598,7 @@ fn track_kbps(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg, ac3_kb
     if matches!(t.format, Ac3 | Ac3Surround) { return t.kbps(2, 0, ac3_kbps); }
     let info = probe_track(tools, src, t);
     let channels = info.as_ref().map_or(6, |s| s.channels.clamp(1, 8));
-    let source_kbps = info.as_ref().map_or(0, |s| (s.bit_rate + 500) / 1000);
+    let source_kbps = info.as_ref().map_or(0, |s| if t.format == DtsCopy { s.dts_kbps() } else { (s.bit_rate + 500) / 1000 });
     t.kbps(channels, source_kbps, ac3_kbps)
 }
 
@@ -609,6 +609,15 @@ fn check_ac3_copy(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg) ->
     if s.sample_rate != 0 && s.sample_rate != 48000 { return Err(trf!("the source track is at {} Hz; 48000 Hz is required", s.sample_rate)); }
     if s.channels > 6 { return Err(trf!("the source track has {} channels; 6 at most", s.channels)); }
     if s.bit_rate > crate::audio::AC3_MAX_KBPS * 1000 { return Err(trf!("the source track is at {} kb/s; {} kb/s at most", (s.bit_rate + 500) / 1000, crate::audio::AC3_MAX_KBPS)); }
+    Ok(())
+}
+
+/// Une piste DTS en « copie » doit etre a 48 kHz (le coeur DTS est lu par tous les lecteurs ; l'extension HD l'accompagne).
+fn check_dts_copy(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg) -> std::result::Result<(), String> {
+    let Some(s) = probe_track(tools, src, t) else { return Err(tr("the source audio track cannot be read").to_string()) };
+    if s.codec != "dts" { return Err(trf!("the source track is “{}”, not DTS", s.codec)); }
+    if s.sample_rate != 0 && s.sample_rate != 48000 { return Err(trf!("the source track is at {} Hz; 48000 Hz is required", s.sample_rate)); }
+    if s.channels > 8 { return Err(trf!("the source track has {} channels; 8 at most", s.channels)); }
     Ok(())
 }
 
@@ -962,8 +971,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         for t in a_tracks.iter().filter(|t| t.format == crate::audio::AudioFormat::Ac3Copy) {
             if let Err(why) = check_ac3_copy(env.tools, &src, t) { return bad(trf!("video {}: an audio track cannot be copied: {}", i + 1, why)); }
         }
+        for t in a_tracks.iter().filter(|t| t.format == crate::audio::AudioFormat::DtsCopy) {
+            if let Err(why) = check_dts_copy(env.tools, &src, t) { return bad(trf!("video {}: an audio track cannot be copied: {}", i + 1, why)); }
+        }
         // audio sans perte : le debit du clip (video + audio) ne doit pas depasser ce que le multiplexage sait porter
-        if a_tracks.iter().any(|t| t.format.is_lpcm()) {
+        if a_tracks.iter().any(|t| t.format.is_heavy()) {
             let abr = crate::fill::parse_kbps(&eopts.audio_bitrate);
             let audio_kbps: u32 = a_tracks.iter().map(|t| track_kbps(env.tools, &src, t, abr)).sum();
             let room = crate::vmux::MUX_BUDGET_KBPS.saturating_sub(audio_kbps);

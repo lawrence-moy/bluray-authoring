@@ -47,7 +47,7 @@ fn synth(big: Option<usize>) -> (Vec<VideoAu>, Vec<AudioFrame>) {
         video.push(VideoAu { pts, dts: Some(dts), data: d });
     }
     video[0].pts = video[0].dts.unwrap(); // pts == dts : chemin « PTS seul »
-    let audio = (0..60u64).map(|k| AudioFrame { pts: 54_000_000 - 2880 + k * 2880, data: (0..768).map(|_| (r.next() & 0xFF) as u8).collect() }).collect();
+    let audio = (0..60u64).map(|k| AudioFrame { pts: 54_000_000 - 2880 + k * 2880, data: (0..768).map(|_| (r.next() & 0xFF) as u8).collect(), ext: Vec::new() }).collect();
     (video, audio)
 }
 
@@ -122,7 +122,7 @@ fn film_de_reference() {
     // remuxage
     let (v, a) = (reassemble(&reff, 0x1011).unwrap(), reassemble(&reff, 0x1100).unwrap());
     let sps = v.iter().find_map(|e| nal_units(&e.data).iter().find(|n| n.0 == 7).map(|&(_, o, n)| e.data[o..o + n].to_vec())).unwrap();
-    let audio: Vec<AudioFrame> = a.iter().map(|e| AudioFrame { pts: e.pts.unwrap(), data: e.data.clone() }).collect();
+    let audio: Vec<AudioFrame> = a.iter().map(|e| AudioFrame { pts: e.pts.unwrap(), data: e.data.clone(), ext: Vec::new() }).collect();
     let video: Vec<VideoAu> = v.iter().map(|e| VideoAu { pts: e.pts.unwrap(), dts: e.dts, data: e.data.clone() }).collect();
     let mut ad = hex("050441432d33");
     ad.extend(ac3_descriptor(&audio[0].data).unwrap());

@@ -15,6 +15,7 @@ pub mod ffmpeg;
 pub mod fill;
 pub mod design;
 pub mod disc;
+pub mod dts;
 pub mod editor;
 pub mod film;
 pub mod framesrc;

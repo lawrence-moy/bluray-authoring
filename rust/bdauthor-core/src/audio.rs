@@ -23,6 +23,8 @@ pub enum AudioFormat {
     Ac3Surround,
     /// la piste AC-3 de la source, recopiee telle quelle (48 kHz, 640 kb/s au plus, 5.1 au plus)
     Ac3Copy,
+    /// la piste DTS de la source (DTS, DTS-HD High Resolution ou DTS-HD Master Audio), recopiee telle quelle (48 kHz)
+    DtsCopy,
     /// LPCM sans perte, 16 bits, nombre de canaux de la source (48 kHz)
     Lpcm16,
     /// LPCM sans perte, 24 bits, nombre de canaux de la source (48 kHz)
@@ -30,11 +32,12 @@ pub enum AudioFormat {
 }
 
 impl AudioFormat {
-    pub const ALL: [AudioFormat; 5] = [AudioFormat::Ac3, AudioFormat::Ac3Surround, AudioFormat::Ac3Copy, AudioFormat::Lpcm16, AudioFormat::Lpcm24];
+    pub const ALL: [AudioFormat; 6] =
+        [AudioFormat::Ac3, AudioFormat::Ac3Surround, AudioFormat::Ac3Copy, AudioFormat::DtsCopy, AudioFormat::Lpcm16, AudioFormat::Lpcm24];
     /// Nom dans le fichier de projet.
     pub fn name(self) -> &'static str {
         match self {
-            AudioFormat::Ac3 => "ac3", AudioFormat::Ac3Surround => "ac3_51", AudioFormat::Ac3Copy => "ac3_copy",
+            AudioFormat::Ac3 => "ac3", AudioFormat::Ac3Surround => "ac3_51", AudioFormat::Ac3Copy => "ac3_copy", AudioFormat::DtsCopy => "dts_copy",
             AudioFormat::Lpcm16 => "lpcm16", AudioFormat::Lpcm24 => "lpcm24",
         }
     }
@@ -42,12 +45,15 @@ impl AudioFormat {
     pub fn label(self) -> &'static str {
         match self {
             AudioFormat::Ac3 => "Dolby Digital 2.0", AudioFormat::Ac3Surround => "Dolby Digital 5.1", AudioFormat::Ac3Copy => "Copy of the source AC-3 track",
+            AudioFormat::DtsCopy => "Copy of the source DTS / DTS-HD track",
             AudioFormat::Lpcm16 => "LPCM 16 bits", AudioFormat::Lpcm24 => "LPCM 24 bits",
         }
     }
     pub fn is_lpcm(self) -> bool { matches!(self, AudioFormat::Lpcm16 | AudioFormat::Lpcm24) }
     /// AC-3 encode par le programme (le debit est alors un reglage de la piste).
     pub fn is_encoded_ac3(self) -> bool { matches!(self, AudioFormat::Ac3 | AudioFormat::Ac3Surround) }
+    /// Flux lourd (sans perte ou haute definition) : le debit de la video doit lui laisser de la place.
+    pub fn is_heavy(self) -> bool { matches!(self, AudioFormat::Lpcm16 | AudioFormat::Lpcm24 | AudioFormat::DtsCopy) }
     /// Profondeur d'un echantillon LPCM (0 pour AC-3).
     pub fn bits(self) -> u32 { match self { AudioFormat::Lpcm16 => 16, AudioFormat::Lpcm24 => 24, _ => 0 } }
     /// Debit du flux audio en kb/s pour `channels` canaux de la source ; `ac3_kbps` : debit AC-3 du projet. Le LPCM de Blu-ray
@@ -55,6 +61,7 @@ impl AudioFormat {
     pub fn kbps(self, channels: u32, ac3_kbps: u32) -> u32 {
         match self {
             AudioFormat::Ac3 | AudioFormat::Ac3Copy => ac3_kbps,
+            AudioFormat::DtsCopy => DTS_HD_KBPS,
             AudioFormat::Ac3Surround => AC3_SURROUND_KBPS,
             _ => (channels.max(1) + 1) / 2 * 2 * self.bits() * 48,
         }
@@ -67,6 +74,8 @@ pub const AC3_RATES: [u32; 19] = [32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192
 pub const AC3_SURROUND_KBPS: u32 = 448;
 /// Debit maximal d'un flux AC-3 sur Blu-ray (kb/s).
 pub const AC3_MAX_KBPS: u32 = 640;
+/// Debit suppose d'une piste DTS-HD MA recopiee dont le debit est inconnu (kb/s ; un DTS-HD MA 5.1 tourne autour de 3 a 5 Mb/s).
+pub const DTS_HD_KBPS: u32 = 6500;
 
 /// Une piste audio d'une video.
 #[derive(Debug, Clone, PartialEq)]
@@ -102,6 +111,7 @@ impl AudioTrackCfg {
             AudioFormat::Ac3 => if self.bitrate != 0 { self.bitrate } else { project_kbps },
             AudioFormat::Ac3Surround => if self.bitrate != 0 { self.bitrate } else { AC3_SURROUND_KBPS },
             AudioFormat::Ac3Copy => if source_kbps != 0 { source_kbps } else { AC3_MAX_KBPS },
+            AudioFormat::DtsCopy => if source_kbps != 0 { source_kbps } else { DTS_HD_KBPS },
             f => f.kbps(channels, project_kbps),
         }
     }

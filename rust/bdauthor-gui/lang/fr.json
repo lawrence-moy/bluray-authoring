@@ -1237,7 +1237,6 @@
   "video {}: the audio tracks ({} kb/s) leave too little room for the video; use fewer or lighter lossless tracks": "vidéo {} : les pistes audio ({} kb/s) laissent trop peu de place à la vidéo ; utilise moins de pistes sans perte, ou plus légères",
   "   video {}: audio {} kb/s, so the video peak rate is limited to {} kb/s": "   vidéo {} : audio {} kb/s, le débit de pointe de la vidéo est donc limité à {} kb/s",
   "Convert to format:": "Convertir au format :",
-  "Dolby Digital is compact. The copy keeps the source's own Dolby Digital track untouched (it must be 48 kHz, 5.1 at most, 640 kb/s at most). LPCM is lossless but heavy: about 4.6 Mb/s for 5.1 in 16 bits, 6.9 Mb/s in 24 bits; the video bitrate is lowered accordingly.": "Le Dolby Digital est compact. La copie garde telle quelle la piste Dolby Digital de la source (48 kHz, 5.1 au plus, 640 kb/s au plus). Le LPCM est sans perte mais lourd : environ 4,6 Mb/s en 5.1 et 16 bits, 6,9 Mb/s en 24 bits ; le débit de la vidéo est réduit en conséquence.",
   "Dolby Digital 2.0": "Dolby Digital 2.0",
   "Dolby Digital 5.1": "Dolby Digital 5.1",
   "Copy of the source AC-3 track": "Copie de la piste AC-3 de la source",
@@ -1339,5 +1338,10 @@
   "{} video(s) not read yet: not counted.": "{} vidéo(s) pas encore lue(s) : non comptée(s).",
   "The content does not fit on this disc: raise the CRF, use “fill the disc”, choose a larger disc or remove content.": "Le contenu ne tient pas sur ce disque : augmentez le CRF, utilisez « remplir le disque », choisissez un disque plus grand ou retirez du contenu.",
   "Beyond the safety margin: burning is less reliable at the edge of a disc.": "Au-delà de la marge de sécurité : la gravure est moins fiable au bord du disque.",
-  "Disc and margin: Edit › Project… › ISO generation.": "Disque et marge : Édition › Projet… › Génération ISO."
+  "Disc and margin: Edit › Project… › ISO generation.": "Disque et marge : Édition › Projet… › Génération ISO.",
+  "Dolby Digital is compact. The copy keeps the source's own Dolby Digital track untouched (it must be 48 kHz, 5.1 at most, 640 kb/s at most). The DTS copy keeps a DTS, DTS-HD High Resolution or DTS-HD Master Audio track untouched (48 kHz): every player plays at least its DTS core. LPCM is lossless but heavy: about 4.6 Mb/s for 5.1 in 16 bits, 6.9 Mb/s in 24 bits; the video bitrate is lowered accordingly.": "Le Dolby Digital est compact. La copie garde telle quelle la piste Dolby Digital de la source (48 kHz, 5.1 au plus, 640 kb/s au plus). La copie DTS garde telle quelle une piste DTS, DTS-HD High Resolution ou DTS-HD Master Audio (48 kHz) : tout lecteur joue au moins son cœur DTS. Le LPCM est sans perte mais lourd : environ 4,6 Mb/s en 5.1 16 bits, 6,9 Mb/s en 24 bits ; le débit vidéo est réduit d'autant.",
+  "DTS-HD is written as on commercial discs (DTS core plus HD extension); test the disc on your player.": "Le DTS-HD est écrit comme sur les disques du commerce (cœur DTS plus extension HD) ; testez le disque sur votre lecteur.",
+  "Copy of the source DTS / DTS-HD track": "Copie de la piste DTS / DTS-HD de la source",
+  "the source track is “{}”, not DTS": "la piste source est « {} », pas du DTS",
+  "the source track has {} channels; 8 at most": "la piste source a {} canaux ; 8 au plus"
 }

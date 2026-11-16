@@ -81,8 +81,10 @@ pub struct Encoded {
     pub audio: Vec<AudioFrame>,
     /// pistes audio suivantes, dans l'ordre de la PMT
     pub extra_audio: Vec<Vec<AudioFrame>>,
-    /// pour chaque piste (la premiere, puis les suivantes) : LPCM (sinon AC-3)
+    /// pour chaque piste (la premiere, puis les suivantes) : LPCM (sinon AC-3 ou DTS)
     pub lpcm: Vec<bool>,
+    /// pour chaque piste : type de flux Blu-ray (0x81 AC-3, 0x80 LPCM, 0x82 / 0x85 / 0x86 DTS, DTS-HD HR, DTS-HD MA)
+    pub codecs: Vec<u8>,
     pub sps: Vec<u8>,
 }
 
@@ -113,8 +115,10 @@ pub fn load_encoded_m2ts(m2ts: &[u8]) -> PResult<Encoded> {
 fn load_source_packets(data: &[u8]) -> PResult<Encoded> {
     let (_, _, streams) = parse_psi(&data)?;
     let vpid = streams.iter().find(|s| s.0 == 0x1B).ok_or_else(|| ParseError("aucun flux H.264".into()))?.1;
-    // pistes audio dans l'ordre de la PMT : AC-3 (0x81) ou LPCM (0x80 ; ffmpeg ecrit les trames `pcm_bluray` en type prive 0x06)
-    let atracks: Vec<(u16, bool)> = streams.iter().filter(|s| matches!(s.0, 0x81 | 0x80 | 0x06)).map(|s| (s.1, s.0 != 0x81)).collect();
+    // pistes audio dans l'ordre de la PMT : AC-3 (0x81), LPCM (0x80 ; ffmpeg ecrit les trames `pcm_bluray` en type prive 0x06)
+    // ou DTS recopie (0x82, 0x85, 0x86, 0x8A)
+    let atracks: Vec<(u16, u8)> = streams.iter().filter(|s| matches!(s.0, 0x81 | 0x80 | 0x06) || crate::dts::TYPES.contains(&s.0))
+        .map(|s| (s.1, if s.0 == 0x06 { 0x80 } else { s.0 })).collect();
     let mut video = Vec::new();
     let mut sps: Option<Vec<u8>> = None;
     for e in reassemble(&data, vpid)? {
@@ -125,34 +129,56 @@ fn load_source_packets(data: &[u8]) -> PResult<Encoded> {
         }
         video.push((e.pts.ok_or_else(|| ParseError("PES video sans PTS".into()))?, e.dts, e.data));
     }
-    let mut tracks: Vec<Vec<(u64, Vec<u8>)>> = Vec::new();
-    for &(a, is_lpcm) in &atracks {
-        let mut audio = Vec::new();
+    let mut tracks: Vec<Vec<(u64, Vec<u8>, Vec<u8>)>> = Vec::new();
+    let mut codecs = Vec::new();
+    for &(a, typ) in &atracks {
+        let mut audio: Vec<(u64, Vec<u8>, Vec<u8>)> = Vec::new();
+        let is_lpcm = typ == 0x80;
         for e in reassemble(&data, a)? {
+            if crate::dts::TYPES.contains(&typ) {
+                // DTS : une trame par PES (ffmpeg) ; dans un clip Blu-ray, l'extension HD est un second PES (extension 0x72)
+                if crate::dts::pes_extension_id(&e.header) == Some(crate::dts::PES_EXT_HD) {
+                    if let Some(last) = audio.last_mut() { last.2.extend_from_slice(&e.data); }
+                    continue;
+                }
+                let pts = e.pts.ok_or_else(|| ParseError("PES audio sans PTS".into()))?;
+                let (core, ext) = crate::dts::split(&e.data)?;
+                // les horodatages d'un MKV sont arrondis a la milliseconde : la trame suit la precedente, sauf vrai trou
+                let pts = match audio.last() {
+                    Some(prev) => {
+                        let next = prev.0 + crate::dts::Core::parse(&prev.1)?.ticks();
+                        if pts.abs_diff(next) * 2 < crate::dts::Core::parse(core)?.ticks() { next } else { pts }
+                    }
+                    None => pts,
+                };
+                audio.push((pts, core.to_vec(), ext.to_vec()));
+                continue;
+            }
             let pts = e.pts.ok_or_else(|| ParseError("PES audio sans PTS".into()))?;
             if is_lpcm {
                 let mut t = pts;
                 for (fr, ticks) in crate::lpcm::frames(&e.data)? {
-                    audio.push((t, fr.to_vec()));
+                    audio.push((t, fr.to_vec(), Vec::new()));
                     t += ticks;
                 }
             } else {
                 for (k, fr) in ac3_frames(&e.data)?.into_iter().enumerate() {
-                    audio.push((pts + k as u64 * AC3_FRAME_TICKS, fr.to_vec()));
+                    audio.push((pts + k as u64 * AC3_FRAME_TICKS, fr.to_vec(), Vec::new()));
                 }
             }
         }
+        codecs.push(if crate::dts::TYPES.contains(&typ) { crate::dts::stream_type(audio.iter().map(|f| f.2.as_slice())) } else { typ });
         tracks.push(audio);
     }
-    let lpcm: Vec<bool> = atracks.iter().map(|t| t.1).collect();
+    let lpcm: Vec<bool> = codecs.iter().map(|t| *t == 0x80).collect();
     let first = video.iter().map(|v| v.0).chain(tracks.iter().flatten().map(|a| a.0)).min().ok_or_else(|| ParseError("flux vide".into()))? as i64;
     let shift = START_PTS - first;
     let sh = |p: u64| (p as i64 + shift) as u64;
     let mut video: Vec<VideoAu> = video.into_iter().map(|(p, d, x)| VideoAu { pts: sh(p), dts: d.map(sh), data: x }).collect();
     video.sort_by_key(|a| a.dts.unwrap_or(a.pts));
-    let mut tracks: Vec<Vec<AudioFrame>> = tracks.into_iter().map(|t| t.into_iter().map(|(p, x)| AudioFrame { pts: sh(p), data: x }).collect()).collect();
+    let mut tracks: Vec<Vec<AudioFrame>> = tracks.into_iter().map(|t| t.into_iter().map(|(p, x, e)| AudioFrame { pts: sh(p), data: x, ext: e }).collect()).collect();
     let audio = if tracks.is_empty() { Vec::new() } else { tracks.remove(0) };
-    Ok(Encoded { video, audio, extra_audio: tracks, lpcm, sps: sps.ok_or_else(|| ParseError("aucun SPS".into()))? })
+    Ok(Encoded { video, audio, extra_audio: tracks, lpcm, codecs, sps: sps.ok_or_else(|| ParseError("aucun SPS".into()))? })
 }
 
 /// Muxage M2TS d'un flux encode (`lang` : code de langue de la piste audio, 3 lettres).
@@ -222,7 +248,10 @@ pub fn mux_encoded_tracks(enc: &Encoded, audio_langs: &[[u8; 3]], subs: &[PgOut]
         let lang = audio_langs.get(k).or(audio_langs.last()).copied().unwrap_or(*b"und");
         let pid = 0x1100 + k as u16;
         let lpcm = enc.lpcm.get(k).copied().unwrap_or(false);
-        let mut d = if lpcm {
+        let codec = enc.codecs.get(k).copied().unwrap_or(if lpcm { crate::lpcm::STREAM_TYPE } else { 0x81 });
+        let mut d = if crate::dts::TYPES.contains(&codec) {
+            crate::dts::registration_descriptor(codec, &a0.data)?
+        } else if lpcm {
             crate::lpcm::registration_descriptor(&a0.data)?
         } else {
             let mut d = vec![0x05, 0x04, 0x41, 0x43, 0x2d, 0x33];
@@ -232,7 +261,7 @@ pub fn mux_encoded_tracks(enc: &Encoded, audio_langs: &[[u8; 3]], subs: &[PgOut]
         d.extend_from_slice(&[0x0A, 4]);
         d.extend_from_slice(&lang);
         d.push(0);
-        streams.push(PmtStream { stream_type: if lpcm { crate::lpcm::STREAM_TYPE } else { 0x81 }, pid, desc: d });
+        streams.push(PmtStream { stream_type: codec, pid, desc: d });
         audios.push((pid, tr.as_slice()));
     }
     let mut tracks = Vec::new();

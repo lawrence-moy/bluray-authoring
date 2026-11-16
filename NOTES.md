@@ -9,7 +9,26 @@
   (`playback::PcmFeed` + cpal, voir « Son dans les aperçus vidéo ») au lieu de `ffplay`. Pause et déplacement instantanés,
   position = son réellement joué, et `ffplay.exe` n'est plus nécessaire (seuls `ffmpeg` et `ffprobe` restent requis).
 - **Test sur lecteur de salon (BD-RE)** des pistes audio : copie AC-3, Dolby Digital 5.1, LPCM 16 et 24 bits (descripteur HDMV
-  et trames de 7,5 ms du LPCM 24 bits non confirmés).
+  et trames de 7,5 ms du LPCM 24 bits non confirmés), copie DTS / DTS-HD (PES 0xFD, extensions 0x71 / 0x72). Notre AC-3 est
+  écrit en flux privé 0xBD ; ffmpeg (mode m2ts) l'écrit en 0xFD + extension 0x71 en notant que certains lecteurs l'exigent :
+  à basculer si un lecteur ne joue pas l'AC-3.
+- **Copie TrueHD** : sur Blu-ray, une piste TrueHD doit embarquer un flux AC-3 dans le même PID (PES 0xFD extension 0x76 pour
+  l'AC-3, 0x72 pour le TrueHD). Les MKV n'ont presque jamais ce cœur : il faudra encoder un AC-3 640 kb/s à partir de la piste
+  et l'entrelacer avec les unités TrueHD recopiées (type 0x83).
+- **E-AC-3 (Dolby Digital Plus)** en piste principale : non conforme sans cœur AC-3 indépendant, absent des sources courantes
+  (streaming). Rester sur Dolby Digital 5.1 ou LPCM.
+
+## Pistes DTS recopiées (`dts.rs`)
+
+- Format `dts_copy` : ffmpeg recopie la piste (`-c:a copy`) ; avant l'encodage on vérifie codec `dts` et 48 kHz.
+- Relecture du TS de ffmpeg : une trame par PES (coeur + sous-trame d'extension, synchro 0x64582025). Les PTS d'un MKV sont
+  arrondis à la ms : on les recalcule à partir de la durée des trames (512 échantillons = 960 ticks), sauf vrai trou.
+- Type d'après les extensions : XLL présent (0x41A29547) → 0x86 DTS-HD MA ; extension sans XLL → 0x85 DTS-HD HR ; sans
+  extension → 0x82 DTS. Attributs du clip d'après l'AMODE du coeur (mono 1, stéréo 3, multicanal 6) ; descripteur HDMV.
+- Multiplexage : DTS simple en 0xBD comme l'AC-3 ; DTS-HD en deux PES de même PTS, 0xFD extension 0x71 (coeur) puis 0x72
+  (extension). La relecture d'un clip ainsi écrit recolle l'extension à sa trame.
+- Débit : celui de ffprobe ne compte souvent que le coeur ; on suppose 6,5 Mb/s pour un MA, 3 Mb/s pour un HR (plafond de la
+  vidéo et jauge du disque).
 
 ## 1. Objectif et choix retenus
 

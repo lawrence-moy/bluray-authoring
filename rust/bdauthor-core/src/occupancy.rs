@@ -80,7 +80,7 @@ pub fn estimate(m: &ProjectModel, facts: &dyn Fn(usize) -> VideoFacts) -> Usage 
         } else {
             for t in &v.audio {
                 let ch = if t.format.is_lpcm() { 6 } else { 2 };
-                let src = if t.format == AudioFormat::Ac3Copy { 640 } else { 0 };
+                let src = match t.format { AudioFormat::Ac3Copy => 640, AudioFormat::DtsCopy => crate::audio::DTS_HD_KBPS, _ => 0 };
                 audio += audio_bytes(t.kbps(ch, src, AC3_DEFAULT_KBPS), 1, d);
             }
         }

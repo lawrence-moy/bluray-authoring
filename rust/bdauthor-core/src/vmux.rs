@@ -18,6 +18,26 @@ pub struct VideoAu {
 pub struct AudioFrame {
     pub pts: u64,
     pub data: Vec<u8>,
+    /// partie haute definition de la trame (extension DTS-HD), vide sinon : ecrite dans un second PES de meme PTS ; la trame
+    /// est alors en paquets « etendus » (stream_id 0xFD, extension 0x71 pour `data`, 0x72 pour `ext`), comme sur les Blu-ray
+    pub ext: Vec<u8>,
+}
+
+/// PES d'un flux a identifiant etendu (stream_id 0xFD, `ext` : stream_id_extension), avec PTS : en-tete des pistes audio
+/// haute definition des Blu-ray (memes octets d'extension que ffmpeg en mode m2ts).
+pub fn build_pes_ext(ext: u8, pts: u64, data: &[u8]) -> Result<Vec<u8>, String> {
+    let length = 3 + 5 + 3 + data.len();
+    if length > 0xFFFF {
+        return Err("PES trop long".into());
+    }
+    let mut o = vec![0, 0, 1, 0xFD];
+    o.extend_from_slice(&(length as u16).to_be_bytes());
+    // PTS + PES_extension_flag ; extension : PES_extension_flag_2, longueur 1, identifiant
+    o.extend_from_slice(&[0x84, 0x81, 8]);
+    o.extend(ts5(0b0010, pts));
+    o.extend_from_slice(&[0x01, 0x81, ext & 0x7F]);
+    o.extend_from_slice(data);
+    Ok(o)
 }
 
 pub fn build_pes(stream_id: u8, pts: u64, dts: Option<u64>, data: &[u8]) -> Result<Vec<u8>, String> {
@@ -205,7 +225,12 @@ pub fn mux_film_audios(
     }
     for (apid, audio) in audios {
         for a in audio.iter() {
-            raw.push((a.pts * 300, Kind::Audio, *apid, build_pes(STREAM_ID_AUDIO, a.pts, None, &a.data)?, a.data.len()));
+            if a.ext.is_empty() {
+                raw.push((a.pts * 300, Kind::Audio, *apid, build_pes(STREAM_ID_AUDIO, a.pts, None, &a.data)?, a.data.len()));
+            } else {
+                raw.push((a.pts * 300, Kind::Audio, *apid, build_pes_ext(crate::dts::PES_EXT_CORE, a.pts, &a.data)?, a.data.len()));
+                raw.push((a.pts * 300, Kind::Audio, *apid, build_pes_ext(crate::dts::PES_EXT_HD, a.pts, &a.ext)?, a.ext.len()));
+            }
         }
     }
     for t in subs {

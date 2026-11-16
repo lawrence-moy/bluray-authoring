@@ -99,7 +99,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                                 changed = true;
                             }
                         }
-                    }).response.on_hover_text(tr("Dolby Digital is compact. The copy keeps the source's own Dolby Digital track untouched (it must be 48 kHz, 5.1 at most, 640 kb/s at most). LPCM is lossless but heavy: about 4.6 Mb/s for 5.1 in 16 bits, 6.9 Mb/s in 24 bits; the video bitrate is lowered accordingly."));
+                    }).response.on_hover_text(tr("Dolby Digital is compact. The copy keeps the source's own Dolby Digital track untouched (it must be 48 kHz, 5.1 at most, 640 kb/s at most). The DTS copy keeps a DTS, DTS-HD High Resolution or DTS-HD Master Audio track untouched (48 kHz): every player plays at least its DTS core. LPCM is lossless but heavy: about 4.6 Mb/s for 5.1 in 16 bits, 6.9 Mb/s in 24 bits; the video bitrate is lowered accordingly."));
                 });
                 if t.format.is_encoded_ac3() {
                     ui.horizontal(|ui| {
@@ -119,6 +119,9 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 }
                 if t.format.is_lpcm() {
                     ui.colored_label(egui::Color32::from_rgb(230, 170, 70), tr("Lossless audio: not every player accepts it; test the disc on yours."));
+                }
+                if t.format == AudioFormat::DtsCopy {
+                    ui.colored_label(egui::Color32::from_rgb(230, 170, 70), tr("DTS-HD is written as on commercial discs (DTS core plus HD extension); test the disc on your player."));
                 }
             }); }
         });
