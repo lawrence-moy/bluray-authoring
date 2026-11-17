@@ -1346,5 +1346,9 @@
   "⏸ Pause": "⏸ Pause",
   "Stop and go back to the start": "Arrêter et revenir au début",
   "the audio output does not respond": "la sortie audio ne répond pas",
-  "The waveform is read from the whole track; you can already play it.": "La forme d'onde est lue sur toute la piste ; vous pouvez déjà l'écouter."
+  "The waveform is read from the whole track; you can already play it.": "La forme d'onde est lue sur toute la piste ; vous pouvez déjà l'écouter.",
+  "Zoom in (mouse wheel on the waveform)": "Zoomer (molette sur la forme d'onde)",
+  "Whole track": "Toute la piste",
+  "{} visible": "{} visibles",
+  "Shift + wheel, or horizontal scroll: move along the track": "Maj + molette, ou défilement horizontal : se déplacer dans la piste"
 }

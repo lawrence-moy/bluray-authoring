@@ -1212,22 +1212,42 @@ pub fn audio_peaks(tools: &Tools, src: &Path, track: Option<u32>, duration: f64,
 /// Le decodage audio n'occupe qu'un coeur : une piste longue est coupee en morceaux decodes en parallele (un ffmpeg par coeur,
 /// chacun positionne par `-ss`), dont on garde la plus forte valeur par tranche.
 pub fn audio_peaks_with(tools: &Tools, src: &Path, track: Option<u32>, duration: f64, bins: usize, progress: &mut dyn FnMut(f32) -> bool) -> Result<Vec<f32>> {
+    peaks_parallel(tools, src, track, 0.0, duration, true, bins, progress)
+}
+
+/// Enveloppe fine d'une portion de piste (zoom) : `bins` valeurs pour `len` secondes a partir de `start`. ffmpeg se place
+/// directement a `start`, et une portion longue est decodee en parallele comme la piste entiere.
+pub fn audio_peaks_range(tools: &Tools, src: &Path, track: Option<u32>, start: f64, len: f64, bins: usize) -> Result<Vec<f32>> {
+    peaks_parallel(tools, src, track, start.max(0.0), len.max(0.01), false, bins, &mut |_| true)
+}
+
+/// Enveloppe de `len` secondes a partir de `start`, en morceaux decodes en parallele ; `to_end` : le dernier morceau va jusqu'a
+/// la fin du fichier (duree annoncee parfois un peu courte).
+#[allow(clippy::too_many_arguments)]
+fn peaks_parallel(
+    tools: &Tools, src: &Path, track: Option<u32>, start: f64, len: f64, to_end: bool, bins: usize, progress: &mut dyn FnMut(f32) -> bool,
+) -> Result<Vec<f32>> {
     use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
     let bins = bins.max(1);
-    let total = (duration * PEAK_RATE as f64).max(1.0);
+    let total = (len * PEAK_RATE as f64).max(1.0);
     // au moins une minute par morceau, au plus un morceau par coeur (8 au plus)
     let cores = std::thread::available_parallelism().map_or(1, |n| n.get()).min(8);
-    let parts = if duration > 0.0 { cores.min((duration / 60.0).ceil() as usize).max(1) } else { 1 };
-    let len = duration / parts as f64;
+    let parts = if len > 0.0 { cores.min((len / 60.0).ceil() as usize).max(1) } else { 1 };
+    let part = len / parts as f64;
     let done = AtomicU64::new(0);
     let stop = AtomicBool::new(false);
     let results: Vec<Result<Vec<f32>>> = std::thread::scope(|sc| {
         let handles: Vec<_> = (0..parts)
             .map(|k| {
                 let (done, stop) = (&done, &stop);
-                // le dernier morceau va jusqu'a la fin (duree annoncee parfois un peu courte)
-                let seg = if parts == 1 { None } else { Some((k as f64 * len, if k + 1 == parts { None } else { Some(len) })) };
-                sc.spawn(move || peaks_segment(tools, src, track, seg, total, bins, done, stop))
+                let last = k + 1 == parts;
+                let seg = if parts == 1 && start == 0.0 && to_end {
+                    None
+                } else {
+                    Some((start + k as f64 * part, if last && to_end { None } else { Some(part) }))
+                };
+                let first = k as f64 * part * PEAK_RATE as f64;
+                sc.spawn(move || peaks_segment(tools, src, track, seg, first, total, bins, done, stop))
             })
             .collect();
         let mut cancelled = false;
@@ -1236,7 +1256,7 @@ pub fn audio_peaks_with(tools: &Tools, src: &Path, track: Option<u32>, duration:
                 cancelled = true;
                 stop.store(true, Ordering::Relaxed);
             }
-            std::thread::sleep(std::time::Duration::from_millis(40));
+            std::thread::sleep(std::time::Duration::from_millis(20));
         }
         if !cancelled && !progress((done.load(Ordering::Relaxed) as f64 / total).min(1.0) as f32) {
             stop.store(true, Ordering::Relaxed);
@@ -1259,10 +1279,12 @@ pub fn audio_peaks_with(tools: &Tools, src: &Path, track: Option<u32>, duration:
 /// Frequence a laquelle la piste est decodee pour l'enveloppe (Hz).
 const PEAK_RATE: u32 = 4000;
 
-/// Enveloppe d'un morceau de piste : `seg` = (debut, duree ou `None` jusqu'a la fin), `None` = toute la piste. Les valeurs sont
-/// rangees dans les `bins` tranches de la piste entiere (`total` echantillons) ; `done` compte les echantillons lus.
+/// Enveloppe d'un morceau de piste : `seg` = (debut, duree ou `None` jusqu'a la fin), `None` = toute la piste. L'echantillon
+/// numero `i` du morceau va dans la tranche de `first + i` parmi les `bins` tranches de `total` echantillons ; `done` compte
+/// les echantillons lus.
+#[allow(clippy::too_many_arguments)]
 fn peaks_segment(
-    tools: &Tools, src: &Path, track: Option<u32>, seg: Option<(f64, Option<f64>)>, total: f64, bins: usize,
+    tools: &Tools, src: &Path, track: Option<u32>, seg: Option<(f64, Option<f64>)>, first: f64, total: f64, bins: usize,
     done: &std::sync::atomic::AtomicU64, stop: &std::sync::atomic::AtomicBool,
 ) -> Result<Vec<f32>> {
     use std::sync::atomic::Ordering;
@@ -1278,7 +1300,6 @@ fn peaks_segment(
     no_window(&mut c);
     let mut child = c.spawn()?;
     let mut out = child.stdout.take().ok_or_else(|| Error::Format("stdout".into()))?;
-    let first = seg.map_or(0.0, |s| s.0 * PEAK_RATE as f64);
     let mut peaks = vec![0.0f32; bins];
     let (mut buf, mut idx, mut odd) = (vec![0u8; 65536], 0u64, None::<u8>);
     loop {

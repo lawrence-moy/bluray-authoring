@@ -156,6 +156,13 @@ fn audio_peaks_of_a_long_track_are_decoded_in_parts() {
     assert!(peaks.iter().all(|v| *v > 0.005), "{peaks:?}");
     let (a, b, c) = (peaks[5..55].iter().cloned().fold(1.0, f32::min), peaks[65..115].iter().cloned().fold(0.0, f32::max), peaks[125..175].iter().cloned().fold(1.0, f32::min));
     assert!(a > 0.1 && b < 0.03 && c > 0.1, "{a} {b} {c}");
+    // zoom : 4 s autour du passage fort -> faible (a 60 s), une valeur toutes les 50 ms
+    let z = bdauthor_core::ffmpeg::audio_peaks_range(&tools, &p, None, 58.0, 4.0, 80).unwrap();
+    assert_eq!(z.len(), 80);
+    assert!(z[..38].iter().all(|v| *v > 0.1) && z[42..].iter().all(|v| *v < 0.03 && *v > 0.005), "{z:?}");
+    // portion longue (decoupee en morceaux) : 50 s a 170 s, une valeur par seconde
+    let w = bdauthor_core::ffmpeg::audio_peaks_range(&tools, &p, None, 50.0, 120.0, 120).unwrap();
+    assert!(w[..9].iter().all(|v| *v > 0.1) && w[11..69].iter().all(|v| *v < 0.03 && *v > 0.005) && w[71..].iter().all(|v| *v > 0.1), "{w:?}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 

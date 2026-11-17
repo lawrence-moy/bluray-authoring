@@ -3,7 +3,7 @@ use crate::i18n::{tr, trf};
 use crate::subs_ui::language_for_code;
 use bdauthor_core::audio::{AudioFormat, AudioSource, AC3_RATES, AC3_SURROUND_KBPS, AudioTrackCfg, MAX_AUDIO_TRACKS};
 use crate::player::AudioOut;
-use bdauthor_core::ffmpeg::{audio_peaks_with, list_audio_streams, probe_duration, AudioStreamInfo, Tools};
+use bdauthor_core::ffmpeg::{audio_peaks_range, audio_peaks_with, list_audio_streams, probe_duration, AudioStreamInfo, Tools};
 use bdauthor_core::model::VideoEntry;
 use bdauthor_core::subtitle::Language;
 use eframe::egui;
@@ -215,6 +215,18 @@ fn peaks_cache() -> std::sync::MutexGuard<'static, HashMap<PeaksKey, (f64, Vec<f
     PEAKS_CACHE.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner())
 }
 
+/// Enveloppe fine d'une portion de la piste, calculee pour le zoom.
+struct Detail {
+    start: f64,
+    len: f64,
+    peaks: Vec<f32>,
+}
+
+/// Portion visible la plus courte (s).
+const MIN_VIEW: f64 = 1.0;
+/// Nombre de valeurs de l'enveloppe de la piste entiere.
+const FULL_BINS: usize = 2000;
+
 /// Lecture en cours de la fenetre d'ecoute.
 struct Playing {
     out: AudioOut,
@@ -247,6 +259,31 @@ pub struct AudioPreview {
     pos: f64,
     /// position visee pendant un glisser sur la frise
     scrub: Option<f64>,
+    /// portion visible de la frise (debut, duree en s) ; duree 0 : toute la piste
+    view: (f64, f64),
+    /// enveloppe fine de la portion zoomee, calcul en cours, portion voulue (debut, duree, valeurs) et depuis quand
+    detail: Option<Detail>,
+    detail_rx: Option<Receiver<Option<Detail>>>,
+    detail_want: Option<((f64, f64, usize), Instant)>,
+    /// position au dernier affichage (suivi de la lecture quand on est zoome)
+    last_cur: f64,
+}
+
+/// Heure avec les dixiemes si `tenths`.
+fn clock_fine(t: f64, tenths: bool) -> String {
+    if !tenths { return clock(t); }
+    let d = (t.max(0.0) * 10.0).round() as u64;
+    let s = d / 10;
+    if s >= 3600 { format!("{}:{:02}:{:02}.{}", s / 3600, s / 60 % 60, s % 60, d % 10) } else { format!("{}:{:02}.{}", s / 60, s % 60, d % 10) }
+}
+
+/// Duree lisible : « 4.2 s », « 3 min 20 s ».
+fn span(t: f64) -> String {
+    if t < 10.0 { format!("{:.1} s", t) } else if t < 60.0 { format!("{:.0} s", t) } else if t < 3600.0 {
+        format!("{} min {:02} s", (t / 60.0) as u64, (t % 60.0) as u64)
+    } else {
+        format!("{} h {:02} min", (t / 3600.0) as u64, (t / 60.0 % 60.0) as u64)
+    }
 }
 
 fn clock(t: f64) -> String {
@@ -260,7 +297,7 @@ impl AudioPreview {
         let key = peaks_key(file, stream);
         let mut me = AudioPreview {
             video, track, title, file: file.to_path_buf(), stream, duration: 0.0, peaks: Vec::new(), progress: 0.0, rx: None, error: None,
-            tools: None, play: None, pos: 0.0, scrub: None,
+            tools: None, play: None, pos: 0.0, scrub: None, view: (0.0, 0.0), detail: None, detail_rx: None, detail_want: None, last_cur: 0.0,
         };
         if let Some((d, p)) = key.as_ref().and_then(|k| peaks_cache().get(k).cloned()) {
             (me.duration, me.peaks, me.progress) = (d, p, 1.0);
@@ -280,7 +317,7 @@ impl AudioPreview {
                 last = pct;
                 tx.send(Loaded::Progress(f)).is_ok()
             };
-            let r = audio_peaks_with(&tools, &src, stream, dur, 2000, &mut report);
+            let r = audio_peaks_with(&tools, &src, stream, dur, FULL_BINS, &mut report);
             match r {
                 Ok(p) => {
                     if let Some(k) = key { peaks_cache().insert(k, (dur, p.clone())); }
@@ -360,6 +397,84 @@ impl AudioPreview {
         open
     }
 
+    /// Portion visible (debut, duree) ; toute la piste quand on n'est pas zoome.
+    fn visible(&self) -> (f64, f64) {
+        let dur = self.duration;
+        let (s, l) = self.view;
+        if l <= 0.0 || l >= dur { (0.0, dur) } else { (s.clamp(0.0, dur - l), l) }
+    }
+
+    /// Change la portion visible (bornee a la piste, au moins `MIN_VIEW`).
+    fn set_view(&mut self, start: f64, len: f64) {
+        let dur = self.duration;
+        if dur <= 0.0 { return; }
+        let len = len.clamp(MIN_VIEW.min(dur), dur);
+        self.view = if len >= dur { (0.0, 0.0) } else { (start.clamp(0.0, dur - len), len) };
+    }
+
+    /// Zoom d'un facteur `f` (< 1 : on agrandit) en gardant l'instant `anchor` au meme endroit.
+    fn zoom_at(&mut self, f: f64, anchor: f64) {
+        let (s, l) = self.visible();
+        let nl = l * f;
+        self.set_view(anchor - (anchor - s) * f, nl);
+    }
+
+    /// Enveloppe fine : demandee quand l'enveloppe de la piste entiere est trop grossiere pour la portion visible (`cols`
+    /// colonnes), calculee un peu apres le dernier changement de zoom, sur la portion visible elargie de moitie de chaque cote
+    /// (un petit deplacement ne la refait pas).
+    fn update_detail(&mut self, cols: usize) {
+        if let Some(rx) = &self.detail_rx {
+            match rx.try_recv() {
+                Ok(d) => { if d.is_some() { self.detail = d; } self.detail_rx = None; }
+                Err(std::sync::mpsc::TryRecvError::Disconnected) => self.detail_rx = None,
+                Err(_) => {}
+            }
+        }
+        let (vs, vl) = self.visible();
+        let dur = self.duration;
+        if dur <= 0.0 || vl >= dur { self.detail_want = None; return; }
+        let col = vl / cols.max(1) as f64;
+        let full = if self.peaks.is_empty() { f64::INFINITY } else { dur / self.peaks.len() as f64 };
+        if col >= full * 0.75 { self.detail_want = None; return; }
+        let fine_enough = self.detail.as_ref().is_some_and(|d| {
+            d.start <= vs + 1e-6 && d.start + d.len >= vs + vl - 1e-6 && d.len / d.peaks.len().max(1) as f64 <= col * 1.5
+        });
+        if fine_enough { self.detail_want = None; return; }
+        let start = (vs - vl * 0.5).max(0.0);
+        let len = (vs + vl * 1.5).min(dur) - start;
+        let bins = ((len / col) as usize * 2).clamp(1, 40_000);
+        let want = (start, len, bins);
+        if self.detail_want.as_ref().map(|w| w.0) != Some(want) { self.detail_want = Some((want, Instant::now())); }
+        let Some((want, since)) = self.detail_want else { return };
+        if self.detail_rx.is_some() || since.elapsed().as_millis() < 150 { return; }
+        let Ok(tools) = Tools::locate() else { return };
+        let (tx, rx) = channel();
+        let (src, stream) = (self.file.clone(), self.stream);
+        std::thread::spawn(move || {
+            let r = audio_peaks_range(&tools, &src, stream, want.0, want.1, want.2).ok().map(|p| Detail { start: want.0, len: want.1, peaks: p });
+            let _ = tx.send(r);
+        });
+        self.detail_rx = Some(rx);
+        self.detail_want = None;
+    }
+
+    /// Plus forte valeur de l'enveloppe entre `t0` et `t1` : enveloppe fine si elle couvre l'intervalle, sinon celle de la piste.
+    fn peak(&self, t0: f64, t1: f64) -> Option<f32> {
+        let max_of = |p: &[f32], start: f64, len: f64| -> f32 {
+            let n = p.len();
+            let i0 = (((t0 - start) / len * n as f64).floor().max(0.0) as usize).min(n - 1);
+            let i1 = (((t1 - start) / len * n as f64).ceil() as usize).clamp(i0 + 1, n);
+            p[i0..i1].iter().cloned().fold(0.0_f32, f32::max)
+        };
+        if let Some(d) = &self.detail {
+            if !d.peaks.is_empty() && d.start <= t0 && d.start + d.len >= t1 && d.len / d.peaks.len() as f64 <= (t1 - t0) * 1.5 {
+                return Some(max_of(&d.peaks, d.start, d.len));
+            }
+        }
+        if self.peaks.is_empty() || self.duration <= 0.0 { return None; }
+        Some(max_of(&self.peaks, 0.0, self.duration))
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.poll();
         // fin de la piste : retour au debut ; sortie audio muette (peripherique en defaut) : arret avec un message
@@ -373,11 +488,28 @@ impl AudioPreview {
         let dur = self.duration;
         let running = self.play.as_ref().is_some_and(|p| !p.paused);
         let cur = self.scrub.unwrap_or_else(|| self.current());
+        // zoome et en lecture : la frise suit le son quand il sort de la portion visible
+        let (vs, vl) = self.visible();
+        if running && self.scrub.is_none() && vl < dur && self.last_cur >= vs && self.last_cur <= vs + vl && cur > vs + vl {
+            self.set_view(cur - vl * 0.05, vl);
+        }
+        self.last_cur = cur;
         let (mut toggle, mut rewind) = (false, false);
+        let mut zoom: Option<f64> = None;
+        let zoomed = self.visible().1 < dur;
         ui.horizontal(|ui| {
             if ui.add_enabled(dur > 0.0, egui::Button::new(if running { tr("⏸ Pause") } else { tr("▶ Play") })).clicked() { toggle = true; }
             if ui.add_enabled(self.play.is_some() || self.pos > 0.0, egui::Button::new(tr("⏹ Stop"))).on_hover_text(tr("Stop and go back to the start")).clicked() { rewind = true; }
-            ui.monospace(format!("{} / {}", clock(cur), clock(dur)));
+            ui.monospace(format!("{} / {}", clock_fine(cur, zoomed && self.visible().1 < 60.0), clock(dur)));
+            ui.separator();
+            if ui.add_enabled(dur > 0.0, egui::Button::new("🔍+")).on_hover_text(tr("Zoom in (mouse wheel on the waveform)")).clicked() { zoom = Some(0.5); }
+            if ui.add_enabled(zoomed, egui::Button::new("🔍−")).on_hover_text(tr("Zoom out")).clicked() { zoom = Some(2.0); }
+            if ui.add_enabled(zoomed, egui::Button::new(tr("Whole track"))).clicked() { zoom = Some(f64::INFINITY); }
+            if zoomed {
+                ui.label(egui::RichText::new(trf!("{} visible", span(self.visible().1))).weak())
+                    .on_hover_text(tr("Shift + wheel, or horizontal scroll: move along the track"));
+            }
+            if self.detail_rx.is_some() || self.detail_want.is_some() { ui.spinner(); }
             if self.rx.is_some() && self.error.is_none() {
                 let pct = (self.progress * 100.0).round() as u32;
                 ui.add(egui::ProgressBar::new(self.progress).desired_width(260.0).animate(true).text(format!("{} {} %", tr("Reading the waveform…"), pct)))
@@ -385,50 +517,84 @@ impl AudioPreview {
             }
         });
         if let Some(e) = &self.error { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), e); }
+        // boutons : zoom autour de la position de lecture si elle est visible, sinon autour du milieu
+        if let Some(f) = zoom {
+            if f.is_infinite() { self.view = (0.0, 0.0); } else {
+                let (vs, vl) = self.visible();
+                let anchor = if cur >= vs && cur <= vs + vl { cur } else { vs + vl / 2.0 };
+                self.zoom_at(f, anchor);
+            }
+        }
 
         // frise : forme d'onde, zone deja jouee en couleur, regle des temps
         let h = (ui.available_height() - 4.0).clamp(80.0, 220.0);
         let (rect, resp) = ui.allocate_exact_size(egui::vec2(ui.available_width(), h), egui::Sense::click_and_drag());
+        // molette : zoom autour du pointeur ; Maj + molette ou defilement horizontal : deplacement
+        if resp.hovered() && dur > 0.0 {
+            let (d, shift) = ui.input(|i| (i.smooth_scroll_delta, i.modifiers.shift));
+            let (vs, vl) = self.visible();
+            let (dx, dy) = if shift && d.x == 0.0 { (d.y, 0.0) } else { (d.x, d.y) };
+            if dy != 0.0 {
+                let anchor = ui.input(|i| i.pointer.hover_pos()).map_or(vs + vl / 2.0, |p| vs + (((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64) * vl);
+                self.zoom_at((-dy as f64 / 200.0).exp(), anchor);
+            }
+            if dx != 0.0 && vl < dur { self.set_view(vs - dx as f64 / rect.width() as f64 * vl, vl); }
+            if dx != 0.0 || dy != 0.0 { ui.input_mut(|i| i.smooth_scroll_delta = egui::Vec2::ZERO); }
+        }
+        let cols = (rect.width() / 2.0).max(1.0) as usize;
+        self.update_detail(cols);
+        let (vs, vl) = self.visible();
         let vis = ui.visuals().clone();
         let painter = ui.painter_at(rect);
         painter.rect_filled(rect, 3.0, vis.extreme_bg_color);
         let ruler = 18.0;
         let wave = egui::Rect::from_min_max(rect.min, egui::pos2(rect.right(), rect.bottom() - ruler));
-        let x_of = |t: f64| rect.left() + (t / dur.max(1e-6)) as f32 * rect.width();
+        let x_of = |t: f64| rect.left() + ((t - vs) / vl.max(1e-6)) as f32 * rect.width();
         if dur > 0.0 {
             // regle : graduation d'au moins 70 px
-            let px_per_s = rect.width() as f64 / dur;
-            let step = [1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 3600.0].into_iter().find(|s| s * px_per_s >= 70.0).unwrap_or(7200.0);
-            let mut t = 0.0;
-            while t <= dur {
+            let px_per_s = rect.width() as f64 / vl.max(1e-6);
+            let step = [0.1, 0.2, 0.5, 1.0, 2.0, 5.0, 10.0, 15.0, 30.0, 60.0, 120.0, 300.0, 600.0, 900.0, 1800.0, 3600.0]
+                .into_iter().find(|s| s * px_per_s >= 70.0).unwrap_or(7200.0);
+            let mut t = (vs / step).ceil() * step;
+            while t <= vs + vl + 1e-9 {
                 let x = x_of(t);
                 painter.line_segment([egui::pos2(x, rect.bottom() - ruler), egui::pos2(x, rect.bottom() - ruler + 5.0)], egui::Stroke::new(1.0_f32, vis.weak_text_color()));
-                painter.text(egui::pos2(x + 3.0, rect.bottom() - 2.0), egui::Align2::LEFT_BOTTOM, clock(t), egui::FontId::proportional(11.0), vis.weak_text_color());
+                painter.text(egui::pos2(x + 3.0, rect.bottom() - 2.0), egui::Align2::LEFT_BOTTOM, clock_fine(t, step < 1.0), egui::FontId::proportional(11.0), vis.weak_text_color());
                 t += step;
             }
         }
-        if !self.peaks.is_empty() {
-            let norm = self.peaks.iter().cloned().fold(0.001_f32, f32::max);
+        // hauteur : relative au plus fort de la piste entiere (le zoom ne change pas l'echelle)
+        let norm = if self.peaks.is_empty() {
+            self.detail.as_ref().map_or(0.001, |d| d.peaks.iter().cloned().fold(0.001_f32, f32::max))
+        } else {
+            self.peaks.iter().cloned().fold(0.001_f32, f32::max)
+        };
+        if dur > 0.0 {
             let mid = wave.center().y;
             let played = x_of(cur);
-            let n = self.peaks.len();
-            let cols = (rect.width() / 2.0).max(1.0) as usize;
             for c in 0..cols {
+                let (t0, t1) = (vs + c as f64 * vl / cols as f64, vs + (c + 1) as f64 * vl / cols as f64);
+                let Some(p) = self.peak(t0, t1) else { break };
                 let x = rect.left() + (c as f32 + 0.5) * rect.width() / cols as f32;
-                // plus forte valeur des tranches couvertes par cette colonne
-                let (i0, i1) = (c * n / cols, ((c + 1) * n / cols).max(c * n / cols + 1).min(n));
-                let p = self.peaks[i0..i1].iter().cloned().fold(0.0_f32, f32::max) / norm;
-                let half = (p.sqrt() * (wave.height() / 2.0 - 2.0)).max(1.0);
+                let half = ((p / norm).min(1.0).sqrt() * (wave.height() / 2.0 - 2.0)).max(1.0);
                 let col = if x <= played { vis.selection.bg_fill } else { vis.widgets.inactive.fg_stroke.color.gamma_multiply(0.6) };
                 painter.line_segment([egui::pos2(x, mid - half), egui::pos2(x, mid + half)], egui::Stroke::new(1.5_f32, col));
             }
+            if cur >= vs && cur <= vs + vl {
+                let x = x_of(cur);
+                painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom() - ruler)], egui::Stroke::new(2.0_f32, vis.selection.stroke.color));
+            }
         }
-        if dur > 0.0 {
-            let x = x_of(cur);
-            painter.line_segment([egui::pos2(x, rect.top()), egui::pos2(x, rect.bottom() - ruler)], egui::Stroke::new(2.0_f32, vis.selection.stroke.color));
+        // zoome : petite barre en haut qui situe la portion visible dans la piste
+        if dur > 0.0 && vl < dur {
+            let bar = egui::Rect::from_min_size(rect.min + egui::vec2(0.0, 1.0), egui::vec2(rect.width(), 3.0));
+            painter.rect_filled(bar, 1.0, vis.widgets.inactive.bg_fill);
+            let a = rect.left() + (vs / dur) as f32 * rect.width();
+            let b = (rect.left() + ((vs + vl) / dur) as f32 * rect.width()).max(a + 3.0);
+            painter.rect_filled(egui::Rect::from_min_max(egui::pos2(a, bar.top()), egui::pos2(b, bar.bottom())), 1.0, vis.selection.stroke.color);
         }
         // clic ou glisser : se deplacer (la lecture repart au relachement)
-        let at = |p: egui::Pos2| (((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64) * dur;
+        let at = |p: egui::Pos2| vs + (((p.x - rect.left()) / rect.width()).clamp(0.0, 1.0) as f64) * vl;
         if dur > 0.0 {
             if resp.dragged() { if let Some(p) = resp.interact_pointer_pos() { self.scrub = Some(at(p)); } }
             if resp.drag_stopped() || resp.clicked() {
@@ -440,6 +606,6 @@ impl AudioPreview {
         }
         if toggle { self.toggle(); }
         if rewind { self.play = None; self.pos = 0.0; }
-        if running || self.rx.is_some() { ui.ctx().request_repaint(); }
+        if running || self.rx.is_some() || self.detail_rx.is_some() || self.detail_want.is_some() { ui.ctx().request_repaint(); }
     }
 }
