@@ -267,6 +267,8 @@ pub struct AudioPreview {
     detail_want: Option<((f64, f64, usize), Instant)>,
     /// position au dernier affichage (suivi de la lecture quand on est zoome)
     last_cur: f64,
+    /// niveaux du son joue
+    vu: crate::vumeter::VuMeter,
 }
 
 /// Heure avec les dixiemes si `tenths`.
@@ -298,6 +300,7 @@ impl AudioPreview {
         let mut me = AudioPreview {
             video, track, title, file: file.to_path_buf(), stream, duration: 0.0, peaks: Vec::new(), progress: 0.0, rx: None, error: None,
             tools: None, play: None, pos: 0.0, scrub: None, view: (0.0, 0.0), detail: None, detail_rx: None, detail_want: None, last_cur: 0.0,
+            vu: Default::default(),
         };
         if let Some((d, p)) = key.as_ref().and_then(|k| peaks_cache().get(k).cloned()) {
             (me.duration, me.peaks, me.progress) = (d, p, 1.0);
@@ -517,6 +520,15 @@ impl AudioPreview {
             }
         });
         if let Some(e) = &self.error { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), e); }
+        // vumetre : cretes du son tel qu'il part vers la sortie audio (pistes multicanal reduites aux canaux de la sortie)
+        let peaks = self.play.as_ref().map(|p| p.out.levels()).unwrap_or_default();
+        self.vu.update(&peaks);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new(tr("Level (dBFS)")).weak())
+                .on_hover_text(tr("Peak level of the sound sent to the audio output, in decibels below full scale. The thin mark holds the peak; the red light shows saturation. A multichannel track is shown with the channels of your audio output."));
+            let w = (ui.available_width() - 4.0).min(560.0);
+            self.vu.ui(ui, w);
+        });
         // boutons : zoom autour de la position de lecture si elle est visible, sinon autour du milieu
         if let Some(f) = zoom {
             if f.is_infinite() { self.view = (0.0, 0.0); } else {
@@ -606,6 +618,6 @@ impl AudioPreview {
         }
         if toggle { self.toggle(); }
         if rewind { self.play = None; self.pos = 0.0; }
-        if running || self.rx.is_some() || self.detail_rx.is_some() || self.detail_want.is_some() { ui.ctx().request_repaint(); }
+        if running || self.vu.active() || self.rx.is_some() || self.detail_rx.is_some() || self.detail_want.is_some() { ui.ctx().request_repaint(); }
     }
 }

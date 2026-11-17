@@ -1350,5 +1350,16 @@
   "Zoom in (mouse wheel on the waveform)": "Zoomer (molette sur la forme d'onde)",
   "Whole track": "Toute la piste",
   "{} visible": "{} visibles",
-  "Shift + wheel, or horizontal scroll: move along the track": "Maj + molette, ou défilement horizontal : se déplacer dans la piste"
+  "Shift + wheel, or horizontal scroll: move along the track": "Maj + molette, ou défilement horizontal : se déplacer dans la piste",
+  "Level (dBFS)": "Niveau (dBFS)",
+  "Peak level of the sound sent to the audio output, in decibels below full scale. The thin mark holds the peak; the red light shows saturation. A multichannel track is shown with the channels of your audio output.": "Niveau de crête du son envoyé à la sortie audio, en décibels sous la pleine échelle. Le trait fin garde le pic ; le voyant rouge signale une saturation. Une piste multicanal est affichée avec les canaux de votre sortie audio.",
+  "M": "M",
+  "L": "G",
+  "R": "D",
+  "C": "C",
+  "LFE": "LFE",
+  "Ls": "Sg",
+  "Rs": "Sd",
+  "Lb": "Ag",
+  "Rb": "Ad"
 }

@@ -13,6 +13,7 @@ mod chapters_ui;
 mod frame_ui;
 mod timeline_ui;
 mod player;
+mod vumeter;
 mod coherence_ui;
 mod occupancy_ui;
 

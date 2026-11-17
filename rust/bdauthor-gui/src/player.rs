@@ -7,7 +7,7 @@ use bdauthor_core::playback::{PcmFeed, PcmSource, PlayClock};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use eframe::egui;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicI32, Ordering};
+use std::sync::atomic::{AtomicI32, AtomicU32, Ordering};
 use std::sync::mpsc::TryRecvError;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -24,6 +24,29 @@ fn sound_choice() -> Option<u32> {
 pub(crate) struct AudioOut {
     feed: PcmFeed,
     stream: cpal::Stream,
+    meter: Arc<Meter>,
+}
+
+/// Niveaux de crete par canal releves par la sortie audio (le son tel qu'il part vers le peripherique), lus puis remis a zero
+/// par l'affichage. Une amplitude positive se compare comme ses bits : `fetch_max` sur les bits garde la plus forte.
+pub(crate) struct Meter {
+    peaks: Vec<AtomicU32>,
+}
+
+impl Meter {
+    fn new(channels: usize) -> Meter { Meter { peaks: (0..channels.max(1)).map(|_| AtomicU32::new(0)).collect() } }
+
+    fn record(&self, block: &[f32]) {
+        let ch = self.peaks.len();
+        let mut m = [0.0f32; 8];
+        for frame in block.chunks(ch) {
+            for (k, s) in frame.iter().enumerate().take(8) { m[k] = m[k].max(s.abs()); }
+        }
+        for (k, p) in self.peaks.iter().enumerate().take(8) { p.fetch_max(m[k].to_bits(), Ordering::Relaxed); }
+    }
+
+    /// Plus forte amplitude de chaque canal depuis la lecture precedente.
+    fn take(&self) -> Vec<f32> { self.peaks.iter().map(|p| f32::from_bits(p.swap(0, Ordering::Relaxed))).collect() }
 }
 
 impl AudioOut {
@@ -37,17 +60,22 @@ impl AudioOut {
         let feed = PcmFeed::start(tools, file, track, t, rate, ch as u32).map_err(|e| e.to_string())?;
         let cfg: cpal::StreamConfig = sup.config();
         let src = feed.source();
+        let meter = Arc::new(Meter::new(ch as usize));
+        let m = meter.clone();
         let stream = match sup.sample_format() {
-            cpal::SampleFormat::F32 => build::<f32>(&dev, &cfg, src),
-            cpal::SampleFormat::I16 => build::<i16>(&dev, &cfg, src),
-            cpal::SampleFormat::U16 => build::<u16>(&dev, &cfg, src),
-            cpal::SampleFormat::I32 => build::<i32>(&dev, &cfg, src),
+            cpal::SampleFormat::F32 => build::<f32>(&dev, &cfg, src, m),
+            cpal::SampleFormat::I16 => build::<i16>(&dev, &cfg, src, m),
+            cpal::SampleFormat::U16 => build::<u16>(&dev, &cfg, src, m),
+            cpal::SampleFormat::I32 => build::<i32>(&dev, &cfg, src, m),
             f => return Err(trf!("audio output format not supported ({})", format!("{f:?}"))),
         }
         .map_err(|e| e.to_string())?;
         stream.play().map_err(|e| e.to_string())?;
-        Ok(AudioOut { feed, stream })
+        Ok(AudioOut { feed, stream, meter })
     }
+
+    /// Crete de chaque canal de la sortie depuis l'appel precedent (amplitude, 1 = pleine echelle).
+    pub(crate) fn levels(&self) -> Vec<f32> { self.meter.take() }
 
     /// Temps entendu depuis le depart (secondes).
     pub(crate) fn position(&self) -> f64 { self.feed.position() }
@@ -61,7 +89,7 @@ impl AudioOut {
     pub(crate) fn resume(&self) -> bool { self.stream.play().is_ok() }
 }
 
-fn build<T>(dev: &cpal::Device, cfg: &cpal::StreamConfig, src: PcmSource) -> Result<cpal::Stream, cpal::BuildStreamError>
+fn build<T>(dev: &cpal::Device, cfg: &cpal::StreamConfig, src: PcmSource, meter: Arc<Meter>) -> Result<cpal::Stream, cpal::BuildStreamError>
 where
     T: cpal::SizedSample + cpal::FromSample<f32>,
 {
@@ -73,6 +101,7 @@ where
             if let Some(d) = ts.playback.duration_since(&ts.callback) { src.set_latency(d); }
             tmp.resize(data.len(), 0.0);
             src.fill(&mut tmp);
+            meter.record(&tmp);
             for (o, s) in data.iter_mut().zip(tmp.iter()) { *o = <T as cpal::Sample>::from_sample(*s); }
         },
         |e| eprintln!("sortie audio : {e}"),
