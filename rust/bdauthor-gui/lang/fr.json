@@ -1361,5 +1361,11 @@
   "Ls": "Sg",
   "Rs": "Sd",
   "Lb": "Ag",
-  "Rb": "Ad"
+  "Rb": "Ad",
+  "Sample rate:": "Fréquence :",
+  "96 kHz keeps the high frequencies of a high-resolution source (music, concert) and doubles the size of the track. With a 48 kHz source it gains nothing.": "Le 96 kHz conserve les hautes fréquences d'une source haute résolution (musique, concert) et double la taille de la piste. Avec une source à 48 kHz, il n'apporte rien.",
+  "(source: {} Hz)": "(source : {} Hz)",
+  "The source is at {} Hz: 96 kHz makes the track heavier without improving it.": "La source est à {} Hz : le 96 kHz alourdit la piste sans l'améliorer.",
+  "   video {}: an audio track is at {} Hz; in 96 kHz LPCM it only gets heavier, with no quality gained": "   vidéo {} : une piste audio est à {} Hz ; en LPCM 96 kHz elle est seulement plus lourde, sans gain de qualité",
+  "sample rate: 96 kHz is only available for LPCM": "fréquence : le 96 kHz n'existe qu'en LPCM"
 }

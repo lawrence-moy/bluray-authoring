@@ -1,7 +1,7 @@
 //! Panneau « Pistes audio » d'une video : pistes de la video ou fichiers audio separes, chacune avec sa langue du projet.
 use crate::i18n::{tr, trf};
 use crate::subs_ui::language_for_code;
-use bdauthor_core::audio::{AudioFormat, AudioSource, AC3_RATES, AC3_SURROUND_KBPS, AudioTrackCfg, MAX_AUDIO_TRACKS};
+use bdauthor_core::audio::{AudioFormat, AudioSource, AC3_RATES, AC3_SURROUND_KBPS, AudioTrackCfg, LPCM_RATES, MAX_AUDIO_TRACKS};
 use crate::player::AudioOut;
 use bdauthor_core::ffmpeg::{audio_peaks_range, audio_peaks_with, list_audio_streams, probe_duration, AudioStreamInfo, Tools};
 use bdauthor_core::model::VideoEntry;
@@ -39,6 +39,11 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
     let mut del = None;
     let mut rows: Vec<egui::Rect> = Vec::new();
     for (k, t) in v.audio.iter_mut().enumerate() {
+        // frequence de la piste source (piste integree a la video, si la video a deja ete examinee)
+        let src_rate = match &t.source {
+            AudioSource::Embedded(n) => probes.get(&v.file).and_then(|r| r.as_ref().ok()).and_then(|s| s.iter().find(|x| x.index == *n)).map(|x| x.sample_rate).filter(|r| *r > 0),
+            AudioSource::File(_) => None,
+        };
         ui.push_id(("audio", k), |ui| {
             let what = match &t.source {
                 AudioSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
@@ -97,6 +102,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                             if ui.selectable_label(t.format == f, tr(f.label())).clicked() {
                                 t.format = f;
                                 if !f.is_encoded_ac3() { t.bitrate = 0; }
+                                if !f.is_lpcm() { t.sample_rate = 0; }
                                 changed = true;
                             }
                         }
@@ -119,6 +125,19 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     ui.label(egui::RichText::new(tr("Sources with more than 6 channels are mixed down to 5.1; a stereo source would only fill the front channels.")).weak());
                 }
                 if t.format.is_lpcm() {
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Sample rate:"));
+                        let khz = |r: u32| format!("{} kHz", r / 1000);
+                        egui::ComboBox::from_id_salt("frequence_piste_audio").selected_text(khz(t.rate())).show_ui(ui, |ui| {
+                            for r in LPCM_RATES {
+                                if ui.selectable_label(t.rate() == r, khz(r)).clicked() { t.sample_rate = if r == 48_000 { 0 } else { r }; changed = true; }
+                            }
+                        }).response.on_hover_text(tr("96 kHz keeps the high frequencies of a high-resolution source (music, concert) and doubles the size of the track. With a 48 kHz source it gains nothing."));
+                        if let Some(r) = src_rate { ui.label(egui::RichText::new(trf!("(source: {} Hz)", r)).weak()); }
+                    });
+                    if let Some(r) = src_rate.filter(|r| t.rate() == 96_000 && *r < 96_000) {
+                        ui.colored_label(egui::Color32::from_rgb(230, 170, 70), trf!("The source is at {} Hz: 96 kHz makes the track heavier without improving it.", r));
+                    }
                     ui.colored_label(egui::Color32::from_rgb(230, 170, 70), tr("Lossless audio: not every player accepts it; test the disc on yours."));
                 }
                 if t.format == AudioFormat::DtsCopy {

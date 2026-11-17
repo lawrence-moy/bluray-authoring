@@ -29,10 +29,19 @@ fn lpcm_frames_are_split_and_timed() {
     pes.extend(&fst);
     let fr = lpcm::frames(&pes).unwrap();
     assert_eq!(fr.len(), 2);
-    assert_eq!((fr[0].0.len(), fr[0].1, fr[1].0.len(), fr[1].1), (f51.len(), 675, fst.len(), 450));
-    // trame tronquee, 96 kHz, en-tete invalide
+    assert_eq!((fr[0].0.len(), fr[0].1.ticks(), fr[1].0.len(), fr[1].1.ticks()), (f51.len(), 675, fst.len(), 450));
+    // 96 kHz : 360 echantillons = 3,75 ms = 337,5 ticks ; les trames se datent d'apres le total d'echantillons
+    let f96 = frame(9, 4, 3, 18, 360);
+    let h96 = lpcm::Header::parse(&f96).unwrap();
+    assert_eq!((h96.rate(), h96.samples(), h96.ticks()), (96_000, 360, 337));
+    assert_eq!(lpcm::frames(&[f96.clone(), f96.clone()].concat()).unwrap().len(), 2);
+    assert_eq!((lpcm::pts_after(1000, 360, 96_000), lpcm::pts_after(1000, 720, 96_000), lpcm::pts_after(0, 96_000 * 3600, 96_000)), (1338, 1675, 90_000 * 3600));
+    assert_eq!(lpcm::pts_after(0, 240, 48_000), 450);
+    assert_eq!(lpcm::attrs(&f96).unwrap(), (6, 4));
+    // trame tronquee, frequences differentes dans un paquet, frequence inconnue, en-tete invalide
     assert!(lpcm::frames(&f51[..100]).is_err());
-    assert!(lpcm::frames(&frame(9, 4, 3, 18, 360)).is_err());
+    assert!(lpcm::frames(&[f51.clone(), f96.clone()].concat()).is_err());
+    assert!(lpcm::frames(&frame(9, 2, 3, 18, 360)).is_err());
     assert!(lpcm::Header::parse(&[0, 4, 0x31, 0]).is_err());
     // attributs du clip : stereo 0x31, 5.1 0x61, mono 0x11 ; descripteur « HDMV »
     assert_eq!(lpcm::attrs(&fst).unwrap(), (3, 1));
@@ -58,6 +67,22 @@ fn audio_format_is_saved_only_when_not_ac3() {
     assert_eq!(AudioFormat::Lpcm24.kbps(6, 192), 6912);
     assert_eq!(AudioFormat::Lpcm16.kbps(2, 192), 1536);
     assert_eq!(AudioFormat::Lpcm24.kbps(5, 192), 6912);
+    // 96 kHz : enregistre seulement s'il est choisi, debit double ; refuse hors LPCM
+    let mut t = AudioTrackCfg::embedded(0, "fra");
+    t.format = AudioFormat::Lpcm24;
+    t.sample_rate = 96_000;
+    let json = t.to_value().to_pretty();
+    assert!(json.contains("\"sample_rate_hz\": 96000"), "{json}");
+    assert_eq!(AudioTrackCfg::from_value(&t.to_value()).unwrap(), t);
+    assert_eq!((t.rate(), t.kbps(6, 0, 192), t.kbps(2, 0, 192)), (96_000, 13_824, 4_608));
+    assert!(t.problems().is_empty());
+    let mut ac3 = t.clone();
+    ac3.format = AudioFormat::Ac3;
+    assert_eq!(ac3.rate(), 48_000);
+    assert!(!ac3.problems().is_empty());
+    // 48 kHz ecrit a la main : equivaut a l'absence
+    let v = bdauthor_core::json::parse(r#"{"track": 0, "format": "lpcm16", "sample_rate_hz": 48000}"#).unwrap();
+    assert_eq!(AudioTrackCfg::from_value(&v).unwrap().sample_rate, 0);
 }
 
 #[test]
@@ -74,6 +99,12 @@ fn ffmpeg_audio_options_per_track() {
     l24.format = AudioFormat::Lpcm24;
     let a = audio_codec_args("192k", &[l24, ac3, l16]).join(" ");
     assert_eq!(a, "-ar 48000 -c:a:0 pcm_bluray -sample_fmt:a:0 s32 -c:a:1 ac3 -b:a:1 192k -ac:a:1 2 -c:a:2 pcm_bluray -sample_fmt:a:2 s16");
+    // LPCM 96 kHz : frequence propre a la piste
+    let mut l96 = AudioTrackCfg::embedded(0, "fra");
+    l96.format = AudioFormat::Lpcm24;
+    l96.sample_rate = 96_000;
+    assert_eq!(audio_codec_args("192k", &[l96, AudioTrackCfg::embedded(0, "eng")]).join(" "),
+               "-ar 48000 -c:a:0 pcm_bluray -sample_fmt:a:0 s32 -ar:a:0 96000 -c:a:1 ac3 -b:a:1 192k -ac:a:1 2");
 }
 
 fn workdir(name: &str) -> PathBuf {
@@ -133,5 +164,49 @@ fn lpcm_tracks_make_a_valid_clip() {
         let secs = total as f64 / 90_000.0;
         assert!((1.5..2.5).contains(&secs), "duree {secs}");
     }
+    let _ = std::fs::remove_dir_all(dir);
+}
+
+#[test]
+fn lpcm_96khz_track_makes_a_valid_clip() {
+    use bdauthor_core::ffmpeg::{EncodeOpts, Tools};
+    use bdauthor_core::film::{load_encoded_m2ts, make_film_m2ts_tracks};
+    use bdauthor_core::tsclip::{make_clip_clpi_tracks, scan_clip};
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = workdir("lpcm96");
+    // source : video et une piste 5.1 a 96 kHz (flac)
+    let src = dir.join("src.mkv");
+    let ok = Command::new(&tools.ffmpeg)
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=3", "-f", "lavfi", "-i", "sine=frequency=440:duration=3:sample_rate=96000,aformat=channel_layouts=5.1(side)",
+               "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "flac"])
+        .arg(&src).status().unwrap().success();
+    assert!(ok, "source");
+    let mut t0 = AudioTrackCfg::embedded(0, "eng");
+    t0.format = AudioFormat::Lpcm24;
+    t0.sample_rate = 96_000;
+    let t1 = AudioTrackCfg::embedded(0, "fra");
+    let tracks = vec![t0, t1];
+    let langs = [*b"eng", *b"fra"];
+    let opts = EncodeOpts { preset: "ultrafast".into(), ..Default::default() };
+    let (m2ts, _) = make_film_m2ts_tracks(&tools, &src, &langs, &tracks, &opts, Some(&dir), &mut |_| {}, &AtomicBool::new(false)).unwrap();
+    // clip : LPCM 5.1 a 96 kHz (attributs 0x64) puis AC-3 stereo a 48 kHz
+    let sc = scan_clip(&m2ts).unwrap();
+    assert_eq!(sc.audio.iter().map(|a| a.1).collect::<Vec<_>>(), vec![0x80, 0x81]);
+    assert_eq!(sc.audio_codes.iter().map(|a| a.2).collect::<Vec<_>>(), vec![0x64, 0x31]);
+    assert!(make_clip_clpi_tracks(&m2ts, &langs, b'0', None, "0200", &[]).unwrap().len() > 100);
+    // relecture : trames a 96 kHz datees sans derive (a un tick pres du compte des echantillons), environ 3 s
+    let enc = load_encoded_m2ts(&m2ts).unwrap();
+    let a = &enc.audio;
+    assert!(a.len() > 100);
+    let mut n = 0u64;
+    for f in a {
+        let h = lpcm::Header::parse(&f.data).unwrap();
+        assert_eq!(h.rate(), 96_000);
+        let want = lpcm::pts_after(a[0].pts, n, 96_000);
+        assert!(f.pts.abs_diff(want) <= 1, "{} {}", f.pts, want);
+        n += h.samples() as u64;
+    }
+    let secs = n as f64 / 96_000.0;
+    assert!((2.5..3.5).contains(&secs), "duree {secs}");
     let _ = std::fs::remove_dir_all(dir);
 }

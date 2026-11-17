@@ -276,7 +276,8 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
 
 ## Audio sans perte (LPCM) par piste
 - Format choisi par piste (`AudioFormat` : AC-3 par defaut, LPCM 16 bits, LPCM 24 bits), cle JSON `format` ecrite seulement hors AC-3.
-  Encodage ffmpeg `pcm_bluray`, flux de type 0x80 dans le TS, le CLPI et la playlist (module `lpcm`). 48 kHz uniquement.
+  Encodage ffmpeg `pcm_bluray`, flux de type 0x80 dans le TS, le CLPI et la playlist (module `lpcm`). 48 kHz, ou 96 kHz par piste
+  (voir plus bas).
 - Debit LPCM = canaux (arrondis au pair) x bits x 48 kb/s ; le debit de pointe de la video est plafonne a `MUX_BUDGET_KBPS` (33 700)
   moins l'audio, erreur si moins de 8 000 kb/s restent.
 - **Dispositions de canaux** : l'encodeur `pcm_bluray` de ffmpeg n'accepte que mono, stereo, 3.0, 3.0(back), 4.0, quad(side),
@@ -285,13 +286,19 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   8 canaux pour elles (prudent, pas exact). Pistes possibles : suivre le remixage reel, ou imposer la disposition (5.0 -> 5.1 + LFE vide).
 - **A verifier sur materiel** (non confirme, aucun lecteur ici) : octets du descripteur d'enregistrement HDMV, et trames de 7,5 ms
   (360 echantillons) en 24 bits. Test prevu : BD-RE avec une piste LPCM 16 bits et une 24 bits.
-- Non fait : TrueHD / DTS-HD (sources deja encodees, copie directe), 96 / 192 kHz.
+- **96 kHz** : champ `sample_rate` de la piste (JSON `sample_rate_hz`, ecrit seulement pour 96000 ; sans effet hors LPCM, signale
+  comme probleme). ffmpeg : `-ar:a:N 96000` apres le `-ar 48000` general. Code de frequence 4 dans l'en-tete des trames, le
+  descripteur HDMV et les attributs du clip (0x64 en 5.1). Debit double (5.1 24 bits : 13,8 Mb/s ; 7.1 24 bits : 18,4 Mb/s).
+  Trames de ffmpeg a 96 kHz : 360 echantillons = 3,75 ms = **337,5 ticks** (pas entier) : les trames d'un meme paquet se datent
+  d'apres le total d'echantillons (`lpcm::pts_after`), sans cumuler d'arrondi. Une source a 48 kHz ou moins en 96 kHz : note dans
+  le journal et avertissement dans l'interface (plus lourd, rien de gagne). 192 kHz (permis par le Blu-ray jusqu'au 5.1) : non propose.
+- Non fait : copie TrueHD (voir « À faire »).
 
 ### Audio AC-3 par piste : 5.1, debit manuel, copie
 - Formats de piste : `ac3` (2.0, defaut), `ac3_51` (5.1, 448 kb/s par defaut ; au-dela de 6 canaux, mixage en 5.1 ; une source stereo
   ne remplit que l'avant), `ac3_copy` (flux AC-3 de la source recopie), `lpcm16`, `lpcm24`.
 - Debit manuel (`bitrate_kbps`, debits AC-3 32 a 640) pour `ac3` et `ac3_51` ; absent = debit du projet (2.0) ou 448 (5.1).
-  Le LPCM n'a pas de reglage de debit (canaux x profondeur x 48) ; la copie garde celui de la source.
+  Le LPCM n'a pas de reglage de debit (canaux x profondeur x frequence) ; la copie garde celui de la source.
 - Copie : refusee avant l'encodage si la source n'est pas de l'AC-3, pas a 48 kHz, a plus de 6 canaux ou a plus de 640 kb/s
   (message explicite). Le decalage de piste (`-itsoffset`) fonctionne aussi avec la copie.
 - Le cache d'encodage tient compte du format et du debit des pistes (les pistes AC-3 par defaut gardent leur ancienne cle).

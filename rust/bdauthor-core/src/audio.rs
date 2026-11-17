@@ -25,9 +25,9 @@ pub enum AudioFormat {
     Ac3Copy,
     /// la piste DTS de la source (DTS, DTS-HD High Resolution ou DTS-HD Master Audio), recopiee telle quelle (48 kHz)
     DtsCopy,
-    /// LPCM sans perte, 16 bits, nombre de canaux de la source (48 kHz)
+    /// LPCM sans perte, 16 bits, nombre de canaux de la source (48 kHz, ou 96 kHz : voir `AudioTrackCfg::sample_rate`)
     Lpcm16,
-    /// LPCM sans perte, 24 bits, nombre de canaux de la source (48 kHz)
+    /// LPCM sans perte, 24 bits, nombre de canaux de la source (48 ou 96 kHz)
     Lpcm24,
 }
 
@@ -91,18 +91,26 @@ pub struct AudioTrackCfg {
     pub format: AudioFormat,
     /// Debit AC-3 (kb/s) des formats encodes ; 0 : celui du projet (stereo) ou 448 (5.1).
     pub bitrate: u32,
+    /// Frequence du LPCM (Hz) : 96000, ou 0 pour 48 kHz ; sans effet sur les autres formats (toujours 48 kHz).
+    pub sample_rate: u32,
 }
+
+/// Frequences LPCM proposees (Hz). Le Blu-ray accepte aussi 192 kHz, au plus en 5.1.
+pub const LPCM_RATES: [u32; 2] = [48_000, 96_000];
 
 /// Nombre maximal de pistes audio par video.
 pub const MAX_AUDIO_TRACKS: usize = 8;
 
 impl AudioTrackCfg {
     pub fn embedded(index: u32, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0 }
+        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0 }
     }
     pub fn from_file(path: &str, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0 }
+        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0 }
     }
+
+    /// Frequence de la piste sur le disque (Hz) : 96 kHz pour un LPCM ainsi regle, 48 kHz sinon.
+    pub fn rate(&self) -> u32 { if self.format.is_lpcm() && self.sample_rate == 96_000 { 96_000 } else { 48_000 } }
 
     /// Debit du flux sur le disque (kb/s) ; `channels` / `source_kbps` : canaux et debit de la piste source (0 si inconnus),
     /// `project_kbps` : debit AC-3 du projet.
@@ -112,7 +120,7 @@ impl AudioTrackCfg {
             AudioFormat::Ac3Surround => if self.bitrate != 0 { self.bitrate } else { AC3_SURROUND_KBPS },
             AudioFormat::Ac3Copy => if source_kbps != 0 { source_kbps } else { AC3_MAX_KBPS },
             AudioFormat::DtsCopy => if source_kbps != 0 { source_kbps } else { DTS_HD_KBPS },
-            f => f.kbps(channels, project_kbps),
+            f => f.kbps(channels, project_kbps) * (self.rate() / 48_000),
         }
     }
 
@@ -132,6 +140,7 @@ impl AudioTrackCfg {
                 Some(s) => AudioFormat::from_name(s).ok_or_else(|| trf!("audio tracks: unknown format “{}”", s))?,
             },
             bitrate: v.get("bitrate_kbps").and_then(Value::as_f64).map_or(0, |x| x.round().max(0.0) as u32),
+            sample_rate: v.get("sample_rate_hz").and_then(Value::as_f64).map_or(0, |x| if x.round() as u32 == 48_000 { 0 } else { x.round().max(0.0) as u32 }),
         })
     }
 
@@ -145,6 +154,7 @@ impl AudioTrackCfg {
         if self.offset_ms != 0 { o.push(("offset_ms".into(), Value::Num(self.offset_ms as f64))); }
         if self.format != AudioFormat::Ac3 { o.push(("format".into(), Value::Str(self.format.name().into()))); }
         if self.bitrate != 0 { o.push(("bitrate_kbps".into(), Value::Num(self.bitrate as f64))); }
+        if self.sample_rate != 0 { o.push(("sample_rate_hz".into(), Value::Num(self.sample_rate as f64))); }
         Value::Obj(o)
     }
 
@@ -160,6 +170,9 @@ impl AudioTrackCfg {
         if let AudioSource::File(f) = &self.source { if f.trim().is_empty() { p.push(tr("audio file not chosen").to_string()); } }
         if self.bitrate != 0 && (!self.format.is_encoded_ac3() || !AC3_RATES.contains(&self.bitrate)) {
             p.push(tr("audio bitrate: only the Dolby Digital rates 32 to 640 kb/s are allowed, and only for encoded Dolby Digital").to_string());
+        }
+        if self.sample_rate != 0 && (self.sample_rate != 96_000 || !self.format.is_lpcm()) {
+            p.push(tr("sample rate: 96 kHz is only available for LPCM").to_string());
         }
         p
     }

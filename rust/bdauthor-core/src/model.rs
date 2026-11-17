@@ -359,6 +359,7 @@ impl ProjectModel {
                     crate::audio::AudioFormat::Ac3Surround => "Dolby Digital 5.1".to_string(),
                     crate::audio::AudioFormat::Ac3Copy => "Dolby Digital".to_string(),
                     crate::audio::AudioFormat::DtsCopy => "DTS".to_string(),
+                    f if t.rate() == 96_000 => format!("LPCM {} bits 96 kHz", f.bits()),
                     f => format!("LPCM {} bits", f.bits()),
                 };
                 if !sound.contains(&n) { sound.push(n); }

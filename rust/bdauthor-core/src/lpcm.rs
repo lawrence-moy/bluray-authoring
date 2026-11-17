@@ -42,8 +42,16 @@ impl Header {
     /// Nombre d'echantillons de la trame.
     pub fn samples(&self) -> usize { self.payload / self.sample_bytes() }
 
-    /// Duree de la trame en ticks de 90 kHz (exact a 48 kHz).
+    /// Duree de la trame en ticks de 90 kHz, arrondie a l'inferieur (une trame de 360 echantillons a 96 kHz dure 337,5 ticks :
+    /// pour dater une suite de trames, compter les echantillons, voir `pts_after`).
     pub fn ticks(&self) -> u64 { self.samples() as u64 * 90_000 / self.rate().max(1) as u64 }
+}
+
+/// Instant (ticks de 90 kHz, arrondi) qui suit `samples` echantillons a `rate` Hz a partir de `start` : les trames se datent
+/// d'apres le total d'echantillons, sans cumuler les arrondis.
+pub fn pts_after(start: u64, samples: u64, rate: u32) -> u64 {
+    let r = rate.max(1) as u64;
+    start + (samples * 90_000 + r / 2) / r
 }
 
 /// Nombre de canaux d'une affectation (mono, stereo, L-C-R, L-R-S, L-C-R-S, L-R-Ls-Rs, 5.0, 5.1, 7.0, 7.1).
@@ -51,16 +59,18 @@ pub fn channels(code: u8) -> u32 {
     match code { 1 => 1, 3 => 2, 4 | 5 => 3, 6 | 7 => 4, 8 => 5, 9 => 6, 10 => 7, 11 => 8, _ => 0 }
 }
 
-/// Decoupe un bloc de PES en trames : (trame entiere avec son en-tete, duree en ticks). Seul 48 kHz est gere.
-pub fn frames(payload: &[u8]) -> PResult<Vec<(&[u8], u64)>> {
+/// Decoupe un bloc de PES en trames : (trame entiere avec son en-tete, en-tete). 48, 96 ou 192 kHz, la meme pour tout le bloc.
+pub fn frames(payload: &[u8]) -> PResult<Vec<(&[u8], Header)>> {
     let (mut out, mut pos) = (Vec::new(), 0usize);
+    let mut rate = None;
     while pos < payload.len() {
         let h = Header::parse(&payload[pos..])?;
-        if h.rate() != 48_000 { return err("seul 48 kHz est gere en LPCM"); }
+        if h.rate() == 0 { return err("frequence LPCM inconnue"); }
+        if *rate.get_or_insert(h.rate()) != h.rate() { return err("frequences LPCM differentes dans un meme paquet"); }
         if h.channels() == 0 { return err("disposition de canaux LPCM inconnue"); }
         let end = pos + 4 + h.payload;
         if end > payload.len() { return err("trame LPCM tronquee"); }
-        out.push((&payload[pos..end], h.ticks()));
+        out.push((&payload[pos..end], h));
         pos = end;
     }
     Ok(out)

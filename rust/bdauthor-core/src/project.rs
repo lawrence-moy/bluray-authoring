@@ -636,6 +636,7 @@ fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) ->
         // l'AC-3 garde la signature d'avant (les caches existants restent valables)
         if t.format != crate::audio::AudioFormat::Ac3 { s.push_str(&format!("#{}", t.format.name())); }
         if t.bitrate != 0 { s.push_str(&format!("~{}", t.bitrate)); }
+        if t.rate() != 48_000 { s.push_str(&format!("^{}", t.rate())); }
     }
     for l in langs { s.push_str(&String::from_utf8_lossy(l)); s.push(','); }
     s
@@ -970,6 +971,12 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         if copy_rate[i].is_some() { eopts.copy_video = true; } else { eopts.video_kbps = target_kbps; }
         for t in a_tracks.iter().filter(|t| t.format == crate::audio::AudioFormat::Ac3Copy) {
             if let Err(why) = check_ac3_copy(env.tools, &src, t) { return bad(trf!("video {}: an audio track cannot be copied: {}", i + 1, why)); }
+        }
+        // LPCM 96 kHz d'une source a 48 kHz ou moins : plus lourd, sans rien gagner (on le signale seulement)
+        for t in a_tracks.iter().filter(|t| t.rate() == 96_000) {
+            if let Some(s) = probe_track(env.tools, &src, t).filter(|s| s.sample_rate != 0 && s.sample_rate < 96_000) {
+                (env.log)(&trf!("   video {}: an audio track is at {} Hz; in 96 kHz LPCM it only gets heavier, with no quality gained", i + 1, s.sample_rate));
+            }
         }
         for t in a_tracks.iter().filter(|t| t.format == crate::audio::AudioFormat::DtsCopy) {
             if let Err(why) = check_dts_copy(env.tools, &src, t) { return bad(trf!("video {}: an audio track cannot be copied: {}", i + 1, why)); }

@@ -156,10 +156,11 @@ fn load_source_packets(data: &[u8]) -> PResult<Encoded> {
             }
             let pts = e.pts.ok_or_else(|| ParseError("PES audio sans PTS".into()))?;
             if is_lpcm {
-                let mut t = pts;
-                for (fr, ticks) in crate::lpcm::frames(&e.data)? {
-                    audio.push((t, fr.to_vec(), Vec::new()));
-                    t += ticks;
+                // datees d'apres les echantillons deja passes dans le paquet (a 96 kHz une trame ne fait pas un nombre entier de ticks)
+                let mut n = 0u64;
+                for (fr, h) in crate::lpcm::frames(&e.data)? {
+                    audio.push((crate::lpcm::pts_after(pts, n, h.rate()), fr.to_vec(), Vec::new()));
+                    n += h.samples() as u64;
                 }
             } else {
                 for (k, fr) in ac3_frames(&e.data)?.into_iter().enumerate() {

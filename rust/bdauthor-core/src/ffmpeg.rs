@@ -585,7 +585,7 @@ fn encode_args_full(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tr
 }
 
 /// Options de codage audio de la sortie : AC-3 stereo au debit `bitrate` pour toutes les pistes, sauf celles qui ont un autre format ou debit (AC-3 5.1, copie de l'AC-3 source, LPCM)
-/// (`pcm_bluray` : 16 bits ou 24 bits, canaux de la source, 48 kHz). Sans piste LPCM, les memes options qu'avant pour toutes.
+/// (`pcm_bluray` : 16 bits ou 24 bits, canaux de la source, 48 ou 96 kHz). Sans piste LPCM, les memes options qu'avant pour toutes.
 pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -> Vec<String> {
     let st = |x: &str| x.to_string();
     if tracks.iter().all(|t| t.format == crate::audio::AudioFormat::Ac3 && t.bitrate == 0) {
@@ -601,6 +601,7 @@ pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -
             Lpcm16 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s16")]),
             Lpcm24 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s32")]),
         }
+        if t.rate() != 48_000 { a.extend([format!("-ar:a:{k}"), t.rate().to_string()]); }
     }
     a
 }
