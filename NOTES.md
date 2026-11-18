@@ -14,7 +14,10 @@
   et l'entrelacer avec les unités TrueHD recopiées (type 0x83).
 - **E-AC-3 (Dolby Digital Plus)** en piste principale : non conforme sans cœur AC-3 indépendant, absent des sources courantes
   (streaming). Rester sur Dolby Digital 5.1 ou LPCM.
-- **Encodeurs matériels** : tester sur le PC (Intel HD 620, Quick Sync) la détection et une vraie génération ; vérifier que
+- **Décodage par la carte graphique** (`-hwaccel`) pour la génération : selon le résultat de « Mesurer les performances » sur le
+  PC (configuration « encodeur matériel, décodage par la carte graphique ») ; codecs de source pris en charge, repli logiciel.
+- **Encodeurs matériels** : détection faite sur le PC le 18/11 : Quick Sync (HD 620) conforme, entrelacé oui, ≈ 3× x264 medium
+  sur la mire ; reste à tester une vraie génération ; vérifier que
   `-strict:v strict` fait bien écrire les SEI buffering period par QSV, et que l'entrelacé passe. Puis graver un BD-RE.
 
 ## Encodage matériel (`hwenc.rs`, `h264check.rs`)
@@ -40,6 +43,10 @@
 - `h264check` vérifie : profil Main/High 8 bits 4:2:0, niveau ≤ 4.1, références ≤ DPB du niveau (4 en 1080), HRD dans le SPS
   (tampon ≤ 30 Mbit, débit ≤ 40 Mb/s), SEI buffering period sur chaque image clé et picture timing sur chaque image, AUD,
   écart entre images clés ≤ keyint, 3 B d'affilée au plus, débit de pointe sur 1 s ≤ 40 Mb/s. Le flux x264 de l'appli passe.
+- **Mesure des performances** (`bench.rs`, bouton des Réglages) : extrait de `dur` s au milieu d'une vraie vidéo, même filtre et
+  même encodeur que la génération (`ffmpeg::bench_args`), sortie `null`. Trois cas : x264, matériel, matériel + `-hwaccel auto`.
+  `-benchmark` donne utime + stime / rtime = cœurs occupés. Conclusions affichées : rapport de vitesse, processeur saturé
+  (≥ 85 %) ou non, gain du décodage par la carte graphique (≥ 10 % : à ajouter à la génération).
 
 ## Pistes DTS recopiées (`dts.rs`)
 

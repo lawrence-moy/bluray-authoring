@@ -551,6 +551,22 @@ fn video_filter(info: &VideoInfo, tg: &Target) -> String {
     )
 }
 
+/// Arguments d'une mesure de vitesse : la video seule de `dur` secondes a partir de `start`, avec le meme filtre et le meme
+/// encodeur que la generation, sans rien ecrire (sortie « null ») ; `gpu_decode` : la source est decodee par la carte graphique
+/// (`-hwaccel auto`, images rapatriees pour les filtres). Rend aussi la cible et si l'encodeur materiel s'applique.
+pub fn bench_args(src: &Path, info: &VideoInfo, o: &EncodeOpts, start: f64, dur: f64, gpu_decode: bool) -> (Vec<String>, Target, bool) {
+    let tg = target_of(info);
+    let hw = o.uses_hw(tg.scan);
+    let mut a: Vec<String> = Vec::new();
+    if gpu_decode { a.extend(["-hwaccel".to_string(), "auto".into()]); }
+    a.extend(["-ss".to_string(), format!("{start:.3}"), "-t".into(), format!("{dur:.3}"), "-i".into(), s(src), "-map".into(), "0:v:0".into(), "-an".into(), "-sn".into(), "-vf".into()]);
+    let vf = video_filter(info, &tg);
+    a.push(if hw { vf.replace(",format=yuv420p", ",format=nv12") } else { vf });
+    a.extend(video_codec_args(o, &tg));
+    a.extend(["-f".to_string(), "null".into(), if cfg!(windows) { "NUL".into() } else { "/dev/null".into() }]);
+    (a, tg, hw)
+}
+
 /// Arguments de la premiere passe d'un encodage a debit cible : video seule, sortie jetee, statistiques dans `log`.
 pub fn first_pass_args(src: &Path, info: &VideoInfo, o: &EncodeOpts, log: &Path) -> (Vec<String>, Target) {
     let tg = target_of(info);

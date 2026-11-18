@@ -1,7 +1,9 @@
 //! Reglages : encodeur video (x264 ou materiel) et detection de l'acceleration materielle, lancee seulement par un bouton.
 use crate::i18n::{tr, trf};
 use bdauthor_core::ffmpeg::Tools;
+use bdauthor_core::bench::{measure, Case, CaseResult};
 use bdauthor_core::hwenc::{detect, Detection, Status, VideoEncoder};
+use std::path::PathBuf;
 use eframe::egui;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{channel, Receiver};
@@ -158,6 +160,192 @@ pub fn section(ui: &mut egui::Ui, encoder: &mut String, detection: &mut String) 
     if cur != VideoEncoder::X264 && !det.as_ref().and_then(|d| d.probe(cur)).is_some_and(|p| p.interlaced_ok()) {
         ui.label(egui::RichText::new(tr("This encoder does not code interlaced video: interlaced sources and 1080p 25 / 29.97 sources (written as 1080i on a Blu-ray) stay on x264.")).weak());
     }
+    if ui.button(tr("Measure performance…")).on_hover_text(tr("Encodes an extract of a real video with x264 and with the hardware encoder (with and without decoding by the graphics chip), without writing anything, and shows the speed and the processor load.")).clicked() {
+        BENCH.lock().unwrap_or_else(|p| p.into_inner()).open = true;
+    }
     crate::help(ui, tr("A hardware encoder is much faster than x264, with a slightly lower quality at the same bitrate. Each video it encodes is checked: if the stream is not Blu-ray compliant, the video is encoded again by x264. The “fill the disc” mode always uses x264 (two passes)."));
     changed
+}
+
+// ---------------------------------------------------------------- mesure des performances
+
+enum BenchMsg {
+    Step(f64, String),
+    Done(Result<(Vec<CaseResult>, Option<String>), String>),
+}
+
+struct BenchRun {
+    rx: Receiver<BenchMsg>,
+    cancel: Arc<AtomicBool>,
+    progress: f64,
+    step: String,
+}
+
+struct Bench {
+    open: bool,
+    /// video choisie (vide : la premiere du projet), duree de l'extrait (s), preset x264 (vide : celui du projet)
+    file: String,
+    secs: u32,
+    preset: String,
+    running: Option<BenchRun>,
+    /// resultats, note, video et preset mesures
+    results: Option<(Vec<CaseResult>, Option<String>, String, String)>,
+    error: Option<String>,
+}
+
+static BENCH: Mutex<Bench> = Mutex::new(Bench { open: false, file: String::new(), secs: 20, preset: String::new(), running: None, results: None, error: None });
+
+const PRESETS: [&str; 9] = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"];
+
+/// La fenetre de mesure est ouverte.
+pub fn bench_open() -> bool { BENCH.lock().unwrap_or_else(|p| p.into_inner()).open }
+
+/// Fenetre de mesure (ouverte par le bouton des reglages). `videos` : videos du projet (chemins complets) ; `preset`, `crf` :
+/// reglages du projet, utilises par defaut.
+pub fn bench_window(ctx: &egui::Context, encoder: &str, detection: &str, videos: &[PathBuf], preset: &str, crf: u32) {
+    let mut b = BENCH.lock().unwrap_or_else(|p| p.into_inner());
+    if !b.open { return; }
+    if let Some(r) = b.running.as_mut() {
+        let mut done = None;
+        while let Ok(m) = r.rx.try_recv() {
+            match m { BenchMsg::Step(f, s) => { r.progress = f; if !s.is_empty() { r.step = s; } } BenchMsg::Done(res) => done = Some(res) }
+        }
+        if let Some(res) = done {
+            let (file, pr) = (b.file.clone(), b.preset.clone());
+            b.running = None;
+            match res {
+                Ok((r, note)) => { b.results = Some((r, note, file, pr)); b.error = None; }
+                Err(e) => { if !e.contains(tr("operation cancelled")) { b.error = Some(e); } }
+            }
+        }
+        ctx.request_repaint_after(std::time::Duration::from_millis(100));
+    }
+    if b.file.is_empty() || (!videos.iter().any(|v| v.display().to_string() == b.file) && !std::path::Path::new(&b.file).is_file()) {
+        b.file = videos.first().map(|v| v.display().to_string()).unwrap_or_default();
+    }
+    if b.preset.is_empty() { b.preset = if preset.is_empty() { "medium".into() } else { preset.to_string() }; }
+    let hw = chosen_or_detected(encoder, detection);
+    let mut open = true;
+    crate::os_window(ctx, "mesure_performances", tr("Measure performance"), [620.0, 430.0], &mut open, &mut |ui| {
+        let busy = b.running.is_some();
+        ui.add_enabled_ui(!busy, |ui| {
+            egui::Grid::new("bench_settings").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
+                ui.label(tr("Video:"));
+                ui.horizontal(|ui| {
+                    let name = |f: &str| std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.to_string());
+                    let cur = if b.file.is_empty() { tr("(to choose)").to_string() } else { name(&b.file) };
+                    egui::ComboBox::from_id_salt("bench_video").selected_text(cur).width(280.0).show_ui(ui, |ui| {
+                        for v in videos {
+                            let f = v.display().to_string();
+                            if ui.selectable_label(b.file == f, name(&f)).clicked() { b.file = f; }
+                        }
+                    });
+                    if ui.button(tr("Choose…")).clicked() {
+                        if let Some(p) = rfd::FileDialog::new().pick_file() { b.file = p.display().to_string(); }
+                    }
+                });
+                ui.end_row();
+                ui.label(tr("Extract:"));
+                egui::ComboBox::from_id_salt("bench_secs").selected_text(format!("{} s", b.secs)).show_ui(ui, |ui| {
+                    for s in [10, 20, 30, 60] { if ui.selectable_label(b.secs == s, format!("{s} s")).clicked() { b.secs = s; } }
+                }).response.on_hover_text(tr("Taken from the middle of the video. Longer gives a steadier measure (the processor of a laptop slows down when it heats up)."));
+                ui.end_row();
+                ui.label(tr("x264 preset:"));
+                egui::ComboBox::from_id_salt("bench_preset").selected_text(b.preset.clone()).show_ui(ui, |ui| {
+                    for p in PRESETS { if ui.selectable_label(b.preset == p, p).clicked() { b.preset = p.to_string(); } }
+                }).response.on_hover_text(tr("Preset of the project by default; the hardware encoder uses the matching setting, as in the disc build."));
+                ui.end_row();
+                ui.label(tr("Hardware encoder:"));
+                ui.label(match hw { Some((e, _)) => tr(e.label()).to_string(), None => tr("none detected (run the detection in the settings)").to_string() });
+                ui.end_row();
+            });
+        });
+        ui.horizontal(|ui| {
+            let can = !busy && std::path::Path::new(&b.file).is_file();
+            if ui.add_enabled(can, egui::Button::new(tr("Start the measure"))).clicked() {
+                let (tx, rx) = channel();
+                let cancel = Arc::new(AtomicBool::new(false));
+                let (c2, ctx2) = (cancel.clone(), ctx.clone());
+                let (file, secs, pr) = (PathBuf::from(&b.file), b.secs as f64, b.preset.clone());
+                std::thread::spawn(move || {
+                    let res = match Tools::locate() {
+                        Ok(tools) => {
+                            let (tx2, ctx3) = (tx.clone(), ctx2.clone());
+                            measure(&tools, &file, secs, &pr, crf, hw, &mut |f, s| { let _ = tx2.send(BenchMsg::Step(f, s.to_string())); ctx3.request_repaint(); }, &c2).map_err(|e| e.to_string())
+                        }
+                        Err(e) => Err(e.to_string()),
+                    };
+                    let _ = tx.send(BenchMsg::Done(res));
+                    ctx2.request_repaint();
+                });
+                b.running = Some(BenchRun { rx, cancel, progress: 0.0, step: String::new() });
+            }
+            if let Some(r) = &b.running {
+                ui.add(egui::ProgressBar::new(r.progress as f32).desired_width(240.0).animate(true).text(r.step.clone()));
+                if ui.button(tr("Cancel")).clicked() { r.cancel.store(true, Ordering::Relaxed); }
+            }
+        });
+        if let Some(e) = &b.error { ui.colored_label(egui::Color32::from_rgb(220, 90, 90), e); }
+        if let Some((res, note, file, pr)) = &b.results {
+            ui.separator();
+            ui.label(egui::RichText::new(trf!("{} — x264 preset {}", std::path::Path::new(file).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), pr)).weak());
+            egui::Grid::new("bench_results").striped(true).num_columns(5).spacing([14.0, 4.0]).show(ui, |ui| {
+                for h in [tr("Configuration"), tr("Pictures/s"), tr("Speed"), tr("Processor"), tr("Time")] { ui.label(egui::RichText::new(h).strong()); }
+                ui.end_row();
+                for c in res {
+                    ui.label(match c.case { Case::X264 => tr("x264 (software)").to_string(), _ => tr(c.case.label()).to_string() });
+                    match &c.result {
+                        Ok(m) => {
+                            ui.monospace(format!("{:.1}", m.fps));
+                            ui.monospace(format!("×{:.2}", m.speed)).on_hover_text(tr("Compared with the real duration of the video: ×1 = as long as the video lasts."));
+                            ui.monospace(format!("{:.0} % ({:.1} {})", m.cpu_share * 100.0, m.cpu_cores, tr("cores"))).on_hover_text(tr("Average load of the processor during the encoding (all its cores together)."));
+                            ui.monospace(format!("{:.1} s", m.seconds));
+                        }
+                        Err(e) => { ui.colored_label(egui::Color32::from_rgb(220, 90, 90), e); ui.label(""); ui.label(""); ui.label(""); }
+                    }
+                    ui.end_row();
+                }
+            });
+            if let Some(n) = note { ui.label(egui::RichText::new(n).weak()); }
+            for line in conclusions(res) { ui.label(line); }
+        }
+    });
+    // fermer la fenetre arrete une mesure en cours
+    if !open {
+        if let Some(r) = &b.running { r.cancel.store(true, Ordering::Relaxed); }
+        b.open = false;
+    }
+}
+
+/// Encodeur materiel a mesurer : celui choisi s'il est materiel, sinon le premier reconnu conforme par la detection.
+fn chosen_or_detected(encoder: &str, detection: &str) -> Option<(VideoEncoder, bool)> {
+    let c = chosen(encoder, detection);
+    if c.0 != VideoEncoder::X264 { return Some(c); }
+    let d = Detection::from_config(detection)?;
+    d.probes.iter().find(|p| p.usable()).map(|p| (p.encoder, p.interlaced_ok()))
+}
+
+/// Ce que disent les mesures, en clair.
+fn conclusions(res: &[CaseResult]) -> Vec<String> {
+    let get = |c: Case| res.iter().find(|r| r.case == c).and_then(|r| r.result.as_ref().ok());
+    let mut out = Vec::new();
+    if let (Some(x), Some(h)) = (get(Case::X264), get(Case::Hw)) {
+        out.push(trf!("The hardware encoder is {}× as fast as x264.", format!("{:.1}", h.fps / x.fps.max(0.001))));
+        if h.cpu_share >= 0.85 {
+            out.push(tr("With the hardware encoder, the processor is almost saturated: it is what limits the speed (decoding the source and the filters).").to_string());
+        } else {
+            out.push(tr("With the hardware encoder, the processor is not saturated: the video chip sets the speed.").to_string());
+        }
+        if let Some(g) = get(Case::HwGpuDecode) {
+            let gain = (g.fps / h.fps.max(0.001) - 1.0) * 100.0;
+            if gain >= 10.0 {
+                out.push(trf!("Decoding by the graphics chip gains {} % and frees the processor ({} % instead of {} %): worth adding to the disc build.", format!("{gain:.0}"), format!("{:.0}", g.cpu_share * 100.0), format!("{:.0}", h.cpu_share * 100.0)));
+            } else if gain > -5.0 {
+                out.push(trf!("Decoding by the graphics chip changes little ({} %).", format!("{gain:+.0}")));
+            } else {
+                out.push(trf!("Decoding by the graphics chip is slower here ({} %).", format!("{gain:+.0}")));
+            }
+        }
+    }
+    out
 }

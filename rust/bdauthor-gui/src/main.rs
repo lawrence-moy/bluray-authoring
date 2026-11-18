@@ -982,6 +982,14 @@ impl eframe::App for App {
             if self.cfg != before { Tools::set_custom_path(&self.cfg.ffmpeg_path); self.cfg.save(); }
         }); }
         self.show_config = open;
+        // mesure des performances (ouverte depuis les reglages) : videos du projet proposees
+        if hwenc_ui::bench_open() {
+            let base = self.path.as_ref().and_then(|p| p.parent()).map(Path::to_path_buf).unwrap_or_default();
+            let videos: Vec<PathBuf> = self.model.videos.iter()
+                .map(|v| if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { base.join(&v.file) })
+                .filter(|f| f.is_file()).collect();
+            hwenc_ui::bench_window(ctx, &self.cfg.video_encoder, &self.cfg.hw_detection, &videos, &self.model.preset, self.model.crf);
+        }
 
         // fenetre du projet (Edition > Projet) : onglets General (disque, encodage), Style des boutons, Langues
         if self.show_project {
