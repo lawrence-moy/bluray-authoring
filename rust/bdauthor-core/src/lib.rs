@@ -18,6 +18,8 @@ pub mod disc;
 pub mod dts;
 pub mod editor;
 pub mod film;
+pub mod h264check;
+pub mod hwenc;
 pub mod framesrc;
 pub mod ig;
 pub mod index;

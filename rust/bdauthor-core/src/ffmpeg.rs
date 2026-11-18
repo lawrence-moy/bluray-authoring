@@ -26,6 +26,8 @@ pub enum Error {
     Cancelled,
     /// Donnees mal formees (flux TS, PES, AC3...) ou muxage impossible.
     Format(String),
+    /// Flux video d'un encodeur materiel non conforme Blu-ray : defauts trouves par `h264check`.
+    NotCompliant(String),
 }
 
 impl fmt::Display for Error {
@@ -37,6 +39,7 @@ impl fmt::Display for Error {
             Error::Ffmpeg { code, stderr } => f.write_str(&trf!("ffmpeg failed (code {}): {}", format!("{:?}", code), stderr.trim())),
             Error::Cancelled => f.write_str(tr("operation cancelled")),
             Error::Format(m) => f.write_str(&trf!("invalid data: {}", m)),
+            Error::NotCompliant(m) => f.write_str(&trf!("video not Blu-ray compliant: {}", m)),
         }
     }
 }
@@ -333,11 +336,34 @@ pub struct EncodeOpts {
     pub copy_video: bool,
     /// Debit video moyen vise (kb/s) : encodage en deux passes au lieu du CRF (remplir le disque). `None` : CRF.
     pub video_kbps: Option<u32>,
+    /// Encodeur video (x264 par defaut ; un encodeur materiel ne sert que la ou `hwenc::applies` le permet) et s'il code
+    /// l'entrelace de facon conforme.
+    pub encoder: crate::hwenc::VideoEncoder,
+    pub encoder_interlaced: bool,
 }
 
 impl Default for EncodeOpts {
     fn default() -> Self {
-        EncodeOpts { crf: 18, maxrate: 30000, keyint: 30, audio_bitrate: "192k".into(), preset: "medium".into(), force_keys: Vec::new(), copy_video: false, video_kbps: None }
+        EncodeOpts {
+            crf: 18, maxrate: 30000, keyint: 30, audio_bitrate: "192k".into(), preset: "medium".into(), force_keys: Vec::new(), copy_video: false, video_kbps: None,
+            encoder: crate::hwenc::VideoEncoder::X264, encoder_interlaced: false,
+        }
+    }
+}
+
+impl EncodeOpts {
+    /// La video de balayage `scan` sera codee par l'encodeur materiel choisi.
+    pub fn uses_hw(&self, scan: Scan) -> bool {
+        !self.copy_video && crate::hwenc::applies(self.encoder, self.encoder_interlaced, scan, self.video_kbps.is_some())
+    }
+}
+
+/// Options video de l'encodage d'une video : encodeur materiel choisi s'il s'applique, sinon x264.
+fn video_codec_args(o: &EncodeOpts, tg: &Target) -> Vec<String> {
+    if o.uses_hw(tg.scan) {
+        crate::hwenc::hw_args(o.encoder, o.crf, o.video_kbps, o.maxrate, o.keyint, &o.preset, tg.scan, tg.height)
+    } else {
+        x264_args_rate(o.crf, o.video_kbps, o.maxrate, o.keyint, &o.preset, tg.scan)
     }
 }
 
@@ -573,8 +599,9 @@ fn encode_args_full(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tr
         a.pop();
         a.extend(["-c:v", "copy"].iter().map(|x| x.to_string()));
     } else {
-        a.push(vf);
-        a.extend(x264_args_rate(o.crf, o.video_kbps, o.maxrate, o.keyint, &o.preset, tg.scan));
+        // les encodeurs materiels prennent le NV12 (meme contenu que le yuv420p, autre rangement)
+        a.push(if o.uses_hw(tg.scan) { vf.replace(",format=yuv420p", ",format=nv12") } else { vf });
+        a.extend(video_codec_args(o, &tg));
         a.extend(force_keys_args(&o.force_keys));
         if let Some((n, log)) = pass { a.extend(["-pass".to_string(), n.to_string(), "-passlogfile".into(), s(log)]); }
     }

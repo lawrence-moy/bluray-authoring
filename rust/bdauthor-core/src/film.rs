@@ -305,12 +305,25 @@ pub fn make_film_m2ts_tracks(
     let target = ffmpeg::encode_to_ts_tracks(tools, src, &ts_path, &info, opts, tracks, progress, cancel)?;
     let enc = load_encoded(&std::fs::read(&ts_path)?)?;
     drop(tmp);
+    // encodeur materiel : son flux est verifie (un pilote peut ignorer un reglage sans le dire)
+    let hw = opts.uses_hw(target.scan);
+    if hw {
+        let r = crate::h264check::check(&enc.video, opts.keyint);
+        if !r.ok() { return Err(Error::NotCompliant(r.issues.join("; "))); }
+    }
     if !tracks.is_empty() && enc.audio_tracks() != tracks.len() {
         return Err(Error::Format(format!("{} pistes audio demandees, {} produites par l'encodage", tracks.len(), enc.audio_tracks())));
     }
     let (m2ts, mux) = mux_encoded_tracks(&enc, langs, &[])?;
     let frames = enc.audio.len() + enc.extra_audio.iter().map(Vec::len).sum::<usize>();
-    Ok((m2ts, FilmStats { cible: if opts.copy_video { format!("{} ({})", target.label, crate::i18n::tr("video stream copied")) } else { target.label.to_string() }, images: enc.video.len(), trames_audio: frames, mux }))
+    let cible = if opts.copy_video {
+        format!("{} ({})", target.label, crate::i18n::tr("video stream copied"))
+    } else if hw {
+        format!("{} ({})", target.label, crate::i18n::tr(opts.encoder.label()))
+    } else {
+        target.label.to_string()
+    };
+    Ok((m2ts, FilmStats { cible, images: enc.video.len(), trames_audio: frames, mux }))
 }
 
 /// Image fixe -> clip video seul (pas d'audio) de `seconds` secondes au format `size`.

@@ -663,6 +663,8 @@ fn cache_key_with(path: &Path, lang: [u8; 3], o: &EncodeOpts, info: &ffmpeg::Vid
         s.push_str(&format!("|cible={}", tg.label));
     }
     if !extra.is_empty() { s.push_str(&format!("|audio={extra}")); }
+    // encodeur materiel : son encodage n'est pas celui de x264 (cle a part)
+    if o.uses_hw(tg.scan) { s.push_str(&format!("|enc={}", o.encoder.name())); }
     // chapitres exacts : une image cle par chapitre, donc un encodage par liste d'instants
     if !o.force_keys.is_empty() { s.push_str(&format!("|cles={}", ffmpeg::force_keys_args(&o.force_keys).get(1).cloned().unwrap_or_default())); }
     // flux recopie ou debit cible : encodages differents du CRF (les cles sans ces options restent celles d'avant)
@@ -821,6 +823,8 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     if let Some(c) = get_usize(enc_cfg.get("keyint"), "encodage.keyint")? { eopts.keyint = c as u32; }
     if let Some(s) = enc_cfg.get("preset").and_then(Value::as_str) { eopts.preset = s.to_string(); }
     if let Some(s) = enc_cfg.get("audio_bitrate").and_then(Value::as_str) { eopts.audio_bitrate = s.to_string(); }
+    // encodeur video : reglage de l'application (detection a la demande dans les reglages)
+    (eopts.encoder, eopts.encoder_interlaced) = crate::hwenc::video_encoder();
     let menu_cfg = proj.get("menu").unwrap_or(&empty);
     let title = proj.get("title").and_then(Value::as_str).unwrap_or("Menu").to_string();
     let boucle = menu_cfg.get("loop").and_then(Value::as_bool).unwrap_or(false);
@@ -940,6 +944,12 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         if copy_rate[i].is_some() { w * 0.03 } else if target_kbps.is_some() { w * 1.3 } else { w }
     }).collect();
     let total_w: f64 = weights.iter().sum::<f64>().max(1e-6);
+    if eopts.encoder != crate::hwenc::VideoEncoder::X264 {
+        (env.log)(&trf!("video encoder: {}", tr(eopts.encoder.label())));
+        if target_kbps.is_some() { (env.log)(tr("   “fill the disc” mode: the videos are encoded by x264 (two passes)")); }
+    }
+    // un encodeur materiel qui a rendu un flux non conforme n'est plus essaye pour les videos suivantes
+    let mut hw_refused = false;
     for (i, v) in vids.iter().enumerate() {
         let name = vfile(v)?;
         let src = p(&name);
@@ -969,6 +979,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
             _ => eopts.clone(),
         };
         if copy_rate[i].is_some() { eopts.copy_video = true; } else { eopts.video_kbps = target_kbps; }
+        if hw_refused { eopts.encoder = crate::hwenc::VideoEncoder::X264; }
+        if eopts.encoder != crate::hwenc::VideoEncoder::X264 && !eopts.copy_video && eopts.video_kbps.is_none() {
+            let tg = ffmpeg::pick_target_scan(info.width, info.height, info.fps(), info.interlaced().then(|| info.top_first()));
+            if !eopts.uses_hw(tg.scan) {
+                (env.log)(&trf!("   target {}: encoded by x264 (the hardware encoder was not found able to code interlaced video)", tg.label));
+            }
+        }
         for t in a_tracks.iter().filter(|t| t.format == crate::audio::AudioFormat::Ac3Copy) {
             if let Err(why) = check_ac3_copy(env.tools, &src, t) { return bad(trf!("video {}: an audio track cannot be copied: {}", i + 1, why)); }
         }
@@ -994,8 +1011,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
         let cached = match &cache_dir {
             Some(d) => {
-                let f = d.join(format!("{}.m2ts", cache_key_with(&src, lang, &eopts, &info, &a_sig)?));
-                std::fs::read(&f).ok().filter(|b| !b.is_empty() && b.len() % 192 == 0).map(|b| (b, f))
+                // avec un encodeur materiel, un encodage x264 deja en cache convient aussi (il est conforme)
+                let mut keys = vec![cache_key_with(&src, lang, &eopts, &info, &a_sig)?];
+                if eopts.encoder != crate::hwenc::VideoEncoder::X264 {
+                    keys.push(cache_key_with(&src, lang, &EncodeOpts { encoder: crate::hwenc::VideoEncoder::X264, ..eopts.clone() }, &info, &a_sig)?);
+                }
+                keys.iter().map(|k| d.join(format!("{k}.m2ts")))
+                    .find_map(|f| std::fs::read(&f).ok().filter(|b| !b.is_empty() && b.len() % 192 == 0).map(|b| (b, f)))
             }
             None => None,
         };
@@ -1012,6 +1034,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                         (env.log)(&trf!("   the copy failed ({}): re-encoding the video instead", e));
                         eopts.copy_video = false;
                         eopts.video_kbps = target_kbps;
+                        crate::film::make_film_m2ts_tracks(env.tools, &src, &a_langs, &a_tracks, &eopts, None, &mut |f| progress(lo + (hi - lo) * f), env.cancel)?
+                    }
+                    // encodeur materiel : echec ou flux non conforme -> x264, pour cette video et les suivantes
+                    Err(e) if eopts.encoder != crate::hwenc::VideoEncoder::X264 && !matches!(e, Error::Cancelled) => {
+                        (env.log)(&trf!("   {}: {}; encoded again by x264", tr(eopts.encoder.label()), e));
+                        hw_refused = true;
+                        eopts.encoder = crate::hwenc::VideoEncoder::X264;
                         crate::film::make_film_m2ts_tracks(env.tools, &src, &a_langs, &a_tracks, &eopts, None, &mut |f| progress(lo + (hi - lo) * f), env.cancel)?
                     }
                     r => r?,

@@ -12,6 +12,7 @@ mod cover_ui;
 mod chapters_ui;
 mod frame_ui;
 mod timeline_ui;
+mod hwenc_ui;
 mod player;
 mod vumeter;
 mod coherence_ui;
@@ -68,6 +69,9 @@ struct Config {
     fonts_dir: String,
     /// journal de generation : ecrit la ligne de commande complete de chaque lancement de ffmpeg
     log_ffmpeg: bool,
+    /// encodeur video choisi (x264, qsv, nvenc, amf) et resultat de la derniere detection (`hwenc::Detection::to_config`)
+    video_encoder: String,
+    hw_detection: String,
     /// projets recents (le plus recent d'abord)
     recent: Vec<String>,
 }
@@ -203,7 +207,7 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), fonts_dir: String::new(), log_ffmpeg: false, recent: Vec::new() };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), fonts_dir: String::new(), log_ffmpeg: false, video_encoder: "x264".to_string(), hw_detection: String::new(), recent: Vec::new() };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
@@ -213,6 +217,8 @@ impl Config {
                     Some(("fonts_dir", v)) => c.fonts_dir = v.trim().to_string(),
                     Some(("autosave", v)) => c.autosave = v.trim() != "false",
                     Some(("log_ffmpeg", v)) => c.log_ffmpeg = v.trim() == "true",
+                    Some(("video_encoder", v)) => c.video_encoder = v.trim().to_string(),
+                    Some(("hw_detection", v)) => c.hw_detection = v.trim().to_string(),
                     Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
                     Some(("recent", v)) => if !v.trim().is_empty() && c.recent.len() < MAX_RECENT { c.recent.push(v.trim().to_string()) },
                     Some(("lang", v)) => c.lang = v.trim().to_string(),
@@ -236,6 +242,7 @@ impl Config {
             }
             let mut t = format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\ncover_bg={}\ncover_guide={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang, rgba_text(self.cover_bg), rgba_text(self.cover_guide));
             t.push_str(&format!("cache_dir={}\nfonts_dir={}\nlog_ffmpeg={}\n", self.cache_dir, self.fonts_dir, self.log_ffmpeg));
+            t.push_str(&format!("video_encoder={}\nhw_detection={}\n", self.video_encoder, self.hw_detection));
             for r in &self.recent { t.push_str(&format!("recent={}\n", r)); }
             let _ = std::fs::write(p, t);
         }
@@ -637,6 +644,7 @@ impl App {
         self.rx = Some(rx);
         let (cancel, ctx) = (self.cancel.clone(), ctx.clone());
         let log_commands = self.cfg.log_ffmpeg;
+        let (video_encoder, encoder_interlaced) = hwenc_ui::chosen(&self.cfg.video_encoder, &self.cfg.hw_detection);
         // verificateur de coherence des menus : ses erreurs et avertissements en tete du journal (sans bloquer)
         let menu_notes: Vec<String> = self.coherence_report().findings.iter()
             .filter(|f| f.severity != bdauthor_core::coherence::Severity::Info)
@@ -644,6 +652,8 @@ impl App {
             .collect();
         std::thread::spawn(move || {
             for l in menu_notes { let _ = tx.send(Msg::Log(l)); }
+            // encodeur video des reglages (propre a ce fil)
+            bdauthor_core::hwenc::set_video_encoder(video_encoder, encoder_interlaced);
             // avancement detaille de chaque encodage ffmpeg de ce fil
             let (tx2, ctx2) = (tx.clone(), ctx.clone());
             bdauthor_core::ffmpeg::set_progress_detail(Some(Box::new(move |d| { let _ = tx2.send(Msg::Detail(d)); ctx2.request_repaint(); })));
@@ -885,6 +895,9 @@ impl eframe::App for App {
             ui.separator();
             ui.checkbox(&mut self.cfg.log_ffmpeg, tr("Show the full ffmpeg commands in the build log"));
             crate::help(ui, tr("Each time the disc build starts ffmpeg (encodings, extracted frames, subtitle conversions), its complete command line is written in the log, after a » sign, ready to be copied and run in a console."));
+            ui.separator();
+            ui.label(egui::RichText::new(tr("Hardware acceleration")).strong());
+            hwenc_ui::section(ui, &mut self.cfg.video_encoder, &mut self.cfg.hw_detection);
             ui.separator();
             ui.label(tr("ffmpeg path (folder containing ffmpeg and ffprobe, or ffmpeg itself):"));
             ui.horizontal(|ui| {

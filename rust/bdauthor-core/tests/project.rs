@@ -1032,3 +1032,29 @@ fn dolby_digital_51_manual_bitrate_and_copy_go_through_the_whole_disc() {
     assert!(err.contains("flac"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn unavailable_hardware_encoder_falls_back_to_x264() {
+    common::fr();
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = std::env::temp_dir().join(format!("bdauthor_hw_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let run = |args: &[&str]| assert!(Command::new(&tools.ffmpeg).args(["-y", "-v", "error"]).args(args).status().unwrap().success());
+    run(&["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24000/1001:duration=3", "-f", "lavfi", "-i", "sine=duration=3", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+          "-preset", "ultrafast", "-c:a", "aac", "-shortest", dir.join("a.mp4").to_str().unwrap()]);
+    run(&["-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=24000/1001:duration=2", "-f", "lavfi", "-i", "sine=duration=2", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+          "-preset", "ultrafast", "-c:a", "aac", "-shortest", dir.join("b.mp4").to_str().unwrap()]);
+    std::fs::write(dir.join("projet.json"), r##"{ "title": "Materiel", "language": "fra", "videos": [ {"file": "a.mp4"}, {"file": "b.mp4"} ],
+      "encoding": {"preset": "ultrafast"}, "menu": {"background_seconds": 2} }"##).unwrap();
+    // Quick Sync choisi, absent ici : la premiere video repasse par x264, la seconde y va directement
+    bdauthor_core::hwenc::set_video_encoder(bdauthor_core::hwenc::VideoEncoder::Qsv, false);
+    let (info, logs) = build_in(&tools, &dir, "out");
+    bdauthor_core::hwenc::set_video_encoder(bdauthor_core::hwenc::VideoEncoder::X264, false);
+    assert!(info.report.ok(), "{}", info.report.render());
+    assert!(logs.iter().any(|l| l.contains("Intel Quick Sync")), "{logs:?}");
+    assert_eq!(logs.iter().filter(|l| l.contains("x264") && l.contains("Quick Sync") && l.contains("ffmpeg")).count(), 1, "{logs:?}");
+    // aucun clip ne porte la mention de l'encodeur materiel
+    assert!(!logs.iter().any(|l| l.contains("(Intel Quick Sync)")), "{logs:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}

@@ -14,6 +14,32 @@
   et l'entrelacer avec les unités TrueHD recopiées (type 0x83).
 - **E-AC-3 (Dolby Digital Plus)** en piste principale : non conforme sans cœur AC-3 indépendant, absent des sources courantes
   (streaming). Rester sur Dolby Digital 5.1 ou LPCM.
+- **Encodeurs matériels** : tester sur le PC (Intel HD 620, Quick Sync) la détection et une vraie génération ; vérifier que
+  `-strict:v strict` fait bien écrire les SEI buffering period par QSV, et que l'entrelacé passe. Puis graver un BD-RE.
+
+## Encodage matériel (`hwenc.rs`, `h264check.rs`)
+
+- Encodeurs : x264 (défaut), Quick Sync (`h264_qsv`), NVENC (`h264_nvenc`), AMF (`h264_amf`). Choix dans les Réglages de l'appli
+  (clés `video_encoder` et `hw_detection` de config.txt), pas dans le projet : c'est une propriété du PC. Fixé par fil
+  (`hwenc::set_video_encoder`, comme `set_command_trace`).
+- **Détection seulement à la demande** (bouton des Réglages, pas au démarrage) : `ffmpeg -encoders`, puis pour chaque encodeur
+  présent un essai de 4 s de mire 1080p23,976 progressive, puis 1080i25 TFF, avec les réglages Blu-ray, vérifié par
+  `h264check` ; x264 medium sur la même mire donne la vitesse de référence. Échecs classés : absent de ffmpeg / non disponible
+  (pas de carte ou de pilote, ex. « Cannot load libcuda.so.1 », « Error creating a MFX session ») / réglage refusé / non conforme.
+  Une ligne gardée dans la config (`qsv=ok,121.0,i-ok;nvenc=unavailable,0.0;…;x264=8.5`).
+- Réglages matériels : pas de CRF comparable, donc CRF -> débit moyen (`occupancy::crf_kbps`), VBR plafonné par maxrate, tampon
+  30 Mbit, GOP fermé de `keyint`, 3 B au plus, 4 références, AUD, HRD (`-bluray-compat` NVENC, `-enforce_hrd` AMF,
+  `-strict:v strict` + `pic_timing_sei` QSV), entrée NV12. Une seule option `-flags` (`+cgop`, plus `+ildct+ilme` en
+  entrelacé) : une seconde remplacerait la première.
+- **PsF** (1080p25 / 1080p29,97, écrits en 1080i) : x264 le fait par `fake-interlaced` ; le matériel non, il le code en vrai
+  entrelacé TFF, seulement s'il a passé l'essai entrelacé ; sinon x264. Même chose pour les sources entrelacées.
+- Mode « remplir le disque » (deux passes) : toujours x264.
+- **Vérification à chaque encodage** : `film::make_film_m2ts_tracks` passe le flux matériel à `h264check` ; non conforme ->
+  `Error::NotCompliant`, et `project` réencode avec x264 (journal), puis n'essaie plus le matériel pour les vidéos suivantes.
+  Clé de cache à part (`|enc=qsv`) ; un encodage x264 déjà en cache est repris aussi quand le matériel est choisi.
+- `h264check` vérifie : profil Main/High 8 bits 4:2:0, niveau ≤ 4.1, références ≤ DPB du niveau (4 en 1080), HRD dans le SPS
+  (tampon ≤ 30 Mbit, débit ≤ 40 Mb/s), SEI buffering period sur chaque image clé et picture timing sur chaque image, AUD,
+  écart entre images clés ≤ keyint, 3 B d'affilée au plus, débit de pointe sur 1 s ≤ 40 Mb/s. Le flux x264 de l'appli passe.
 
 ## Pistes DTS recopiées (`dts.rs`)
 
