@@ -1450,6 +1450,5 @@
   "Decoding by the graphics chip changes little ({} %).": "Le décodage par la carte graphique change peu de chose ({} %).",
   "Decoding by the graphics chip is slower here ({} %).": "Le décodage par la carte graphique est plus lent ici ({} %).",
   "VAAPI (Linux)": "VAAPI (Linux)",
-  "Apple VideoToolbox": "Apple VideoToolbox",
   "Windows Media Foundation": "Windows Media Foundation"
 }

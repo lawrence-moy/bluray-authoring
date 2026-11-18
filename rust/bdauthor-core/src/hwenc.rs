@@ -1,5 +1,6 @@
-//! Encodage video materiel (Intel Quick Sync, NVIDIA NVENC, AMD AMF, VAAPI sous Linux, VideoToolbox sous macOS, Media Foundation
-//! sous Windows) : options ffmpeg de chaque encodeur, choix courant et detection.
+//! Encodage video materiel (Intel Quick Sync, NVIDIA NVENC, AMD AMF, VAAPI sous Linux, Media Foundation sous Windows) : options
+//! ffmpeg de chaque encodeur, choix courant et detection. Apple VideoToolbox n'est pas propose : il n'a aucun reglage pour les
+//! parametres HRD et les messages de temps qu'exige le Blu-ray (et personne ici ne peut l'essayer).
 //!
 //! La detection ne reconnait pas un modele de carte : elle essaie chaque encodeur que ffmpeg connait, avec les reglages
 //! Blu-ray, sur quelques secondes de mire, puis juge le flux produit avec `h264check`. Elle n'est lancee qu'a la demande.
@@ -25,24 +26,18 @@ pub enum VideoEncoder {
     Amf,
     /// Linux (Intel, AMD)
     Vaapi,
-    /// macOS
-    VideoToolbox,
     /// Windows, toute carte ayant un pilote video (secours, peu de reglages)
     Mf,
 }
 
 impl VideoEncoder {
-    pub const HARDWARE: [VideoEncoder; 6] =
-        [VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf, VideoEncoder::Vaapi, VideoEncoder::VideoToolbox, VideoEncoder::Mf];
-    pub const ALL: [VideoEncoder; 7] = [
-        VideoEncoder::X264, VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf, VideoEncoder::Vaapi, VideoEncoder::VideoToolbox, VideoEncoder::Mf,
-    ];
+    pub const HARDWARE: [VideoEncoder; 5] = [VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf, VideoEncoder::Vaapi, VideoEncoder::Mf];
+    pub const ALL: [VideoEncoder; 6] = [VideoEncoder::X264, VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf, VideoEncoder::Vaapi, VideoEncoder::Mf];
 
-    /// L'encodeur existe sur ce systeme (VAAPI : Linux, VideoToolbox : macOS, Media Foundation : Windows).
+    /// L'encodeur existe sur ce systeme (VAAPI : Linux, Media Foundation : Windows).
     pub fn on_this_system(self) -> bool {
         match self {
             VideoEncoder::Vaapi => cfg!(target_os = "linux"),
-            VideoEncoder::VideoToolbox => cfg!(target_os = "macos"),
             VideoEncoder::Mf => cfg!(windows),
             _ => true,
         }
@@ -52,7 +47,7 @@ impl VideoEncoder {
     pub fn name(self) -> &'static str {
         match self {
             VideoEncoder::X264 => "x264", VideoEncoder::Qsv => "qsv", VideoEncoder::Nvenc => "nvenc", VideoEncoder::Amf => "amf",
-            VideoEncoder::Vaapi => "vaapi", VideoEncoder::VideoToolbox => "videotoolbox", VideoEncoder::Mf => "mf",
+            VideoEncoder::Vaapi => "vaapi", VideoEncoder::Mf => "mf",
         }
     }
     pub fn from_name(s: &str) -> Option<VideoEncoder> { VideoEncoder::ALL.into_iter().find(|e| e.name() == s) }
@@ -60,7 +55,7 @@ impl VideoEncoder {
     pub fn codec(self) -> &'static str {
         match self {
             VideoEncoder::X264 => "libx264", VideoEncoder::Qsv => "h264_qsv", VideoEncoder::Nvenc => "h264_nvenc", VideoEncoder::Amf => "h264_amf",
-            VideoEncoder::Vaapi => "h264_vaapi", VideoEncoder::VideoToolbox => "h264_videotoolbox", VideoEncoder::Mf => "h264_mf",
+            VideoEncoder::Vaapi => "h264_vaapi", VideoEncoder::Mf => "h264_mf",
         }
     }
     /// Libelle (anglais, a traduire).
@@ -71,7 +66,6 @@ impl VideoEncoder {
             VideoEncoder::Nvenc => "NVIDIA NVENC",
             VideoEncoder::Amf => "AMD AMF",
             VideoEncoder::Vaapi => "VAAPI (Linux)",
-            VideoEncoder::VideoToolbox => "Apple VideoToolbox",
             VideoEncoder::Mf => "Windows Media Foundation",
         }
     }
@@ -155,10 +149,6 @@ pub fn hw_args(e: VideoEncoder, crf: u32, kbps: Option<u32>, maxrate: u32, keyin
         VideoEncoder::Vaapi => out.extend(v(&[
             "-level", "41", "-rc_mode", "VBR", "-b:v", &b, "-maxrate", &m, "-bufsize", "30000k", "-g", &g, "-bf", "3", "-b_depth", "1",
             "-idr_interval", "0", "-refs", "4", "-aud", "1", "-sei", "timing",
-        ])),
-        // VideoToolbox : pas de reglage HRD ; materiel seulement (pas de repli logiciel cache), pas de mode temps reel
-        VideoEncoder::VideoToolbox => out.extend(v(&[
-            "-level", "4.1", "-b:v", &b, "-maxrate", &m, "-bufsize", "30000k", "-g", &g, "-bf", "3", "-coder", "cabac", "-allow_sw", "0", "-realtime", "0",
         ])),
         // Media Foundation : debit variable plafonne, scenario d'archivage, encodage materiel exige
         VideoEncoder::Mf => out.extend(v(&[

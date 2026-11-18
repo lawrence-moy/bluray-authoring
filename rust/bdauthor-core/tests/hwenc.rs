@@ -17,11 +17,9 @@ fn encoder_names_and_options() {
     assert!(va.contains("-rc_mode VBR") && va.contains("-sei timing") && va.contains("-idr_interval 0") && !va.contains("-preset"), "{va}");
     let mf = hw_args(VideoEncoder::Mf, 18, None, 30000, 24, "slow", Scan::Progressive, 1080).join(" ");
     assert!(mf.starts_with("-c:v h264_mf -profile:v 100 -hw_encoding 1 -rate_control pc_vbr"), "{mf}");
-    let vt = hw_args(VideoEncoder::VideoToolbox, 18, None, 30000, 24, "slow", Scan::Progressive, 1080).join(" ");
-    assert!(vt.contains("-allow_sw 0") && vt.contains("-level 4.1"), "{vt}");
     // un encodeur propre a un autre systeme n'est pas essaye ici
     assert!(VideoEncoder::Qsv.on_this_system() && VideoEncoder::X264.on_this_system());
-    assert_eq!(VideoEncoder::HARDWARE.iter().filter(|e| e.on_this_system()).count(), 4, "Qsv, Nvenc, Amf et l'encodeur du systeme");
+    assert!(VideoEncoder::from_name("videotoolbox").is_none());
     let q = hw_args(VideoEncoder::Qsv, 18, None, 30000, 24, "slow", Scan::Progressive, 1080).join(" ");
     assert!(q.starts_with("-c:v h264_qsv -profile:v high -preset slow -level 41 -b:v 9000k -maxrate 30000k -bufsize 30000k -g 24 -bf 3 -refs 4"), "{q}");
     assert!(q.ends_with("-flags +cgop"), "{q}");

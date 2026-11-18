@@ -24,10 +24,11 @@
 
 - Encodeurs : x264 (défaut), Quick Sync (`h264_qsv`), NVENC (`h264_nvenc`), AMF (`h264_amf`), et selon le système VAAPI
   (`h264_vaapi`, Linux : `-vaapi_device /dev/dri/renderD…` avant la source, filtre terminé par `format=nv12,hwupload`,
-  `-rc_mode VBR -sei timing -idr_interval 0 -b_depth 1`), VideoToolbox (`h264_videotoolbox`, macOS : pas de réglage HRD, sans
-  doute refusé par le vérificateur) et Media Foundation (`h264_mf`, Windows : `-hw_encoding 1 -rate_control pc_vbr -scenario
+  `-rc_mode VBR -sei timing -idr_interval 0 -b_depth 1`) et Media Foundation (`h264_mf`, Windows : `-hw_encoding 1 -rate_control pc_vbr -scenario
   archive`, profil numérique 100). Seuls ceux du système sont essayés (`on_this_system`). Options de VAAPI non vérifiables ici
-  (ffmpeg ouvre le périphérique en lisant les options) ; VideoToolbox et Media Foundation absents du ffmpeg de test. Choix dans les Réglages de l'appli
+  (ffmpeg ouvre le périphérique en lisant les options) ; Media Foundation absent du ffmpeg de test. **VideoToolbox (macOS)
+  retiré** : aucun réglage pour les paramètres HRD ni les SEI buffering period / picture timing, donc sans doute toujours non
+  conforme, et impossible à essayer ici ; à rajouter seulement si quelqu'un peut le tester sur un Mac. Choix dans les Réglages de l'appli
   (clés `video_encoder` et `hw_detection` de config.txt), pas dans le projet : c'est une propriété du PC. Fixé par fil
   (`hwenc::set_video_encoder`, comme `set_command_trace`).
 - **Détection seulement à la demande** (bouton des Réglages, pas au démarrage) : `ffmpeg -encoders`, puis pour chaque encodeur
