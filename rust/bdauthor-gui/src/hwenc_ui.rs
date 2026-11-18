@@ -1,7 +1,7 @@
 //! Reglages : encodeur video (x264 ou materiel) et detection de l'acceleration materielle, lancee seulement par un bouton.
 use crate::i18n::{tr, trf};
 use bdauthor_core::ffmpeg::Tools;
-use bdauthor_core::bench::{measure, Case, CaseResult};
+use bdauthor_core::bench::{measure_source, Case, CaseResult, Source};
 use bdauthor_core::hwenc::{detect, Detection, Status, VideoEncoder};
 use std::path::PathBuf;
 use eframe::egui;
@@ -195,6 +195,27 @@ struct Bench {
 
 static BENCH: Mutex<Bench> = Mutex::new(Bench { open: false, file: String::new(), secs: 20, preset: String::new(), running: None, results: None, error: None });
 
+/// Valeurs de `Bench::file` qui designent une mire generee (sinon : chemin d'une video).
+const PATTERN_24: &str = "<mire 1080p23.976>";
+const PATTERN_25: &str = "<mire 1080p25>";
+
+/// Nom affiche de la video mesuree.
+fn source_name(f: &str) -> String {
+    match f {
+        PATTERN_24 => tr("Test pattern 1080p 23.976 (generated)").to_string(),
+        PATTERN_25 => tr("Test pattern 1080p 25, written as 1080i (generated)").to_string(),
+        _ => std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.to_string()),
+    }
+}
+
+fn source_of(f: &str) -> Option<Source> {
+    match f {
+        PATTERN_24 => Some(Source::Pattern { fps25: false }),
+        PATTERN_25 => Some(Source::Pattern { fps25: true }),
+        _ => std::path::Path::new(f).is_file().then(|| Source::File(PathBuf::from(f))),
+    }
+}
+
 const PRESETS: [&str; 9] = ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"];
 
 /// La fenetre de mesure est ouverte.
@@ -220,8 +241,9 @@ pub fn bench_window(ctx: &egui::Context, encoder: &str, detection: &str, videos:
         }
         ctx.request_repaint_after(std::time::Duration::from_millis(100));
     }
-    if b.file.is_empty() || (!videos.iter().any(|v| v.display().to_string() == b.file) && !std::path::Path::new(&b.file).is_file()) {
-        b.file = videos.first().map(|v| v.display().to_string()).unwrap_or_default();
+    // par defaut : la premiere video du projet, sinon la mire
+    if source_of(&b.file).is_none() {
+        b.file = videos.first().map(|v| v.display().to_string()).unwrap_or_else(|| PATTERN_24.to_string());
     }
     if b.preset.is_empty() { b.preset = if preset.is_empty() { "medium".into() } else { preset.to_string() }; }
     let hw = chosen_or_detected(encoder, detection);
@@ -232,14 +254,17 @@ pub fn bench_window(ctx: &egui::Context, encoder: &str, detection: &str, videos:
             egui::Grid::new("bench_settings").num_columns(2).spacing([10.0, 6.0]).show(ui, |ui| {
                 ui.label(tr("Video:"));
                 ui.horizontal(|ui| {
-                    let name = |f: &str| std::path::Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.to_string());
-                    let cur = if b.file.is_empty() { tr("(to choose)").to_string() } else { name(&b.file) };
-                    egui::ComboBox::from_id_salt("bench_video").selected_text(cur).width(280.0).show_ui(ui, |ui| {
+                    let cur = if b.file.is_empty() { tr("(to choose)").to_string() } else { source_name(&b.file) };
+                    egui::ComboBox::from_id_salt("bench_video").selected_text(cur).width(320.0).show_ui(ui, |ui| {
                         for v in videos {
                             let f = v.display().to_string();
-                            if ui.selectable_label(b.file == f, name(&f)).clicked() { b.file = f; }
+                            if ui.selectable_label(b.file == f, source_name(&f)).clicked() { b.file = f; }
                         }
-                    });
+                        if !videos.is_empty() { ui.separator(); }
+                        for p in [PATTERN_24, PATTERN_25] {
+                            if ui.selectable_label(b.file == p, source_name(p)).clicked() { b.file = p.to_string(); }
+                        }
+                    }).response.on_hover_text(tr("The test pattern is generated for the measure, with a fine grain so that it is about as hard to encode as a film. A real video of your own gives the most faithful measure."));
                     if ui.button(tr("Choose…")).clicked() {
                         if let Some(p) = rfd::FileDialog::new().pick_file() { b.file = p.display().to_string(); }
                     }
@@ -261,17 +286,18 @@ pub fn bench_window(ctx: &egui::Context, encoder: &str, detection: &str, videos:
             });
         });
         ui.horizontal(|ui| {
-            let can = !busy && std::path::Path::new(&b.file).is_file();
+            let src = source_of(&b.file);
+            let can = !busy && src.is_some();
             if ui.add_enabled(can, egui::Button::new(tr("Start the measure"))).clicked() {
                 let (tx, rx) = channel();
                 let cancel = Arc::new(AtomicBool::new(false));
                 let (c2, ctx2) = (cancel.clone(), ctx.clone());
-                let (file, secs, pr) = (PathBuf::from(&b.file), b.secs as f64, b.preset.clone());
+                let (src, secs, pr) = (src.clone().unwrap_or(Source::Pattern { fps25: false }), b.secs as f64, b.preset.clone());
                 std::thread::spawn(move || {
                     let res = match Tools::locate() {
                         Ok(tools) => {
                             let (tx2, ctx3) = (tx.clone(), ctx2.clone());
-                            measure(&tools, &file, secs, &pr, crf, hw, &mut |f, s| { let _ = tx2.send(BenchMsg::Step(f, s.to_string())); ctx3.request_repaint(); }, &c2).map_err(|e| e.to_string())
+                            measure_source(&tools, &src, secs, &pr, crf, hw, &mut |f, s| { let _ = tx2.send(BenchMsg::Step(f, s.to_string())); ctx3.request_repaint(); }, &c2).map_err(|e| e.to_string())
                         }
                         Err(e) => Err(e.to_string()),
                     };
@@ -288,7 +314,7 @@ pub fn bench_window(ctx: &egui::Context, encoder: &str, detection: &str, videos:
         if let Some(e) = &b.error { ui.colored_label(egui::Color32::from_rgb(220, 90, 90), e); }
         if let Some((res, note, file, pr)) = &b.results {
             ui.separator();
-            ui.label(egui::RichText::new(trf!("{} — x264 preset {}", std::path::Path::new(file).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(), pr)).weak());
+            ui.label(egui::RichText::new(trf!("{} — x264 preset {}", source_name(file), pr)).weak());
             egui::Grid::new("bench_results").striped(true).num_columns(5).spacing([14.0, 4.0]).show(ui, |ui| {
                 for h in [tr("Configuration"), tr("Pictures/s"), tr("Speed"), tr("Processor"), tr("Time")] { ui.label(egui::RichText::new(h).strong()); }
                 ui.end_row();

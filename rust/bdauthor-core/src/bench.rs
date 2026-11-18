@@ -147,3 +147,42 @@ pub fn measure(
     step(1.0, "");
     Ok((out, note))
 }
+
+/// Video mesuree : un fichier, ou une mire de test 1080p generee pour la mesure (23,976 ou 25 images/s ; le 25 passe, comme une
+/// source PAL, par le codage entrelace du Blu-ray).
+#[derive(Debug, Clone, PartialEq)]
+pub enum Source {
+    File(std::path::PathBuf),
+    Pattern { fps25: bool },
+}
+
+/// Filtre de la mire : la mire de la detection, avec un grain fin (une mire nette s'encode bien plus facilement qu'un film ;
+/// avec ce grain, x264 en qualite 18 donne environ 19 Mb/s, comme un film en 1080p).
+pub fn pattern_filter(fps25: bool) -> String {
+    format!("testsrc2=size=1920x1080:rate={},noise=alls=6:allf=t,gblur=sigma=0.8", if fps25 { "25" } else { "24000/1001" })
+}
+
+/// Comme `measure`, pour une video ou une mire. La mire est d'abord enregistree (H.264 presque sans perte, dans un dossier
+/// temporaire efface ensuite) : la mesure la lit et la decode comme une vraie video, sans compter le cout de sa fabrication.
+#[allow(clippy::too_many_arguments)]
+pub fn measure_source(
+    tools: &Tools, src: &Source, dur: f64, preset: &str, crf: u32, hw: Option<(VideoEncoder, bool)>, step: &mut dyn FnMut(f64, &str), cancel: &AtomicBool,
+) -> Result<(Vec<CaseResult>, Option<String>)> {
+    match src {
+        Source::File(f) => measure(tools, f, dur, preset, crf, hw, step, cancel),
+        Source::Pattern { fps25 } => {
+            let dir = std::env::temp_dir().join(format!("bdauthor_mire_{}", std::process::id()));
+            std::fs::create_dir_all(&dir)?;
+            let file = dir.join("mire.mkv");
+            let label = tr("preparing the test pattern");
+            step(0.0, label);
+            let args: Vec<String> = ["-f", "lavfi", "-i", &pattern_filter(*fps25), "-t", &format!("{dur:.3}"), "-c:v", "libx264", "-preset", "ultrafast", "-crf", "12", "-pix_fmt", "yuv420p"]
+                .iter().map(|x| x.to_string()).chain(std::iter::once(file.display().to_string())).collect();
+            let fps = if *fps25 { 25.0 } else { 24000.0 / 1001.0 };
+            let r = run_case(tools, &args, dur, fps, &mut |f| step(f * 0.2, label), cancel)
+                .and_then(|_| measure(tools, &file, dur, preset, crf, hw, &mut |f, s| step(0.2 + f * 0.8, s), cancel));
+            let _ = std::fs::remove_dir_all(&dir);
+            r
+        }
+    }
+}

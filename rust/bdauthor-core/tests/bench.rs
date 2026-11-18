@@ -46,3 +46,18 @@ fn measure_runs_x264_and_reports_missing_hardware() {
     assert!(r.len() == 1 && note.is_some());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn a_test_pattern_can_be_measured_without_any_video() {
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    assert!(pattern_filter(true).contains("rate=25") && pattern_filter(false).contains("rate=24000/1001"));
+    let mut last = 0.0;
+    let (r, _) = measure_source(&tools, &Source::Pattern { fps25: false }, 2.0, "ultrafast", 18, None, &mut |f, _| { assert!(f >= last - 1e-9); last = f; }, &AtomicBool::new(false)).unwrap();
+    let m = r[0].result.as_ref().unwrap();
+    // 2 s a 23,976 i/s
+    assert!((47..=49).contains(&m.frames), "{m:?}");
+    assert_eq!(last, 1.0);
+    // mire a 25 i/s : cible 1080i (PsF) ; sans encodeur materiel, x264 seul
+    let (r, _) = measure_source(&tools, &Source::Pattern { fps25: true }, 2.0, "ultrafast", 18, Some((VideoEncoder::Qsv, false)), &mut |_, _| {}, &AtomicBool::new(false)).unwrap();
+    assert_eq!(r.len(), 1, "le materiel sans entrelace ne s'applique pas a une cible 1080i");
+}

@@ -51,7 +51,9 @@
   écart entre images clés ≤ keyint, 3 B d'affilée au plus, débit de pointe sur 1 s ≤ 40 Mb/s. Le flux x264 de l'appli passe.
 - **Mesure des performances** (`bench.rs`, bouton des Réglages) : extrait de `dur` s au milieu d'une vraie vidéo, même filtre et
   même encodeur que la génération (`ffmpeg::bench_args`), sortie `null`. Trois cas : x264, matériel, matériel + `-hwaccel auto`.
-  `-benchmark` donne utime + stime / rtime = cœurs occupés. Conclusions affichées : rapport de vitesse, processeur saturé
+  `-benchmark` donne utime + stime / rtime = cœurs occupés. Sans vidéo : mire `testsrc2` 1080p (23,976 ou 25) avec grain
+  (`noise=alls=6:allf=t,gblur=sigma=0.8`, ≈ 19 Mb/s en x264 CRF 18, comme un film), d'abord enregistrée en H.264 CRF 12
+  ultrafast dans un dossier temporaire : la mesure la décode comme une vraie vidéo, sans compter le coût des filtres de grain. Conclusions affichées : rapport de vitesse, processeur saturé
   (≥ 85 %) ou non, gain du décodage par la carte graphique (≥ 10 % : à ajouter à la génération).
 
 ## Pistes DTS recopiées (`dts.rs`)

@@ -1450,5 +1450,9 @@
   "Decoding by the graphics chip changes little ({} %).": "Le décodage par la carte graphique change peu de chose ({} %).",
   "Decoding by the graphics chip is slower here ({} %).": "Le décodage par la carte graphique est plus lent ici ({} %).",
   "VAAPI (Linux)": "VAAPI (Linux)",
-  "Windows Media Foundation": "Windows Media Foundation"
+  "Windows Media Foundation": "Windows Media Foundation",
+  "Test pattern 1080p 23.976 (generated)": "Mire de test 1080p 23,976 (générée)",
+  "Test pattern 1080p 25, written as 1080i (generated)": "Mire de test 1080p 25, écrite en 1080i (générée)",
+  "The test pattern is generated for the measure, with a fine grain so that it is about as hard to encode as a film. A real video of your own gives the most faithful measure.": "La mire est générée pour la mesure, avec un grain fin pour qu'elle soit à peu près aussi difficile à encoder qu'un film. Une vraie vidéo à vous donne la mesure la plus fidèle.",
+  "preparing the test pattern": "préparation de la mire"
 }
