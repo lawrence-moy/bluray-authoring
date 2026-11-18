@@ -6,9 +6,22 @@ use std::sync::atomic::AtomicBool;
 
 #[test]
 fn encoder_names_and_options() {
-    for e in [VideoEncoder::X264, VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf] {
+    for e in VideoEncoder::ALL {
         assert_eq!(VideoEncoder::from_name(e.name()), Some(e));
     }
+    // VAAPI : peripherique ouvert avant la source, images envoyees a la carte ; messages de temps demandes
+    assert_eq!(VideoEncoder::Vaapi.input_args()[0], "-vaapi_device");
+    assert_eq!(VideoEncoder::Vaapi.filter_tail(), ",format=nv12,hwupload");
+    assert!(VideoEncoder::Qsv.input_args().is_empty() && VideoEncoder::Qsv.filter_tail() == ",format=nv12");
+    let va = hw_args(VideoEncoder::Vaapi, 18, None, 30000, 24, "slow", Scan::Progressive, 1080).join(" ");
+    assert!(va.contains("-rc_mode VBR") && va.contains("-sei timing") && va.contains("-idr_interval 0") && !va.contains("-preset"), "{va}");
+    let mf = hw_args(VideoEncoder::Mf, 18, None, 30000, 24, "slow", Scan::Progressive, 1080).join(" ");
+    assert!(mf.starts_with("-c:v h264_mf -profile:v 100 -hw_encoding 1 -rate_control pc_vbr"), "{mf}");
+    let vt = hw_args(VideoEncoder::VideoToolbox, 18, None, 30000, 24, "slow", Scan::Progressive, 1080).join(" ");
+    assert!(vt.contains("-allow_sw 0") && vt.contains("-level 4.1"), "{vt}");
+    // un encodeur propre a un autre systeme n'est pas essaye ici
+    assert!(VideoEncoder::Qsv.on_this_system() && VideoEncoder::X264.on_this_system());
+    assert_eq!(VideoEncoder::HARDWARE.iter().filter(|e| e.on_this_system()).count(), 4, "Qsv, Nvenc, Amf et l'encodeur du systeme");
     let q = hw_args(VideoEncoder::Qsv, 18, None, 30000, 24, "slow", Scan::Progressive, 1080).join(" ");
     assert!(q.starts_with("-c:v h264_qsv -profile:v high -preset slow -level 41 -b:v 9000k -maxrate 30000k -bufsize 30000k -g 24 -bf 3 -refs 4"), "{q}");
     assert!(q.ends_with("-flags +cgop"), "{q}");
@@ -29,6 +42,10 @@ fn encode_args_use_the_hardware_encoder_when_it_applies() {
     let (a, tg) = ffmpeg::encode_args(std::path::Path::new("in.mkv"), std::path::Path::new("out.ts"), &info, &o);
     let j = a.join(" ");
     assert!(o.uses_hw(tg.scan) && j.contains("-c:v h264_qsv") && j.contains("format=nv12") && !j.contains("libx264"), "{j}");
+    // VAAPI : le peripherique vient avant la source
+    let va = EncodeOpts { encoder: VideoEncoder::Vaapi, ..Default::default() };
+    let j = ffmpeg::encode_args(std::path::Path::new("in.mkv"), std::path::Path::new("out.ts"), &info, &va).0.join(" ");
+    assert!(j.starts_with("-vaapi_device /dev/dri/") && j.contains("format=nv12,hwupload") && j.contains("h264_vaapi"), "{j}");
     // remplir le disque (deux passes) : x264
     o.video_kbps = Some(20000);
     let j = ffmpeg::encode_args(std::path::Path::new("in.mkv"), std::path::Path::new("out.ts"), &info, &o).0.join(" ");
@@ -44,6 +61,8 @@ fn encoder_list_and_failures_are_read() {
     assert_eq!(classify_failure(nv), Status::Unavailable("Cannot load libcuda.so.1".into()));
     let qsv = "[h264_qsv @ 0x55d8] Error creating a MFX session: -9.\nConversion failed!";
     assert!(matches!(classify_failure(qsv), Status::Unavailable(m) if m.contains("MFX session")));
+    let va = "[AVHWDeviceContext @ 0x55] No VA display found for device /dev/dri/renderD128.\nDevice creation failed: -22.\nFailed to set value '/dev/dri/renderD128' for option 'vaapi_device': Invalid argument\nError parsing global options: Invalid argument";
+    assert_eq!(classify_failure(va), Status::Unavailable("No VA display found for device /dev/dri/renderD128.".into()));
     let lvl = "[h264_nvenc @ 0x1] InitializeEncoder failed: invalid param (8): Invalid Level.\nConversion failed!";
     assert!(matches!(classify_failure(lvl), Status::Refused(m) if m.contains("Invalid Level")));
     assert!(matches!(classify_failure("Unrecognized option 'tune'.\nError splitting the argument list: Option not found"), Status::Refused(_)));
@@ -73,7 +92,7 @@ fn real_detection_reports_missing_hardware_cleanly() {
     let mut steps = Vec::new();
     let d = detect(&tools, &mut |f, s| steps.push((f, s.to_string())), &AtomicBool::new(false)).unwrap();
     eprintln!("{d:#?}");
-    assert_eq!(d.probes.len(), 3);
+    assert_eq!(d.probes.len(), VideoEncoder::HARDWARE.iter().filter(|e| e.on_this_system()).count());
     assert!(d.x264_fps > 0.0);
     assert!(steps.windows(2).all(|w| w[1].0 >= w[0].0) && steps.last().unwrap().0 == 1.0);
     for p in &d.probes {

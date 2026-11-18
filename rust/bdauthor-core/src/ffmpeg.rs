@@ -557,11 +557,11 @@ fn video_filter(info: &VideoInfo, tg: &Target) -> String {
 pub fn bench_args(src: &Path, info: &VideoInfo, o: &EncodeOpts, start: f64, dur: f64, gpu_decode: bool) -> (Vec<String>, Target, bool) {
     let tg = target_of(info);
     let hw = o.uses_hw(tg.scan);
-    let mut a: Vec<String> = Vec::new();
+    let mut a: Vec<String> = if hw { o.encoder.input_args() } else { Vec::new() };
     if gpu_decode { a.extend(["-hwaccel".to_string(), "auto".into()]); }
     a.extend(["-ss".to_string(), format!("{start:.3}"), "-t".into(), format!("{dur:.3}"), "-i".into(), s(src), "-map".into(), "0:v:0".into(), "-an".into(), "-sn".into(), "-vf".into()]);
     let vf = video_filter(info, &tg);
-    a.push(if hw { vf.replace(",format=yuv420p", ",format=nv12") } else { vf });
+    a.push(if hw { vf.replace(",format=yuv420p", o.encoder.filter_tail()) } else { vf });
     a.extend(video_codec_args(o, &tg));
     a.extend(["-f".to_string(), "null".into(), if cfg!(windows) { "NUL".into() } else { "/dev/null".into() }]);
     (a, tg, hw)
@@ -615,8 +615,15 @@ fn encode_args_full(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tr
         a.pop();
         a.extend(["-c:v", "copy"].iter().map(|x| x.to_string()));
     } else {
-        // les encodeurs materiels prennent le NV12 (meme contenu que le yuv420p, autre rangement)
-        a.push(if o.uses_hw(tg.scan) { vf.replace(",format=yuv420p", ",format=nv12") } else { vf });
+        // les encodeurs materiels prennent le NV12 (meme contenu que le yuv420p, autre rangement), envoye a la carte pour VAAPI
+        if o.uses_hw(tg.scan) {
+            a.push(vf.replace(",format=yuv420p", o.encoder.filter_tail()));
+            let mut pre = o.encoder.input_args();
+            pre.append(&mut a);
+            a = pre;
+        } else {
+            a.push(vf);
+        }
         a.extend(video_codec_args(o, &tg));
         a.extend(force_keys_args(&o.force_keys));
         if let Some((n, log)) = pass { a.extend(["-pass".to_string(), n.to_string(), "-passlogfile".into(), s(log)]); }

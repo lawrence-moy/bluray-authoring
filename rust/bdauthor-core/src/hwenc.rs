@@ -1,5 +1,5 @@
-//! Encodage video materiel (Intel Quick Sync, NVIDIA NVENC, AMD AMF) : options ffmpeg de chaque encodeur, choix courant et
-//! detection.
+//! Encodage video materiel (Intel Quick Sync, NVIDIA NVENC, AMD AMF, VAAPI sous Linux, VideoToolbox sous macOS, Media Foundation
+//! sous Windows) : options ffmpeg de chaque encodeur, choix courant et detection.
 //!
 //! La detection ne reconnait pas un modele de carte : elle essaie chaque encodeur que ffmpeg connait, avec les reglages
 //! Blu-ray, sur quelques secondes de mire, puis juge le flux produit avec `h264check`. Elle n'est lancee qu'a la demande.
@@ -23,21 +23,45 @@ pub enum VideoEncoder {
     Qsv,
     Nvenc,
     Amf,
+    /// Linux (Intel, AMD)
+    Vaapi,
+    /// macOS
+    VideoToolbox,
+    /// Windows, toute carte ayant un pilote video (secours, peu de reglages)
+    Mf,
 }
 
 impl VideoEncoder {
-    pub const HARDWARE: [VideoEncoder; 3] = [VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf];
+    pub const HARDWARE: [VideoEncoder; 6] =
+        [VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf, VideoEncoder::Vaapi, VideoEncoder::VideoToolbox, VideoEncoder::Mf];
+    pub const ALL: [VideoEncoder; 7] = [
+        VideoEncoder::X264, VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf, VideoEncoder::Vaapi, VideoEncoder::VideoToolbox, VideoEncoder::Mf,
+    ];
+
+    /// L'encodeur existe sur ce systeme (VAAPI : Linux, VideoToolbox : macOS, Media Foundation : Windows).
+    pub fn on_this_system(self) -> bool {
+        match self {
+            VideoEncoder::Vaapi => cfg!(target_os = "linux"),
+            VideoEncoder::VideoToolbox => cfg!(target_os = "macos"),
+            VideoEncoder::Mf => cfg!(windows),
+            _ => true,
+        }
+    }
 
     /// Nom enregistre dans la configuration.
     pub fn name(self) -> &'static str {
-        match self { VideoEncoder::X264 => "x264", VideoEncoder::Qsv => "qsv", VideoEncoder::Nvenc => "nvenc", VideoEncoder::Amf => "amf" }
+        match self {
+            VideoEncoder::X264 => "x264", VideoEncoder::Qsv => "qsv", VideoEncoder::Nvenc => "nvenc", VideoEncoder::Amf => "amf",
+            VideoEncoder::Vaapi => "vaapi", VideoEncoder::VideoToolbox => "videotoolbox", VideoEncoder::Mf => "mf",
+        }
     }
-    pub fn from_name(s: &str) -> Option<VideoEncoder> {
-        [VideoEncoder::X264, VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf].into_iter().find(|e| e.name() == s)
-    }
+    pub fn from_name(s: &str) -> Option<VideoEncoder> { VideoEncoder::ALL.into_iter().find(|e| e.name() == s) }
     /// Nom de l'encodeur dans ffmpeg.
     pub fn codec(self) -> &'static str {
-        match self { VideoEncoder::X264 => "libx264", VideoEncoder::Qsv => "h264_qsv", VideoEncoder::Nvenc => "h264_nvenc", VideoEncoder::Amf => "h264_amf" }
+        match self {
+            VideoEncoder::X264 => "libx264", VideoEncoder::Qsv => "h264_qsv", VideoEncoder::Nvenc => "h264_nvenc", VideoEncoder::Amf => "h264_amf",
+            VideoEncoder::Vaapi => "h264_vaapi", VideoEncoder::VideoToolbox => "h264_videotoolbox", VideoEncoder::Mf => "h264_mf",
+        }
     }
     /// Libelle (anglais, a traduire).
     pub fn label(self) -> &'static str {
@@ -46,8 +70,36 @@ impl VideoEncoder {
             VideoEncoder::Qsv => "Intel Quick Sync",
             VideoEncoder::Nvenc => "NVIDIA NVENC",
             VideoEncoder::Amf => "AMD AMF",
+            VideoEncoder::Vaapi => "VAAPI (Linux)",
+            VideoEncoder::VideoToolbox => "Apple VideoToolbox",
+            VideoEncoder::Mf => "Windows Media Foundation",
         }
     }
+
+    /// Options a placer avant la source (ouverture du peripherique) : VAAPI seulement.
+    pub fn input_args(self) -> Vec<String> {
+        match self {
+            VideoEncoder::Vaapi => vec!["-vaapi_device".into(), vaapi_device()],
+            _ => Vec::new(),
+        }
+    }
+
+    /// Fin du filtre video : format des images remises a l'encodeur (NV12), puis envoi dans la memoire de la carte (VAAPI).
+    pub fn filter_tail(self) -> &'static str {
+        match self {
+            VideoEncoder::X264 => ",format=yuv420p",
+            VideoEncoder::Vaapi => ",format=nv12,hwupload",
+            _ => ",format=nv12",
+        }
+    }
+}
+
+/// Premier peripherique de rendu de Linux (`/dev/dri/renderD128` le plus souvent).
+fn vaapi_device() -> String {
+    let mut nodes: Vec<String> = std::fs::read_dir("/dev/dri").into_iter().flatten().flatten()
+        .map(|e| e.path().display().to_string()).filter(|p| p.contains("renderD")).collect();
+    nodes.sort();
+    nodes.into_iter().next().unwrap_or_else(|| "/dev/dri/renderD128".into())
 }
 
 thread_local! {
@@ -70,7 +122,7 @@ fn preset_for(e: VideoEncoder, x264: &str) -> &'static str {
         VideoEncoder::Nvenc => ["p1", "p2", "p3", "p4", "p5", "p5", "p6", "p7", "p7", "p7"][rank],
         VideoEncoder::Qsv => ["veryfast", "veryfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "veryslow"][rank],
         VideoEncoder::Amf => ["speed", "speed", "speed", "balanced", "balanced", "balanced", "quality", "quality", "quality", "quality"][rank],
-        VideoEncoder::X264 => "medium",
+        _ => "",
     }
 }
 
@@ -80,7 +132,8 @@ fn preset_for(e: VideoEncoder, x264: &str) -> &'static str {
 pub fn hw_args(e: VideoEncoder, crf: u32, kbps: Option<u32>, maxrate: u32, keyint: u32, preset: &str, scan: Scan, height: u32) -> Vec<String> {
     let avg = kbps.unwrap_or_else(|| crate::occupancy::crf_kbps(crf, height).round() as u32).clamp(1000, maxrate);
     let v = |a: &[&str]| a.iter().map(|s| s.to_string()).collect::<Vec<_>>();
-    let mut out = v(&["-c:v", e.codec(), "-profile:v", "high"]);
+    // Media Foundation n'a pas de noms de profils : valeur numerique de High (100)
+    let mut out = v(&["-c:v", e.codec(), "-profile:v", if e == VideoEncoder::Mf { "100" } else { "high" }]);
     let (b, m) = (format!("{avg}k"), format!("{maxrate}k"));
     let g = keyint.to_string();
     match e {
@@ -97,6 +150,19 @@ pub fn hw_args(e: VideoEncoder, crf: u32, kbps: Option<u32>, maxrate: u32, keyin
         VideoEncoder::Amf => out.extend(v(&[
             "-usage", "transcoding", "-quality", preset_for(e, preset), "-level", "41", "-rc", "vbr_peak", "-b:v", &b, "-maxrate", &m,
             "-bufsize", "30000k", "-g", &g, "-bf", "3", "-refs", "4", "-enforce_hrd", "1", "-aud", "1", "-header_insertion_mode", "idr",
+        ])),
+        // VAAPI : messages de temps (buffering period, picture timing) demandes, toutes les images I sont IDR, B sans pyramide
+        VideoEncoder::Vaapi => out.extend(v(&[
+            "-level", "41", "-rc_mode", "VBR", "-b:v", &b, "-maxrate", &m, "-bufsize", "30000k", "-g", &g, "-bf", "3", "-b_depth", "1",
+            "-idr_interval", "0", "-refs", "4", "-aud", "1", "-sei", "timing",
+        ])),
+        // VideoToolbox : pas de reglage HRD ; materiel seulement (pas de repli logiciel cache), pas de mode temps reel
+        VideoEncoder::VideoToolbox => out.extend(v(&[
+            "-level", "4.1", "-b:v", &b, "-maxrate", &m, "-bufsize", "30000k", "-g", &g, "-bf", "3", "-coder", "cabac", "-allow_sw", "0", "-realtime", "0",
+        ])),
+        // Media Foundation : debit variable plafonne, scenario d'archivage, encodage materiel exige
+        VideoEncoder::Mf => out.extend(v(&[
+            "-hw_encoding", "1", "-rate_control", "pc_vbr", "-scenario", "archive", "-b:v", &b, "-maxrate", &m, "-bufsize", "30000k", "-g", &g, "-bf", "2",
         ])),
         VideoEncoder::X264 => {}
     }
@@ -163,7 +229,7 @@ pub fn classify_failure(stderr: &str) -> Status {
     let low = stderr.to_ascii_lowercase();
     // message de l'encodeur lui-meme (« [h264_qsv @ …] … ») ou d'une option refusee, sinon les dernieres lignes
     let own: Vec<&str> = stderr.lines().map(str::trim)
-        .filter(|l| l.starts_with("[h264_") || l.contains("Unrecognized option") || l.contains("Error setting option") || l.contains("Option not found"))
+        .filter(|l| l.starts_with("[h264_") || l.starts_with("[AVHWDeviceContext") || l.contains("Unrecognized option") || l.contains("Error setting option") || l.contains("Option not found"))
         .map(|l| l.split_once("] ").map_or(l, |(_, m)| m)).collect();
     let last: String = if own.is_empty() {
         stderr.lines().rev().map(str::trim).filter(|l| !l.is_empty()).take(3).collect::<Vec<_>>().into_iter().rev().collect::<Vec<_>>().join(" / ")
@@ -220,7 +286,8 @@ const INTERLACED_TRIAL: (&str, u32, Scan, u32) = ("testsrc2=size=1920x1080:rate=
 /// Un essai : encode la mire en TS dans `dir`, puis verifie le flux. Rend le statut et les images par seconde.
 fn trial(tools: &Tools, e: VideoEncoder, t: (&str, u32, Scan, u32), dir: &Path, cancel: &AtomicBool) -> Result<(Status, f64)> {
     let out = dir.join(format!("essai_{}.ts", e.name()));
-    let mut a: Vec<String> = ["-f", "lavfi", "-i", t.0, "-t", &t.1.to_string(), "-an", "-pix_fmt", "nv12"].iter().map(|s| s.to_string()).collect();
+    let mut a: Vec<String> = e.input_args();
+    a.extend(["-f", "lavfi", "-i", t.0, "-t", &t.1.to_string(), "-an", "-vf", &e.filter_tail()[1..]].iter().map(|s| s.to_string()));
     if e == VideoEncoder::X264 {
         a.truncate(a.len() - 2);
         a.extend(["-c:v", "libx264", "-preset", "medium", "-crf", "18", "-x264-params", "bluray-compat=1:nal-hrd=vbr:vbv-maxrate=30000:vbv-bufsize=30000:level=4.1:keyint=24"].iter().map(|s| s.to_string()));
@@ -261,11 +328,11 @@ pub fn detect(tools: &Tools, step: &mut dyn FnMut(f32, &str), cancel: &AtomicBoo
     let present = listed_encoders(&listed);
     let dir = std::env::temp_dir().join(format!("bdauthor_hwenc_{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
-    let total = (present.len() * 2 + 1) as f32;
+    let total = (present.iter().filter(|e| e.on_this_system()).count() * 2 + 1) as f32;
     let mut done = 0.0f32;
     let mut probes = Vec::new();
     let result = (|| -> Result<f64> {
-        for e in VideoEncoder::HARDWARE {
+        for e in VideoEncoder::HARDWARE.into_iter().filter(|e| e.on_this_system()) {
             if !present.contains(&e) {
                 probes.push(Probe { encoder: e, status: Status::NotInFfmpeg, fps: 0.0, interlaced: None });
                 continue;

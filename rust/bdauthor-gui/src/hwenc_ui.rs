@@ -101,7 +101,7 @@ pub fn section(ui: &mut egui::Ui, encoder: &mut String, detection: &mut String) 
     ui.horizontal(|ui| {
         ui.label(tr("Video encoder:"));
         egui::ComboBox::from_id_salt("video_encoder").selected_text(format!("{}{}", tr(cur.label()), speed(cur))).show_ui(ui, |ui| {
-            for e in [VideoEncoder::X264, VideoEncoder::Qsv, VideoEncoder::Nvenc, VideoEncoder::Amf] {
+            for e in VideoEncoder::ALL.into_iter().filter(|e| e.on_this_system()) {
                 let r = ui.add_enabled(usable(e), egui::SelectableLabel::new(cur == e, format!("{}{}", tr(e.label()), speed(e))));
                 let r = if usable(e) { r } else { r.on_disabled_hover_text(tr("Not found usable by the last detection.")) };
                 if r.clicked() && cur != e { *encoder = e.name().to_string(); changed = true; }

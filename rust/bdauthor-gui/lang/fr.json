@@ -1448,5 +1448,8 @@
   "The hardware encoder is {}× as fast as x264.": "L'encodeur matériel est {}× plus rapide que x264.",
   "Decoding by the graphics chip gains {} % and frees the processor ({} % instead of {} %): worth adding to the disc build.": "Le décodage par la carte graphique fait gagner {} % et soulage le processeur ({} % au lieu de {} %) : il vaut la peine de l'ajouter à la génération.",
   "Decoding by the graphics chip changes little ({} %).": "Le décodage par la carte graphique change peu de chose ({} %).",
-  "Decoding by the graphics chip is slower here ({} %).": "Le décodage par la carte graphique est plus lent ici ({} %)."
+  "Decoding by the graphics chip is slower here ({} %).": "Le décodage par la carte graphique est plus lent ici ({} %).",
+  "VAAPI (Linux)": "VAAPI (Linux)",
+  "Apple VideoToolbox": "Apple VideoToolbox",
+  "Windows Media Foundation": "Windows Media Foundation"
 }
