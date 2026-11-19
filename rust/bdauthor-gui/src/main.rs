@@ -12,6 +12,7 @@ mod cover_ui;
 mod chapters_ui;
 mod frame_ui;
 mod timeline_ui;
+mod burn;
 mod hwenc_ui;
 mod player;
 mod vumeter;
@@ -72,6 +73,9 @@ struct Config {
     /// encodeur video choisi (x264, qsv, nvenc, amf) et resultat de la derniere detection (`hwenc::Detection::to_config`)
     video_encoder: String,
     hw_detection: String,
+    /// apparence : theme (« system », « dark », « light ») et taille de l'interface (1 = 100 %)
+    theme: String,
+    ui_scale: f32,
     /// projets recents (le plus recent d'abord)
     recent: Vec<String>,
 }
@@ -207,7 +211,7 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), fonts_dir: String::new(), log_ffmpeg: false, video_encoder: "x264".to_string(), hw_detection: String::new(), recent: Vec::new() };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), fonts_dir: String::new(), log_ffmpeg: false, video_encoder: "x264".to_string(), hw_detection: String::new(), theme: "system".to_string(), ui_scale: 1.0, recent: Vec::new() };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
@@ -219,6 +223,8 @@ impl Config {
                     Some(("log_ffmpeg", v)) => c.log_ffmpeg = v.trim() == "true",
                     Some(("video_encoder", v)) => c.video_encoder = v.trim().to_string(),
                     Some(("hw_detection", v)) => c.hw_detection = v.trim().to_string(),
+                    Some(("theme", v)) => c.theme = v.trim().to_string(),
+                    Some(("ui_scale", v)) => c.ui_scale = v.trim().parse::<f32>().ok().filter(|z| (0.5..=3.0).contains(z)).unwrap_or(1.0),
                     Some(("autosave_min", v)) => c.autosave_min = v.trim().parse().unwrap_or(2).clamp(1, 60),
                     Some(("recent", v)) => if !v.trim().is_empty() && c.recent.len() < MAX_RECENT { c.recent.push(v.trim().to_string()) },
                     Some(("lang", v)) => c.lang = v.trim().to_string(),
@@ -243,6 +249,7 @@ impl Config {
             let mut t = format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\ncover_bg={}\ncover_guide={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang, rgba_text(self.cover_bg), rgba_text(self.cover_guide));
             t.push_str(&format!("cache_dir={}\nfonts_dir={}\nlog_ffmpeg={}\n", self.cache_dir, self.fonts_dir, self.log_ffmpeg));
             t.push_str(&format!("video_encoder={}\nhw_detection={}\n", self.video_encoder, self.hw_detection));
+            t.push_str(&format!("theme={}\nui_scale={}\n", self.theme, self.ui_scale));
             for r in &self.recent { t.push_str(&format!("recent={}\n", r)); }
             let _ = std::fs::write(p, t);
         }
@@ -421,6 +428,11 @@ struct App {
     cancel: Arc<AtomicBool>,
     result: Option<(bool, String)>,
     notice: String,
+    /// image ISO de la derniere generation, et resultat du dernier envoi au graveur
+    built_iso: Option<PathBuf>,
+    burn_msg: Option<(bool, String)>,
+    /// apparence appliquee a l'interface (theme, taille)
+    applied_look: Option<(String, f32)>,
 }
 
 impl Default for App {
@@ -428,7 +440,7 @@ impl Default for App {
         App {
             mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_grid: false, cover_grid_mm: 5.0, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_build: false, show_coherence: false, coherence_filter: None, coherence_sel: None, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, cover_frame_request: None, cover_frames: Default::default(), thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, snap_px: 10, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
-            model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new() }
+            model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new(), built_iso: None, burn_msg: None, applied_look: None }
     }
 }
 
@@ -639,6 +651,8 @@ impl App {
         self.progress = 0.0;
         self.ffmpeg_detail = None;
         self.build_t0 = Some(std::time::Instant::now());
+        self.built_iso = iso_path.clone();
+        self.burn_msg = None;
         self.cancel = Arc::new(AtomicBool::new(false));
         let (tx, rx) = channel();
         self.rx = Some(rx);
@@ -746,6 +760,7 @@ impl App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         window_capture(ctx);
+        self.apply_look(ctx);
         self.poll();
         if self.worker.is_none() {
             self.worker = Some(editor_ui::Worker::start(ctx.clone()));
@@ -864,6 +879,25 @@ impl eframe::App for App {
         // une fenetre systeme existe tant qu'on l'appelle : seulement quand elle est ouverte
         if open { os_window(ctx, "configuration", tr("Settings"), [640.0, 480.0], &mut open, &mut |ui| {
             let before = self.cfg.clone();
+            // apparence : theme et taille (appliques des le choix)
+            ui.horizontal(|ui| {
+                ui.label(tr("Theme:"));
+                for (v, l) in [("system", tr("same as the system")), ("dark", tr("dark")), ("light", tr("light"))] {
+                    if ui.radio(self.cfg.theme == v, l).clicked() { self.cfg.theme = v.to_string(); }
+                }
+            });
+            ui.horizontal(|ui| {
+                ui.label(tr("Interface size:"));
+                let pct = |z: f32| format!("{:.0} %", z * 100.0);
+                egui::ComboBox::from_id_salt("taille_interface").selected_text(pct(self.cfg.ui_scale)).show_ui(ui, |ui| {
+                    for z in UI_SCALES {
+                        if ui.selectable_label((self.cfg.ui_scale - z).abs() < 0.001, pct(z)).clicked() { self.cfg.ui_scale = z; }
+                    }
+                });
+                if (self.cfg.ui_scale - 1.0).abs() > 0.001 && ui.small_button(tr("100 %")).clicked() { self.cfg.ui_scale = 1.0; }
+            });
+            crate::help(ui, tr("Also with Ctrl + and Ctrl − (Ctrl 0: 100 %)."));
+            ui.separator();
             ui.horizontal(|ui| {
                 ui.label("Langue / Language :");
                 let langs = crate::i18n::available();
@@ -1179,6 +1213,18 @@ impl eframe::App for App {
                         if ui.button(tr("Save as…")).clicked() { ui.close_menu(); self.save(true); }
                     });
                     ui.separator();
+                    let burn_ok = burn::available();
+                    let r = ui.add_enabled(burn_ok, egui::Button::new(tr("Burn an ISO image…")));
+                    let r = if burn_ok { r.on_hover_text(tr("Sends an ISO image to the Windows disc image burner, which asks for the drive and burns the disc.")) } else { r.on_disabled_hover_text(burn::unavailable_reason()) };
+                    if r.clicked() {
+                        ui.close_menu();
+                        let mut dlg = rfd::FileDialog::new().set_title(tr("Burn an ISO image")).add_filter(tr("ISO image"), &["iso"]);
+                        if let Some(d) = self.built_iso.as_ref().and_then(|p| p.parent()) { dlg = dlg.set_directory(d); }
+                        if let Some(f) = dlg.pick_file() {
+                            self.notice = match burn::burn(&f) { Ok(()) => tr("Disc image burner opened: choose the drive and start the burning.").to_string(), Err(e) => trf!("Cannot burn: {}", e) };
+                        }
+                    }
+                    ui.separator();
                     if ui.button(tr("Settings…")).clicked() { self.show_config = true; ui.close_menu(); }
                     ui.separator();
                     if ui.button(tr("Quit")).clicked() { ui.close_menu(); ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close); }
@@ -1231,8 +1277,12 @@ impl eframe::App for App {
         // fenetre « Generer le disque » : bouton de generation, progression, resultat et journal de la construction
         if self.show_build {
             let mut open = true;
-            let (mut start, mut cancel_req) = (false, false);
+            let (mut start, mut cancel_req, mut burn_req) = (false, false, false);
             let can_build = !self.model.videos.is_empty();
+            // image prete a graver : generation reussie qui a produit une image
+            let iso_ready = (!busy && self.result.as_ref().is_some_and(|r| r.0)).then(|| self.built_iso.clone()).flatten()
+                .and_then(|p| std::fs::metadata(&p).ok().map(|m| (p, m.len())));
+            let burn_msg = self.burn_msg.clone();
             {
                 let (progress, result, log) = (self.progress, &self.result, &self.log);
                 let (detail, t0) = (self.ffmpeg_detail, self.build_t0);
@@ -1266,6 +1316,21 @@ impl eframe::App for App {
                         let col = if *ok { egui::Color32::from_rgb(90, 200, 120) } else { egui::Color32::from_rgb(230, 100, 90) };
                         ui.colored_label(col, text);
                     }
+                    if let Some((iso, bytes)) = &iso_ready {
+                        ui.horizontal_wrapped(|ui| {
+                            let ok = burn::available();
+                            let b = ui.add_enabled(ok, egui::Button::new(tr("Burn…")));
+                            let b = if ok { b.on_hover_text(tr("Sends the image to the Windows disc image burner, which asks for the drive and burns the disc.")) } else { b.on_disabled_hover_text(burn::unavailable_reason()) };
+                            if b.clicked() { burn_req = true; }
+                            let name = iso.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                            let size = format!("{:.2}", *bytes as f64 / 1e9);
+                            let disc = match burn::disc_for(*bytes) { Some(d) => trf!("fits on a {}", d), None => tr("too big for a Blu-ray disc").to_string() };
+                            ui.label(egui::RichText::new(trf!("{} — {} GB, {}", name, crate::i18n::num(size), disc)).weak());
+                        });
+                    }
+                    if let Some((ok, text)) = &burn_msg {
+                        ui.colored_label(if *ok { egui::Color32::from_rgb(90, 200, 120) } else { egui::Color32::from_rgb(230, 100, 90) }, text);
+                    }
                     ui.separator();
                     egui::ScrollArea::vertical().stick_to_bottom(true).auto_shrink([false, false]).show(ui, |ui| {
                         for l in log { ui.monospace(l); }
@@ -1273,6 +1338,14 @@ impl eframe::App for App {
                 });
             }
             self.show_build = open;
+            if burn_req {
+                if let Some((iso, _)) = &iso_ready {
+                    self.burn_msg = Some(match burn::burn(iso) {
+                        Ok(()) => (true, tr("Disc image burner opened: choose the drive and start the burning.").to_string()),
+                        Err(e) => (false, trf!("Cannot burn: {}", e)),
+                    });
+                }
+            }
             if cancel_req { self.cancel.store(true, Ordering::Relaxed); }
             if start { self.start_build(ctx); }
         }
@@ -1550,6 +1623,30 @@ fn main() -> eframe::Result<()> {
         ..Default::default()
     };
     eframe::run_native("bdauthor", options, Box::new(|_cc| Ok(Box::new(App::default()))))
+}
+
+/// Tailles proposees pour l'interface.
+const UI_SCALES: [f32; 8] = [0.75, 0.9, 1.0, 1.1, 1.25, 1.5, 1.75, 2.0];
+
+impl App {
+    /// Applique le theme et la taille de l'interface quand ils changent ; une taille changee au clavier (Ctrl +, Ctrl −,
+    /// Ctrl 0, geres par egui) est gardee dans la configuration.
+    fn apply_look(&mut self, ctx: &egui::Context) {
+        let look = (self.cfg.theme.clone(), self.cfg.ui_scale);
+        if self.applied_look.as_ref() != Some(&look) {
+            ctx.set_theme(match self.cfg.theme.as_str() {
+                "dark" => egui::ThemePreference::Dark,
+                "light" => egui::ThemePreference::Light,
+                _ => egui::ThemePreference::System,
+            });
+            ctx.set_zoom_factor(self.cfg.ui_scale);
+            self.applied_look = Some(look);
+        } else if (ctx.zoom_factor() - self.cfg.ui_scale).abs() > 0.001 {
+            self.cfg.ui_scale = (ctx.zoom_factor() * 100.0).round() / 100.0;
+            self.applied_look = Some((self.cfg.theme.clone(), self.cfg.ui_scale));
+            self.cfg.save();
+        }
+    }
 }
 
 /// Capture de la fenetre de l'application (Ctrl+Maj+F12) : une image PNG exacte de la fenetre, fenetres internes et menus
