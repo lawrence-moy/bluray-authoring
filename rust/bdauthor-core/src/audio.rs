@@ -31,6 +31,44 @@ pub enum AudioFormat {
     Lpcm24,
 }
 
+/// Canaux d'une piste LPCM : ceux de la source, ou un plafond (une source qui a deja moins de canaux n'est pas touchee).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LpcmChannels {
+    #[default]
+    Source,
+    /// 5.1 au plus (une source 7.1, 7.0 ou 6.1 est mixee en 5.1)
+    Max51,
+    /// stereo (mixage standard, caisson de basses garde)
+    Stereo,
+    /// stereo Dolby Pro Logic II (un ampli home-cinema peut en retirer un effet surround)
+    StereoDpl2,
+}
+
+impl LpcmChannels {
+    pub const ALL: [LpcmChannels; 4] = [LpcmChannels::Source, LpcmChannels::Max51, LpcmChannels::Stereo, LpcmChannels::StereoDpl2];
+    pub fn name(self) -> &'static str {
+        match self { LpcmChannels::Source => "source", LpcmChannels::Max51 => "5.1", LpcmChannels::Stereo => "stereo", LpcmChannels::StereoDpl2 => "stereo_dpl2" }
+    }
+    pub fn from_name(s: &str) -> Option<LpcmChannels> { LpcmChannels::ALL.into_iter().find(|c| c.name() == s) }
+    /// Plafond de canaux (`None` : ceux de la source).
+    pub fn max(self) -> Option<u32> {
+        match self { LpcmChannels::Source => None, LpcmChannels::Max51 => Some(6), LpcmChannels::Stereo | LpcmChannels::StereoDpl2 => Some(2) }
+    }
+    /// Canaux sur le disque pour une source de `src` canaux.
+    pub fn out(self, src: u32) -> u32 { self.max().map_or(src, |m| src.min(m)) }
+    /// Filtre ffmpeg du mixage. La normalisation de ffmpeg (aucune saturation possible) baisse beaucoup le niveau : dialogues
+    /// au centre -4,7 dB en 5.1 et -11 dB en stereo ; avec `rematrix_maxval=2`, 0 dB en 5.1 et -5 dB en stereo (le mixage de
+    /// reference donnerait -3 dB, mais pourrait saturer quand tous les canaux sont forts).
+    pub fn filter(self) -> Option<&'static str> {
+        match self {
+            LpcmChannels::Source => None,
+            LpcmChannels::Max51 => Some("aresample=ochl=5.1(side):rematrix_maxval=2"),
+            LpcmChannels::Stereo => Some("aresample=ochl=stereo:lfe_mix_level=0.7071:rematrix_maxval=2"),
+            LpcmChannels::StereoDpl2 => Some("aresample=ochl=stereo:matrix_encoding=dplii:lfe_mix_level=0.7071:rematrix_maxval=2"),
+        }
+    }
+}
+
 impl AudioFormat {
     pub const ALL: [AudioFormat; 6] =
         [AudioFormat::Ac3, AudioFormat::Ac3Surround, AudioFormat::Ac3Copy, AudioFormat::DtsCopy, AudioFormat::Lpcm16, AudioFormat::Lpcm24];
@@ -93,6 +131,8 @@ pub struct AudioTrackCfg {
     pub bitrate: u32,
     /// Frequence du LPCM (Hz) : 96000, ou 0 pour 48 kHz ; sans effet sur les autres formats (toujours 48 kHz).
     pub sample_rate: u32,
+    /// Canaux du LPCM (plafond) ; sans effet sur les autres formats.
+    pub lpcm_channels: LpcmChannels,
 }
 
 /// Frequences LPCM proposees (Hz). Le Blu-ray accepte aussi 192 kHz, au plus en 5.1.
@@ -103,11 +143,14 @@ pub const MAX_AUDIO_TRACKS: usize = 8;
 
 impl AudioTrackCfg {
     pub fn embedded(index: u32, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0 }
+        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source }
     }
     pub fn from_file(path: &str, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0 }
+        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source }
     }
+
+    /// Canaux sur le disque d'une piste LPCM dont la source a `src` canaux.
+    pub fn lpcm_out_channels(&self, src: u32) -> u32 { if self.format.is_lpcm() { self.lpcm_channels.out(src) } else { src } }
 
     /// Frequence de la piste sur le disque (Hz) : 96 kHz pour un LPCM ainsi regle, 48 kHz sinon.
     pub fn rate(&self) -> u32 { if self.format.is_lpcm() && self.sample_rate == 96_000 { 96_000 } else { 48_000 } }
@@ -120,7 +163,7 @@ impl AudioTrackCfg {
             AudioFormat::Ac3Surround => if self.bitrate != 0 { self.bitrate } else { AC3_SURROUND_KBPS },
             AudioFormat::Ac3Copy => if source_kbps != 0 { source_kbps } else { AC3_MAX_KBPS },
             AudioFormat::DtsCopy => if source_kbps != 0 { source_kbps } else { DTS_HD_KBPS },
-            f => f.kbps(channels, project_kbps) * (self.rate() / 48_000),
+            f => f.kbps(self.lpcm_out_channels(channels), project_kbps) * (self.rate() / 48_000),
         }
     }
 
@@ -140,6 +183,7 @@ impl AudioTrackCfg {
                 Some(s) => AudioFormat::from_name(s).ok_or_else(|| trf!("audio tracks: unknown format “{}”", s))?,
             },
             bitrate: v.get("bitrate_kbps").and_then(Value::as_f64).map_or(0, |x| x.round().max(0.0) as u32),
+            lpcm_channels: v.get("lpcm_channels").and_then(Value::as_str).and_then(LpcmChannels::from_name).unwrap_or_default(),
             sample_rate: v.get("sample_rate_hz").and_then(Value::as_f64).map_or(0, |x| if x.round() as u32 == 48_000 { 0 } else { x.round().max(0.0) as u32 }),
         })
     }
@@ -155,6 +199,7 @@ impl AudioTrackCfg {
         if self.format != AudioFormat::Ac3 { o.push(("format".into(), Value::Str(self.format.name().into()))); }
         if self.bitrate != 0 { o.push(("bitrate_kbps".into(), Value::Num(self.bitrate as f64))); }
         if self.sample_rate != 0 { o.push(("sample_rate_hz".into(), Value::Num(self.sample_rate as f64))); }
+        if self.lpcm_channels != LpcmChannels::Source { o.push(("lpcm_channels".into(), Value::Str(self.lpcm_channels.name().into()))); }
         Value::Obj(o)
     }
 
@@ -170,6 +215,9 @@ impl AudioTrackCfg {
         if let AudioSource::File(f) = &self.source { if f.trim().is_empty() { p.push(tr("audio file not chosen").to_string()); } }
         if self.bitrate != 0 && (!self.format.is_encoded_ac3() || !AC3_RATES.contains(&self.bitrate)) {
             p.push(tr("audio bitrate: only the Dolby Digital rates 32 to 640 kb/s are allowed, and only for encoded Dolby Digital").to_string());
+        }
+        if self.lpcm_channels != LpcmChannels::Source && !self.format.is_lpcm() {
+            p.push(tr("channels: the choice of channels is only available for LPCM").to_string());
         }
         if self.sample_rate != 0 && (self.sample_rate != 96_000 || !self.format.is_lpcm()) {
             p.push(tr("sample rate: 96 kHz is only available for LPCM").to_string());

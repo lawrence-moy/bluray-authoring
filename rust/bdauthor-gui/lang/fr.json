@@ -1475,5 +1475,14 @@
   "the Windows disc image burner (isoburn.exe) was not found": "le graveur d'images disque de Windows (isoburn.exe) est introuvable",
   "burning goes through the Windows disc image burner; on this system, use your usual burning software": "la gravure passe par le graveur d'images disque de Windows ; sur ce système, utilisez votre logiciel de gravure habituel",
   "the image {} does not exist": "l'image {} n'existe pas",
-  "cannot start the disc image burner: {}": "impossible de lancer le graveur d'images disque : {}"
+  "cannot start the disc image burner: {}": "impossible de lancer le graveur d'images disque : {}",
+  "Channels:": "Canaux :",
+  "as the source": "comme la source",
+  "5.1 at most": "5.1 au plus",
+  "stereo": "stéréo",
+  "Lighter track: a 7.1 source is mixed into 5.1 (the back channels go into the surround ones), or everything into stereo (centre and surrounds added to left and right, subwoofer kept). A source that already has fewer channels is left as it is. A stereo mix is about 5 dB quieter on the dialogues than the original.": "Piste plus légère : une source 7.1 est mixée en 5.1 (les canaux arrière vont dans les canaux surround), ou tout en stéréo (centre et surrounds ajoutés à gauche et à droite, caisson de basses gardé). Une source qui a déjà moins de canaux n'est pas touchée. Un mixage stéréo est environ 5 dB plus faible que l'original sur les dialogues.",
+  "Dolby Pro Logic II": "Dolby Pro Logic II",
+  "Ordinary stereo, from which a home-cinema amplifier can rebuild a surround effect.": "Stéréo ordinaire, dont un ampli home-cinéma peut retirer un effet surround.",
+  "(source: {} channels → {}, {} Mb/s)": "(source : {} canaux → {}, {} Mb/s)",
+  "channels: the choice of channels is only available for LPCM": "canaux : le choix des canaux n'existe qu'en LPCM"
 }

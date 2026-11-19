@@ -333,6 +333,12 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   Trames de ffmpeg a 96 kHz : 360 echantillons = 3,75 ms = **337,5 ticks** (pas entier) : les trames d'un meme paquet se datent
   d'apres le total d'echantillons (`lpcm::pts_after`), sans cumuler d'arrondi. Une source a 48 kHz ou moins en 96 kHz : note dans
   le journal et avertissement dans l'interface (plus lourd, rien de gagne). 192 kHz (permis par le Blu-ray jusqu'au 5.1) : non propose.
+- **Canaux** (`lpcm_channels` : `5.1`, `stereo`, `stereo_dpl2` ; absent = comme la source) : plafond, pas forçage ; `project`
+  remet « comme la source » quand la source a déjà assez peu de canaux (pas de mixage, clé de cache inchangée). Filtre par
+  piste `-filter:a:N aresample=ochl=5.1(side)` ou `ochl=stereo:lfe_mix_level=0.7071` (+ `matrix_encoding=dplii`), toujours
+  avec `rematrix_maxval=2` : la normalisation par défaut de ffmpeg (sans saturation possible) baisse les dialogues de 4,7 dB
+  en 5.1 et de 11 dB en stéréo ; avec 2 : 0 dB en 5.1, -5 dB en stéréo (référence -3 dB, mais saturation possible quand tous
+  les canaux sont forts). Mesuré avec volumedetect sur un 7.1 au seul canal central.
 - Non fait : copie TrueHD (voir « À faire »).
 
 ### Audio AC-3 par piste : 5.1, debit manuel, copie

@@ -652,6 +652,8 @@ pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -
             Lpcm24 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s32")]),
         }
         if t.rate() != 48_000 { a.extend([format!("-ar:a:{k}"), t.rate().to_string()]); }
+        // LPCM : mixage vers moins de canaux (seulement si la source en a plus, voir `project`)
+        if let Some(f) = t.lpcm_channels.filter().filter(|_| t.format.is_lpcm()) { a.extend([format!("-filter:a:{k}"), st(f)]); }
     }
     a
 }

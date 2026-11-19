@@ -1,7 +1,7 @@
 //! Panneau « Pistes audio » d'une video : pistes de la video ou fichiers audio separes, chacune avec sa langue du projet.
 use crate::i18n::{tr, trf};
 use crate::subs_ui::language_for_code;
-use bdauthor_core::audio::{AudioFormat, AudioSource, AC3_RATES, AC3_SURROUND_KBPS, AudioTrackCfg, LPCM_RATES, MAX_AUDIO_TRACKS};
+use bdauthor_core::audio::{AudioFormat, AudioSource, AC3_RATES, AC3_SURROUND_KBPS, AudioTrackCfg, LpcmChannels, LPCM_RATES, MAX_AUDIO_TRACKS};
 use crate::player::AudioOut;
 use bdauthor_core::ffmpeg::{audio_peaks_range, audio_peaks_with, list_audio_streams, probe_duration, AudioStreamInfo, Tools};
 use bdauthor_core::model::VideoEntry;
@@ -39,11 +39,13 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
     let mut del = None;
     let mut rows: Vec<egui::Rect> = Vec::new();
     for (k, t) in v.audio.iter_mut().enumerate() {
-        // frequence de la piste source (piste integree a la video, si la video a deja ete examinee)
-        let src_rate = match &t.source {
-            AudioSource::Embedded(n) => probes.get(&v.file).and_then(|r| r.as_ref().ok()).and_then(|s| s.iter().find(|x| x.index == *n)).map(|x| x.sample_rate).filter(|r| *r > 0),
+        // frequence et canaux de la piste source (piste integree a la video, si la video a deja ete examinee)
+        let src_stream = match &t.source {
+            AudioSource::Embedded(n) => probes.get(&v.file).and_then(|r| r.as_ref().ok()).and_then(|s| s.iter().find(|x| x.index == *n)).map(|x| (x.sample_rate, x.channels)),
             AudioSource::File(_) => None,
         };
+        let src_rate = src_stream.map(|s| s.0).filter(|r| *r > 0);
+        let src_ch = src_stream.map(|s| s.1).filter(|c| *c > 0);
         ui.push_id(("audio", k), |ui| {
             let what = match &t.source {
                 AudioSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
@@ -102,7 +104,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                             if ui.selectable_label(t.format == f, tr(f.label())).clicked() {
                                 t.format = f;
                                 if !f.is_encoded_ac3() { t.bitrate = 0; }
-                                if !f.is_lpcm() { t.sample_rate = 0; }
+                                if !f.is_lpcm() { t.sample_rate = 0; t.lpcm_channels = LpcmChannels::Source; }
                                 changed = true;
                             }
                         }
@@ -134,6 +136,33 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                             }
                         }).response.on_hover_text(tr("96 kHz keeps the high frequencies of a high-resolution source (music, concert) and doubles the size of the track. With a 48 kHz source it gains nothing."));
                         if let Some(r) = src_rate { ui.label(egui::RichText::new(trf!("(source: {} Hz)", r)).weak()); }
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Channels:"));
+                        let stereo = matches!(t.lpcm_channels, LpcmChannels::Stereo | LpcmChannels::StereoDpl2);
+                        let label = |c: LpcmChannels| match c {
+                            LpcmChannels::Source => tr("as the source"),
+                            LpcmChannels::Max51 => tr("5.1 at most"),
+                            _ => tr("stereo"),
+                        };
+                        egui::ComboBox::from_id_salt("canaux_piste_audio").selected_text(label(t.lpcm_channels)).show_ui(ui, |ui| {
+                            for c in [LpcmChannels::Source, LpcmChannels::Max51, LpcmChannels::Stereo] {
+                                let on = if c == LpcmChannels::Stereo { stereo } else { t.lpcm_channels == c };
+                                if ui.selectable_label(on, label(c)).clicked() && !on { t.lpcm_channels = c; changed = true; }
+                            }
+                        }).response.on_hover_text(tr("Lighter track: a 7.1 source is mixed into 5.1 (the back channels go into the surround ones), or everything into stereo (centre and surrounds added to left and right, subwoofer kept). A source that already has fewer channels is left as it is. A stereo mix is about 5 dB quieter on the dialogues than the original."));
+                        if stereo {
+                            let mut dpl = t.lpcm_channels == LpcmChannels::StereoDpl2;
+                            if ui.checkbox(&mut dpl, tr("Dolby Pro Logic II")).on_hover_text(tr("Ordinary stereo, from which a home-cinema amplifier can rebuild a surround effect.")).changed() {
+                                t.lpcm_channels = if dpl { LpcmChannels::StereoDpl2 } else { LpcmChannels::Stereo };
+                                changed = true;
+                            }
+                        }
+                        if let Some(c) = src_ch {
+                            let out = t.lpcm_out_channels(c);
+                            let mbps = format!("{:.1}", t.kbps(c, 0, 0) as f64 / 1000.0);
+                            ui.label(egui::RichText::new(trf!("(source: {} channels → {}, {} Mb/s)", c, out, crate::i18n::num(mbps))).weak());
+                        }
                     });
                     if let Some(r) = src_rate.filter(|r| t.rate() == 96_000 && *r < 96_000) {
                         ui.colored_label(egui::Color32::from_rgb(230, 170, 70), trf!("The source is at {} Hz: 96 kHz makes the track heavier without improving it.", r));

@@ -210,3 +210,61 @@ fn lpcm_96khz_track_makes_a_valid_clip() {
     assert!((2.5..3.5).contains(&secs), "duree {secs}");
     let _ = std::fs::remove_dir_all(dir);
 }
+
+#[test]
+fn lpcm_channel_limit_options() {
+    use bdauthor_core::audio::LpcmChannels;
+    let mut t = AudioTrackCfg::embedded(0, "fra");
+    t.format = AudioFormat::Lpcm24;
+    t.lpcm_channels = LpcmChannels::Max51;
+    assert!(t.to_value().to_pretty().contains("\"lpcm_channels\": \"5.1\""));
+    assert_eq!(AudioTrackCfg::from_value(&t.to_value()).unwrap(), t);
+    // debit : 7.1 plafonne a 5.1, une source 5.1 ou stereo inchangee
+    assert_eq!((t.kbps(8, 0, 192), t.kbps(6, 0, 192), t.kbps(2, 0, 192)), (6912, 6912, 2304));
+    t.lpcm_channels = LpcmChannels::Stereo;
+    // une source mono reste mono (sur Blu-ray, un nombre impair de canaux occupe la place du nombre pair suivant)
+    assert_eq!((t.kbps(8, 0, 192), t.kbps(1, 0, 192)), (2304, 2304));
+    assert!(t.problems().is_empty());
+    assert_eq!(bdauthor_core::ffmpeg::audio_codec_args("192k", &[t.clone()]).join(" "), "-ar 48000 -c:a:0 pcm_bluray -sample_fmt:a:0 s32 -filter:a:0 aresample=ochl=stereo:lfe_mix_level=0.7071:rematrix_maxval=2");
+    t.lpcm_channels = LpcmChannels::StereoDpl2;
+    assert!(bdauthor_core::ffmpeg::audio_codec_args("192k", &[t.clone()]).join(" ").contains("matrix_encoding=dplii"));
+    // hors LPCM : refuse
+    let mut a = t.clone();
+    a.format = AudioFormat::Ac3;
+    assert!(!a.problems().is_empty());
+    assert!(!bdauthor_core::ffmpeg::audio_codec_args("192k", &[a]).join(" ").contains("-filter"));
+    // ancien projet sans le champ : comme la source
+    let v = bdauthor_core::json::parse(r#"{"track": 0, "format": "lpcm16"}"#).unwrap();
+    assert_eq!(AudioTrackCfg::from_value(&v).unwrap().lpcm_channels, LpcmChannels::Source);
+}
+
+#[test]
+fn lpcm_71_source_is_mixed_down() {
+    use bdauthor_core::audio::LpcmChannels;
+    use bdauthor_core::ffmpeg::{EncodeOpts, Tools};
+    use bdauthor_core::film::{load_encoded_m2ts, make_film_m2ts_tracks};
+    use bdauthor_core::tsclip::scan_clip;
+    let Ok(tools) = Tools::locate() else { eprintln!("ffmpeg absent : test ignore"); return };
+    let dir = workdir("lpcm71");
+    let src = dir.join("src.mkv");
+    let ok = Command::new(&tools.ffmpeg)
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=25:duration=2", "-f", "lavfi", "-i", "sine=frequency=440:duration=2:sample_rate=48000,aformat=channel_layouts=7.1",
+               "-map", "0:v", "-map", "1:a", "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "flac"])
+        .arg(&src).status().unwrap().success();
+    assert!(ok, "source");
+    let opts = EncodeOpts { preset: "ultrafast".into(), ..Default::default() };
+    let mut want = Vec::new();
+    for (lim, ch, attr) in [(LpcmChannels::Source, 8, 0x61), (LpcmChannels::Max51, 6, 0x61), (LpcmChannels::Stereo, 2, 0x31), (LpcmChannels::StereoDpl2, 2, 0x31)] {
+        let mut t = AudioTrackCfg::embedded(0, "fra");
+        t.format = AudioFormat::Lpcm24;
+        t.lpcm_channels = lim;
+        let (m2ts, _) = make_film_m2ts_tracks(&tools, &src, &[*b"fra"], &[t], &opts, Some(&dir), &mut |_| {}, &AtomicBool::new(false)).unwrap();
+        let sc = scan_clip(&m2ts).unwrap();
+        let enc = load_encoded_m2ts(&m2ts).unwrap();
+        let h = lpcm::Header::parse(&enc.audio[0].data).unwrap();
+        want.push((lim, h.channels(), sc.audio_codes[0].2));
+        assert_eq!((h.channels(), sc.audio_codes[0].2), (ch, attr), "{lim:?}");
+    }
+    eprintln!("{want:?}");
+    let _ = std::fs::remove_dir_all(dir);
+}

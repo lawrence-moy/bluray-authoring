@@ -636,6 +636,7 @@ fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) ->
         // l'AC-3 garde la signature d'avant (les caches existants restent valables)
         if t.format != crate::audio::AudioFormat::Ac3 { s.push_str(&format!("#{}", t.format.name())); }
         if t.bitrate != 0 { s.push_str(&format!("~{}", t.bitrate)); }
+        if t.lpcm_channels != crate::audio::LpcmChannels::Source { s.push_str(&format!("%{}", t.lpcm_channels.name())); }
         if t.rate() != 48_000 { s.push_str(&format!("^{}", t.rate())); }
     }
     for l in langs { s.push_str(&String::from_utf8_lossy(l)); s.push(','); }
@@ -966,6 +967,11 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                         if !full.is_file() { return bad(trf!("video {}, audio track: file not found ({})", i + 1, f)); }
                         *f = full.to_string_lossy().into_owned();
                     }
+                }
+                // LPCM a canaux plafonnes : rien a mixer si la source a deja assez peu de canaux (cle de cache inchangee)
+                for x in t.iter_mut().filter(|x| x.format.is_lpcm() && x.lpcm_channels != crate::audio::LpcmChannels::Source) {
+                    let src_ch = probe_track(env.tools, &src, x).map_or(0, |s| s.channels);
+                    if src_ch != 0 && src_ch <= x.lpcm_channels.max().unwrap_or(u32::MAX) { x.lpcm_channels = crate::audio::LpcmChannels::Source; }
                 }
                 (t, pl.videos[i].langs.clone())
             }
