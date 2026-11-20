@@ -916,6 +916,19 @@ impl App {
                     changed |= ui.add(egui::DragValue::new(&mut fx.shadow_mm).range(0.0..=5.0).speed(0.05).suffix(" mm")).changed();
                     changed |= ui.color_edit_button_srgb(&mut fx.shadow_color).changed();
                 });
+                // fond du cadre (sous le texte)
+                ui.horizontal(|ui| {
+                    let mut on = fx.bg.is_some();
+                    if ui.checkbox(&mut on, tr("Background")).on_hover_text(tr("Colour filling the whole frame of the text, under it. Resize the frame to set the margin around the text.")).changed() {
+                        fx.bg = if on { Some(fx.bg.unwrap_or([0, 0, 0])) } else { None };
+                        changed = true;
+                    }
+                    if let Some(c) = fx.bg.as_mut() {
+                        changed |= ui.color_edit_button_srgb(c).changed();
+                        ui.label(tr("Rounded corners"));
+                        changed |= ui.add(egui::DragValue::new(&mut fx.bg_radius_mm).range(0.0..=20.0).speed(0.1).suffix(" mm")).changed();
+                    }
+                });
                 if !font.is_empty() {
                     if let Ok(r) = &self.renderer {
                         if r.custom_font(font, &base_dir).is_none() {

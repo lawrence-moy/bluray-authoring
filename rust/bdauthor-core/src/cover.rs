@@ -39,11 +39,17 @@ pub struct TextFx {
     /// texte justifie : coupe en lignes de la largeur du cadre, les mots etant espaces pour remplir chaque ligne (sauf la derniere
     /// de chaque paragraphe, qui suit l'alignement)
     pub justify: bool,
+    /// couleur de fond du cadre (`None` : transparent) et arrondi de ses coins (mm)
+    pub bg: Option<[u8; 3]>,
+    pub bg_radius_mm: f64,
 }
 
 impl Default for TextFx {
     fn default() -> TextFx {
-        TextFx { outline_mm: 0.0, outline_color: [0, 0, 0], shadow_mm: 0.0, shadow_color: [0, 0, 0], spacing: 1.0, valign: VAlign::Middle, autofit: false, bold: false, italic: false, justify: false }
+        TextFx {
+            outline_mm: 0.0, outline_color: [0, 0, 0], shadow_mm: 0.0, shadow_color: [0, 0, 0], spacing: 1.0, valign: VAlign::Middle, autofit: false, bold: false,
+            italic: false, justify: false, bg: None, bg_radius_mm: 0.0,
+        }
     }
 }
 
@@ -559,6 +565,13 @@ impl Cover {
                     let r = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi), mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
                     items.extend(code.decors(r, dpi, it.w, vars, base).into_iter().map(|d| (d, 0)));
                 }
+                // texte sur fond : un rectangle de la taille du cadre, dessine juste dessous (meme rotation)
+                CoverKind::Text { fx: TextFx { bg: Some(c), bg_radius_mm, .. }, .. } => {
+                    let r = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi), mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
+                    items.push((CoverDecor::Shape { flip: false, style: LineStyle::Solid, arrow: LineArrow::None, shape: ShapeKind::Rect, x: r.0, y: r.1, w: r.2, h: r.3,
+                        fill: Some(*c), stroke: None, stroke_px: 0, radius_px: mm_px(*bg_radius_mm, dpi).max(0) }, it.rot));
+                    items.extend(one(it));
+                }
                 _ => items.extend(one(it)),
             }
         }
@@ -955,6 +968,8 @@ fn item_to_value(it: &CoverItem) -> Value {
             if fx.justify { e.push(("justify".into(), Value::Bool(true))); }
             if fx.bold { e.push(("bold".into(), Value::Bool(true))); }
             if fx.italic { e.push(("italic".into(), Value::Bool(true))); }
+            if let Some(c) = fx.bg { e.push(("background".into(), color_hex(c))); }
+            if fx.bg_radius_mm != 0.0 { e.push(("background_radius_mm".into(), n(fx.bg_radius_mm))); }
         }
         CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
             if *style != LineStyle::Solid { e.push(("line_style".into(), Value::Str(style.name().into()))); }
@@ -1035,6 +1050,8 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
                     justify: e.get("justify").and_then(Value::as_bool).unwrap_or(false),
                     bold: e.get("bold").and_then(Value::as_bool).unwrap_or(false),
                     italic: e.get("italic").and_then(Value::as_bool).unwrap_or(false),
+                    bg: e.get("background").filter(|v| **v != Value::Null).map(|v| color_from(Some(v), [0, 0, 0])),
+                    bg_radius_mm: g("background_radius_mm", 0.0).clamp(0.0, 100.0),
                 }
             },
         },
