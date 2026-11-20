@@ -131,6 +131,18 @@ fn item_label(it: &CoverItem, i: usize) -> String {
     }
 }
 
+/// Type d'un element de jaquette, en clair.
+fn cover_kind_name(k: &CoverKind) -> &'static str {
+    match k {
+        CoverKind::Text { .. } => tr("Text"),
+        CoverKind::Image { .. } => tr("Image"),
+        CoverKind::VideoImage { .. } => tr("Video image"),
+        CoverKind::Shape { shape, .. } => shape.label(),
+        CoverKind::InfoTable { .. } => tr("Info table"),
+        CoverKind::Barcode { .. } => tr("Barcode"),
+    }
+}
+
 /// Intitule d'une information de tableau (en-tete et reglages).
 fn info_label(f: InfoField) -> &'static str {
     match f {
@@ -808,13 +820,33 @@ impl App {
             });
             if let Some(a) = align { changed |= bdauthor_core::cover::align_cover(doc.items_mut(), &sel, a, (tw, th)); }
         }
-        if sel.len() > 1 {
-            ui.separator();
-            ui.label(trf!("{} items selected: drag them together, align them or copy them. Select just one to change its settings.", sel.len()));
-            return changed;
-        }
-        let Some(i) = sel.first().copied() else { return changed };
+        // element principal : ses reglages s'affichent ; en selection multiple, ce qui y change passe aux autres du meme type
+        let Some(i) = self.cover_sel.filter(|p| sel.contains(p)).or_else(|| sel.first().copied()) else { return changed };
         ui.separator();
+        if sel.len() > 1 {
+            let main = &doc.items()[i];
+            let same = sel.iter().filter(|&&k| k != i && std::mem::discriminant(&doc.items()[k].kind) == std::mem::discriminant(&main.kind)).count();
+            let other = sel.len() - 1 - same;
+            if same > 0 {
+                ui.label(egui::RichText::new(trf!("{} items selected: what you change below also applies to the {} other(s) of the same type ({}).", sel.len(), same, cover_kind_name(&main.kind))).strong())
+                    .on_hover_text(tr("Size, rotation, colours, font, outline, shadow, border… apply to all. Position, name, text, image, video and code stay those of each item."));
+            } else {
+                ui.label(trf!("{} items selected, of different types: only this one is changed below.", sel.len()));
+            }
+            if other > 0 && same > 0 { ui.label(egui::RichText::new(trf!("{} selected item(s) of another type will not be changed.", other)).weak()); }
+        }
+        let before = doc.items()[i].clone();
+        changed |= self.cover_item_settings(ui, doc, i);
+        if sel.len() > 1 && bdauthor_core::cover::apply_to_like(doc.items_mut(), i, &before, &sel) > 0 { changed = true; }
+        changed
+    }
+
+    /// Reglages de l'element `i` de la jaquette ou de l'etiquette ; rend vrai s'il a change.
+    fn cover_item_settings(&mut self, ui: &mut egui::Ui, doc: &mut dyn SheetDoc, i: usize) -> bool {
+        let mut changed = false;
+        let (sw, sh) = doc.sheet_mm();
+        let bleed = doc.bleed_mm();
+        let (tw, th) = (sw - 2.0 * bleed, sh - 2.0 * bleed);
         let zones = doc.zones();
         let base_dir = self.base_dir();
         let vlabels: Vec<String> = (0..self.model.videos.len()).map(|v| bdauthor_core::editor::video_title(&self.model, v)).collect();

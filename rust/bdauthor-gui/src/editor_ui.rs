@@ -1331,6 +1331,22 @@ impl App {
         self.extra_sel.retain(|&e| e != i);
         let mut group: Vec<usize> = self.extra_sel.clone();
         group.push(i);
+        // selection multiple : les reglages modifies ici passent aux autres elements du meme type
+        if group.len() > 1 {
+            if let Some(d) = info.design(&self.model.designs) {
+                if let Some(main) = d.items.get(i) {
+                    let same = group.iter().filter(|&&k| k != i && d.items.get(k).is_some_and(|it| bdauthor_core::design::same_kind(it, main))).count();
+                    let other = group.len() - 1 - same;
+                    if same > 0 {
+                        ui.label(egui::RichText::new(trf!("{} items selected: what you change below also applies to the {} other(s) of the same type ({}).", group.len(), same, kind_name(&main.kind))).strong())
+                            .on_hover_text(tr("Size, style, colours, font, state images, sounds… apply to all. Position, name, text, video, chapter, image and destination stay those of each item."));
+                    }
+                    if other > 0 {
+                        ui.label(egui::RichText::new(trf!("{} selected item(s) of another type will not be changed.", other)).weak());
+                    }
+                }
+            }
+        }
         let mut align: Option<ItemAlign> = None;
         ui.collapsing(if group.len() > 1 { trf!("Alignment ({} items)", group.len()) } else { tr("Alignment and centering").to_string() }, |ui| {
             crate::help(ui, tr("Shift+click on the preview adds or removes an item from the selection; dragging one of them moves the whole group. With several items, alignment is done on their common frame; with one, on the page."));
@@ -1417,6 +1433,8 @@ impl App {
                 }
             }
         }
+        // etat de l'element principal avant ses reglages (modification groupee)
+        let before_item = if group.len() > 1 { info.design(&self.model.designs).and_then(|d| d.items.get(i).cloned()) } else { None };
         let mut pick_image = false;
         let mut pick_frame = false;
         let mut changed = false;
@@ -1881,6 +1899,10 @@ impl App {
                 if horizontal { it.h = 0; if it.w < 16 { it.w = 600; } } else { it.w = 0; if it.h < 16 { it.h = 300; } }
                 changed = true;
             }
+        }
+        // modification groupee : apres tous les reglages (y compris ceux choisis dans une fenetre : police, images d'etats...)
+        if let (Some(b), Some(d)) = (before_item.as_ref(), info.design_mut(&mut self.model.designs)) {
+            if bdauthor_core::design::apply_to_like(d, i, b, &group) > 0 { changed = true; }
         }
         if changed {
             self.bump();

@@ -211,3 +211,49 @@ impl Value {
         }
     }
 }
+
+/// Differences entre deux objets : (chemin, nouvelle valeur ou `None` si la cle a disparu). Les sous-objets sont compares cle
+/// par cle ; les cles `skip` du premier niveau sont ignorees.
+pub fn diff(a: &Value, b: &Value, skip: &[&str]) -> Vec<(Vec<String>, Option<Value>)> {
+    fn walk(a: &Value, b: &Value, path: &mut Vec<String>, skip: &[&str], out: &mut Vec<(Vec<String>, Option<Value>)>) {
+        let (Value::Obj(oa), Value::Obj(ob)) = (a, b) else { return };
+        let mut seen = std::collections::HashSet::new();
+        for k in oa.iter().map(|e| &e.0).chain(ob.iter().map(|e| &e.0)) {
+            if !seen.insert(k.clone()) || (path.is_empty() && skip.contains(&k.as_str())) { continue; }
+            let (va, vb) = (a.get(k), b.get(k));
+            if va == vb { continue; }
+            path.push(k.clone());
+            match (va, vb) {
+                (Some(x @ Value::Obj(_)), Some(y @ Value::Obj(_))) => walk(x, y, path, skip, out),
+                _ => out.push((path.clone(), vb.cloned())),
+            }
+            path.pop();
+        }
+    }
+    let mut out = Vec::new();
+    walk(a, b, &mut Vec::new(), skip, &mut out);
+    out
+}
+
+/// Ecrit (ou retire, `None`) la valeur au chemin `path`, en creant les objets intermediaires.
+pub fn set_path(v: &mut Value, path: &[String], val: &Option<Value>) {
+    let Value::Obj(o) = v else { return };
+    let Some((k, rest)) = path.split_first() else { return };
+    let pos = o.iter().position(|e| &e.0 == k);
+    if rest.is_empty() {
+        match (pos, val) {
+            (Some(p), Some(x)) => o[p].1 = x.clone(),
+            (None, Some(x)) => o.push((k.clone(), x.clone())),
+            (Some(p), None) => { o.remove(p); }
+            (None, None) => {}
+        }
+        return;
+    }
+    if val.is_none() && pos.is_none() { return; }
+    let p = match pos {
+        Some(p) => p,
+        None => { o.push((k.clone(), Value::Obj(Vec::new()))); o.len() - 1 }
+    };
+    if !matches!(o[p].1, Value::Obj(_)) { o[p].1 = Value::Obj(Vec::new()); }
+    set_path(&mut o[p].1, rest, val);
+}

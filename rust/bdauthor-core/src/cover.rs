@@ -1261,3 +1261,28 @@ pub fn align_cover(items: &mut [CoverItem], sel: &[usize], op: crate::editor::It
     for (k, &i) in idx.iter().enumerate() { if (items[i].x, items[i].y) != before[k] { moved = true; } }
     moved
 }
+
+/// Cles d'un element de jaquette qui lui restent propres quand on en modifie plusieurs a la fois : position, nom, calque et
+/// contenu (texte, image, valeur du code-barres, videos du tableau, image de video).
+pub const OWN_KEYS: [&str; 12] = ["x", "y", "name", "layer", "type", "text", "file", "value", "videos", "video", "time_s", "crop"];
+
+/// Reporte sur les elements `others` du meme type ce qui a change sur l'element `primary` depuis `before` (sauf `OWN_KEYS`).
+/// Rend le nombre d'elements modifies.
+pub fn apply_to_like(items: &mut [CoverItem], primary: usize, before: &CoverItem, others: &[usize]) -> usize {
+    let Some(after) = items.get(primary).cloned() else { return 0 };
+    if *before == after { return 0; }
+    let changes = crate::json::diff(&item_to_value(before), &item_to_value(&after), &OWN_KEYS);
+    if changes.is_empty() { return 0; }
+    let mut n = 0;
+    for &k in others {
+        if k == primary || !items.get(k).is_some_and(|it| std::mem::discriminant(&it.kind) == std::mem::discriminant(&after.kind)) { continue; }
+        let old = items[k].clone();
+        let mut v = item_to_value(&old);
+        for (p, val) in &changes { crate::json::set_path(&mut v, p, val); }
+        let Ok(mut new) = item_from_value(&v, k, "") else { continue };
+        (new.x, new.y, new.layer) = (old.x, old.y, old.layer);
+        new.name = old.name.clone();
+        if new != old { items[k] = new; n += 1; }
+    }
+    n
+}

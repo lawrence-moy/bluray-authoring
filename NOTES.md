@@ -20,6 +20,16 @@
   sur la mire ; reste à tester une vraie génération ; vérifier que
   `-strict:v strict` fait bien écrire les SEI buffering period par QSV, et que l'entrelacé passe. Puis graver un BD-RE.
 
+## Modification groupée (sélection multiple)
+
+- Inspecteur des deux éditeurs : l'élément principal est modifié normalement ; à la fin (après les fenêtres de choix : police,
+  images d'états…), son JSON avant/après est comparé (`json::diff`, clé par clé dans les sous-objets) et les seules clés
+  changées sont reportées (`json::set_path`) sur les autres éléments sélectionnés du même type (même variante de `Kind` /
+  `CoverKind`), relus depuis le JSON. Clés propres à chaque élément (`design::OWN_KEYS`, `cover::OWN_KEYS`) : position, nom,
+  identifiant, navigation, calque, et le contenu (texte, légende, vidéo, chapitre, instants, fichier, recadrage, destination,
+  action, valeur du code-barres, vidéos du tableau). Changer un champ du style d'un bouton ne remplace pas le reste de son style.
+- Jaquette : les réglages d'un élément sont passés dans `cover_item_settings` (ils avaient plusieurs `return`).
+
 ## Encodage matériel (`hwenc.rs`, `h264check.rs`)
 
 - Encodeurs : x264 (défaut), Quick Sync (`h264_qsv`), NVENC (`h264_nvenc`), AMF (`h264_amf`), et selon le système VAAPI

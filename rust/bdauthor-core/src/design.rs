@@ -1092,3 +1092,48 @@ impl Designs {
         Ok(d)
     }
 }
+
+// ---------------------------------------------------------------- modification groupee (selection multiple)
+
+/// Cles d'un element qui lui restent propres quand on en modifie plusieurs a la fois : position, identite, navigation, calque
+/// et contenu (texte, video, chapitre, image, destination, action). Le reste (taille, style, couleurs, police, images d'etats,
+/// sons, forme...) s'applique a tous.
+pub const OWN_KEYS: [&str; 18] = [
+    "x", "y", "id", "navigation", "name", "layer", "type", "text", "caption", "video", "chapter", "start_s", "image_s", "file", "time_s",
+    "crop", "target", "action",
+];
+
+/// JSON d'un element seul (meme ecriture que dans la page).
+fn item_value(d: &PageDesign, it: &Item) -> Value {
+    let tmp = PageDesign { items: vec![it.clone()], layers: d.layers.clone(), ..Default::default() };
+    match tmp.to_value().get("items").and_then(Value::as_array) { Some(a) if !a.is_empty() => a[0].clone(), _ => Value::Obj(Vec::new()) }
+}
+
+fn item_of_value(v: Value) -> Option<Item> {
+    PageDesign::from_value(&Value::Obj(vec![("items".into(), Value::Arr(vec![v]))])).ok()?.items.into_iter().next()
+}
+
+/// Les elements sont du meme type (vignette, navigation, texte, forme, image) : une modification groupee peut s'appliquer.
+pub fn same_kind(a: &Item, b: &Item) -> bool { std::mem::discriminant(&a.kind) == std::mem::discriminant(&b.kind) }
+
+/// Reporte sur les elements `others` du meme type ce qui a change sur l'element `primary` depuis `before` (sauf `OWN_KEYS`).
+/// Rend le nombre d'elements modifies.
+pub fn apply_to_like(d: &mut PageDesign, primary: usize, before: &Item, others: &[usize]) -> usize {
+    let Some(after) = d.items.get(primary).cloned() else { return 0 };
+    if *before == after { return 0; }
+    let changes = crate::json::diff(&item_value(d, before), &item_value(d, &after), &OWN_KEYS);
+    if changes.is_empty() { return 0; }
+    let mut n = 0;
+    for &k in others {
+        if k == primary || !d.items.get(k).is_some_and(|it| same_kind(it, &after)) { continue; }
+        let old = d.items[k].clone();
+        let mut v = item_value(d, &old);
+        for (p, val) in &changes { crate::json::set_path(&mut v, p, val); }
+        let Some(mut new) = item_of_value(v) else { continue };
+        // ce qui reste propre a l'element, quoi que dise le JSON relu
+        (new.x, new.y, new.id, new.nav, new.layer) = (old.x, old.y, old.id, old.nav, old.layer);
+        new.name = old.name.clone();
+        if new != old { d.items[k] = new; n += 1; }
+    }
+    n
+}

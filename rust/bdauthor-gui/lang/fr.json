@@ -1484,5 +1484,12 @@
   "Dolby Pro Logic II": "Dolby Pro Logic II",
   "Ordinary stereo, from which a home-cinema amplifier can rebuild a surround effect.": "Stéréo ordinaire, dont un ampli home-cinéma peut retirer un effet surround.",
   "(source: {} channels → {}, {} Mb/s)": "(source : {} canaux → {}, {} Mb/s)",
-  "channels: the choice of channels is only available for LPCM": "canaux : le choix des canaux n'existe qu'en LPCM"
+  "channels: the choice of channels is only available for LPCM": "canaux : le choix des canaux n'existe qu'en LPCM",
+  "{} items selected: what you change below also applies to the {} other(s) of the same type ({}).": "{} éléments sélectionnés : ce que vous modifiez ci-dessous s'applique aussi aux {} autre(s) du même type ({}).",
+  "Size, style, colours, font, state images, sounds… apply to all. Position, name, text, video, chapter, image and destination stay those of each item.": "Taille, style, couleurs, police, images d'états, sons… s'appliquent à tous. La position, le nom, le texte, la vidéo, le chapitre, l'image et la destination restent ceux de chaque élément.",
+  "{} selected item(s) of another type will not be changed.": "{} élément(s) sélectionné(s) d'un autre type ne seront pas modifiés.",
+  "Size, rotation, colours, font, outline, shadow, border… apply to all. Position, name, text, image, video and code stay those of each item.": "Taille, rotation, couleurs, police, contour, ombre, bordure… s'appliquent à tous. La position, le nom, le texte, l'image, la vidéo et le code restent ceux de chaque élément.",
+  "{} items selected, of different types: only this one is changed below.": "{} éléments sélectionnés, de types différents : seul celui-ci est modifié ci-dessous.",
+  "Info table": "Tableau d'informations",
+  "Barcode": "Code-barres"
 }
