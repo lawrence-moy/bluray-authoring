@@ -667,22 +667,24 @@ fn edge_handles_resize_one_axis_and_snap_only_that_edge() {
 fn text_background_is_drawn_under_the_text() {
     let mut c = Cover::default();
     let mut t = CoverItem::text("Titre", 10.0, 20.0, 80.0, 15.0, 24.0);
-    if let CoverKind::Text { fx, .. } = &mut t.kind { fx.bg = Some([20, 40, 200]); fx.bg_radius_mm = 2.0; }
+    if let CoverKind::Text { fx, .. } = &mut t.kind { fx.bg = Some([20, 40, 200]); fx.bg_radius_mm = 2.0; fx.bg_opacity = 60; }
     t.rot = 90;
     c.items.push(t);
     c.items.push(CoverItem::text("Sans fond", 10.0, 50.0, 80.0, 15.0, 24.0));
     let l = c.layout(300, Path::new("."));
     // fond, texte, puis le second texte (sans fond)
     assert_eq!(l.items.len(), 3, "{:?}", l.items.iter().map(|d| d.0.rect()).collect::<Vec<_>>());
-    let (CoverDecor::Shape { fill, stroke, radius_px, shape, .. }, rot) = &l.items[0] else { panic!("fond attendu en premier") };
-    assert_eq!((*fill, *stroke, *shape, *rot), (Some([20, 40, 200]), None, ShapeKind::Rect, 90));
+    let (CoverDecor::Shape { fill, stroke, radius_px, shape, alpha, .. }, rot) = &l.items[0] else { panic!("fond attendu en premier") };
+    assert_eq!((*fill, *stroke, *shape, *rot, *alpha), (Some([20, 40, 200]), None, ShapeKind::Rect, 90, 0.6));
     assert_eq!(*radius_px, (2.0_f64 / 25.4 * 300.0).round() as i32);
     assert!(matches!(&l.items[1], (CoverDecor::Text { .. }, 90)));
     assert_eq!(l.items[0].0.rect(), l.items[1].0.rect(), "meme cadre");
     assert!(matches!(&l.items[2], (CoverDecor::Text { .. }, 0)));
     // enregistre seulement s'il est choisi, et relu
     let v = c.to_value().unwrap().to_pretty();
-    assert!(v.contains("\"background\": \"#1428c8\"") && v.contains("\"background_radius_mm\": 2"), "{v}");
+    assert!(v.contains("\"background\": \"#1428c8\"") && v.contains("\"background_radius_mm\": 2") && v.contains("\"background_opacity\": 60"), "{v}");
+    // les autres formes restent opaques
+    assert!(l.items.iter().skip(1).all(|(d, _)| !matches!(d, CoverDecor::Shape { alpha, .. } if *alpha != 1.0)));
     assert_eq!(v.matches("\"background\"").count(), 1);
     let back = Cover::from_value(Some(&bdauthor_core::json::parse(&v).unwrap())).unwrap();
     assert_eq!(back.items, c.items);

@@ -614,12 +614,12 @@ impl FontRenderer {
         use bdauthor_core::cover::CoverDecor as D;
         match d {
             D::Image { path, x, y, w, h } => self.compose_on(im, &[Decor::Image { path: path.clone(), x: *x, y: *y, w: *w, h: *h }]),
-            D::Shape { shape, x, y, w, h, fill, stroke, stroke_px, radius_px, flip, style, arrow } => {
+            D::Shape { shape, x, y, w, h, fill, stroke, stroke_px, radius_px, flip, style, arrow, alpha } => {
                 if *shape == bdauthor_core::cover::ShapeKind::Line {
-                    if let Some(c) = stroke.or(*fill) { draw_segment(&mut im, (*x, *y, *w, *h), *flip, c, *stroke_px, *style, *arrow); }
+                    if let Some(c) = stroke.or(*fill) { draw_segment_a(&mut im, (*x, *y, *w, *h), *flip, c, *stroke_px, *style, *arrow, *alpha); }
                     return Ok(im);
                 }
-                draw_shape(&mut im, *shape, (*x, *y, *w, *h), *fill, *stroke, *stroke_px, *radius_px);
+                draw_shape_a(&mut im, *shape, (*x, *y, *w, *h), *fill, *stroke, *stroke_px, *radius_px, *alpha);
                 Ok(im)
             }
             D::Text { .. } => {
@@ -770,13 +770,7 @@ fn draw_paint(im: &mut RgbaImage, shape: bdauthor_core::cover::ShapeKind, rect: 
 }
 
 /// Segment d'epaisseur `stroke_px` entre deux coins opposes du cadre `rect` (`flip` : bas gauche -> haut droit), avec son type de trait
-/// (plein a bouts arrondis, tirets, pointilles, tirets et points, double) et d'eventuelles pointes de fleche.
-fn draw_segment(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb: [u8; 3], stroke_px: i32,
-                style: bdauthor_core::cover::LineStyle, arrow: bdauthor_core::cover::LineArrow) {
-    draw_segment_a(im, rect, flip, rgb, stroke_px, style, arrow, 1.0);
-}
-
-/// Comme `draw_segment`, avec une opacite `alpha` (0..1).
+/// (plein a bouts arrondis, tirets, pointilles, tirets et points, double), d'eventuelles pointes de fleche et une opacite `alpha` (0..1).
 #[allow(clippy::too_many_arguments)]
 fn draw_segment_a(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rgb: [u8; 3], stroke_px: i32,
                   style: bdauthor_core::cover::LineStyle, arrow: bdauthor_core::cover::LineArrow, alpha: f32) {
@@ -839,12 +833,8 @@ fn draw_segment_a(im: &mut RgbaImage, rect: (i32, i32, i32, i32), flip: bool, rg
     }
 }
 
-/// Rectangle (arrondi), ellipse ou trait horizontal, avec remplissage et bordure interieure, bords lisses.
-fn draw_shape(im: &mut RgbaImage, shape: bdauthor_core::cover::ShapeKind, rect: (i32, i32, i32, i32), fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32) {
-    draw_shape_a(im, shape, rect, fill, stroke, stroke_px, radius_px, 1.0);
-}
-
-/// Comme `draw_shape`, avec une opacite `alpha` (0..1) pour le remplissage et la bordure.
+/// Rectangle (arrondi), ellipse ou trait horizontal, avec remplissage et bordure interieure, bords lisses, et une opacite `alpha`
+/// (0..1) pour le remplissage et la bordure.
 #[allow(clippy::too_many_arguments)]
 fn draw_shape_a(im: &mut RgbaImage, shape: bdauthor_core::cover::ShapeKind, rect: (i32, i32, i32, i32), fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, alpha: f32) {
     use bdauthor_core::cover::ShapeKind;

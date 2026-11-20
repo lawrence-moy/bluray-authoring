@@ -925,6 +925,9 @@ impl App {
                     }
                     if let Some(c) = fx.bg.as_mut() {
                         changed |= ui.color_edit_button_srgb(c).changed();
+                        ui.label(tr("Opacity"));
+                        changed |= ui.add(egui::DragValue::new(&mut fx.bg_opacity).range(0..=100).speed(1).suffix(" %"))
+                            .on_hover_text(tr("100 %: opaque; lower, what is under the text (photo, colour) shows through the background.")).changed();
                         ui.label(tr("Rounded corners"));
                         changed |= ui.add(egui::DragValue::new(&mut fx.bg_radius_mm).range(0.0..=20.0).speed(0.1).suffix(" mm")).changed();
                     }

@@ -1492,5 +1492,7 @@
   "{} items selected, of different types: only this one is changed below.": "{} éléments sélectionnés, de types différents : seul celui-ci est modifié ci-dessous.",
   "Info table": "Tableau d'informations",
   "Barcode": "Code-barres",
-  "Colour filling the whole frame of the text, under it. Resize the frame to set the margin around the text.": "Couleur qui remplit tout le cadre du texte, sous celui-ci. Redimensionnez le cadre pour régler la marge autour du texte."
+  "Colour filling the whole frame of the text, under it. Resize the frame to set the margin around the text.": "Couleur qui remplit tout le cadre du texte, sous celui-ci. Redimensionnez le cadre pour régler la marge autour du texte.",
+  "Opacity": "Opacité",
+  "100 %: opaque; lower, what is under the text (photo, colour) shows through the background.": "100 % : opaque ; en dessous, ce qui est sous le texte (photo, couleur) transparaît à travers le fond."
 }

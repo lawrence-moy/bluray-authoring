@@ -42,13 +42,15 @@ pub struct TextFx {
     /// couleur de fond du cadre (`None` : transparent) et arrondi de ses coins (mm)
     pub bg: Option<[u8; 3]>,
     pub bg_radius_mm: f64,
+    /// opacite du fond en pourcentage (100 : opaque)
+    pub bg_opacity: u8,
 }
 
 impl Default for TextFx {
     fn default() -> TextFx {
         TextFx {
             outline_mm: 0.0, outline_color: [0, 0, 0], shadow_mm: 0.0, shadow_color: [0, 0, 0], spacing: 1.0, valign: VAlign::Middle, autofit: false, bold: false,
-            italic: false, justify: false, bg: None, bg_radius_mm: 0.0,
+            italic: false, justify: false, bg: None, bg_radius_mm: 0.0, bg_opacity: 100,
         }
     }
 }
@@ -144,7 +146,7 @@ impl BarcodeSpec {
     pub fn decors(&self, r: (i32, i32, i32, i32), dpi: u32, w_mm: f64, vars: &BTreeMap<String, String>, base: &Path) -> Vec<CoverDecor> {
         let (x, y, w, h) = r;
         let mut out = Vec::new();
-        let rect = |x: i32, y: i32, w: i32, h: i32, c: [u8; 3]| CoverDecor::Shape { shape: ShapeKind::Rect, x, y, w, h, fill: Some(c), stroke: None, stroke_px: 0, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None };
+        let rect = |x: i32, y: i32, w: i32, h: i32, c: [u8; 3]| CoverDecor::Shape { shape: ShapeKind::Rect, x, y, w, h, fill: Some(c), stroke: None, stroke_px: 0, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None, alpha: 1.0 };
         if let Some(bg) = self.background { out.push(rect(x, y, w, h, bg)); }
         let Ok(code) = barcode::encode(self.kind, &self.resolved(vars)) else { return out };
         let total = code.modules.len() + 2 * barcode::QUIET_MODULES;
@@ -279,7 +281,7 @@ impl InfoTable {
         for (r, row) in cells.iter().enumerate() {
             for (c, (_, head)) in row.iter().enumerate() {
                 let Some(fill) = (if *head { self.header_fill } else { self.fill }) else { continue };
-                out.push(CoverDecor::Shape { shape: ShapeKind::Rect, x: xs[c], y: ys[r], w: xs[c + 1] - xs[c], h: ys[r + 1] - ys[r], fill: Some(fill), stroke: None, stroke_px: 0, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None });
+                out.push(CoverDecor::Shape { shape: ShapeKind::Rect, x: xs[c], y: ys[r], w: xs[c + 1] - xs[c], h: ys[r + 1] - ys[r], fill: Some(fill), stroke: None, stroke_px: 0, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None, alpha: 1.0 });
             }
         }
         for (r, row) in cells.iter().enumerate() {
@@ -292,7 +294,7 @@ impl InfoTable {
             }
         }
         if let Some(g) = self.grid {
-            let line = |x: i32, y: i32, w: i32, h: i32| CoverDecor::Shape { shape: ShapeKind::Line, x, y, w, h, fill: None, stroke: Some(g), stroke_px, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None };
+            let line = |x: i32, y: i32, w: i32, h: i32| CoverDecor::Shape { shape: ShapeKind::Line, x, y, w, h, fill: None, stroke: Some(g), stroke_px, radius_px: 0, flip: false, style: LineStyle::Solid, arrow: LineArrow::None, alpha: 1.0 };
             // traits a l'interieur du cadre : les bords exterieurs sont decales d'un demi-trait
             let half = stroke_px / 2;
             for (k, &yy) in ys.iter().enumerate() {
@@ -459,7 +461,8 @@ pub enum CoverDecor {
     /// les retours a la ligne ne changent pas avec la resolution de l'apercu
     Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, size_f: f32, w_f: f32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool, bold: bool, italic: bool, justify: bool },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
-    Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, flip: bool, style: LineStyle, arrow: LineArrow },
+    /// `alpha` : opacite (1 = opaque)
+    Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, flip: bool, style: LineStyle, arrow: LineArrow, alpha: f32 },
 }
 
 impl CoverDecor {
@@ -546,7 +549,7 @@ impl Cover {
                 }
                 CoverKind::InfoTable { .. } | CoverKind::Barcode { .. } => return None,
                 CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
-                    CoverDecor::Shape { flip: *flip, style: *style, arrow: *arrow, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0) }
+                    CoverDecor::Shape { flip: *flip, style: *style, arrow: *arrow, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0), alpha: 1.0 }
                 }
             };
             Some((d, if is_line { 0 } else { it.rot }))
@@ -566,10 +569,10 @@ impl Cover {
                     items.extend(code.decors(r, dpi, it.w, vars, base).into_iter().map(|d| (d, 0)));
                 }
                 // texte sur fond : un rectangle de la taille du cadre, dessine juste dessous (meme rotation)
-                CoverKind::Text { fx: TextFx { bg: Some(c), bg_radius_mm, .. }, .. } => {
+                CoverKind::Text { fx: TextFx { bg: Some(c), bg_radius_mm, bg_opacity, .. }, .. } => {
                     let r = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi), mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
                     items.push((CoverDecor::Shape { flip: false, style: LineStyle::Solid, arrow: LineArrow::None, shape: ShapeKind::Rect, x: r.0, y: r.1, w: r.2, h: r.3,
-                        fill: Some(*c), stroke: None, stroke_px: 0, radius_px: mm_px(*bg_radius_mm, dpi).max(0) }, it.rot));
+                        fill: Some(*c), stroke: None, stroke_px: 0, radius_px: mm_px(*bg_radius_mm, dpi).max(0), alpha: (*bg_opacity).min(100) as f32 / 100.0 }, it.rot));
                     items.extend(one(it));
                 }
                 _ => items.extend(one(it)),
@@ -970,6 +973,7 @@ fn item_to_value(it: &CoverItem) -> Value {
             if fx.italic { e.push(("italic".into(), Value::Bool(true))); }
             if let Some(c) = fx.bg { e.push(("background".into(), color_hex(c))); }
             if fx.bg_radius_mm != 0.0 { e.push(("background_radius_mm".into(), n(fx.bg_radius_mm))); }
+            if fx.bg_opacity < 100 { e.push(("background_opacity".into(), n(fx.bg_opacity as f64))); }
         }
         CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
             if *style != LineStyle::Solid { e.push(("line_style".into(), Value::Str(style.name().into()))); }
@@ -1052,6 +1056,7 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
                     italic: e.get("italic").and_then(Value::as_bool).unwrap_or(false),
                     bg: e.get("background").filter(|v| **v != Value::Null).map(|v| color_from(Some(v), [0, 0, 0])),
                     bg_radius_mm: g("background_radius_mm", 0.0).clamp(0.0, 100.0),
+                    bg_opacity: g("background_opacity", 100.0).round().clamp(0.0, 100.0) as u8,
                 }
             },
         },
