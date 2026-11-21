@@ -110,6 +110,8 @@ pub(crate) struct SheetTextEdit {
     anchor: usize,
     dragging: bool,
     goal: Option<f32>,
+    /// l'apercu avait le focus clavier a l'image precedente (Ctrl+Z / Ctrl+Y y annulent et retablissent)
+    focused: bool,
 }
 
 impl SheetTextEdit {
@@ -552,7 +554,9 @@ impl App {
         let ms = self.t0.elapsed().as_millis() as u64;
         let cur = (self.model.cover.clone(), self.model.label.clone());
         self.cover_hist.get_or_insert_with(|| bdauthor_core::cover::EditHistory::new(&cur)).observe(&cur, ms);
-        if ctx.wants_keyboard_input() { return; }
+        // une zone de saisie du panneau garde ses propres Ctrl+Z ; le texte edite sur la feuille utilise l'historique de la jaquette
+        let on_sheet = self.cover_text_edit.is_some_and(|e| e.focused);
+        if ctx.wants_keyboard_input() && !on_sheet { return; }
         let (undo, redo) = ctx.input(|i| {
             let z = i.key_pressed(Key::Z) && i.modifiers.command;
             let y = i.key_pressed(Key::Y) && i.modifiers.command;
@@ -561,7 +565,21 @@ impl App {
         if undo { self.cover_undo_redo(false); } else if redo { self.cover_undo_redo(true); }
     }
 
+    /// Texte de l'element edite sur la feuille.
+    fn sheet_text(&self, e: &SheetTextEdit) -> Option<String> {
+        let doc: &dyn SheetDoc = if e.page == 0 { &self.model.cover } else { &self.model.label };
+        match &doc.items().get(e.item)?.kind { CoverKind::Text { text, .. } => Some(text.clone()), _ => None }
+    }
+
+    /// La prochaine modification de la jaquette commence une nouvelle etape d'annulation.
+    fn cover_checkpoint(&mut self) {
+        if let Some(h) = &mut self.cover_hist { h.checkpoint(); }
+    }
+
     fn cover_undo_redo(&mut self, redo: bool) {
+        // texte edite sur la feuille : on y reste, le curseur va a l'endroit modifie
+        let editing = self.cover_text_edit;
+        let before = editing.as_ref().and_then(|e| self.sheet_text(e));
         let mut cur = (self.model.cover.clone(), self.model.label.clone());
         let ok = match &mut self.cover_hist {
             Some(h) => if redo { h.redo(&mut cur) } else { h.undo(&mut cur) },
@@ -575,6 +593,24 @@ impl App {
             self.cover_closed.clear();
             self.cover_layer_edit = None;
             self.cover_changed();
+            if let (Some(mut e), Some(old)) = (editing, before) {
+                if let Some(new) = self.sheet_text(&e) {
+                    if new == old {
+                        // mise en forme seule : la selection reste
+                        let n = new.chars().count();
+                        (e.caret, e.anchor) = (e.caret.min(n), e.anchor.min(n));
+                    } else {
+                        let (a, b): (Vec<char>, Vec<char>) = (old.chars().collect(), new.chars().collect());
+                        let pre = a.iter().zip(&b).take_while(|(x, y)| x == y).count();
+                        let suf = a[pre..].iter().rev().zip(b[pre..].iter().rev()).take_while(|(x, y)| x == y).count();
+                        e.caret = b.len() - suf;
+                        e.anchor = e.caret;
+                    }
+                    (e.dragging, e.goal) = (false, None);
+                    self.cover_select_only(Some(e.item));
+                    self.cover_text_edit = Some(e);
+                }
+            }
         }
     }
 
@@ -938,6 +974,7 @@ impl App {
         let vlabels: Vec<String> = (0..self.model.videos.len()).map(|v| bdauthor_core::editor::video_title(&self.model, v)).collect();
         let vdurs: Vec<Option<f64>> = self.model.videos.iter().map(|v| self.durations.get(&v.file).copied()).collect();
         let mut pick_cover_frame = false;
+        let mut checkpoint = false;
         let page = self.cover_page;
         // texte edite sur la feuille : la selection est celle de la feuille
         let on_sheet = self.cover_text_edit.filter(|e| e.page == page && e.item == i);
@@ -976,8 +1013,9 @@ impl App {
                 };
                 ui.horizontal(|ui| {
                     ui.label(tr("Selection"));
-                    if selection_tools(ui, text, fx, *color, *size_pt, sel.clone()) {
+                    if let Some(discrete) = selection_tools(ui, text, fx, *color, *size_pt, sel.clone()) {
                         changed = true;
+                        checkpoint |= discrete;
                         // la zone de saisie reprend le focus : la selection reste visible pour d'autres reglages
                         if on_sheet.is_none() { ui.memory_mut(|m| m.request_focus(edit_id)); }
                     }
@@ -1386,6 +1424,7 @@ impl App {
             if ui.button(tr("Center vertically")).clicked() { it.y = (th - it.h) / 2.0; changed = true; }
         });
         crate::help(ui, tr("Automatic fields: {titre}, {liste_videos}, {nb_videos}, {duree_totale}, {nb_chapitres}, {annee}, filled from the project."));
+        if checkpoint { self.cover_checkpoint(); }
         changed
     }
 
@@ -1733,7 +1772,7 @@ impl App {
                             let g = self.sheet_text_geom(&*doc, i, &vars);
                             let r = g.hit(p, &to_screen).unwrap_or(text.chars().count());
                             let (a, b) = word_around(text, r);
-                            self.cover_text_edit = Some(SheetTextEdit { page: self.cover_page, item: i, caret: b, anchor: a, dragging: false, goal: None });
+                            self.cover_text_edit = Some(SheetTextEdit { page: self.cover_page, item: i, caret: b, anchor: a, dragging: false, goal: None, focused: true });
                             resp.request_focus();
                         }
                     }
@@ -2015,6 +2054,8 @@ impl App {
         (ed.caret, ed.anchor) = (ed.caret.min(n), ed.anchor.min(n));
         let mut changed = false;
         let mut done = false;
+        // nouvelle etape d'annulation : chaque mot tape, chaque clic de mise en forme
+        let mut checkpoint = false;
         // clavier (quand l'apercu a le focus ; il le reprend si rien d'autre ne l'a)
         if ctx.memory(|m| m.focused().is_none()) && !ctx.memory(|m| m.any_popup_open()) { resp.request_focus(); }
         if resp.has_focus() {
@@ -2033,7 +2074,10 @@ impl App {
                     changed = true;
                 };
                 match e {
-                    egui::Event::Text(t) if !t.chars().any(char::is_control) => replace(&mut ed, text, fx, sel, t),
+                    egui::Event::Text(t) if !t.chars().any(char::is_control) => {
+                        if t.chars().all(char::is_whitespace) { checkpoint = true; }
+                        replace(&mut ed, text, fx, sel, t);
+                    }
                     egui::Event::Paste(t) => replace(&mut ed, text, fx, sel, &t.replace("\r\n", "\n").replace('\r', "\n")),
                     egui::Event::Copy | egui::Event::Cut if !sel.is_empty() => {
                         ctx.copy_text(text.chars().skip(sel.start).take(sel.len()).collect());
@@ -2050,7 +2094,7 @@ impl App {
                         };
                         match key {
                             Key::Escape => done = true,
-                            Key::Enter => replace(&mut ed, text, fx, sel, "\n"),
+                            Key::Enter => { checkpoint = true; replace(&mut ed, text, fx, sel, "\n"); }
                             Key::Backspace if !sel.is_empty() => replace(&mut ed, text, fx, sel, ""),
                             Key::Backspace if ed.caret > 0 => { let (p, c) = (g.prev(ed.caret), ed.caret); replace(&mut ed, text, fx, p..c, ""); }
                             Key::Delete if !sel.is_empty() => replace(&mut ed, text, fx, sel, ""),
@@ -2114,13 +2158,15 @@ impl App {
         egui::Area::new(egui::Id::new("jaquette_texte_outils")).order(egui::Order::Foreground).fixed_pos(pos).constrain_to(viewport).show(ctx, |ui| {
             egui::Frame::popup(ui.style()).inner_margin(4.0).show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    if selection_tools(ui, text, fx, *color, *size_pt, sel) { changed = true; resp.request_focus(); }
+                    if let Some(discrete) = selection_tools(ui, text, fx, *color, *size_pt, sel) { changed = true; checkpoint |= discrete; resp.request_focus(); }
                     ui.separator();
                     if ui.button(tr("Done")).on_hover_text(tr("Stop typing on the sheet (Esc)")).clicked() { done = true; }
                 });
             });
         });
+        ed.focused = resp.has_focus();
         self.cover_text_edit = if done { resp.surrender_focus(); None } else { Some(ed) };
+        if checkpoint { self.cover_checkpoint(); }
         changed
     }
 
@@ -2201,10 +2247,11 @@ fn rich_galley(ui: &egui::Ui, s: &str, spans: &[bdauthor_core::rich::TextSpan], 
 }
 
 /// Boutons Gras, Italique, Couleur et Effacer la mise en forme, appliques a la partie `sel` du texte (grises sans selection) ;
-/// `color` et `size_pt` : couleur et taille du texte entier. Rend vrai si la mise en forme a change.
-fn selection_tools(ui: &mut egui::Ui, text: &str, fx: &mut bdauthor_core::cover::TextFx, color: [u8; 3], size_pt: f64, sel: Option<std::ops::Range<usize>>) -> bool {
+/// `color` et `size_pt` : couleur et taille du texte entier. Rend `Some(clic)` si la mise en forme a change : `true` pour un
+/// clic (gras, italique, effacer : une etape d'annulation a part), `false` pour un reglage continu (couleur, taille).
+fn selection_tools(ui: &mut egui::Ui, text: &str, fx: &mut bdauthor_core::cover::TextFx, color: [u8; 3], size_pt: f64, sel: Option<std::ops::Range<usize>>) -> Option<bool> {
     let n = text.chars().count();
-    let mut restyled = false;
+    let (mut restyled, mut click) = (false, false);
     ui.add_enabled_ui(sel.is_some(), |ui| {
         let r = sel.clone().unwrap_or(0..0);
         let all = bdauthor_core::rich::per_char(n, &fx.spans);
@@ -2215,11 +2262,13 @@ fn selection_tools(ui: &mut egui::Ui, text: &str, fx: &mut bdauthor_core::cover:
             let (want, base) = (!all_bold, fx.bold);
             fx.spans = bdauthor_core::rich::apply(&fx.spans, n, r.clone(), |c| c.bold = (want != base).then_some(want));
             restyled = true;
+            click = true;
         }
         if ui.selectable_label(all_italic, egui::RichText::new(tr("Italic")).italics()).on_hover_text(tr("Puts the selected part of the text in italics (or back to normal)")).clicked() {
             let (want, base) = (!all_italic, fx.italic);
             fx.spans = bdauthor_core::rich::apply(&fx.spans, n, r.clone(), |c| c.italic = (want != base).then_some(want));
             restyled = true;
+            click = true;
         }
         let mut c = bdauthor_core::rich::common(&fx.spans, n, r.clone()).and_then(|s| s.color).unwrap_or(color);
         if ui.color_edit_button_srgb(&mut c).on_hover_text(tr("Colour of the selected part of the text")).changed() {
@@ -2236,9 +2285,10 @@ fn selection_tools(ui: &mut egui::Ui, text: &str, fx: &mut bdauthor_core::cover:
         if ui.button(tr("Clear formatting")).on_hover_text(tr("The selected part of the text takes the bold, italics, colour and size of the whole text again")).clicked() {
             fx.spans = bdauthor_core::rich::apply(&fx.spans, n, r.clone(), |s| *s = Default::default());
             restyled = true;
+            click = true;
         }
     });
-    restyled
+    restyled.then_some(click)
 }
 
 fn zone_label(name: &'static str) -> &'static str {

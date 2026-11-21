@@ -1085,6 +1085,9 @@ impl<T: Clone + PartialEq> EditHistory<T> {
         true
     }
 
+    /// La prochaine modification commence une nouvelle etape, meme si elle suit de pres la precedente.
+    pub fn checkpoint(&mut self) { self.last_ms = 0; }
+
     pub fn can_undo(&self) -> bool { !self.undo.is_empty() }
     pub fn can_redo(&self) -> bool { !self.redo.is_empty() }
 }

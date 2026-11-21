@@ -736,3 +736,22 @@ fn jewel_case_geometry_layout_json_and_a4() {
     // 8 traits de coupe par piece et 2 traits par pli
     assert_eq!(text.matches(" l S").count(), 2 * 8 + 2 * 2);
 }
+
+#[test]
+fn history_checkpoint_starts_a_new_step() {
+    let mut s = String::from("a");
+    let mut h = EditHistory::new(&s);
+    // frappes rapprochees : une seule etape
+    s.push('b'); h.observe(&s, 1000);
+    s.push('c'); h.observe(&s, 1200);
+    // un point de decoupe : la modification suivante, meme proche, est une etape a part
+    h.checkpoint();
+    s.push(' '); h.observe(&s, 1300);
+    s.push('d'); h.observe(&s, 1400);
+    assert!(h.undo(&mut s));
+    assert_eq!(s, "abc");
+    assert!(h.undo(&mut s));
+    assert_eq!(s, "a");
+    assert!(h.redo(&mut s) && h.redo(&mut s));
+    assert_eq!(s, "abc d");
+}
