@@ -451,7 +451,7 @@ pub struct Cover {
 
 impl Default for Cover {
     fn default() -> Cover {
-        Cover { case: CaseKind::Keepcase, face_mm: 129.0, height_mm: 148.0, spine_mm: 11.0, tray_mm: 137.0, tray_height_mm: 118.0, bleed_mm: 3.0, colors: [[24, 28, 40], [40, 60, 110], [24, 28, 40]], bg_image: String::new(), marks: false, dpi: 300, items: vec![], layers: vec![] }
+        Cover { case: CaseKind::Keepcase, face_mm: 129.0, height_mm: 148.0, spine_mm: 11.0, tray_mm: 137.0, tray_height_mm: 118.0, bleed_mm: 3.0, colors: [[24, 28, 40], [40, 60, 110], [24, 28, 40]], bg_image: String::new(), marks: false, dpi: 600, items: vec![], layers: vec![] }
     }
 }
 
@@ -930,7 +930,7 @@ pub struct DiscLabel {
 
 impl Default for DiscLabel {
     fn default() -> DiscLabel {
-        DiscLabel { diameter_mm: 118.0, hole_mm: 25.0, bleed_mm: 2.0, color: [24, 28, 40], bg_image: String::new(), marks: false, dpi: 300, items: vec![], layers: vec![] }
+        DiscLabel { diameter_mm: 118.0, hole_mm: 25.0, bleed_mm: 2.0, color: [24, 28, 40], bg_image: String::new(), marks: false, dpi: 600, items: vec![], layers: vec![] }
     }
 }
 
