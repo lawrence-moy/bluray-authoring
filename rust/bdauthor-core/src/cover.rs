@@ -44,13 +44,15 @@ pub struct TextFx {
     pub bg_radius_mm: f64,
     /// opacite du fond en pourcentage (100 : opaque)
     pub bg_opacity: u8,
+    /// parties du texte en gras, en italique ou d'une autre couleur (rangs de caracteres du texte saisi, champs `{...}` compris)
+    pub spans: Vec<crate::rich::TextSpan>,
 }
 
 impl Default for TextFx {
     fn default() -> TextFx {
         TextFx {
             outline_mm: 0.0, outline_color: [0, 0, 0], shadow_mm: 0.0, shadow_color: [0, 0, 0], spacing: 1.0, valign: VAlign::Middle, autofit: false, bold: false,
-            italic: false, justify: false, bg: None, bg_radius_mm: 0.0, bg_opacity: 100,
+            italic: false, justify: false, bg: None, bg_radius_mm: 0.0, bg_opacity: 100, spans: vec![],
         }
     }
 }
@@ -168,7 +170,7 @@ impl BarcodeSpec {
         if self.show_text && text_h > 0 {
             let font = if self.font.is_empty() || Path::new(&self.font).is_absolute() { self.font.clone() } else if base.join(&self.font).is_file() { base.join(&self.font).to_string_lossy().into_owned() } else { self.font.clone() };
             out.push(CoverDecor::Text { text: code.text, x, y: y + h - text_h, w, h: text_h, size, size_f: size as f32, w_f: w as f32, color: self.color, align: Align::Center, font, valign: VAlign::Middle, spacing: 1.0,
-                outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: false, italic: false, justify: false });
+                outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: false, italic: false, justify: false, spans: vec![] });
         }
         out
     }
@@ -290,7 +292,7 @@ impl InfoTable {
                 let (cw, ch) = (xs[c + 1] - xs[c] - 2 * pad, ys[r + 1] - ys[r]);
                 if cw < 1 || ch < 1 { continue; }
                 out.push(CoverDecor::Text { text: text.clone(), x: xs[c] + pad, y: ys[r], w: cw, h: ch, size, size_f: size as f32, w_f: cw as f32, color: if *head { self.header_color } else { self.color }, align: self.align, font: font.clone(),
-                    valign: VAlign::Middle, spacing: 1.0, outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: *head && self.header_bold, italic: false, justify: false });
+                    valign: VAlign::Middle, spacing: 1.0, outline: 0, outline_color: [0, 0, 0], shadow: 0, shadow_color: [0, 0, 0], autofit: true, bold: *head && self.header_bold, italic: false, justify: false, spans: vec![] });
             }
         }
         if let Some(g) = self.grid {
@@ -494,7 +496,8 @@ pub struct CoverLayout {
 pub enum CoverDecor {
     /// `size_f` et `w_f` : taille et largeur exactes en pixels (sans arrondi) ; le texte justifie coupe ses lignes d'apres elles pour que
     /// les retours a la ligne ne changent pas avec la resolution de l'apercu
-    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, size_f: f32, w_f: f32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool, bold: bool, italic: bool, justify: bool },
+    /// `spans` : parties mises en forme a part (rangs de caracteres de `text`)
+    Text { text: String, x: i32, y: i32, w: i32, h: i32, size: i32, size_f: f32, w_f: f32, color: [u8; 3], align: Align, font: String, valign: VAlign, spacing: f32, outline: i32, outline_color: [u8; 3], shadow: i32, shadow_color: [u8; 3], autofit: bool, bold: bool, italic: bool, justify: bool, spans: Vec<crate::rich::TextSpan> },
     Image { path: PathBuf, x: i32, y: i32, w: i32, h: i32 },
     /// `alpha` : opacite (1 = opaque)
     Shape { shape: ShapeKind, x: i32, y: i32, w: i32, h: i32, fill: Option<[u8; 3]>, stroke: Option<[u8; 3]>, stroke_px: i32, radius_px: i32, flip: bool, style: LineStyle, arrow: LineArrow, alpha: f32 },
@@ -519,6 +522,49 @@ fn color_from(v: Option<&Value>, d: [u8; 3]) -> [u8; 3] {
     let Some(s) = v.and_then(Value::as_str) else { return d };
     let s = s.trim_start_matches('#');
     match u32::from_str_radix(s, 16) { Ok(n) if s.len() == 6 => [(n >> 16) as u8, (n >> 8) as u8, n as u8], _ => d }
+}
+
+/// Dessin d'un element simple (texte, image, forme) en pixels a `dpi`, avec sa rotation ; `b` : fond perdu en pixels. Les tableaux,
+/// codes-barres et fonds de texte sont poses a part par `Cover::layout_with`.
+fn item_decor_px(it: &CoverItem, b: i32, dpi: u32, base: &Path, vars: &BTreeMap<String, String>) -> Option<(CoverDecor, u16)> {
+    let abs = |p: &str| -> PathBuf { let q = Path::new(p); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
+        let (x, y) = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi));
+        let is_line = matches!(&it.kind, CoverKind::Shape { shape: ShapeKind::Line, .. });
+        // une ligne peut etre exactement horizontale ou verticale (cadre de largeur ou hauteur nulle)
+        let (iw, ih) = if is_line { (mm_px(it.w, dpi).max(0), mm_px(it.h, dpi).max(0)) } else { (mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1)) };
+        let d = match &it.kind {
+            CoverKind::Text { text, size_pt, color, align, font, fx } => {
+                let (text, mut spans) = crate::rich::substitute(text, &fx.spans, vars);
+                if text.is_empty() { return None; }
+                // taille d'une portion : facteur de la taille du texte (l'ajustement au cadre reduit tout le texte d'autant)
+                for s in &mut spans { if let Some(p) = s.style.size { s.style.size = Some(p / size_pt.max(0.1)); } }
+                let font = if font.is_empty() || Path::new(font).is_absolute() { font.clone() } else if base.join(font).is_file() { base.join(font).to_string_lossy().into_owned() } else { font.clone() };
+                CoverDecor::Text { text, x, y, w: iw, h: ih, size: ((size_pt / 72.0 * dpi as f64).round() as i32).max(1), size_f: (size_pt / 72.0 * dpi as f64).max(1.0) as f32, w_f: (it.w / 25.4 * dpi as f64) as f32, color: *color, align: *align, font, valign: fx.valign,
+                    spacing: fx.spacing as f32, outline: if fx.outline_mm > 0.0 { mm_px(fx.outline_mm, dpi).max(1) } else { 0 }, outline_color: fx.outline_color,
+                    shadow: if fx.shadow_mm > 0.0 { mm_px(fx.shadow_mm, dpi).max(1) } else { 0 }, shadow_color: fx.shadow_color, autofit: fx.autofit, bold: fx.bold, italic: fx.italic, justify: fx.justify, spans }
+            }
+            CoverKind::Image { path } => {
+                if path.is_empty() { return None; }
+                CoverDecor::Image { path: abs(path), x, y, w: iw, h: ih }
+            }
+            CoverKind::VideoImage { frame } => {
+                // l'image extraite est donnee par `vars` ; sans elle (pas encore prete, video a choisir) l'element est ignore
+                let p = vars.get(&frame_key(frame)?)?;
+                CoverDecor::Image { path: PathBuf::from(p), x, y, w: iw, h: ih }
+            }
+            CoverKind::InfoTable { .. } | CoverKind::Barcode { .. } => return None,
+            CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
+                CoverDecor::Shape { flip: *flip, style: *style, arrow: *arrow, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0), alpha: 1.0 }
+            }
+        };
+    Some((d, if is_line { 0 } else { it.rot }))
+}
+
+/// Dessin d'un element en pixels a `dpi` (feuille dont le fond perdu fait `bleed_mm`), comme dans `Cover::layout_with` : pour un
+/// texte, son cadre et son texte (champs remplaces) sans son fond. `None` : rien a dessiner (texte vide, image manquante...).
+pub fn item_decor(it: &CoverItem, bleed_mm: f64, dpi: u32, base: &Path, vars: &BTreeMap<String, String>) -> Option<(CoverDecor, u16)> {
+    let dpi = dpi.max(30);
+    item_decor_px(it, mm_px(bleed_mm, dpi), dpi, base, vars)
 }
 
 impl Cover {
@@ -619,36 +665,6 @@ impl Cover {
             }
         };
         let abs = |p: &str| -> PathBuf { let q = Path::new(p); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
-        let one = |it: &CoverItem| -> Option<(CoverDecor, u16)> {
-            let (x, y) = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi));
-            let is_line = matches!(&it.kind, CoverKind::Shape { shape: ShapeKind::Line, .. });
-            // une ligne peut etre exactement horizontale ou verticale (cadre de largeur ou hauteur nulle)
-            let (iw, ih) = if is_line { (mm_px(it.w, dpi).max(0), mm_px(it.h, dpi).max(0)) } else { (mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1)) };
-            let d = match &it.kind {
-                CoverKind::Text { text, size_pt, color, align, font, fx } => {
-                    let text = apply_vars(text, vars);
-                    if text.is_empty() { return None; }
-                    let font = if font.is_empty() || Path::new(font).is_absolute() { font.clone() } else if base.join(font).is_file() { base.join(font).to_string_lossy().into_owned() } else { font.clone() };
-                    CoverDecor::Text { text, x, y, w: iw, h: ih, size: ((size_pt / 72.0 * dpi as f64).round() as i32).max(1), size_f: (size_pt / 72.0 * dpi as f64).max(1.0) as f32, w_f: (it.w / 25.4 * dpi as f64) as f32, color: *color, align: *align, font, valign: fx.valign,
-                        spacing: fx.spacing as f32, outline: if fx.outline_mm > 0.0 { mm_px(fx.outline_mm, dpi).max(1) } else { 0 }, outline_color: fx.outline_color,
-                        shadow: if fx.shadow_mm > 0.0 { mm_px(fx.shadow_mm, dpi).max(1) } else { 0 }, shadow_color: fx.shadow_color, autofit: fx.autofit, bold: fx.bold, italic: fx.italic, justify: fx.justify }
-                }
-                CoverKind::Image { path } => {
-                    if path.is_empty() { return None; }
-                    CoverDecor::Image { path: abs(path), x, y, w: iw, h: ih }
-                }
-                CoverKind::VideoImage { frame } => {
-                    // l'image extraite est donnee par `vars` ; sans elle (pas encore prete, video a choisir) l'element est ignore
-                    let p = vars.get(&frame_key(frame)?)?;
-                    CoverDecor::Image { path: PathBuf::from(p), x, y, w: iw, h: ih }
-                }
-                CoverKind::InfoTable { .. } | CoverKind::Barcode { .. } => return None,
-                CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
-                    CoverDecor::Shape { flip: *flip, style: *style, arrow: *arrow, shape: *shape, x, y, w: iw, h: ih, fill: *fill, stroke: *stroke, stroke_px: if stroke.is_some() { mm_px(*stroke_mm, dpi).max(1) } else { 0 }, radius_px: mm_px(*radius_mm, dpi).max(0), alpha: 1.0 }
-                }
-            };
-            Some((d, if is_line { 0 } else { it.rot }))
-        };
         let mut items = Vec::new();
         for i in draw_order(&self.items, &self.layers) {
             let it = &self.items[i];
@@ -668,9 +684,9 @@ impl Cover {
                     let r = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi), mm_px(it.w, dpi).max(1), mm_px(it.h, dpi).max(1));
                     items.push((CoverDecor::Shape { flip: false, style: LineStyle::Solid, arrow: LineArrow::None, shape: ShapeKind::Rect, x: r.0, y: r.1, w: r.2, h: r.3,
                         fill: Some(*c), stroke: None, stroke_px: 0, radius_px: mm_px(*bg_radius_mm, dpi).max(0), alpha: (*bg_opacity).min(100) as f32 / 100.0 }, it.rot));
-                    items.extend(one(it));
+                    items.extend(item_decor_px(it, b, dpi, base, vars));
                 }
-                _ => items.extend(one(it)),
+                _ => items.extend(item_decor_px(it, b, dpi, base, vars)),
             }
         }
         CoverLayout { size, fills, bg_image: if self.bg_image.is_empty() { None } else { Some(abs(&self.bg_image)) }, items }
@@ -822,9 +838,7 @@ pub fn frame_key(f: &VideoFrame) -> Option<String> {
 }
 
 pub fn apply_vars(text: &str, vars: &BTreeMap<String, String>) -> String {
-    let mut out = text.to_string();
-    for (k, v) in vars { out = out.replace(&format!("{{{k}}}"), v); }
-    out
+    crate::rich::substitute_map(text, &[], vars).text
 }
 
 /// Duree en « h:mm:ss » (ou « m:ss » sous une heure).
@@ -1100,6 +1114,7 @@ fn item_to_value(it: &CoverItem) -> Value {
             if let Some(c) = fx.bg { e.push(("background".into(), color_hex(c))); }
             if fx.bg_radius_mm != 0.0 { e.push(("background_radius_mm".into(), n(fx.bg_radius_mm))); }
             if fx.bg_opacity < 100 { e.push(("background_opacity".into(), n(fx.bg_opacity as f64))); }
+            if !fx.spans.is_empty() { e.push(("spans".into(), crate::rich::to_value(&fx.spans))); }
         }
         CoverKind::Shape { shape, fill, stroke, stroke_mm, radius_mm, flip, style, arrow } => {
             if *style != LineStyle::Solid { e.push(("line_style".into(), Value::Str(style.name().into()))); }
@@ -1183,6 +1198,7 @@ fn item_from_value(e: &Value, k: usize, what: &str) -> Result<CoverItem, String>
                     bg: e.get("background").filter(|v| **v != Value::Null).map(|v| color_from(Some(v), [0, 0, 0])),
                     bg_radius_mm: g("background_radius_mm", 0.0).clamp(0.0, 100.0),
                     bg_opacity: g("background_opacity", 100.0).round().clamp(0.0, 100.0) as u8,
+                    spans: crate::rich::from_value(e.get("spans"), e.get("text").and_then(Value::as_str).unwrap_or("").chars().count()),
                 }
             },
         },
@@ -1412,7 +1428,7 @@ pub fn align_cover(items: &mut [CoverItem], sel: &[usize], op: crate::editor::It
 
 /// Cles d'un element de jaquette qui lui restent propres quand on en modifie plusieurs a la fois : position, nom, calque et
 /// contenu (texte, image, valeur du code-barres, videos du tableau, image de video).
-pub const OWN_KEYS: [&str; 12] = ["x", "y", "name", "layer", "type", "text", "file", "value", "videos", "video", "time_s", "crop"];
+pub const OWN_KEYS: [&str; 13] = ["x", "y", "name", "layer", "type", "text", "spans", "file", "value", "videos", "video", "time_s", "crop"];
 
 /// Reporte sur les elements `others` du meme type ce qui a change sur l'element `primary` depuis `before` (sauf `OWN_KEYS`).
 /// Rend le nombre d'elements modifies.

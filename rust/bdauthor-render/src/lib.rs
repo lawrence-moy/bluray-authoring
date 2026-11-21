@@ -264,6 +264,74 @@ fn draw_line_styled(img: &mut RgbaImage, font: &FontVec, text: &str, size: f32, 
     draw_run(img, font, &run, size, &mut x, base, rgb);
 }
 
+/// Morceau d'une ligne de texte de jaquette au dessin : texte, gras, italique, couleur, taille (pixels) et rang de chaque
+/// caractere dans le texte entier. Le crenage repart a zero a chaque morceau ; le gras ajoute son epaisseur a la fin.
+struct Seg {
+    text: String,
+    bold: bool,
+    italic: bool,
+    color: [u8; 3],
+    size: f32,
+    idx: Vec<usize>,
+}
+
+/// Morceaux de meme reglage effectif d'une suite de caracteres (`styles` : reglage de chacun ; vide : texte sans mise en forme
+/// partielle, un seul morceau) ; `base` : gras, italique et couleur du texte entier, `sz` : sa taille (pixels).
+fn segs_of(text: &str, styles: &[bdauthor_core::rich::SpanStyle], idx: &[usize], rich: bool, base: (bool, bool, [u8; 3]), sz: f32) -> Vec<Seg> {
+    let mut out: Vec<Seg> = Vec::new();
+    for (i, c) in text.chars().enumerate() {
+        let st = styles.get(i).copied().unwrap_or_default();
+        let (b, it, col) = if rich { st.resolve(base.0, base.1, base.2) } else { base };
+        let size = if rich { sz * st.factor() } else { sz };
+        let di = idx.get(i).copied().unwrap_or(usize::MAX);
+        match out.last_mut() {
+            Some(g) if !rich || (g.bold == b && g.italic == it && g.color == col && g.size == size) => { g.text.push(c); g.idx.push(di); }
+            _ => out.push(Seg { text: c.to_string(), bold: b, italic: it, color: col, size, idx: vec![di] }),
+        }
+    }
+    out
+}
+
+fn segs_width(font: &FontVec, segs: &[Seg]) -> f32 {
+    segs.iter().map(|g| text_extent(font, &g.text, g.size).0 + if g.bold { bold_off(g.size) } else { 0.0 }).sum()
+}
+
+/// Morceau d'une ligne de texte de jaquette : ligne, texte, decalage et largeur de sa place, alignement, reglage et rang (dans le
+/// texte entier) de chaque caractere.
+struct TextPart {
+    line: usize,
+    text: String,
+    xo: f32,
+    ww: f32,
+    align: Align,
+    styles: Vec<bdauthor_core::rich::SpanStyle>,
+    idx: Vec<usize>,
+}
+
+/// Mise en page d'un texte de jaquette : police, taille, haut, hauteur et facteur de taille (le plus grand de ses caracteres) de
+/// chaque ligne, morceaux.
+struct TextPlan {
+    /// police du texte (`None` : police par defaut du moteur)
+    custom: Option<Arc<FontVec>>,
+    sz: f32,
+    line_top: Vec<f32>,
+    line_h: Vec<f32>,
+    line_scale: Vec<f32>,
+    parts: Vec<TextPart>,
+    rich: bool,
+}
+
+/// Positions du curseur dans un texte de jaquette (voir `FontRenderer::cover_text_carets`).
+#[derive(Debug, Clone)]
+pub struct TextCarets {
+    /// (ligne, abscisse) avant chaque caractere, rangs 0 a n compris
+    pub carets: Vec<(usize, f32)>,
+    /// haut et hauteur de chaque ligne
+    pub line_top: Vec<f32>,
+    pub line_h: Vec<f32>,
+    pub lines: usize,
+}
+
 /// Dessine un morceau de texte a partir de `*x` (ligne de base `base`), puis avance `*x`.
 fn draw_run(img: &mut RgbaImage, font: &FontVec, r: &bdauthor_core::subtitle::Run, size: f32, x: &mut f32, base: f32, rgb: [u8; 3]) {
     if r.text.is_empty() || size < 1.0 {
@@ -629,10 +697,11 @@ impl FontRenderer {
         }
     }
 
-    /// Texte de jaquette : interligne, alignement vertical, ajustement a la taille du cadre, contour et ombre.
-    fn draw_cover_text(&self, im: &mut RgbaImage, d: &bdauthor_core::cover::CoverDecor) {
+    /// Mise en page d'un texte de jaquette (taille apres ajustement, lignes, morceaux) : commune au dessin et a la position des
+    /// caracteres pour l'edition sur la feuille.
+    fn cover_text_plan(&self, d: &bdauthor_core::cover::CoverDecor) -> Option<TextPlan> {
         use bdauthor_core::cover::{CoverDecor as D, VAlign};
-        let D::Text { text, x, y, w, h, size, size_f, w_f, color, align, font, valign, spacing, outline, outline_color, shadow, shadow_color, autofit, bold, italic, justify } = d else { return };
+        let D::Text { text, w, h, size, size_f, w_f, align, font, valign, spacing, autofit, bold, italic, color, justify, spans, .. } = d else { return None };
         let custom = self.custom_font(font, Path::new(""));
         let f: &FontVec = custom.as_deref().unwrap_or(&self.font);
         let lines: Vec<&str> = text.split('\n').collect();
@@ -640,61 +709,196 @@ impl FontRenderer {
         let mut sz = if *justify { *size_f } else { *size as f32 };
         let wf = if *justify { *w_f } else { *w as f32 };
         let line_h = |s: f32| text_extent(f, "Ag", s).1 * 1.1 * *spacing;
-        let measure = |s: &str, z: f32| text_extent(f, s, z).0 + if *bold { bold_off(z) } else { 0.0 };
-        // justifie : le texte est coupe en lignes de la largeur du cadre (a la taille `z`)
-        let wrapped = |z: f32| bdauthor_core::cover::wrap_words(&lines, wf, &|s| measure(s, z), text_extent(f, " ", z).0);
+        let rich = !spans.is_empty();
+        let n = text.chars().count();
+        let chars: Vec<char> = text.chars().collect();
+        let all = if rich { bdauthor_core::rich::per_char(n, spans) } else { vec![] };
+        let styles_of = |c0: usize, len: usize| if rich { all[c0.min(n)..(c0 + len).min(n)].to_vec() } else { vec![] };
+        let base = (*bold, *italic, *color);
+        // largeur des caracteres c0..c0+len a la taille `z` (chacun a sa taille, comme au dessin)
+        let measure = |c0: usize, len: usize, z: f32| -> f32 {
+            let t: String = chars[c0.min(n)..(c0 + len).min(n)].iter().collect();
+            if rich { segs_width(f, &segs_of(&t, &styles_of(c0, len), &[], true, base, z)) } else { text_extent(f, &t, z).0 + if *bold { bold_off(z) } else { 0.0 } }
+        };
+        // facteur de taille d'une position (une ligne vide prend celui de son retour a la ligne)
+        let scale_at = |c: usize| if !rich || n == 0 { 1.0 } else { all[c.min(n - 1)].factor() };
+        let span_scale = |c0: usize, len: usize| if len == 0 { scale_at(c0) } else { (c0..c0 + len).map(scale_at).fold(0.0f32, f32::max) };
+        // rang (caracteres) d'un mot du texte, retrouve a partir de `*at` (octets) ; les mots se suivent dans l'ordre
+        let word_at = |word: &str, at: &mut usize| -> usize {
+            let pos = text[*at..].find(word).map_or(*at, |p| *at + p);
+            let c0 = text[..pos].chars().count();
+            *at = pos + word.len();
+            c0
+        };
+        // debut (rang) de chaque ligne saisie (paragraphe)
+        let mut para_start = vec![0usize];
+        for l in &lines { para_start.push(para_start.last().unwrap() + l.chars().count() + 1); }
+        // justifie : le texte est coupe en lignes de la largeur du cadre (a la taille `z`), et facteur de taille de chaque ligne
+        let wrapped = |z: f32| -> (Vec<bdauthor_core::cover::JustLine>, Vec<f32>) {
+            let at = std::cell::Cell::new(0usize);
+            let jl = bdauthor_core::cover::wrap_words(&lines, wf, &|wd| { let mut a = at.get(); let c0 = word_at(wd, &mut a); at.set(a); measure(c0, wd.chars().count(), z) }, text_extent(f, " ", z).0);
+            let (mut at, mut para, mut first, mut scales) = (0usize, 0usize, true, Vec::new());
+            for l in &jl {
+                let sc = if l.words.is_empty() { if first { scale_at(para_start[para.min(para_start.len() - 1)]) } else { 1.0 } }
+                    else { l.words.iter().map(|wd| { let c0 = word_at(wd, &mut at); span_scale(c0, wd.chars().count()) }).fold(0.0f32, f32::max) };
+                scales.push(sc);
+                first = l.last;
+                if l.last { para += 1; }
+            }
+            (jl, scales)
+        };
+        let plain_scales: Vec<f32> = lines.iter().enumerate().map(|(k, l)| span_scale(para_start[k], l.chars().count())).collect();
         if *autofit {
             if *justify {
                 // la hauteur du texte coupe croit comme le carre de la taille
                 for _ in 0..6 {
-                    let th = line_h(sz) * wrapped(sz).len() as f32;
+                    let th = line_h(sz) * wrapped(sz).1.iter().sum::<f32>();
                     if th <= *h as f32 + 0.5 || sz <= 4.0 { break; }
                     sz = (sz * (*h as f32 / th).sqrt() * 0.98).max(4.0);
                 }
             } else {
-                let widest = |s: f32| lines.iter().map(|l| measure(l, s)).fold(0.0f32, f32::max);
+                let widest = |z: f32| lines.iter().enumerate().map(|(k, l)| measure(para_start[k], l.chars().count(), z)).fold(0.0f32, f32::max);
                 for _ in 0..3 {
-                    let (tw, th) = (widest(sz), line_h(sz) * lines.len() as f32);
+                    let (tw, th) = (widest(sz), line_h(sz) * plain_scales.iter().sum::<f32>());
                     let k = (*w as f32 / tw.max(1.0)).min(*h as f32 / th.max(1.0));
                     if k >= 0.999 { break; }
                     sz = (sz * k * 0.995).max(4.0);
                 }
             }
         }
-        let lh = line_h(sz);
-        // morceaux a dessiner : (ligne, texte, decalage x, largeur, alignement) ; en justifie, chaque mot d'une ligne etiree est
-        // pose a part, l'ecart entre les mots remplissant la largeur du cadre
-        let mut parts: Vec<(usize, String, f32, f32, Align)> = Vec::new();
-        let mut nlines = lines.len();
+        // morceaux a dessiner ; en justifie, chaque mot d'une ligne etiree est pose a part, l'ecart entre les mots remplissant la
+        // largeur du cadre. Sans mise en forme partielle, les reglages restent vides
+        let mut parts: Vec<TextPart> = Vec::new();
+        let mut line_scale = plain_scales.clone();
         if *justify {
-            let jl = wrapped(sz);
-            nlines = jl.len();
+            let (jl, scales) = wrapped(sz);
+            line_scale = scales;
+            let (mut at, mut para, mut first) = (0usize, 0usize, true);
             for (k, l) in jl.iter().enumerate() {
+                let starts: Vec<usize> = l.words.iter().map(|wd| word_at(wd, &mut at)).collect();
                 if !l.last && l.words.len() >= 2 {
-                    let ws: Vec<f32> = l.words.iter().map(|s| measure(s, sz)).collect();
+                    let ws: Vec<f32> = l.words.iter().zip(&starts).map(|(s, c0)| measure(*c0, s.chars().count(), sz)).collect();
                     let gap = ((wf - ws.iter().sum::<f32>()) / (l.words.len() - 1) as f32).max(0.0);
                     let mut cx = 0.0f32;
-                    for (s, ww) in l.words.iter().zip(&ws) {
-                        parts.push((k, s.clone(), cx, *ww, Align::Left));
+                    for ((s, ww), c0) in l.words.iter().zip(&ws).zip(starts) {
+                        let len = s.chars().count();
+                        parts.push(TextPart { line: k, text: s.clone(), xo: cx, ww: *ww, align: Align::Left, styles: styles_of(c0, len), idx: (c0..c0 + len).collect() });
                         cx += *ww + gap;
                     }
                 } else {
-                    parts.push((k, l.words.join(" "), 0.0, *w as f32, *align));
+                    // l'espace entre deux mots prend le reglage du mot qui la precede (et le rang du blanc qui suit ce mot)
+                    let (mut st, mut idx) = (Vec::new(), Vec::new());
+                    for (i, (wd, c0)) in l.words.iter().zip(&starts).enumerate() {
+                        if i > 0 {
+                            if rich { st.push(st.last().copied().unwrap_or_default()); }
+                            idx.push(idx.last().map_or(*c0, |e: &usize| e + 1));
+                        }
+                        let len = wd.chars().count();
+                        st.extend(styles_of(*c0, len));
+                        idx.extend(*c0..*c0 + len);
+                    }
+                    let empty_at = if l.words.is_empty() && first { Some(para_start[para.min(para_start.len() - 1)]) } else { None };
+                    parts.push(TextPart { line: k, text: l.words.join(" "), xo: 0.0, ww: *w as f32, align: *align, styles: st, idx: empty_at.map_or(idx, |e| vec![e]) });
                 }
+                first = l.last;
+                if l.last { para += 1; }
             }
         } else {
-            for (k, l) in lines.iter().enumerate() { parts.push((k, l.to_string(), 0.0, *w as f32, *align)); }
+            let mut c0 = 0usize;
+            for (k, l) in lines.iter().enumerate() {
+                let len = l.chars().count();
+                parts.push(TextPart { line: k, text: l.to_string(), xo: 0.0, ww: *w as f32, align: *align, styles: styles_of(c0, len), idx: if len == 0 { vec![c0] } else { (c0..c0 + len).collect() } });
+                c0 += len + 1;
+            }
         }
-        let total = lh * nlines as f32;
-        let top = match valign { VAlign::Top => 0.0, VAlign::Middle => (*h as f32 - total) / 2.0, VAlign::Bottom => *h as f32 - total };
-        let paint = |img: &mut RgbaImage, ox: f32, oy: f32, col: [u8; 3]| {
-            for (k, t, xo, ww, al) in &parts {
-                let rect = (ox + *xo, oy + top + lh * *k as f32, *ww, lh);
-                if *bold || *italic { draw_line_styled(img, f, t, sz, col, rect, *al, *bold, *italic); } else { draw_line_f(img, f, t, sz, col, rect, *al); }
+        // lignes : hauteur selon leur plus grand caractere, empilees selon l'alignement vertical
+        let line_hs: Vec<f32> = line_scale.iter().map(|k| line_h(sz) * k).collect();
+        let total: f32 = line_hs.iter().sum();
+        let mut y = match valign { VAlign::Top => 0.0, VAlign::Middle => (*h as f32 - total) / 2.0, VAlign::Bottom => *h as f32 - total };
+        let line_top: Vec<f32> = line_hs.iter().map(|lh| { let t = y; y += lh; t }).collect();
+        Some(TextPlan { custom, sz, line_top, line_h: line_hs, line_scale, parts, rich })
+    }
+
+    /// Position du curseur avant chaque caractere d'un texte de jaquette (rangs 0 a n compris) : (ligne, abscisse), en pixels depuis
+    /// le coin haut gauche du cadre, le texte etant a plat (sans sa rotation) ; avec le haut de la premiere ligne et la hauteur des lignes.
+    pub fn cover_text_carets(&self, d: &bdauthor_core::cover::CoverDecor) -> Option<TextCarets> {
+        use bdauthor_core::cover::CoverDecor as D;
+        let D::Text { text, color, bold, italic, .. } = d else { return None };
+        let plan = self.cover_text_plan(d)?;
+        let f: &FontVec = plan.custom.as_deref().unwrap_or(&self.font);
+        let n = text.chars().count();
+        // boite (ligne, gauche, droite) de chaque caractere dessine ; position d'une ligne vide
+        let mut boxes: Vec<Option<(usize, f32, f32)>> = vec![None; n + 1];
+        let mut empty: Vec<Option<(usize, f32)>> = vec![None; n + 1];
+        for p in &plan.parts {
+            let segs = segs_of(&p.text, &p.styles, &p.idx, plan.rich, (*bold, *italic, *color), plan.sz);
+            let tw = segs_width(f, &segs);
+            let mut x = p.xo + match p.align { Align::Left => 0.0, Align::Center => (p.ww - tw) / 2.0, Align::Right => p.ww - tw };
+            if p.text.is_empty() {
+                if let Some(&e) = p.idx.first() { if e <= n { empty[e] = Some((p.line, x)); } }
+                continue;
+            }
+            for g in &segs {
+                let sf = f.as_scaled(PxScale::from(g.size));
+                let mut prev = None;
+                for (c, di) in g.text.chars().zip(&g.idx) {
+                    let id = f.glyph_id(c);
+                    if let Some(pv) = prev { x += sf.kern(pv, id); }
+                    let left = x;
+                    x += sf.h_advance(id);
+                    prev = Some(id);
+                    if *di <= n && boxes[*di].is_none() { boxes[*di] = Some((p.line, left, x)); }
+                }
+                if g.bold {
+                    // epaisseur du gras : au bout du dernier caractere du morceau
+                    x += bold_off(g.size);
+                    if let Some(bx) = g.idx.last().and_then(|&di| boxes.get_mut(di)).and_then(|b| b.as_mut()) { bx.2 = x; }
+                }
+            }
+        }
+        let mut carets: Vec<(usize, f32)> = Vec::with_capacity(n + 1);
+        for di in 0..=n {
+            let c = if let Some((l, left, _)) = boxes[di] { (l, left) }
+                else if let Some(e) = empty[di] { e }
+                else if di > 0 && boxes[di - 1].is_some() { let (l, _, r) = boxes[di - 1].unwrap(); (l, r) }
+                else if di > 0 { carets[di - 1] }
+                else { (0, 0.0) };
+            carets.push(c);
+        }
+        let lines = plan.line_top.len();
+        Some(TextCarets { carets, line_top: plan.line_top, line_h: plan.line_h, lines })
+    }
+
+    /// Texte de jaquette : interligne, alignement vertical, ajustement a la taille du cadre, contour et ombre.
+    fn draw_cover_text(&self, im: &mut RgbaImage, d: &bdauthor_core::cover::CoverDecor) {
+        use bdauthor_core::cover::CoverDecor as D;
+        let D::Text { x, y, w, h, color, outline, outline_color, shadow, shadow_color, bold, italic, .. } = d else { return };
+        let Some(plan) = self.cover_text_plan(d) else { return };
+        let (f, sz, rich): (&FontVec, f32, bool) = (plan.custom.as_deref().unwrap_or(&self.font), plan.sz, plan.rich);
+        // `own` : couleurs propres des parties mises en forme (sinon tout le texte en `col`, pour le contour)
+        let paint = |img: &mut RgbaImage, ox: f32, oy: f32, col: [u8; 3], own: bool| {
+            for TextPart { line: k, text: t, xo, ww, align: al, styles: st, idx } in &plan.parts {
+                let (lt, lh) = (plan.line_top[*k], plan.line_h[*k]);
+                if rich {
+                    // ligne de base commune, placee d'apres le plus grand caractere de la ligne
+                    let segs = segs_of(t, st, idx, true, (*bold, *italic, col), sz);
+                    let tw = segs_width(f, &segs);
+                    let mut x = ox + *xo + match al { Align::Left => 0.0, Align::Center => (*ww - tw) / 2.0, Align::Right => *ww - tw };
+                    let big = sz * plan.line_scale[*k];
+                    let sf = f.as_scaled(PxScale::from(big));
+                    let base = oy + lt + (lh - (sf.ascent() - sf.descent())) / 2.0 + sf.ascent();
+                    for g in &segs {
+                        let run = bdauthor_core::subtitle::Run { text: g.text.clone(), bold: g.bold, italic: g.italic, underline: false, color: None };
+                        draw_run(img, f, &run, g.size, &mut x, base, if own { g.color } else { col });
+                    }
+                } else {
+                    let rect = (ox + *xo, oy + lt, *ww, lh);
+                    if *bold || *italic { draw_line_styled(img, f, t, sz, col, rect, *al, *bold, *italic); } else { draw_line_f(img, f, t, sz, col, rect, *al); }
+                }
             }
         };
         if *outline == 0 && *shadow == 0 {
-            paint(im, *x as f32, *y as f32, *color);
+            paint(im, *x as f32, *y as f32, *color, true);
             return;
         }
         let pad = *outline + *shadow + 2;
@@ -703,7 +907,7 @@ impl FontRenderer {
         if *outline > 0 {
             // contour : le texte decale tout autour d'un cercle de rayon `outline`
             let mut ring = RgbaImage::new(lw, lhh);
-            paint(&mut ring, pad as f32, pad as f32, *outline_color);
+            paint(&mut ring, pad as f32, pad as f32, *outline_color, false);
             let r = *outline as f32;
             let n = ((std::f32::consts::TAU * r).ceil() as usize).clamp(8, 72);
             for i in 0..n {
@@ -712,7 +916,7 @@ impl FontRenderer {
             }
             blit(&mut body, &ring, 0, 0, 1.0);
         }
-        paint(&mut body, pad as f32, pad as f32, *color);
+        paint(&mut body, pad as f32, pad as f32, *color, true);
         if *shadow > 0 {
             let mut tinted = body.clone();
             for p in tinted.data.chunks_exact_mut(4) { p[0] = shadow_color[0]; p[1] = shadow_color[1]; p[2] = shadow_color[2]; }

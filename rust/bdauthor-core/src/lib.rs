@@ -8,6 +8,7 @@ mod entities;
 pub mod check;
 pub mod convert;
 pub mod cover;
+pub mod rich;
 pub mod deflate;
 pub mod pdf;
 pub mod clpi;

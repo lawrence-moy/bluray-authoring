@@ -471,7 +471,7 @@
   "Actual size (approximate: screen assumed at 96 dpi)": "Taille réelle (approximative : écran supposé à 96 dpi)",
   "100% = actual size": "100 % = taille réelle",
   "Wheel: zoom · wheel click (or Space + drag): pan the view": "Molette : zoom · clic molette (ou Espace + glisser) : déplacer la vue",
-  "{}Drag: move · corners: resize (Shift: proportional) · rectangle or Shift+click: multiple selection · arrows: move by 0.5 mm (Shift 5 mm, Ctrl 0.1 mm) · Alt: no snapping · Ctrl+C/X/V · Del · Ctrl+Z / Ctrl+Y": "{}Glisser : déplacer · coins : redimensionner (Maj : proportionnel) · rectangle ou Maj+clic : sélection multiple · flèches : déplacer de 0,5 mm (Maj 5 mm, Ctrl 0,1 mm) · Alt : sans aimantation · Ctrl+C/X/V · Suppr · Ctrl+Z / Ctrl+Y",
+  "{}Drag: move · corners: resize (Shift: proportional) · rectangle or Shift+click: multiple selection · double-click a text: type on the sheet · arrows: move by 0.5 mm (Shift 5 mm, Ctrl 0.1 mm) · Alt: no snapping · Ctrl+C/X/V · Del · Ctrl+Z / Ctrl+Y": "{}Glisser : déplacer · coins : redimensionner (Maj : proportionnel) · rectangle ou Maj+clic : sélection multiple · double-clic sur un texte : saisie sur la feuille · flèches : déplacer de 0,5 mm (Maj 5 mm, Ctrl 0,1 mm) · Alt : sans aimantation · Ctrl+C/X/V · Suppr · Ctrl+Z / Ctrl+Y",
   "{} (copy)": "{} (copie)",
   "{} (copy {})": "{} (copie {})",
   "Frame": "Cadre",
@@ -1508,5 +1508,15 @@
   "Jewel case: two pieces to cut out on the same sheet, the booklet (under the lid) at the top and the tray card (under the disc tray, folded at its two spines) at the bottom. All measurements are in millimeters, from the top-left corner of the trimmed sheet (so the bleed has negative values).": "Boîtier cristal : deux pièces à découper sur la même feuille, le livret (sous le couvercle) en haut et le verso (sous le plateau du disque, plié à ses deux tranches) en bas. Toutes les mesures sont en millimètres, depuis le coin haut gauche de la feuille rognée (le fond perdu a donc des valeurs négatives).",
   "the left spine": "la tranche gauche",
   "the right spine": "la tranche droite",
-  "the booklet": "le livret"
+  "the booklet": "le livret",
+  "Puts the selected part of the text in bold (or back to normal)": "Met en gras la partie sélectionnée du texte (ou la remet en normal)",
+  "Puts the selected part of the text in italics (or back to normal)": "Met en italique la partie sélectionnée du texte (ou la remet en normal)",
+  "Colour of the selected part of the text": "Couleur de la partie sélectionnée du texte",
+  "Clear formatting": "Effacer la mise en forme",
+  "The selected part of the text takes the bold, italics, colour and size of the whole text again": "La partie sélectionnée reprend le gras, l'italique, la couleur et la taille du texte entier",
+  "Done": "Terminer",
+  "Stop typing on the sheet (Esc)": "Arrêter la saisie sur la feuille (Échap)",
+  "Select part of the text, here or on the sheet (double-click the text), to change its bold, italics, colour or size. In the typing box, bold is shown underlined.": "Sélectionnez une partie du texte, ici ou sur la feuille (double-clic sur le texte), pour en changer le gras, l'italique, la couleur ou la taille. Dans la zone de saisie, le gras est souligné.",
+  "Select part of the text, here or on the sheet (double-click the text), to change its bold, italics, colour or size.": "Sélectionnez une partie du texte, ici ou sur la feuille (double-clic sur le texte), pour en changer le gras, l'italique, la couleur ou la taille.",
+  "Size of the selected part of the text": "Taille de la partie sélectionnée du texte"
 }
