@@ -689,3 +689,50 @@ fn text_background_is_drawn_under_the_text() {
     let back = Cover::from_value(Some(&bdauthor_core::json::parse(&v).unwrap())).unwrap();
     assert_eq!(back.items, c.items);
 }
+
+#[test]
+fn jewel_case_geometry_layout_json_and_a4() {
+    let mut c = Cover::default();
+    c.set_format(JEWEL_FORMAT);
+    assert_eq!(c.case, CaseKind::Jewel);
+    // livret 120 x 120 en haut, carte arriere 150 x 118 en bas, separes par les deux fonds perdus et 10 mm
+    assert_eq!(c.tray_width_mm(), 150.0);
+    assert_eq!(c.trim_mm(), (150.0, 254.0));
+    assert_eq!(c.pieces_mm(), vec![(15.0, 0.0, 120.0, 120.0), (0.0, 136.0, 150.0, 118.0)]);
+    assert_eq!(c.zone_mm(Zone::Spine), (0.0, 136.0, 6.5, 118.0));
+    assert_eq!(c.zone_mm(Zone::Back), (6.5, 136.0, 137.0, 118.0));
+    assert_eq!(c.zone_mm(Zone::SpineRight), (143.5, 136.0, 6.5, 118.0));
+    assert_eq!(c.folds_mm(), vec![(6.5, 136.0, 254.0), (143.5, 136.0, 254.0)]);
+    let names: Vec<&str> = c.zones().into_iter().map(|z| z.0).collect();
+    assert_eq!(names, ["le livret", "la tranche gauche", "le dos", "la tranche droite"]);
+    let (rects, lines, _) = c.guides();
+    assert_eq!((rects.len(), lines.len()), (2, 2));
+    // fonds : livret = couleur de face, dos et tranches de la carte arriere, blanc entre les pieces
+    c.colors = [[1, 2, 3], [4, 5, 6], [7, 8, 9]];
+    let bg = c.layout(300, Path::new(".")).background();
+    let px = |x: f64, y: f64| bg.pixel((35.0 + x / 25.4 * 300.0) as u32, (35.0 + y / 25.4 * 300.0) as u32);
+    assert_eq!(px(75.0, 60.0), [7, 8, 9, 255]);
+    assert_eq!(px(13.5, 60.0), [7, 8, 9, 255]); // fond perdu du livret
+    assert_eq!(px(5.0, 60.0), [255, 255, 255, 255]);
+    assert_eq!(px(75.0, 128.0), [255, 255, 255, 255]);
+    assert_eq!(px(3.0, 195.0), [4, 5, 6, 255]);
+    assert_eq!(px(-2.0, 195.0), [4, 5, 6, 255]); // fond perdu de la tranche
+    assert_eq!(px(75.0, 195.0), [1, 2, 3, 255]);
+    assert_eq!(px(147.0, 195.0), [4, 5, 6, 255]);
+    // JSON : le type de boitier et la carte arriere sont gardes ; un keepcase n'ecrit pas ces cles
+    c.tray_mm = 136.0;
+    let v = c.to_value().unwrap();
+    assert_eq!(v.get("case").and_then(|x| x.as_str()), Some("jewel"));
+    assert_eq!(Cover::from_value(Some(&v)).unwrap(), c);
+    let mut k = Cover::default();
+    k.set_format(1);
+    assert!(k.to_value().unwrap().get("case").is_none());
+    assert_eq!(Cover::from_value(k.to_value().as_ref()).unwrap().case, CaseKind::Keepcase);
+    // A4 portrait, avec les reperes des deux pieces
+    c.tray_mm = 137.0;
+    let sheet = c.layout(72, Path::new(".")).background();
+    let text = String::from_utf8_lossy(&c.to_pdf_a4(&sheet, "cristal").unwrap()).into_owned();
+    assert!(text.contains("/MediaBox [0 0 595.276 841.890]"));
+    // 8 traits de coupe par piece et 2 traits par pli
+    assert_eq!(text.matches(" l S").count(), 2 * 8 + 2 * 2);
+}

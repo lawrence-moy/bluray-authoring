@@ -404,16 +404,38 @@ pub fn wrap_words(paragraphs: &[&str], avail: f32, width: &dyn Fn(&str) -> f32, 
     out
 }
 
-/// Zone de la jaquette.
+/// Zone de la jaquette. Boitier cristal : `Front` est le livret, `Back` le dos de la carte arriere, `Spine` et `SpineRight` ses
+/// tranches gauche et droite (keepcase : `SpineRight` est la tranche unique).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Zone { Back, Spine, Front }
+pub enum Zone { Back, Spine, SpineRight, Front }
+
+/// Type de boitier : keepcase (une feuille dos | tranche | face qui s'enroule) ou boitier cristal (deux pieces : le livret sous le
+/// couvercle et la carte arriere, sous le plateau, pliee en deux tranches).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaseKind { Keepcase, Jewel }
+
+impl CaseKind {
+    pub fn name(self) -> &'static str { match self { CaseKind::Keepcase => "keepcase", CaseKind::Jewel => "jewel" } }
+    pub fn from_name(s: &str) -> Option<CaseKind> { match s { "keepcase" => Some(CaseKind::Keepcase), "jewel" => Some(CaseKind::Jewel), _ => None } }
+    pub fn label(self) -> &'static str { match self { CaseKind::Keepcase => tr("Keepcase (Blu-ray / DVD)"), CaseKind::Jewel => tr("Jewel case") } }
+}
+
+/// Boitier cristal : ecart (mm) entre le livret et la carte arriere sur la feuille, en plus de leurs deux fonds perdus (de quoi
+/// passer les ciseaux et tracer les reperes de coupe sans qu'ils se touchent).
+pub const JEWEL_GAP_MM: f64 = 10.0;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Cover {
-    /// largeur du dos et de la face (mm)
+    pub case: CaseKind,
+    /// largeur du dos et de la face (mm) ; boitier cristal : largeur du livret
     pub face_mm: f64,
+    /// hauteur de la feuille ; boitier cristal : hauteur du livret
     pub height_mm: f64,
+    /// largeur de la tranche ; boitier cristal : largeur de chacune des deux tranches de la carte arriere
     pub spine_mm: f64,
+    /// boitier cristal : largeur du dos de la carte arriere (entre les tranches) et hauteur de cette carte
+    pub tray_mm: f64,
+    pub tray_height_mm: f64,
     pub bleed_mm: f64,
     /// couleurs de fond du dos, de la tranche et de la face
     pub colors: [[u8; 3]; 3],
@@ -429,18 +451,31 @@ pub struct Cover {
 
 impl Default for Cover {
     fn default() -> Cover {
-        Cover { face_mm: 129.0, height_mm: 148.0, spine_mm: 11.0, bleed_mm: 3.0, colors: [[24, 28, 40], [40, 60, 110], [24, 28, 40]], bg_image: String::new(), marks: false, dpi: 300, items: vec![], layers: vec![] }
+        Cover { case: CaseKind::Keepcase, face_mm: 129.0, height_mm: 148.0, spine_mm: 11.0, tray_mm: 137.0, tray_height_mm: 118.0, bleed_mm: 3.0, colors: [[24, 28, 40], [40, 60, 110], [24, 28, 40]], bg_image: String::new(), marks: false, dpi: 300, items: vec![], layers: vec![] }
     }
 }
 
-/// Formats usuels : (nom, largeur du dos et de la face, hauteur, tranche), en mm.
-pub const FORMATS: [(&str, f64, f64, f64); 5] = [
-    ("Blu-ray standard (11 mm spine)", 129.0, 148.0, 11.0),
-    ("Thick Blu-ray (14 mm spine)", 129.0, 148.0, 14.0),
-    ("Standard DVD (14 mm spine)", 129.0, 183.0, 14.0),
-    ("Slim DVD (7 mm spine)", 129.0, 183.0, 7.0),
-    ("Slim Blu-ray (7 mm spine)", 129.0, 148.0, 7.0),
+/// Format usuel de jaquette (mm) ; voir les champs de `Cover`.
+#[derive(Debug, Clone, Copy)]
+pub struct CoverFormat { pub name: &'static str, pub case: CaseKind, pub face_mm: f64, pub height_mm: f64, pub spine_mm: f64, pub tray_mm: f64, pub tray_height_mm: f64 }
+
+const fn keepcase(name: &'static str, face_mm: f64, height_mm: f64, spine_mm: f64) -> CoverFormat {
+    CoverFormat { name, case: CaseKind::Keepcase, face_mm, height_mm, spine_mm, tray_mm: 137.0, tray_height_mm: 118.0 }
+}
+
+/// Formats usuels.
+pub const FORMATS: [CoverFormat; 6] = [
+    keepcase("Blu-ray standard (11 mm spine)", 129.0, 148.0, 11.0),
+    keepcase("Thick Blu-ray (14 mm spine)", 129.0, 148.0, 14.0),
+    keepcase("Standard DVD (14 mm spine)", 129.0, 183.0, 14.0),
+    keepcase("Slim DVD (7 mm spine)", 129.0, 183.0, 7.0),
+    keepcase("Slim Blu-ray (7 mm spine)", 129.0, 148.0, 7.0),
+    // livret 120 x 120 sous le couvercle ; carte arriere 150 x 118 : dos de 137 mm entre deux tranches de 6,5 mm
+    CoverFormat { name: "Jewel case (120 × 120 mm booklet, 150 × 118 mm tray card)", case: CaseKind::Jewel, face_mm: 120.0, height_mm: 120.0, spine_mm: 6.5, tray_mm: 137.0, tray_height_mm: 118.0 },
 ];
+
+/// Rang dans `FORMATS` du boitier cristal.
+pub const JEWEL_FORMAT: usize = 5;
 
 /// Resultat de la mise en page en pixels.
 #[derive(Debug, Clone)]
@@ -487,15 +522,55 @@ fn color_from(v: Option<&Value>, d: [u8; 3]) -> [u8; 3] {
 }
 
 impl Cover {
-    /// Taille de la feuille rognee (mm).
-    pub fn trim_mm(&self) -> (f64, f64) { (2.0 * self.face_mm + self.spine_mm, self.height_mm) }
+    /// Taille de la feuille rognee (mm) ; boitier cristal : rectangle englobant le livret et la carte arriere.
+    pub fn trim_mm(&self) -> (f64, f64) {
+        match self.case {
+            CaseKind::Keepcase => (2.0 * self.face_mm + self.spine_mm, self.height_mm),
+            CaseKind::Jewel => (self.face_mm.max(self.tray_width_mm()), self.height_mm + self.jewel_gap_mm() + self.tray_height_mm),
+        }
+    }
+    /// Boitier cristal : largeur totale de la carte arriere (dos et deux tranches).
+    pub fn tray_width_mm(&self) -> f64 { self.tray_mm + 2.0 * self.spine_mm }
+    /// Boitier cristal : ecart entre le bas du livret rogne et le haut de la carte arriere rognee.
+    pub fn jewel_gap_mm(&self) -> f64 { 2.0 * self.bleed_mm + JEWEL_GAP_MM }
+    /// Pieces a decouper (x, y, w, h), en mm depuis le coin de la feuille rognee : la jaquette entiere, ou le livret puis la carte
+    /// arriere (centres l'un sous l'autre).
+    pub fn pieces_mm(&self) -> Vec<(f64, f64, f64, f64)> {
+        let (tw, th) = self.trim_mm();
+        match self.case {
+            CaseKind::Keepcase => vec![(0.0, 0.0, tw, th)],
+            CaseKind::Jewel => {
+                let tray = self.tray_width_mm();
+                vec![((tw - self.face_mm) / 2.0, 0.0, self.face_mm, self.height_mm), ((tw - tray) / 2.0, th - self.tray_height_mm, tray, self.tray_height_mm)]
+            }
+        }
+    }
+    /// Plis : abscisse et etendue verticale (x, y0, y1) en mm.
+    pub fn folds_mm(&self) -> Vec<(f64, f64, f64)> {
+        let (a, b) = (self.zone_mm(Zone::Spine), self.zone_mm(Zone::SpineRight));
+        match self.case {
+            CaseKind::Keepcase => vec![(a.0, 0.0, a.3), (a.0 + a.2, 0.0, a.3)],
+            CaseKind::Jewel => vec![(a.0 + a.2, a.1, a.1 + a.3), (b.0, b.1, b.1 + b.3)],
+        }
+    }
     /// Taille de la feuille avec fond perdu (mm).
     pub fn sheet_mm(&self) -> (f64, f64) { let t = self.trim_mm(); (t.0 + 2.0 * self.bleed_mm, t.1 + 2.0 * self.bleed_mm) }
     /// Rectangle (x, y, largeur, hauteur) de chaque zone, en mm depuis le coin de la feuille rognee.
     pub fn zone_mm(&self, z: Zone) -> (f64, f64, f64, f64) {
+        if self.case == CaseKind::Jewel {
+            let p = self.pieces_mm();
+            let ((bx, by, bw, bh), (tx, ty, _, th)) = (p[0], p[1]);
+            let sp = self.spine_mm;
+            return match z {
+                Zone::Front => (bx, by, bw, bh),
+                Zone::Spine => (tx, ty, sp, th),
+                Zone::Back => (tx + sp, ty, self.tray_mm, th),
+                Zone::SpineRight => (tx + sp + self.tray_mm, ty, sp, th),
+            };
+        }
         match z {
             Zone::Back => (0.0, 0.0, self.face_mm, self.height_mm),
-            Zone::Spine => (self.face_mm, 0.0, self.spine_mm, self.height_mm),
+            Zone::Spine | Zone::SpineRight => (self.face_mm, 0.0, self.spine_mm, self.height_mm),
             Zone::Front => (self.face_mm + self.spine_mm, 0.0, self.face_mm, self.height_mm),
         }
     }
@@ -503,7 +578,10 @@ impl Cover {
 
     /// Ajuste les dimensions a un format usuel (rang dans `FORMATS`).
     pub fn set_format(&mut self, k: usize) {
-        if let Some(f) = FORMATS.get(k) { self.face_mm = f.1; self.height_mm = f.2; self.spine_mm = f.3; }
+        if let Some(f) = FORMATS.get(k) {
+            self.case = f.case;
+            (self.face_mm, self.height_mm, self.spine_mm, self.tray_mm, self.tray_height_mm) = (f.face_mm, f.height_mm, f.spine_mm, f.tray_mm, f.tray_height_mm);
+        }
     }
 
     /// Mise en page en pixels a `dpi` points par pouce ; `base` : dossier du projet (chemins relatifs).
@@ -518,11 +596,28 @@ impl Cover {
         let (fw, sp) = (mm_px(self.face_mm, dpi), mm_px(self.spine_mm, dpi));
         let (w, h) = (size.0 as i32, size.1 as i32);
         // les zones d'extremite debordent sur le fond perdu ; les separations tombent au pixel pres sans trou
-        let fills = vec![
-            ((0, 0, b + fw, h), self.colors[0]),
-            ((b + fw, 0, sp, h), self.colors[1]),
-            ((b + fw + sp, 0, w - (b + fw + sp), h), self.colors[2]),
-        ];
+        let fills = match self.case {
+            CaseKind::Keepcase => vec![
+                ((0, 0, b + fw, h), self.colors[0]),
+                ((b + fw, 0, sp, h), self.colors[1]),
+                ((b + fw + sp, 0, w - (b + fw + sp), h), self.colors[2]),
+            ],
+            CaseKind::Jewel => {
+                // fond blanc entre les pieces ; chaque piece deborde de son fond perdu sur ses bords exterieurs
+                let px = |mm: f64| b + mm_px(mm, dpi);
+                let (f, l, r) = (self.zone_mm(Zone::Front), self.zone_mm(Zone::Spine), self.zone_mm(Zone::SpineRight));
+                let (fx0, fy0, fx1, fy1) = (px(f.0) - b, px(f.1) - b, px(f.0 + f.2) + b, px(f.1 + f.3) + b);
+                let (x0, x1, x2, x3) = (px(l.0), px(l.0 + l.2), px(r.0), px(r.0 + r.2));
+                let (y0, y1) = (px(l.1) - b, px(l.1 + l.3) + b);
+                vec![
+                    ((0, 0, w, h), [255, 255, 255]),
+                    ((fx0, fy0, fx1 - fx0, fy1 - fy0), self.colors[2]),
+                    ((x0 - b, y0, x1 - x0 + b, y1 - y0), self.colors[1]),
+                    ((x1, y0, x2 - x1, y1 - y0), self.colors[0]),
+                    ((x2, y0, x3 - x2 + b, y1 - y0), self.colors[1]),
+                ]
+            }
+        };
         let abs = |p: &str| -> PathBuf { let q = Path::new(p); if q.is_absolute() { q.to_path_buf() } else { base.join(q) } };
         let one = |it: &CoverItem| -> Option<(CoverDecor, u16)> {
             let (x, y) = (b + mm_px(it.x, dpi), b + mm_px(it.y, dpi));
@@ -585,19 +680,22 @@ impl Cover {
     /// est agrandie de 10 mm de chaque cote : traits de coupe aux quatre coins de la jaquette rognee, traits de pliage de la tranche.
     /// Traits de coupe aux quatre coins de la jaquette rognee dont le coin haut gauche est en (x0, y0) sur la page, et traits de
     /// pliage de la tranche en haut et en bas (mm depuis le coin haut gauche de la page).
-    fn cut_lines(&self, x0: f64, y0: f64) -> Vec<(f64, f64, f64, f64)> {
-        let (tw, th) = self.trim_mm();
-        let (x1, y1) = (x0 + tw, y0 + th);
+    /// Boitier cristal : les memes reperes autour de chacune des deux pieces.
+    fn cut_lines(&self, ox: f64, oy: f64) -> Vec<(f64, f64, f64, f64)> {
         let t = 6.0; // longueur des traits
         let gap = 1.5; // ecart entre le trait et le coin (pour ne pas couvrir le fond perdu)
         let mut lines = vec![];
-        for &(x, y, dx, dy) in &[(x0, y0, -1.0, -1.0), (x1, y0, 1.0, -1.0), (x0, y1, -1.0, 1.0), (x1, y1, 1.0, 1.0)] {
-            lines.push((x + dx * gap, y, x + dx * (gap + t), y));
-            lines.push((x, y + dy * gap, x, y + dy * (gap + t)));
+        for (px, py, pw, ph) in self.pieces_mm() {
+            let (x0, y0, x1, y1) = (ox + px, oy + py, ox + px + pw, oy + py + ph);
+            for &(x, y, dx, dy) in &[(x0, y0, -1.0, -1.0), (x1, y0, 1.0, -1.0), (x0, y1, -1.0, 1.0), (x1, y1, 1.0, 1.0)] {
+                lines.push((x + dx * gap, y, x + dx * (gap + t), y));
+                lines.push((x, y + dy * gap, x, y + dy * (gap + t)));
+            }
         }
-        for fx in [x0 + self.face_mm, x0 + self.face_mm + self.spine_mm] {
-            lines.push((fx, y0 - gap, fx, y0 - gap - t));
-            lines.push((fx, y1 + gap, fx, y1 + gap + t));
+        for (fx, fy0, fy1) in self.folds_mm() {
+            let (fx, fy0, fy1) = (ox + fx, oy + fy0, oy + fy1);
+            lines.push((fx, fy0 - gap, fx, fy0 - gap - t));
+            lines.push((fx, fy1 + gap, fx, fy1 + gap + t));
         }
         lines
     }
@@ -633,6 +731,11 @@ impl Cover {
             ("colors".into(), Value::Obj(vec![("back".into(), color_hex(self.colors[0])), ("spine".into(), color_hex(self.colors[1])), ("front".into(), color_hex(self.colors[2]))])),
             ("crop_marks".into(), Value::Bool(self.marks)), ("dpi".into(), n(self.dpi as f64)),
         ];
+        if self.case == CaseKind::Jewel {
+            o.insert(0, ("case".into(), Value::Str(self.case.name().into())));
+            o.push(("tray_back_mm".into(), n(self.tray_mm)));
+            o.push(("tray_height_mm".into(), n(self.tray_height_mm)));
+        }
         if !self.bg_image.is_empty() { o.push(("background_image".into(), Value::Str(self.bg_image.clone()))); }
         let items: Vec<Value> = self.items.iter().map(item_to_value).collect();
         if !self.layers.is_empty() { o.push(("layers".into(), layers_to_value(&self.layers))); }
@@ -648,6 +751,9 @@ impl Cover {
         c.height_mm = num("height_mm", c.height_mm).clamp(20.0, 400.0);
         c.spine_mm = num("spine_mm", c.spine_mm).clamp(0.0, 100.0);
         c.bleed_mm = num("bleed_mm", c.bleed_mm).clamp(0.0, 20.0);
+        c.case = v.get("case").and_then(Value::as_str).and_then(CaseKind::from_name).unwrap_or(CaseKind::Keepcase);
+        c.tray_mm = num("tray_back_mm", c.tray_mm).clamp(20.0, 400.0);
+        c.tray_height_mm = num("tray_height_mm", c.tray_height_mm).clamp(20.0, 400.0);
         c.dpi = num("dpi", c.dpi as f64).round().clamp(72.0, 600.0) as u32;
         c.marks = v.get("crop_marks").and_then(Value::as_bool).unwrap_or(false);
         if let Some(cs) = v.get("colors") {
@@ -762,6 +868,19 @@ impl SheetDoc for Cover {
     fn snap_lines(&self) -> (Vec<f64>, Vec<f64>) {
         let (tw, th) = self.trim_mm();
         let (f, sp, b, m) = (self.face_mm, self.spine_mm, self.bleed_mm, SAFE_MM);
+        if self.case == CaseKind::Jewel {
+            // bords (fond perdu et marge de securite compris) et milieux de chaque piece et de chaque zone, centre de la feuille
+            let (mut xs, mut ys) = (vec![tw / 2.0], vec![]);
+            for (x, y, w, h) in self.pieces_mm() {
+                xs.extend([x - b, x + m, x + w - m, x + w + b]);
+                ys.extend([y - b, y, y + m, y + h / 2.0, y + h - m, y + h, y + h + b]);
+            }
+            for z in [Zone::Front, Zone::Spine, Zone::Back, Zone::SpineRight] {
+                let (x, _, w, _) = self.zone_mm(z);
+                xs.extend([x, x + w / 2.0, x + w]);
+            }
+            return (xs, ys);
+        }
         let mut xs = vec![-b, 0.0, f / 2.0, f, f + sp / 2.0, f + sp, f + sp + f / 2.0, tw, tw + b, m, tw - m];
         if f > 2.0 * m { xs.extend([f - m, f + sp + m]); }
         (xs, vec![-b, 0.0, th / 2.0, th, th + b, m, th - m])
@@ -769,20 +888,27 @@ impl SheetDoc for Cover {
     fn safe_guides(&self) -> (Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64)>) {
         let (_, th) = self.trim_mm();
         let (f, sp, m) = (self.face_mm, self.spine_mm, SAFE_MM);
+        if self.case == CaseKind::Jewel {
+            let inset = |(x, y, w, h): (f64, f64, f64, f64)| (x + m, y + m, w - 2.0 * m, h - 2.0 * m);
+            let mut r = vec![inset(self.zone_mm(Zone::Front)), inset(self.zone_mm(Zone::Back))];
+            if sp > 2.0 * m { r.extend([inset(self.zone_mm(Zone::Spine)), inset(self.zone_mm(Zone::SpineRight))]); }
+            return (r, vec![]);
+        }
         let mut r = vec![(m, m, f - 2.0 * m, th - 2.0 * m), (f + sp + m, m, f - 2.0 * m, th - 2.0 * m)];
         if sp > 2.0 * m { r.push((f + m, m, sp - 2.0 * m, th - 2.0 * m)); }
         (r, vec![])
     }
     fn zones(&self) -> Vec<(&'static str, (f64, f64, f64, f64))> {
-        vec![("le dos", self.zone_mm(Zone::Back)), ("la tranche", self.zone_mm(Zone::Spine)), ("la face", self.zone_mm(Zone::Front))]
+        match self.case {
+            CaseKind::Keepcase => vec![("le dos", self.zone_mm(Zone::Back)), ("la tranche", self.zone_mm(Zone::Spine)), ("la face", self.zone_mm(Zone::Front))],
+            CaseKind::Jewel => vec![("le livret", self.zone_mm(Zone::Front)), ("la tranche gauche", self.zone_mm(Zone::Spine)), ("le dos", self.zone_mm(Zone::Back)), ("la tranche droite", self.zone_mm(Zone::SpineRight))],
+        }
     }
     fn layout_with(&self, dpi: u32, base: &Path, vars: &BTreeMap<String, String>) -> CoverLayout { Cover::layout_with(self, dpi, base, vars) }
     fn to_pdf(&self, sheet: &RgbaImage, title: &str) -> Vec<u8> { Cover::to_pdf(self, sheet, title) }
     fn to_pdf_a4(&self, sheet: &RgbaImage, title: &str) -> Result<Vec<u8>, String> { Cover::to_pdf_a4(self, sheet, title) }
     fn guides(&self) -> (Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64, f64)>, Vec<(f64, f64, f64)>) {
-        let (tw, th) = self.trim_mm();
-        let f = [self.face_mm, self.face_mm + self.spine_mm];
-        (vec![(0.0, 0.0, tw, th)], f.iter().map(|&x| (x, 0.0, x, th)).collect(), vec![])
+        (self.pieces_mm(), self.folds_mm().into_iter().map(|(x, y0, y1)| (x, y0, x, y1)).collect(), vec![])
     }
 }
 
@@ -868,7 +994,7 @@ impl SheetDoc for DiscLabel {
     fn layout_with(&self, dpi: u32, base: &Path, vars: &BTreeMap<String, String>) -> CoverLayout {
         // meme mise en forme que la jaquette : une seule zone couvrant la feuille
         let as_cover = Cover { face_mm: 0.0, spine_mm: self.diameter_mm, height_mm: self.diameter_mm, bleed_mm: self.bleed_mm,
-            colors: [self.color; 3], bg_image: self.bg_image.clone(), marks: false, dpi: self.dpi, items: self.items.clone(), layers: self.layers.clone() };
+            colors: [self.color; 3], bg_image: self.bg_image.clone(), marks: false, dpi: self.dpi, items: self.items.clone(), layers: self.layers.clone(), ..Cover::default() };
         as_cover.layout_with(dpi, base, vars)
     }
     fn to_pdf(&self, sheet: &RgbaImage, title: &str) -> Vec<u8> {

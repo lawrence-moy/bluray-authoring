@@ -1494,5 +1494,19 @@
   "Barcode": "Code-barres",
   "Colour filling the whole frame of the text, under it. Resize the frame to set the margin around the text.": "Couleur qui remplit tout le cadre du texte, sous celui-ci. Redimensionnez le cadre pour régler la marge autour du texte.",
   "Opacity": "Opacité",
-  "100 %: opaque; lower, what is under the text (photo, colour) shows through the background.": "100 % : opaque ; en dessous, ce qui est sous le texte (photo, couleur) transparaît à travers le fond."
+  "100 %: opaque; lower, what is under the text (photo, colour) shows through the background.": "100 % : opaque ; en dessous, ce qui est sous le texte (photo, couleur) transparaît à travers le fond.",
+  "Case": "Boîtier",
+  "Keepcase (Blu-ray / DVD)": "Standard (Blu-ray / DVD)",
+  "Jewel case": "Boîtier cristal",
+  "Jewel case (120 × 120 mm booklet, 150 × 118 mm tray card)": "Boîtier cristal (livret 120 × 120 mm, verso 150 × 118 mm)",
+  "Booklet": "Livret",
+  "Booklet height": "Hauteur du livret",
+  "Tray card back": "Dos du verso",
+  "Tray card height": "Hauteur du verso",
+  "Spines": "Tranches",
+  "Tray card: {} mm wide in all (back and two spines).": "Verso : {} mm de large en tout (dos et deux tranches).",
+  "Jewel case: two pieces to cut out on the same sheet, the booklet (under the lid) at the top and the tray card (under the disc tray, folded at its two spines) at the bottom. All measurements are in millimeters, from the top-left corner of the trimmed sheet (so the bleed has negative values).": "Boîtier cristal : deux pièces à découper sur la même feuille, le livret (sous le couvercle) en haut et le verso (sous le plateau du disque, plié à ses deux tranches) en bas. Toutes les mesures sont en millimètres, depuis le coin haut gauche de la feuille rognée (le fond perdu a donc des valeurs négatives).",
+  "the left spine": "la tranche gauche",
+  "the right spine": "la tranche droite",
+  "the booklet": "le livret"
 }

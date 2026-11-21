@@ -3,7 +3,7 @@
 use crate::i18n::{tr, trf};
 use crate::App;
 use bdauthor_core::barcode::{self, BarcodeKind};
-use bdauthor_core::cover::{InfoField, InfoTable, LineArrow, LineStyle, ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
+use bdauthor_core::cover::{CaseKind, InfoField, InfoTable, LineArrow, LineStyle, ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS, JEWEL_FORMAT};
 use bdauthor_core::design::Align;
 use bdauthor_core::editor::ItemAlign;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Key, Rect, Sense, Stroke};
@@ -208,19 +208,42 @@ fn extract_cover_frame(src: &std::path::Path, fr: &bdauthor_core::design::VideoF
 
 const IMG_EXT: [&str; 6] = ["png", "jpg", "jpeg", "bmp", "svg", "svgz"];
 
+/// Champ de saisie d'une longueur en mm.
+fn mm(v: &mut f64, lo: f64, hi: f64, speed: f64) -> egui::DragValue<'_> { egui::DragValue::new(v).range(lo..=hi).speed(speed).suffix(" mm") }
+
 fn cover_format(ui: &mut egui::Ui, c: &mut Cover) -> bool {
     let mut changed = false;
     egui::CollapsingHeader::new(tr("Format and printing")).default_open(true).show(ui, |ui| {
         egui::ComboBox::from_id_salt("jaquette_format").selected_text(tr("Choose a standard format…")).show_ui(ui, |ui| {
             for (k, f) in FORMATS.iter().enumerate() {
-                if ui.selectable_label(false, tr(f.0)).clicked() { c.set_format(k); changed = true; }
+                if ui.selectable_label(false, tr(f.name)).clicked() { c.set_format(k); changed = true; }
+            }
+        });
+        ui.horizontal(|ui| {
+            ui.label(tr("Case"));
+            for case in [CaseKind::Keepcase, CaseKind::Jewel] {
+                // changer de boitier reprend ses dimensions usuelles
+                if ui.selectable_label(c.case == case, case.label()).clicked() && c.case != case {
+                    c.set_format(if case == CaseKind::Jewel { JEWEL_FORMAT } else { 0 });
+                    changed = true;
+                }
             }
         });
         egui::Grid::new("jaquette_dims").num_columns(4).show(ui, |ui| {
-            ui.label(tr("Back / front")); changed |= ui.add(egui::DragValue::new(&mut c.face_mm).range(20.0..=400.0).speed(0.5).suffix(" mm")).changed();
-            ui.label(tr("Height")); changed |= ui.add(egui::DragValue::new(&mut c.height_mm).range(20.0..=400.0).speed(0.5).suffix(" mm")).changed();
-            ui.end_row();
-            ui.label(tr("Spine")); changed |= ui.add(egui::DragValue::new(&mut c.spine_mm).range(0.0..=100.0).speed(0.25).suffix(" mm")).changed();
+            if c.case == CaseKind::Jewel {
+                ui.label(tr("Booklet")); changed |= ui.add(mm(&mut c.face_mm, 20.0, 400.0, 0.5)).changed();
+                ui.label(tr("Booklet height")); changed |= ui.add(mm(&mut c.height_mm, 20.0, 400.0, 0.5)).changed();
+                ui.end_row();
+                ui.label(tr("Tray card back")); changed |= ui.add(mm(&mut c.tray_mm, 20.0, 400.0, 0.5)).changed();
+                ui.label(tr("Tray card height")); changed |= ui.add(mm(&mut c.tray_height_mm, 20.0, 400.0, 0.5)).changed();
+                ui.end_row();
+                ui.label(tr("Spines")); changed |= ui.add(mm(&mut c.spine_mm, 0.0, 100.0, 0.25)).changed();
+            } else {
+                ui.label(tr("Back / front")); changed |= ui.add(mm(&mut c.face_mm, 20.0, 400.0, 0.5)).changed();
+                ui.label(tr("Height")); changed |= ui.add(mm(&mut c.height_mm, 20.0, 400.0, 0.5)).changed();
+                ui.end_row();
+                ui.label(tr("Spine")); changed |= ui.add(mm(&mut c.spine_mm, 0.0, 100.0, 0.25)).changed();
+            }
             ui.label(tr("Bleed")); changed |= ui.add(egui::DragValue::new(&mut c.bleed_mm).range(0.0..=20.0).speed(0.25).suffix(" mm")).changed();
             ui.end_row();
             ui.label(tr("Resolution")); changed |= ui.add(egui::DragValue::new(&mut c.dpi).range(72..=600).speed(5.0).suffix(" dpi")).changed();
@@ -228,11 +251,15 @@ fn cover_format(ui: &mut egui::Ui, c: &mut Cover) -> bool {
         });
         let (sw, sh) = c.sheet_mm();
         ui.label(egui::RichText::new(trf!("Sheet with bleed: {} × {} mm ({} × {} px at {} dpi)", format!("{:.1}", sw), format!("{:.1}", sh), (sw / 25.4 * c.dpi as f64).round(), (sh / 25.4 * c.dpi as f64).round(), c.dpi)).weak());
+        if c.case == CaseKind::Jewel {
+            ui.label(egui::RichText::new(trf!("Tray card: {} mm wide in all (back and two spines).", format!("{:.1}", c.tray_width_mm()))).weak());
+        }
         changed |= ui.checkbox(&mut c.marks, tr("Crop and fold marks (page enlarged by 10 mm on each side)")).changed();
     });
     egui::CollapsingHeader::new(tr("Background")).default_open(true).show(ui, |ui| {
         ui.horizontal(|ui| {
-            for (i, name) in [tr("Back"), tr("Spine"), tr("Front")].into_iter().enumerate() {
+            let names = if c.case == CaseKind::Jewel { [tr("Tray card back"), tr("Spines"), tr("Booklet")] } else { [tr("Back"), tr("Spine"), tr("Front")] };
+            for (i, name) in names.into_iter().enumerate() {
                 ui.label(name);
                 changed |= ui.color_edit_button_srgb(&mut c.colors[i]).changed();
             }
@@ -519,7 +546,11 @@ impl App {
         }
         if self.cover_page == 0 {
             ui.heading(tr("Cover"));
-            crate::help(ui, tr("Unfolded sheet of the case: back on the left, spine in the middle, front on the right. All measurements are in millimeters, from the top-left corner of the trimmed cover (so the bleed has negative values)."));
+            crate::help(ui, if self.model.cover.case == CaseKind::Jewel {
+                tr("Jewel case: two pieces to cut out on the same sheet, the booklet (under the lid) at the top and the tray card (under the disc tray, folded at its two spines) at the bottom. All measurements are in millimeters, from the top-left corner of the trimmed sheet (so the bleed has negative values).")
+            } else {
+                tr("Unfolded sheet of the case: back on the left, spine in the middle, front on the right. All measurements are in millimeters, from the top-left corner of the trimmed cover (so the bleed has negative values).")
+            });
             changed |= cover_format(ui, &mut self.model.cover);
         } else {
             ui.heading(tr("Disc label"));
@@ -1257,9 +1288,9 @@ impl App {
             ui.label(tr("Place on"));
             for (name, z) in &zones {
                 if ui.button(zone_label(*name)).clicked() {
-                    let m = match *name { "la tranche" => 1.0, "le disque" => 0.0, "le haut" | "le bas" => 2.0, _ => 8.0 };
+                    let m = match *name { "la tranche" | "la tranche gauche" | "la tranche droite" => 1.0, "le disque" => 0.0, "le haut" | "le bas" => 2.0, _ => 8.0 };
                     (it.x, it.y, it.w, it.h) = (z.0 + m, z.1 + m, (z.2 - 2.0 * m).max(1.0), (z.3 - 2.0 * m).max(1.0));
-                    if *name == "la tranche" && !is_table { it.rot = 90; }
+                    if matches!(*name, "la tranche" | "la tranche gauche" | "la tranche droite") && !is_table { it.rot = 90; }
                     changed = true;
                 }
             }
@@ -1845,6 +1876,9 @@ fn zone_label(name: &'static str) -> &'static str {
     match name {
         "le dos" => tr("the back"),
         "la tranche" => tr("the spine"),
+        "la tranche gauche" => tr("the left spine"),
+        "la tranche droite" => tr("the right spine"),
+        "le livret" => tr("the booklet"),
         "la face" => tr("the front"),
         "le disque" => tr("the disc"),
         "le haut" => tr("the top"),
