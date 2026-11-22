@@ -1113,7 +1113,7 @@ impl App {
                         painter.line_segment([a, z], Stroke::new(4.0_f32, Color32::from_black_alpha(150)));
                         painter.line_segment([a, z], Stroke::new(1.5_f32, Color32::WHITE));
                     } else if selected {
-                        painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 28));
+                        if self.cfg.page_veil { painter.rect_filled(r, 0.0, Color32::from_rgba_unmultiplied(255, 255, 255, 28)); }
                         painter.rect_stroke(r, 0.0, Stroke::new(2.5_f32, Color32::WHITE));
                     } else {
                         painter.rect_stroke(r, 0.0, Stroke::new(1.0_f32, col));

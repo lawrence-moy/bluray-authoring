@@ -1557,5 +1557,8 @@
   "Home, M": "Origine, M",
   "Enter, Space": "Entrée, Espace",
   "Ctrl+Shift+F12": "Ctrl+Maj+F12",
-  "Ctrl+Y, Ctrl+Shift+Z": "Ctrl+Y, Ctrl+Maj+Z"
+  "Ctrl+Y, Ctrl+Shift+Z": "Ctrl+Y, Ctrl+Maj+Z",
+  "Page editor": "Éditeur de page",
+  "Show a veil over the selected widget": "Afficher un voile sur le widget sélectionné",
+  "On: the selected widget is covered with a light veil, in addition to its frame. Off: only the frame is shown, so the widget stays fully visible.": "Activé : le widget sélectionné est recouvert d'un voile clair, en plus de son cadre. Désactivé : seul le cadre est affiché, le widget reste entièrement visible."
 }

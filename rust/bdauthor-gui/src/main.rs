@@ -77,6 +77,8 @@ struct Config {
     /// apparence : theme (« system », « dark », « light ») et taille de l'interface (1 = 100 %)
     theme: String,
     ui_scale: f32,
+    /// editeur de page : voile clair sur l'element selectionne (desactive par defaut)
+    page_veil: bool,
     /// projets recents (le plus recent d'abord)
     recent: Vec<String>,
 }
@@ -212,7 +214,7 @@ impl Config {
         Some(base.join("bdauthor").join("config.txt"))
     }
     fn load() -> Config {
-        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), fonts_dir: String::new(), log_ffmpeg: false, video_encoder: "x264".to_string(), hw_detection: String::new(), theme: "system".to_string(), ui_scale: 1.0, recent: Vec::new() };
+        let mut c = Config { adaptive_preview: true, ffmpeg_path: String::new(), autosave: true, autosave_min: 2, lang: "fr".to_string(), cover_bg: COVER_BG, cover_guide: COVER_GUIDE, cache_dir: String::new(), fonts_dir: String::new(), log_ffmpeg: false, video_encoder: "x264".to_string(), hw_detection: String::new(), theme: "system".to_string(), ui_scale: 1.0, page_veil: false, recent: Vec::new() };
         if let Some(t) = Config::path().and_then(|p| std::fs::read_to_string(p).ok()) {
             for l in t.lines() {
                 match l.split_once('=') {
@@ -221,6 +223,7 @@ impl Config {
                     Some(("cache_dir", v)) => c.cache_dir = v.trim().to_string(),
                     Some(("fonts_dir", v)) => c.fonts_dir = v.trim().to_string(),
                     Some(("autosave", v)) => c.autosave = v.trim() != "false",
+                    Some(("page_veil", v)) => c.page_veil = v.trim() == "true",
                     Some(("log_ffmpeg", v)) => c.log_ffmpeg = v.trim() == "true",
                     Some(("video_encoder", v)) => c.video_encoder = v.trim().to_string(),
                     Some(("hw_detection", v)) => c.hw_detection = v.trim().to_string(),
@@ -250,7 +253,7 @@ impl Config {
             let mut t = format!("adaptive_preview={}\nffmpeg_path={}\nautosave={}\nautosave_min={}\nlang={}\ncover_bg={}\ncover_guide={}\n", self.adaptive_preview, self.ffmpeg_path, self.autosave, self.autosave_min, self.lang, rgba_text(self.cover_bg), rgba_text(self.cover_guide));
             t.push_str(&format!("cache_dir={}\nfonts_dir={}\nlog_ffmpeg={}\n", self.cache_dir, self.fonts_dir, self.log_ffmpeg));
             t.push_str(&format!("video_encoder={}\nhw_detection={}\n", self.video_encoder, self.hw_detection));
-            t.push_str(&format!("theme={}\nui_scale={}\n", self.theme, self.ui_scale));
+            t.push_str(&format!("theme={}\nui_scale={}\npage_veil={}\n", self.theme, self.ui_scale, self.page_veil));
             for r in &self.recent { t.push_str(&format!("recent={}\n", r)); }
             let _ = std::fs::write(p, t);
         }
@@ -275,6 +278,8 @@ struct App {
     render_ms: f32,
     cfg: Config,
     show_config: bool,
+    /// onglet des reglages (0 : general, 1 : editeur de page)
+    config_tab: u8,
     /// fenetre « Projet » (onglets General, Style des boutons, Langues)
     show_project: bool,
     /// onglet affiche de la fenetre Projet : 0 General, 1 Style des boutons, 2 Langues
@@ -442,7 +447,7 @@ struct App {
 impl Default for App {
     fn default() -> Self {
         App {
-            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_grid: false, cover_grid_mm: 5.0, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_shortcuts: false, show_build: false, show_coherence: false, coherence_filter: None, coherence_sel: None, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, cover_frame_request: None, cover_text_edit: None, cover_frames: Default::default(), thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, snap_px: 10, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
+            mode: Mode::Projet, cur: None, history: History::default(), t0: std::time::Instant::now(), last_preview: std::time::Instant::now(), render_ms: 0.0, cfg: Config::load(), show_config: false, config_tab: 0, show_project: false, project_tab: 0, preview_sel: None, preview_act: false, preview_pulse: 0, preview_nstep: 0, anim_preview: false, anim_key: (None, false, false, false), anim_t0: std::time::Instant::now(), sim: None, sel_item: None, extra_sel: Vec::new(), clipboard: Vec::new(), clip_from: None, clip_cut: false, cover_sel: None, cover_extra: Vec::new(), cover_marquee: None, cover_clip: Vec::new(), cover_paste_n: 0, cover_snap: true, cover_grid: false, cover_grid_mm: 5.0, cover_safe: false, autosave_t: std::time::Instant::now(), autosave_ok: None, restore_offer: None, confirm_remove: None, confirm_quit: false, quit_ok: false, show_about: false, show_shortcuts: false, show_build: false, show_coherence: false, coherence_filter: None, coherence_sel: None, ffmpeg_detail: None, build_t0: None, recovery_checked: false, sub_preview: None, audio_preview: None, chapter_editor: None, chapter_request: None, frame_picker: None, frame_request: None, cover_frame_request: None, cover_text_edit: None, cover_frames: Default::default(), thumb_request: None, frames: HashMap::new(), cover_tex: None, cover_gen: 1, cover_seen: 0, cover_page: 0, cover_layer: 0, cover_zoom: 1.0, cover_pan: egui::Vec2::ZERO, cover_panning: false, cover_inch: false, cover_png_trim: false, cover_tex_dpi: 0, cover_closed: HashSet::new(), cover_layer_edit: None, cover_hist: None, cover_drag: None, cover_export_rx: None, cover_vars_seen: Default::default(), view_zoom: 1.0, view_pan: egui::Vec2::ZERO, view_page: None, view_panning: false, paste_n: 0, marquee: None, active_layer: 0, layer_edit: None, page_edit: None, tree_pages: HashMap::new(), tree_layers_closed: HashSet::new(), drag: None, snap: true, snap_px: 10, guide_snap: true, edit_gen: 1, preview_gen: 0, preview_tex: None, base_cache: None,
             durations: HashMap::new(), probe_failed: HashSet::new(), video_sizes: HashMap::new(), sub_probes: HashMap::new(), audio_probes: HashMap::new(), thumbs: HashMap::new(), requested: HashSet::new(), worker: None, renderer: FontRenderer::new(),
             model: ProjectModel::default(), path: None, dirty: false, sel: None, log: vec![], progress: 0.0, rx: None, cancel: Arc::new(AtomicBool::new(false)), result: None, notice: String::new(), built_iso: None, burn_msg: None, applied_look: None }
     }
@@ -884,6 +889,17 @@ impl eframe::App for App {
         // une fenetre systeme existe tant qu'on l'appelle : seulement quand elle est ouverte
         if open { os_window(ctx, "configuration", tr("Settings"), [640.0, 480.0], &mut open, &mut |ui| {
             let before = self.cfg.clone();
+            ui.horizontal(|ui| {
+                ui.selectable_value(&mut self.config_tab, 0, tr("General"));
+                ui.selectable_value(&mut self.config_tab, 1, tr("Page editor"));
+            });
+            ui.separator();
+            if self.config_tab == 1 {
+                ui.checkbox(&mut self.cfg.page_veil, tr("Show a veil over the selected widget"));
+                crate::help(ui, tr("On: the selected widget is covered with a light veil, in addition to its frame. Off: only the frame is shown, so the widget stays fully visible."));
+                if self.cfg != before { self.cfg.save(); }
+                return;
+            }
             // apparence : theme et taille (appliques des le choix)
             ui.horizontal(|ui| {
                 ui.label(tr("Theme:"));
