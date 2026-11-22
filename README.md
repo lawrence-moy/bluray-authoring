@@ -1,4 +1,4 @@
-# bdauthor
+# Blu-ray Authoring
 
 **Create real Blu-ray discs with menus (HDMV) from your videos, using a graphical editor and no other authoring software.**
 

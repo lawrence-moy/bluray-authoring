@@ -3,7 +3,7 @@
 use crate::i18n::{tr, trf};
 use crate::App;
 use bdauthor_core::barcode::{self, BarcodeKind};
-use bdauthor_core::cover::{CaseKind, InfoField, InfoTable, LineArrow, LineStyle, ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS, JEWEL_FORMAT};
+use bdauthor_core::cover::{CaseKind, InfoField, InfoTable, LineArrow, LineStyle, ShapeKind, VAlign, layer_state, layers_or_default, normalize_layers, Cover, CoverItem, CoverKind, CoverLayer, DiscLabel, SheetDoc, FIELDS, FORMATS};
 use bdauthor_core::design::Align;
 use bdauthor_core::editor::ItemAlign;
 use eframe::egui::{self, pos2, vec2, Color32, CursorIcon, Key, Rect, Sense, Stroke};
@@ -274,16 +274,6 @@ fn cover_format(ui: &mut egui::Ui, c: &mut Cover) -> bool {
         egui::ComboBox::from_id_salt("jaquette_format").selected_text(tr("Choose a standard format…")).show_ui(ui, |ui| {
             for (k, f) in FORMATS.iter().enumerate() {
                 if ui.selectable_label(false, tr(f.name)).clicked() { c.set_format(k); changed = true; }
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.label(tr("Case"));
-            for case in [CaseKind::Keepcase, CaseKind::Jewel] {
-                // changer de boitier reprend ses dimensions usuelles
-                if ui.selectable_label(c.case == case, case.label()).clicked() && c.case != case {
-                    c.set_format(if case == CaseKind::Jewel { JEWEL_FORMAT } else { 0 });
-                    changed = true;
-                }
             }
         });
         egui::Grid::new("jaquette_dims").num_columns(4).show(ui, |ui| {
