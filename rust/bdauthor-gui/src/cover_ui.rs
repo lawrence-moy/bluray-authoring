@@ -13,6 +13,28 @@ use std::sync::mpsc::{channel, Receiver, Sender, TryRecvError};
 
 /// Resolution (dpi) de l'apercu a l'ecran.
 const PREVIEW_DPI: u32 = 96;
+
+/// Rendu de la zone visible a fort zoom dans un thread a part (l'interface ne gele pas) : seule la demande la plus recente est traitee.
+struct SheetJob { key: (u64, u32, Option<(i32, i32, i32, i32)>), layout: bdauthor_core::cover::CoverLayout, ctx: egui::Context }
+struct SheetDone { key: (u64, u32, Option<(i32, i32, i32, i32)>), img: Option<(bdauthor_core::palette::RgbaImage, (i32, i32))> }
+struct SheetWorker { tx: std::sync::Mutex<std::sync::mpsc::Sender<SheetJob>>, rx: std::sync::Mutex<std::sync::mpsc::Receiver<SheetDone>>, last: std::sync::Mutex<Option<(u64, u32, Option<(i32, i32, i32, i32)>)>> }
+fn sheet_worker() -> &'static SheetWorker {
+    static W: std::sync::OnceLock<SheetWorker> = std::sync::OnceLock::new();
+    W.get_or_init(|| {
+        let (tx, jobs) = std::sync::mpsc::channel::<SheetJob>();
+        let (done_tx, rx) = std::sync::mpsc::channel::<SheetDone>();
+        std::thread::spawn(move || {
+            let renderer = bdauthor_render::FontRenderer::new().ok();
+            while let Ok(mut job) = jobs.recv() {
+                while let Ok(newer) = jobs.try_recv() { job = newer; }
+                let img = renderer.as_ref().and_then(|r| r.render_layout_region(job.layout, job.key.1, job.key.2).ok());
+                let _ = done_tx.send(SheetDone { key: job.key, img });
+                job.ctx.request_repaint();
+            }
+        });
+        SheetWorker { tx: std::sync::Mutex::new(tx), rx: std::sync::Mutex::new(rx), last: std::sync::Mutex::new(None) }
+    })
+}
 /// Taille minimale d'un element (mm) et rayon (pixels) de saisie d'une poignee.
 const MIN_MM: f64 = 2.0;
 /// taille des icones des listes (comme l'editeur de menu)
@@ -1531,26 +1553,101 @@ impl App {
         let rect = Rect::from_center_size(viewport.center() + self.cover_pan, vec2(sw as f32 * k, sh as f32 * k));
         // finesse de l'apercu selon le zoom : 96, 144 ou 192 dpi
         let need = k * ctx.pixels_per_point() * 25.4;
-        let want_dpi = if need <= 110.0 { PREVIEW_DPI } else if need <= 165.0 { 144 } else { 192 };
-        if self.cover_gen != self.cover_seen || self.cover_tex.is_none() || self.cover_tex_dpi != want_dpi {
+        // paliers de resolution ; le plus petit suffisant (a 15 % pres). Jusqu'a 192 dpi la feuille entiere est rendue ; au-dela,
+        // seule la zone visible (avec une marge pour le deplacement de la vue) l'est, ce qui garde la nettete a tous les zooms
+        let want_dpi = [PREVIEW_DPI, 144, 192, 288, 384, 576, 768, 1152, 1536, 2304, 3072].into_iter()
+            .find(|&d| d as f32 * 1.15 >= need)
+            .unwrap_or(3072);
+        let region_mode = want_dpi > 192;
+        // zone visible de la feuille (mm, fond perdu compris)
+        let vis = viewport.intersect(rect);
+        let vmm = if vis.is_positive() { Some(((vis.min - rect.min) / k, (vis.max - rect.min) / k)) } else { None };
+        // texture actuelle : (dpi, x, y, largeur, hauteur) en pixels de la feuille a ce dpi ; largeur 0 = feuille entiere
+        let tex_id = egui::Id::new("cover_tex_region");
+        let cur: Option<(u32, i32, i32, i32, i32)> = ctx.data(|d| d.get_temp(tex_id));
+        let covers = |c: &(u32, i32, i32, i32, i32)| {
+            if !region_mode { return c.3 == 0; }
+            let Some((a, z)) = vmm else { return true };
+            let f = 25.4 / c.0 as f32;
+            c.3 > 0 && c.0 == want_dpi && a.x >= c.1 as f32 * f && a.y >= c.2 as f32 * f && z.x <= (c.1 + c.3) as f32 * f && z.y <= (c.2 + c.4) as f32 * f
+        };
+        // pendant un zoom : on garde l'ancienne texture (agrandie) et on ne re-rend au bon palier qu'une fois le zoom arrete
+        let zoom_wait = {
+            let id = egui::Id::new("cover_zoom_moved");
+            let now = ctx.input(|i| i.time);
+            let (z0, t0) = ctx.data(|d| d.get_temp::<(f32, f64)>(id)).unwrap_or((self.cover_zoom, f64::NEG_INFINITY));
+            let t = if (z0 - self.cover_zoom).abs() > 1e-6 { now } else { t0 };
+            ctx.data_mut(|d| d.insert_temp(id, (self.cover_zoom, t)));
+            let left = 0.15 - (now - t);
+            let wait = left > 0.0 && self.cover_gen == self.cover_seen && self.cover_tex.is_some();
+            if wait && (self.cover_tex_dpi != want_dpi || !cur.as_ref().is_some_and(covers)) { ctx.request_repaint_after(std::time::Duration::from_secs_f64(left + 0.01)); }
+            wait
+        };
+        // resultat du thread de rendu (zone visible a fort zoom) : texture, resolution et zone a jour
+        let worker = sheet_worker();
+        let mut done = None;
+        while let Ok(d) = worker.rx.lock().unwrap().try_recv() { done = Some(d); }
+        if let Some(d) = done {
+            let ok = d.img.is_some();
+            if let Some((img, (ox, oy))) = d.img {
+                let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data);
+                match &mut self.cover_tex {
+                    Some(t) => t.set(ci, egui::TextureOptions::LINEAR),
+                    None => self.cover_tex = Some(ctx.load_texture("jaquette", ci, egui::TextureOptions::LINEAR)),
+                }
+                ctx.data_mut(|dd| dd.insert_temp(tex_id, (d.key.1, ox, oy, img.width as i32, img.height as i32)));
+                self.cover_seen = d.key.0;
+                self.cover_tex_dpi = d.key.1;
+            }
+            // demande terminee ; en cas d'echec elle reste notee pour ne pas etre relancee en boucle
+            let mut last = worker.last.lock().unwrap();
+            if ok && *last == Some(d.key) { *last = None; }
+        }
+        let cur: Option<(u32, i32, i32, i32, i32)> = ctx.data(|d| d.get_temp(tex_id));
+        let stale = self.cover_gen != self.cover_seen || self.cover_tex.is_none() || self.cover_tex_dpi != want_dpi || !cur.as_ref().is_some_and(covers);
+        if !zoom_wait && stale {
             let base = self.base_dir();
             if let Ok(r) = &self.renderer {
-                if let Ok(img) = r.render_sheet(&*doc, want_dpi, &base, &vars) {
+                if region_mode {
+                    // demande au thread (la mise en page, quasi instantanee, est calculee ici) sauf si elle est deja en cours
+                    let want = vmm.map(|(a, z)| {
+                        // marge de 35 % de la zone visible de chaque cote
+                        let (mx, my) = ((z.x - a.x) * 0.35, (z.y - a.y) * 0.35);
+                        let f = want_dpi as f32 / 25.4;
+                        let (x0, y0) = (((a.x - mx) * f).floor() as i32, ((a.y - my) * f).floor() as i32);
+                        (x0, y0, (((z.x + mx) * f).ceil() as i32 - x0), (((z.y + my) * f).ceil() as i32 - y0))
+                    });
+                    let key = (self.cover_gen, want_dpi, want);
+                    let mut last = worker.last.lock().unwrap();
+                    if *last != Some(key) {
+                        let layout = doc.layout_with(want_dpi, &base, &vars);
+                        if worker.tx.lock().unwrap().send(SheetJob { key, layout, ctx: ctx.clone() }).is_ok() { *last = Some(key); }
+                    }
+                } else if let Ok((img, _)) = r.render_sheet_region(&*doc, want_dpi, &base, &vars, None) {
                     let ci = egui::ColorImage::from_rgba_unmultiplied([img.width as usize, img.height as usize], &img.data);
                     match &mut self.cover_tex {
                         Some(t) => t.set(ci, egui::TextureOptions::LINEAR),
                         None => self.cover_tex = Some(ctx.load_texture("jaquette", ci, egui::TextureOptions::LINEAR)),
                     }
+                    ctx.data_mut(|d| d.insert_temp(tex_id, (want_dpi, 0, 0, 0, 0)));
+                    self.cover_seen = self.cover_gen;
+                    self.cover_tex_dpi = want_dpi;
                 }
             }
-            self.cover_seen = self.cover_gen;
-            self.cover_tex_dpi = want_dpi;
+            if !region_mode { self.cover_seen = self.cover_gen; self.cover_tex_dpi = want_dpi; }
         }
         let painter = full_painter.with_clip_rect(viewport);
         let bg = self.cfg.cover_bg;
         painter.rect_filled(viewport, 0.0, Color32::from_rgba_unmultiplied(bg[0], bg[1], bg[2], bg[3]));
+        let tex_rect = match ctx.data(|d| d.get_temp::<(u32, i32, i32, i32, i32)>(tex_id)) {
+            Some((d, x, y, w, h)) if w > 0 => {
+                let f = 25.4 / d as f32 * k;
+                Rect::from_min_size(rect.min + vec2(x as f32 * f, y as f32 * f), vec2(w as f32 * f, h as f32 * f))
+            }
+            _ => rect,
+        };
         match &self.cover_tex {
-            Some(t) => painter.image(t.id(), rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE),
+            Some(t) => painter.image(t.id(), tex_rect, Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)), Color32::WHITE),
             None => painter.rect_filled(rect, 0.0, Color32::from_gray(30)),
         };
         let origin = rect.min;

@@ -223,3 +223,41 @@ fn cover_text_span_size_enlarges_its_line_only() {
     c2.items[0] = plain;
     assert!(lit(&img) > lit(&r.render_sheet(&c2, 100, base, &vars).unwrap()));
 }
+
+#[test]
+fn sheet_region_matches_the_same_part_of_the_whole_sheet() {
+    use bdauthor_core::cover::{Cover, CoverItem};
+    let Ok(r) = FontRenderer::new() else { return };
+    let mut c = Cover::default();
+    c.items.push(CoverItem::text("Titre", 20.0, 30.0, 120.0, 40.0, 40.0));
+    let base = std::path::Path::new(".");
+    let full = r.render_sheet(&c, 150, base, &Default::default()).unwrap();
+    let (reg, (ox, oy)) = r.render_sheet_region(&c, 150, base, &Default::default(), Some((200, 300, 500, 300))).unwrap();
+    assert_eq!((ox, oy), (200, 300));
+    for y in 0..reg.height {
+        for x in 0..reg.width {
+            let (a, b) = (reg.pixel(x, y), full.pixel(x + ox as u32, y + oy as u32));
+            // tolere un ecart d'arrondi de 1 niveau de couleur (degrade du fond)
+            assert!((0..4).all(|k| a[k].abs_diff(b[k]) <= 1), "pixel ({x},{y}) : {a:?} / {b:?}");
+        }
+    }
+}
+
+#[test]
+#[ignore]
+fn profile_sheet_region() {
+    use bdauthor_core::cover::{Cover, CoverItem};
+    let Ok(r) = FontRenderer::new() else { println!("pas de police"); return };
+    let mut c = Cover::default();
+    for k in 0..8 { c.items.push(CoverItem::text("Titre de la jaquette, texte assez long", 10.0 + k as f64 * 3.0, 20.0 + k as f64 * 20.0, 140.0, 18.0, 14.0)); }
+    let base = std::path::Path::new(".");
+    let t = std::time::Instant::now();
+    r.render_sheet(&c, 192, base, &Default::default()).unwrap();
+    println!("feuille entiere 192 dpi : {:?}", t.elapsed());
+    for dpi in [288u32, 576, 1152, 2304] {
+        let (w, h) = ((8.0 * dpi as f64) as i32, (5.0 * dpi as f64) as i32);
+        let t = std::time::Instant::now();
+        r.render_sheet_region(&c, dpi, base, &Default::default(), Some((dpi as i32, dpi as i32, w, h))).unwrap();
+        println!("zone {w}x{h} a {dpi} dpi : {:?}", t.elapsed());
+    }
+}

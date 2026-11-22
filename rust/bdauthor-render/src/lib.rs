@@ -646,13 +646,89 @@ impl FontRenderer {
     /// elements dans leur ordre ; `vars` remplit les champs automatiques des textes.
     /// Un element tourne est dessine a plat sur le morceau correspondant, tourne dans l'autre sens, puis remis en place.
     pub fn render_sheet(&self, doc: &dyn bdauthor_core::cover::SheetDoc, dpi: u32, project_dir: &Path, vars: &std::collections::BTreeMap<String, String>) -> Result<RgbaImage> {
-        use bdauthor_core::cover::{crop, rotate_quarters};
+        Ok(self.render_sheet_region(doc, dpi, project_dir, vars, None)?.0)
+    }
+
+    /// Comme `render_sheet`, mais seulement la zone `region` (x, y, largeur, hauteur en pixels a `dpi`) si elle est donnee.
+    /// Renvoie l'image et son origine (x, y) dans la feuille : la zone reellement rendue est bornee a la feuille et agrandie pour
+    /// contenir en entier les elements tournes qui la touchent (ils sont dessines sur un morceau de l'image).
+    pub fn render_sheet_region(&self, doc: &dyn bdauthor_core::cover::SheetDoc, dpi: u32, project_dir: &Path, vars: &std::collections::BTreeMap<String, String>, region: Option<(i32, i32, i32, i32)>) -> Result<(RgbaImage, (i32, i32))> {
+        let prof = std::env::var_os("BDAUTHOR_PROFILE").map(|_| std::time::Instant::now());
         let lay = doc.layout_with(dpi, project_dir, vars);
-        let mut im = lay.background();
+        let t_layout = prof.map(|t| t.elapsed());
+        let r = self.render_layout_region(lay, dpi, region)?;
+        if let Some(tl) = t_layout { eprintln!("[profil] mise en page {:.1} ms", tl.as_secs_f64() * 1e3); }
+        Ok(r)
+    }
+
+    /// Comme `render_sheet_region` a partir d'une mise en page deja calculee (`layout_with`) : permet de dessiner dans un autre thread.
+    pub fn render_layout_region(&self, mut lay: bdauthor_core::cover::CoverLayout, dpi: u32, region: Option<(i32, i32, i32, i32)>) -> Result<(RgbaImage, (i32, i32))> {
+        use bdauthor_core::cover::{crop, rotate_quarters};
+        let prof = std::env::var_os("BDAUTHOR_PROFILE").map(|_| std::time::Instant::now());
+        let t_layout = prof.map(|t| t.elapsed());
+        let (sw, sh) = (lay.size.0 as i32, lay.size.1 as i32);
+        let (mut x0, mut y0, mut x1, mut y1) = match region {
+            Some((x, y, w, h)) => (x.clamp(0, sw), y.clamp(0, sh), (x + w).clamp(0, sw), (y + h).clamp(0, sh)),
+            None => (0, 0, sw, sh),
+        };
+        let partial = (x0, y0, x1, y1) != (0, 0, sw, sh);
+        if partial {
+            // les elements tournes qui touchent la zone sont inclus en entier
+            loop {
+                let mut grew = false;
+                for (d, rot) in &lay.items {
+                    if *rot == 0 { continue; }
+                    let (x, y, w, h) = d.rect();
+                    let (ix0, iy0, ix1, iy1) = (x.max(0), y.max(0), (x + w).min(sw), (y + h).min(sh));
+                    if ix0 < x1 && ix1 > x0 && iy0 < y1 && iy1 > y0 && (ix0 < x0 || iy0 < y0 || ix1 > x1 || iy1 > y1) {
+                        (x0, y0, x1, y1) = (x0.min(ix0), y0.min(iy0), x1.max(ix1), y1.max(iy1));
+                        grew = true;
+                    }
+                }
+                if !grew { break; }
+            }
+        }
+        let (ox, oy) = (x0, y0);
+        let t_pre = prof.map(|t| t.elapsed());
+        let (rw, rh) = ((x1 - x0).max(0) as u32, (y1 - y0).max(0) as u32);
+        let mut im = if partial {
+            let mut im = RgbaImage::new(rw, rh);
+            for ((x, y, w, h), c) in &lay.fills {
+                for yy in (*y).max(y0)..(*y + *h).min(y1) {
+                    for xx in (*x).max(x0)..(*x + *w).min(x1) { im.set((xx - ox) as u32, (yy - oy) as u32, [c[0], c[1], c[2], 255]); }
+                }
+            }
+            im
+        } else { lay.background() };
         if let Some(p) = &lay.bg_image {
             let src = self.cached_image(p)?;
-            let bg = self.cached_sprite(hkey(|hh| ("sheet_bg", Arc::as_ptr(&src) as usize, lay.size).hash(hh)), || cover_resize(&src, lay.size.0, lay.size.1));
-            blit(&mut im, &bg, 0, 0, 1.0);
+            if !partial {
+                let bg = self.cached_sprite(hkey(|hh| ("sheet_bg", Arc::as_ptr(&src) as usize, lay.size).hash(hh)), || cover_resize(&src, lay.size.0, lay.size.1));
+                blit(&mut im, &bg, 0, 0, 1.0);
+            } else if rw > 0 && rh > 0 {
+                // seule la partie de l'image source qui couvre la zone est redimensionnee (memes echelle et centrage que `cover_resize`)
+                let sc = (sw as f64 / src.width as f64).max(sh as f64 / src.height as f64);
+                let (nw, nh) = (((src.width as f64 * sc).round() as i32).max(sw), ((src.height as f64 * sc).round() as i32).max(sh));
+                let (cx, cy) = ((nw - sw) / 2, (nh - sh) / 2);
+                let sx0 = (((x0 + cx) as f64 / sc).floor() as i32 - 2).clamp(0, src.width as i32);
+                let sy0 = (((y0 + cy) as f64 / sc).floor() as i32 - 2).clamp(0, src.height as i32);
+                let sx1 = (((x1 + cx) as f64 / sc).ceil() as i32 + 2).clamp(0, src.width as i32);
+                let sy1 = (((y1 + cy) as f64 / sc).ceil() as i32 + 2).clamp(0, src.height as i32);
+                if sx1 > sx0 && sy1 > sy0 {
+                    let piece = crop(&src, sx0, sy0, sx1 - sx0, sy1 - sy0);
+                    let (pw, ph) = ((((sx1 - sx0) as f64 * sc).round() as u32).max(1), (((sy1 - sy0) as f64 * sc).round() as u32).max(1));
+                    let rs = resize(&piece, pw, ph);
+                    blit(&mut im, &rs, (sx0 as f64 * sc).round() as i32 - cx - ox, (sy0 as f64 * sc).round() as i32 - cy - oy, 1.0);
+                }
+            }
+        }
+        if partial {
+            // coordonnees relatives a la zone ; les elements hors zone sont ignores (sauf tournes, deja inclus)
+            lay.items = lay.items.into_iter().filter_map(|(d, rot)| {
+                let (x, y, w, h) = d.rect();
+                if x + w <= x0 || x >= x1 || y + h <= y0 || y >= y1 { return None; }
+                Some((d.with_rect(x - ox, y - oy, w, h), rot))
+            }).collect();
         }
         for (d, rot) in lay.items {
             // image introuvable : l'element est ignore (l'apercu reste affiche)
@@ -674,7 +750,10 @@ impl FontRenderer {
             let done = self.draw_cover_decor(flat, &d.with_rect(0, 0, fw, fh))?;
             blit(&mut im, &rotate_quarters(&done, q), x.max(0), y.max(0), 1.0);
         }
-        Ok(im)
+        if let (Some(t), Some(tl), Some(tp)) = (prof, t_layout, t_pre) {
+            eprintln!("[profil] feuille {dpi} dpi region {:?} -> {}x{} px : mise en page {:.1} ms, zone {:.1} ms, fond+elements {:.1} ms, total {:.1} ms", region, im.width, im.height, tl.as_secs_f64() * 1e3, (tp - tl).as_secs_f64() * 1e3, (t.elapsed() - tp).as_secs_f64() * 1e3, t.elapsed().as_secs_f64() * 1e3);
+        }
+        Ok((im, (ox, oy)))
     }
 
     /// Un element de jaquette (texte avec effets, image ou forme) pose sur `im`.
