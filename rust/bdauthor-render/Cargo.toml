@@ -1,6 +1,6 @@
 [package]
 name = "bdauthor-render"
-version = "0.1.4"
+version = "0.1.5"
 edition = "2021"
 description = "Rendu des boutons de menu (texte, PNG) pour bdauthor-core : bibliotheques `image` et `ab_glyph`"
 

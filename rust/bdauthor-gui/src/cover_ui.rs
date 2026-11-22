@@ -1511,8 +1511,11 @@ impl App {
         let full = resp.rect;
         let viewport = Rect::from_min_max(full.min + vec2(RULER_W, RULER_H), full.max);
         // deplacement (clic molette, clic droit maintenu ou Espace + bouton gauche) et zoom a la molette, centre sur le curseur
-        let panning = (resp.hovered() || self.cover_panning) && !ctx.wants_keyboard_input()
-            && ctx.input(|i| i.pointer.middle_down() || i.pointer.secondary_down() || (i.key_down(Key::Space) && i.pointer.primary_down()));
+        // en edition du texte sur la feuille, la feuille a le focus clavier : seuls les boutons de la souris deplacent la vue
+        let sheet_focus = self.cover_text_edit.is_some() && ctx.memory(|m| m.has_focus(resp.id));
+        let panning = (resp.hovered() || self.cover_panning)
+            && ((!ctx.wants_keyboard_input() && ctx.input(|i| i.key_down(Key::Space) && i.pointer.primary_down()))
+                || ((!ctx.wants_keyboard_input() || sheet_focus) && ctx.input(|i| i.pointer.middle_down() || i.pointer.secondary_down())));
         let skip_input = panning || self.cover_panning;
         self.cover_panning = panning;
         if panning {
