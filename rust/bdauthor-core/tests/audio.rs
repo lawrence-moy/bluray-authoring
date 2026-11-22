@@ -7,7 +7,7 @@ use bdauthor_core::subtitle::Language;
 fn langs(codes: &[&str]) -> Vec<Language> {
     codes.iter().enumerate().map(|(i, c)| Language { id: i as u32 + 1, name: c.to_uppercase(), code: c.to_string() }).collect()
 }
-fn tr(id: u32) -> AudioTrackCfg { AudioTrackCfg { source: AudioSource::Embedded(id), lang_id: id, lang: "und".into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: Default::default() } }
+fn tr(id: u32) -> AudioTrackCfg { AudioTrackCfg { source: AudioSource::Embedded(id), lang_id: id, lang: "und".into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: Default::default(), gain_db: 0.0 } }
 
 #[test]
 fn plan_orders_tracks_by_language() {
@@ -78,4 +78,33 @@ impl AudioForTest for ProjectModel {
         let back = ProjectModel::from_json(&self.to_json()).unwrap();
         back.videos[0].audio.clone()
     }
+}
+
+#[test]
+fn track_level_is_saved_validated_and_sent_to_ffmpeg() {
+    use bdauthor_core::audio::{AudioFormat, AudioTrackCfg};
+    use bdauthor_core::ffmpeg::audio_codec_args;
+    let mut t = AudioTrackCfg::embedded(0, "fra");
+    // 0 dB : rien n'est ecrit et la ligne de commande reste celle d'avant
+    assert!(t.to_value().get("gain_db").is_none());
+    assert!(!audio_codec_args("448k", &[t.clone()]).iter().any(|a| a.contains("volume")));
+    t.gain_db = -3.5;
+    let back = AudioTrackCfg::from_value(&t.to_value()).unwrap();
+    assert_eq!(back.gain_db, -3.5);
+    let args = audio_codec_args("448k", &[t.clone()]);
+    let k = args.iter().position(|a| a == "-filter:a:0").expect("filtre de la piste");
+    assert_eq!(args[k + 1], "volume=-3.50dB");
+    // LPCM stereo : le mixage des canaux vient avant le niveau
+    t.format = AudioFormat::Lpcm16;
+    t.lpcm_channels = bdauthor_core::audio::LpcmChannels::Stereo;
+    let args = audio_codec_args("448k", &[t.clone()]);
+    let k = args.iter().position(|a| a == "-filter:a:0").unwrap();
+    assert!(args[k + 1].starts_with("aresample=") && args[k + 1].ends_with(",volume=-3.50dB"), "{}", args[k + 1]);
+    // piste recopiee : pas de filtre possible, signale
+    t.format = AudioFormat::Ac3Copy;
+    assert!(!t.problems().is_empty());
+    assert!(t.gain_filter().is_none());
+    t.format = AudioFormat::Ac3;
+    t.gain_db = 40.0;
+    assert!(!t.problems().is_empty());
 }

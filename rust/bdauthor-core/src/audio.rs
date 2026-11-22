@@ -87,6 +87,8 @@ impl AudioFormat {
             AudioFormat::Lpcm16 => "LPCM 16 bits", AudioFormat::Lpcm24 => "LPCM 24 bits",
         }
     }
+    /// Piste recopiee telle quelle (aucun filtre possible).
+    pub fn is_copy(self) -> bool { matches!(self, AudioFormat::Ac3Copy | AudioFormat::DtsCopy) }
     pub fn is_lpcm(self) -> bool { matches!(self, AudioFormat::Lpcm16 | AudioFormat::Lpcm24) }
     /// AC-3 encode par le programme (le debit est alors un reglage de la piste).
     pub fn is_encoded_ac3(self) -> bool { matches!(self, AudioFormat::Ac3 | AudioFormat::Ac3Surround) }
@@ -133,7 +135,12 @@ pub struct AudioTrackCfg {
     pub sample_rate: u32,
     /// Canaux du LPCM (plafond) ; sans effet sur les autres formats.
     pub lpcm_channels: LpcmChannels,
+    /// Niveau sonore de la piste (dB, 0 : inchange) ; sans effet sur les pistes recopiees telles quelles.
+    pub gain_db: f64,
 }
+
+/// Reglage du niveau sonore d'une piste (dB).
+pub const GAIN_RANGE_DB: std::ops::RangeInclusive<f64> = -30.0..=20.0;
 
 /// Frequences LPCM proposees (Hz). Le Blu-ray accepte aussi 192 kHz, au plus en 5.1.
 pub const LPCM_RATES: [u32; 2] = [48_000, 96_000];
@@ -143,10 +150,15 @@ pub const MAX_AUDIO_TRACKS: usize = 8;
 
 impl AudioTrackCfg {
     pub fn embedded(index: u32, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source }
+        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source, gain_db: 0.0 }
     }
     pub fn from_file(path: &str, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source }
+        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source, gain_db: 0.0 }
+    }
+
+    /// Filtre ffmpeg du niveau sonore (`None` : piste inchangee).
+    pub fn gain_filter(&self) -> Option<String> {
+        (self.gain_db != 0.0 && !self.format.is_copy()).then(|| format!("volume={:.2}dB", self.gain_db))
     }
 
     /// Canaux sur le disque d'une piste LPCM dont la source a `src` canaux.
@@ -184,6 +196,7 @@ impl AudioTrackCfg {
             },
             bitrate: v.get("bitrate_kbps").and_then(Value::as_f64).map_or(0, |x| x.round().max(0.0) as u32),
             lpcm_channels: v.get("lpcm_channels").and_then(Value::as_str).and_then(LpcmChannels::from_name).unwrap_or_default(),
+            gain_db: v.get("gain_db").and_then(Value::as_f64).filter(|x| x.is_finite()).map_or(0.0, |x| (x * 100.0).round() / 100.0),
             sample_rate: v.get("sample_rate_hz").and_then(Value::as_f64).map_or(0, |x| if x.round() as u32 == 48_000 { 0 } else { x.round().max(0.0) as u32 }),
         })
     }
@@ -197,6 +210,7 @@ impl AudioTrackCfg {
         if self.lang_id != 0 { o.push(("language_id".into(), Value::Num(self.lang_id as f64))); }
         if self.offset_ms != 0 { o.push(("offset_ms".into(), Value::Num(self.offset_ms as f64))); }
         if self.format != AudioFormat::Ac3 { o.push(("format".into(), Value::Str(self.format.name().into()))); }
+        if self.gain_db != 0.0 { o.push(("gain_db".into(), Value::Num(self.gain_db))); }
         if self.bitrate != 0 { o.push(("bitrate_kbps".into(), Value::Num(self.bitrate as f64))); }
         if self.sample_rate != 0 { o.push(("sample_rate_hz".into(), Value::Num(self.sample_rate as f64))); }
         if self.lpcm_channels != LpcmChannels::Source { o.push(("lpcm_channels".into(), Value::Str(self.lpcm_channels.name().into()))); }
@@ -221,6 +235,11 @@ impl AudioTrackCfg {
         }
         if self.sample_rate != 0 && (self.sample_rate != 96_000 || !self.format.is_lpcm()) {
             p.push(tr("sample rate: 96 kHz is only available for LPCM").to_string());
+        }
+        if !GAIN_RANGE_DB.contains(&self.gain_db) {
+            p.push(trf!("audio level: between {} and {} dB expected", GAIN_RANGE_DB.start(), GAIN_RANGE_DB.end()));
+        } else if self.gain_db != 0.0 && self.format.is_copy() {
+            p.push(tr("audio level: not available for a track copied as it is (choose another format)").to_string());
         }
         p
     }

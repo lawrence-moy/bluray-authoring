@@ -638,7 +638,7 @@ fn encode_args_full(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tr
 /// (`pcm_bluray` : 16 bits ou 24 bits, canaux de la source, 48 ou 96 kHz). Sans piste LPCM, les memes options qu'avant pour toutes.
 pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -> Vec<String> {
     let st = |x: &str| x.to_string();
-    if tracks.iter().all(|t| t.format == crate::audio::AudioFormat::Ac3 && t.bitrate == 0) {
+    if tracks.iter().all(|t| t.format == crate::audio::AudioFormat::Ac3 && t.bitrate == 0 && t.gain_db == 0.0) {
         return vec![st("-c:a"), st("ac3"), st("-b:a"), bitrate.to_string(), st("-ar"), st("48000"), st("-ac"), st("2")];
     }
     let mut a = vec![st("-ar"), st("48000")];
@@ -653,7 +653,10 @@ pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -
         }
         if t.rate() != 48_000 { a.extend([format!("-ar:a:{k}"), t.rate().to_string()]); }
         // LPCM : mixage vers moins de canaux (seulement si la source en a plus, voir `project`)
-        if let Some(f) = t.lpcm_channels.filter().filter(|_| t.format.is_lpcm()) { a.extend([format!("-filter:a:{k}"), st(f)]); }
+        // filtres de la piste : mixage des canaux (LPCM) puis niveau sonore
+        let mut filters: Vec<String> = t.lpcm_channels.filter().filter(|_| t.format.is_lpcm()).map(st).into_iter().collect();
+        filters.extend(t.gain_filter());
+        if !filters.is_empty() { a.extend([format!("-filter:a:{k}"), filters.join(",")]); }
     }
     a
 }

@@ -638,6 +638,7 @@ fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) ->
         if t.bitrate != 0 { s.push_str(&format!("~{}", t.bitrate)); }
         if t.lpcm_channels != crate::audio::LpcmChannels::Source { s.push_str(&format!("%{}", t.lpcm_channels.name())); }
         if t.rate() != 48_000 { s.push_str(&format!("^{}", t.rate())); }
+        if t.gain_db != 0.0 { s.push_str(&format!("*{:.2}", t.gain_db)); }
     }
     for l in langs { s.push_str(&String::from_utf8_lossy(l)); s.push(','); }
     s

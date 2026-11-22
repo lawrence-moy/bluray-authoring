@@ -97,6 +97,15 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     ui.label(tr("Offset +/- (ms):"));
                     changed |= ui.add(egui::DragValue::new(&mut t.offset_ms).speed(10.0).range(-600_000..=600_000).suffix(" ms")).changed();
                 });
+                // niveau sonore : sans effet sur une piste recopiee telle quelle
+                ui.add_enabled_ui(!t.format.is_copy(), |ui| {
+                    ui.horizontal(|ui| {
+                        ui.label(tr("Level (dB):"));
+                        changed |= ui.add(egui::DragValue::new(&mut t.gain_db).speed(0.1).range(bdauthor_core::audio::GAIN_RANGE_DB).fixed_decimals(1).suffix(" dB")).changed();
+                        if t.gain_db != 0.0 && ui.small_button(tr("Reset")).clicked() { t.gain_db = 0.0; changed = true; }
+                        crate::help(ui, tr("Raises (+) or lowers (−) the volume of this track in the disc. 0 dB leaves it unchanged. A strong boost can saturate loud passages. Not available for a track copied as it is."));
+                    });
+                });
                 ui.horizontal(|ui| {
                     ui.label(tr("Convert to format:"));
                     egui::ComboBox::from_id_salt("format_piste_audio").selected_text(tr(t.format.label())).show_ui(ui, |ui| {
