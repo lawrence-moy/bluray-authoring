@@ -318,7 +318,7 @@ fn cover_format(ui: &mut egui::Ui, c: &mut Cover) -> bool {
             let names = if c.case == CaseKind::Jewel { [tr("Tray card back"), tr("Spines"), tr("Booklet")] } else { [tr("Back"), tr("Spine"), tr("Front")] };
             for (i, name) in names.into_iter().enumerate() {
                 ui.label(name);
-                changed |= ui.color_edit_button_srgb(&mut c.colors[i]).changed();
+                changed |= crate::color_button(ui, &mut c.colors[i]).changed();
             }
         });
         changed |= crate::file_row(ui, tr("Background image:"), &mut c.bg_image, tr("(none: colors above)"), tr("Images"), &IMG_EXT);
@@ -345,7 +345,7 @@ fn label_format(ui: &mut egui::Ui, l: &mut DiscLabel) -> bool {
     egui::CollapsingHeader::new(tr("Background")).default_open(true).show(ui, |ui| {
         ui.horizontal(|ui| {
             ui.label(tr("Color"));
-            changed |= ui.color_edit_button_srgb(&mut l.color).changed();
+            changed |= crate::color_button(ui, &mut l.color).changed();
         });
         changed |= crate::file_row(ui, tr("Background image:"), &mut l.bg_image, tr("(none: color above)"), tr("Images"), &IMG_EXT);
     });
@@ -1029,7 +1029,7 @@ impl App {
                     ui.label(tr("Size"));
                     changed |= ui.add(egui::DragValue::new(size_pt).range(4.0..=400.0).speed(0.5).suffix(" pt")).changed();
                     ui.label(tr("Color"));
-                    changed |= ui.color_edit_button_srgb(color).changed();
+                    changed |= crate::color_button(ui, color).changed();
                     egui::ComboBox::from_id_salt("jaquette_align").selected_text(align.name()).show_ui(ui, |ui| {
                         for a in [Align::Left, Align::Center, Align::Right] {
                             if ui.selectable_label(*align == a, a.name()).clicked() { *align = a; changed = true; }
@@ -1066,10 +1066,10 @@ impl App {
                 ui.horizontal(|ui| {
                     ui.label(tr("Outline"));
                     changed |= ui.add(egui::DragValue::new(&mut fx.outline_mm).range(0.0..=5.0).speed(0.05).suffix(" mm")).changed();
-                    changed |= ui.color_edit_button_srgb(&mut fx.outline_color).changed();
+                    changed |= crate::color_button(ui, &mut fx.outline_color).changed();
                     ui.label(tr("Shadow"));
                     changed |= ui.add(egui::DragValue::new(&mut fx.shadow_mm).range(0.0..=5.0).speed(0.05).suffix(" mm")).changed();
-                    changed |= ui.color_edit_button_srgb(&mut fx.shadow_color).changed();
+                    changed |= crate::color_button(ui, &mut fx.shadow_color).changed();
                 });
                 // fond du cadre (sous le texte)
                 ui.horizontal(|ui| {
@@ -1079,7 +1079,7 @@ impl App {
                         changed = true;
                     }
                     if let Some(c) = fx.bg.as_mut() {
-                        changed |= ui.color_edit_button_srgb(c).changed();
+                        changed |= crate::color_button(ui, c).changed();
                         ui.label(tr("Opacity"));
                         changed |= ui.add(egui::DragValue::new(&mut fx.bg_opacity).range(0..=100).speed(1).suffix(" %"))
                             .on_hover_text(tr("100 %: opaque; lower, what is under the text (photo, colour) shows through the background.")).changed();
@@ -1187,7 +1187,7 @@ impl App {
                     ui.label(tr("Size"));
                     changed |= ui.add(egui::DragValue::new(&mut t.size_pt).range(3.0..=72.0).speed(0.2).suffix(" pt")).changed();
                     ui.label(tr("Color"));
-                    changed |= ui.color_edit_button_srgb(&mut t.color).changed();
+                    changed |= crate::color_button(ui, &mut t.color).changed();
                     egui::ComboBox::from_id_salt("jaquette_tableau_align").selected_text(t.align.name()).show_ui(ui, |ui| {
                         for a in [Align::Left, Align::Center, Align::Right] {
                             if ui.selectable_label(t.align == a, a.name()).clicked() { t.align = a; changed = true; }
@@ -1196,22 +1196,22 @@ impl App {
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("Headings"));
-                    changed |= ui.color_edit_button_srgb(&mut t.header_color).changed();
+                    changed |= crate::color_button(ui, &mut t.header_color).changed();
                     changed |= ui.toggle_value(&mut t.header_bold, egui::RichText::new(tr("Bold")).strong()).changed();
                     let mut on = t.header_fill.is_some();
                     if ui.checkbox(&mut on, tr("Background")).changed() { t.header_fill = if on { Some([40, 40, 40]) } else { None }; changed = true; }
-                    if let Some(c) = &mut t.header_fill { changed |= ui.color_edit_button_srgb(c).changed(); }
+                    if let Some(c) = &mut t.header_fill { changed |= crate::color_button(ui, c).changed(); }
                 });
                 ui.horizontal(|ui| {
                     let mut on = t.fill.is_some();
                     if ui.checkbox(&mut on, tr("Cells background")).on_hover_text(tr("Background of the cells other than the headings")).changed() { t.fill = if on { Some([20, 20, 20]) } else { None }; changed = true; }
-                    if let Some(c) = &mut t.fill { changed |= ui.color_edit_button_srgb(c).changed(); }
+                    if let Some(c) = &mut t.fill { changed |= crate::color_button(ui, c).changed(); }
                 });
                 ui.horizontal(|ui| {
                     let mut on = t.grid.is_some();
                     if ui.checkbox(&mut on, tr("Grid")).changed() { t.grid = if on { Some(t.color) } else { None }; changed = true; }
                     if let Some(c) = &mut t.grid {
-                        changed |= ui.color_edit_button_srgb(c).changed();
+                        changed |= crate::color_button(ui, c).changed();
                         changed |= ui.add(egui::DragValue::new(&mut t.grid_mm).range(0.05..=2.0).speed(0.01).suffix(" mm")).changed();
                     }
                 });
@@ -1255,10 +1255,10 @@ impl App {
                 }
                 ui.horizontal(|ui| {
                     ui.label(tr("Color"));
-                    changed |= ui.color_edit_button_srgb(&mut c.color).changed();
+                    changed |= crate::color_button(ui, &mut c.color).changed();
                     let mut on = c.background.is_some();
                     if ui.checkbox(&mut on, tr("Background")).on_hover_text(tr("Background of the code, quiet zones included (white by default: dark bars on a dark cover cannot be read)")).changed() { c.background = if on { Some([255, 255, 255]) } else { None }; changed = true; }
-                    if let Some(bg) = &mut c.background { changed |= ui.color_edit_button_srgb(bg).changed(); }
+                    if let Some(bg) = &mut c.background { changed |= crate::color_button(ui, bg).changed(); }
                 });
                 ui.horizontal(|ui| {
                     changed |= ui.checkbox(&mut c.show_text, tr("Readable text")).on_hover_text(tr("Digits (or characters) printed under the bars")).changed();
@@ -1316,7 +1316,7 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(tr("Color"));
                         let mut col = stroke.or(*fill).unwrap_or([255, 255, 255]);
-                        if ui.color_edit_button_srgb(&mut col).changed() { *stroke = Some(col); *fill = None; changed = true; }
+                        if crate::color_button(ui, &mut col).changed() { *stroke = Some(col); *fill = None; changed = true; }
                         ui.label(tr("Thickness"));
                         changed |= ui.add(egui::DragValue::new(stroke_mm).range(0.1..=50.0).speed(0.05).suffix(" mm")).changed();
                     });
@@ -1324,13 +1324,13 @@ impl App {
                     ui.horizontal(|ui| {
                         let mut on = fill.is_some();
                         if ui.checkbox(&mut on, tr("Fill")).changed() { *fill = if on { Some([255, 255, 255]) } else { None }; changed = true; }
-                        if let Some(c) = fill { changed |= ui.color_edit_button_srgb(c).changed(); }
+                        if let Some(c) = fill { changed |= crate::color_button(ui, c).changed(); }
                     });
                     ui.horizontal(|ui| {
                         let mut on = stroke.is_some();
                         if ui.checkbox(&mut on, tr("Border")).changed() { *stroke = if on { Some([0, 0, 0]) } else { None }; changed = true; }
                         if let Some(c) = stroke {
-                            changed |= ui.color_edit_button_srgb(c).changed();
+                            changed |= crate::color_button(ui, c).changed();
                             changed |= ui.add(egui::DragValue::new(stroke_mm).range(0.1..=50.0).speed(0.05).suffix(" mm")).changed();
                         }
                     });
@@ -1500,9 +1500,9 @@ impl App {
             // couleurs de l'editeur (gardees dans la configuration) : fond autour de la feuille, reperes des bords et des plis
             let mut cfg_changed = false;
             ui.label(tr("Background:"));
-            cfg_changed |= ui.color_edit_button_srgba_unmultiplied(&mut self.cfg.cover_bg).on_hover_text(tr("Color around the sheet in the editor (not printed)")).changed();
+            cfg_changed |= crate::color_button_alpha(ui, &mut self.cfg.cover_bg).on_hover_text(tr("Color around the sheet in the editor (not printed)")).changed();
             ui.label(tr("Guides:"));
-            cfg_changed |= ui.color_edit_button_srgba_unmultiplied(&mut self.cfg.cover_guide).on_hover_text(tr("Color of the trim and fold lines between back, spine and front (not printed)")).changed();
+            cfg_changed |= crate::color_button_alpha(ui, &mut self.cfg.cover_guide).on_hover_text(tr("Color of the trim and fold lines between back, spine and front (not printed)")).changed();
             if ui.small_button(tr("Default colors")).clicked() { self.cfg.cover_bg = crate::COVER_BG; self.cfg.cover_guide = crate::COVER_GUIDE; cfg_changed = true; }
             if cfg_changed { self.cfg.save(); }
             crate::help(ui, tr("Wheel: zoom · wheel click, right button held (or Space + drag): pan the view"));
@@ -2271,7 +2271,7 @@ fn selection_tools(ui: &mut egui::Ui, text: &str, fx: &mut bdauthor_core::cover:
             click = true;
         }
         let mut c = bdauthor_core::rich::common(&fx.spans, n, r.clone()).and_then(|s| s.color).unwrap_or(color);
-        if ui.color_edit_button_srgb(&mut c).on_hover_text(tr("Colour of the selected part of the text")).changed() {
+        if crate::color_button(ui, &mut c).on_hover_text(tr("Colour of the selected part of the text")).changed() {
             fx.spans = bdauthor_core::rich::apply(&fx.spans, n, r.clone(), |s| s.color = (c != color).then_some(c));
             restyled = true;
         }

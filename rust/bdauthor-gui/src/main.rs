@@ -181,6 +181,102 @@ pub(crate) fn help(ui: &mut egui::Ui, text: &str) {
     });
 }
 
+/// Couleur lue dans un texte : `#RGB`, `#RRGGBB`, `#RRGGBBAA` (le `#` est facultatif) ou `r, g, b[, a]` / `rgb(r, g, b)`.
+fn parse_color_text(t: &str) -> Option<[u8; 4]> {
+    let t = t.trim().trim_start_matches("rgba(").trim_start_matches("rgb(").trim_end_matches(')').trim();
+    if t.contains(',') || t.contains(' ') {
+        let n: Vec<u8> = t.split(|c: char| c == ',' || c.is_whitespace()).filter(|x| !x.is_empty()).map(|x| x.parse().ok()).collect::<Option<_>>()?;
+        return match n.len() { 3 => Some([n[0], n[1], n[2], 255]), 4 => Some([n[0], n[1], n[2], n[3]]), _ => None };
+    }
+    let h = t.trim_start_matches('#');
+    if !h.is_ascii() || !h.chars().all(|c| c.is_ascii_hexdigit()) { return None; }
+    let v = |i: usize, n: usize| u8::from_str_radix(&h[i..i + n], 16).ok();
+    match h.len() {
+        3 => Some([v(0, 1)? * 17, v(1, 1)? * 17, v(2, 1)? * 17, 255]),
+        6 => Some([v(0, 2)?, v(2, 2)?, v(4, 2)?, 255]),
+        8 => Some([v(0, 2)?, v(2, 2)?, v(4, 2)?, v(6, 2)?]),
+        _ => None,
+    }
+}
+
+/// Menu du clic droit d'un selecteur de couleur : copier la couleur (`#RRGGBB`) ou coller une couleur copiee (texte du presse-papiers).
+/// Rend la nouvelle valeur si une couleur a ete collee.
+fn color_copy_paste(resp: &egui::Response, cur: [u8; 4], alpha: bool) -> Option<[u8; 4]> {
+    let mut pasted = None;
+    resp.context_menu(|ui| {
+        if ui.button(tr("Copy the colour")).clicked() {
+            let t = if alpha { format!("#{:02X}{:02X}{:02X}{:02X}", cur[0], cur[1], cur[2], cur[3]) } else { format!("#{:02X}{:02X}{:02X}", cur[0], cur[1], cur[2]) };
+            ui.ctx().copy_text(t.clone());
+            if let Ok(mut cb) = arboard::Clipboard::new() { let _ = cb.set_text(t); }
+            ui.close_menu();
+        }
+        let clip = arboard::Clipboard::new().ok().and_then(|mut cb| cb.get_text().ok()).and_then(|t| parse_color_text(&t));
+        if ui.add_enabled(clip.is_some(), egui::Button::new(tr("Paste the colour"))).on_disabled_hover_text(tr("The clipboard holds no colour (#RRGGBB, #RGB or r, g, b)")).clicked() {
+            pasted = clip;
+            ui.close_menu();
+        }
+    });
+    pasted
+}
+
+/// Selecteur de couleur (sans transparence) : un carre de couleur qui ouvre la palette, avec un champ texte `#RRGGBB` (a taper, copier
+/// ou coller) et « Copier / Coller la couleur » au clic droit.
+pub(crate) fn color_button(ui: &mut egui::Ui, c: &mut [u8; 3]) -> egui::Response {
+    let mut rgba = [c[0], c[1], c[2], 255];
+    let resp = color_picker_button(ui, &mut rgba, false);
+    *c = [rgba[0], rgba[1], rgba[2]];
+    resp
+}
+
+/// Comme `color_button`, avec transparence (`#RRGGBBAA`).
+pub(crate) fn color_button_alpha(ui: &mut egui::Ui, c: &mut [u8; 4]) -> egui::Response {
+    color_picker_button(ui, c, true)
+}
+
+fn hex_text(c: [u8; 4], alpha: bool) -> String {
+    if alpha { format!("#{:02X}{:02X}{:02X}{:02X}", c[0], c[1], c[2], c[3]) } else { format!("#{:02X}{:02X}{:02X}", c[0], c[1], c[2]) }
+}
+
+fn color_picker_button(ui: &mut egui::Ui, c: &mut [u8; 4], alpha: bool) -> egui::Response {
+    use egui::color_picker::{color_picker_hsva_2d, show_color, Alpha};
+    let before = *c;
+    let size = ui.spacing().interact_size;
+    let shown = show_color(ui, egui::Color32::from_rgba_unmultiplied(c[0], c[1], c[2], c[3]), size);
+    // show_color ne reagit qu'au survol : le clic est ajoute ici
+    let mut resp = ui.interact(shown.rect, shown.id.with("click"), egui::Sense::click()).on_hover_cursor(egui::CursorIcon::PointingHand);
+    let id = resp.id.with("color_popup");
+    if resp.clicked() { ui.memory_mut(|m| m.toggle_popup(id)); }
+    if let Some(p) = color_copy_paste(&resp, *c, alpha) { *c = p; }
+    egui::popup::popup_below_widget(ui, id, &resp, egui::popup::PopupCloseBehavior::CloseOnClickOutside, |ui| {
+        ui.spacing_mut().slider_width = 210.0;
+        // teinte / saturation / valeur gardees d'une image a l'autre (un gris ne perd pas sa teinte)
+        let hkey = id.with("hsva");
+        let mut hsva = ui.data(|d| d.get_temp::<egui::epaint::Hsva>(hkey)).filter(|h| h.to_srgba_unmultiplied() == *c)
+            .unwrap_or_else(|| egui::epaint::Hsva::from_srgba_unmultiplied(*c));
+        if color_picker_hsva_2d(ui, &mut hsva, if alpha { Alpha::OnlyBlend } else { Alpha::Opaque }) {
+            *c = hsva.to_srgba_unmultiplied();
+        }
+        ui.data_mut(|d| d.insert_temp(hkey, hsva));
+        // valeur en texte : on la tape, la copie ou la colle ; elle suit la palette tant qu'on n'y ecrit pas
+        let tkey = id.with("hex");
+        let mut text = ui.data(|d| d.get_temp::<String>(tkey)).unwrap_or_else(|| hex_text(*c, alpha));
+        ui.horizontal(|ui| {
+            ui.label(tr("Value:"));
+            let te = ui.add(egui::TextEdit::singleline(&mut text).desired_width(if alpha { 90.0 } else { 74.0 }).font(egui::TextStyle::Monospace));
+            if te.changed() {
+                if let Some(p) = parse_color_text(&text) { *c = if alpha { p } else { [p[0], p[1], p[2], 255] }; }
+            }
+            if !te.has_focus() { text = hex_text(*c, alpha); }
+            if te.lost_focus() { text = hex_text(*c, alpha); }
+            let valid = parse_color_text(&text).is_some();
+            if !valid { ui.colored_label(egui::Color32::from_rgb(220, 90, 90), tr("invalid")); }
+        });
+        ui.data_mut(|d| d.insert_temp(tkey, text));
+    });
+    if *c != before { resp.mark_changed(); }
+    resp
+}
+
 /// Petit bouton « supprimer » dessine (une croix) : le glyphe ✕ n'est pas dans la police par defaut.
 /// Bouton carre de la meme taille que `delete_button`, avec un symbole (ex. rechargement).
 pub(crate) fn symbol_button(ui: &mut egui::Ui, symbol: &str, tip: &str) -> bool {
@@ -1253,8 +1349,8 @@ impl eframe::App for App {
                 // annuler / retablir : modifications de la mise en page
                 ui.menu_button(tr("Edit"), |ui| {
                     let edit = !busy && self.mode == Mode::MiseEnPage;
-                    if ui.add_enabled(edit && self.history.can_undo(), egui::Button::new(tr("↶ Undo")).shortcut_text("Ctrl+Z")).clicked() { self.undo_action(); ui.close_menu(); }
-                    if ui.add_enabled(edit && self.history.can_redo(), egui::Button::new(tr("↷ Redo")).shortcut_text("Ctrl+Y")).clicked() { self.redo_action(); ui.close_menu(); }
+                    if ui.add_enabled(edit && self.history.can_undo(), egui::Button::new(tr("Undo")).shortcut_text("Ctrl+Z")).clicked() { self.undo_action(); ui.close_menu(); }
+                    if ui.add_enabled(edit && self.history.can_redo(), egui::Button::new(tr("Redo")).shortcut_text("Ctrl+Y")).clicked() { self.redo_action(); ui.close_menu(); }
                     if self.mode != Mode::MiseEnPage {
                         ui.label(egui::RichText::new(tr("Applies to the “Layout” tab")).weak());
                     }

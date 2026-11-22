@@ -213,13 +213,13 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, base: &Path, changed: &mut bool
         ui.label(tr("Size:"));
         *changed |= ui.add(egui::DragValue::new(&mut s.size).range(8..=400).suffix(" px")).changed();
         ui.label(tr("Color:"));
-        *changed |= ui.color_edit_button_srgb(&mut s.color).changed();
+        *changed |= crate::color_button(ui, &mut s.color).changed();
     });
     ui.horizontal(|ui| {
         ui.label(tr("Outline:"));
         *changed |= ui.add(egui::DragValue::new(&mut s.outline).range(0..=30).suffix(" px")).changed();
         ui.label(tr("Outline color:"));
-        *changed |= ui.color_edit_button_srgb(&mut s.outline_color).changed();
+        *changed |= crate::color_button(ui, &mut s.outline_color).changed();
     });
     ui.horizontal(|ui| {
         ui.label(tr("Position:"));
@@ -248,7 +248,7 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, base: &Path, changed: &mut bool
         ui.label(tr("Shadow:"));
         *changed |= ui.add(egui::DragValue::new(&mut s.shadow).range(0..=30).suffix(" px")).on_hover_text(tr("0: no shadow")).changed();
         ui.add_enabled_ui(s.shadow > 0, |ui| {
-            *changed |= ui.color_edit_button_srgb(&mut s.shadow_color).changed();
+            *changed |= crate::color_button(ui, &mut s.shadow_color).changed();
             ui.label(tr("Opacity:"));
             *changed |= ui.add(egui::DragValue::new(&mut s.shadow_opacity).range(0..=100).suffix(" %")).changed();
         });
@@ -257,7 +257,7 @@ fn style_ui(ui: &mut egui::Ui, s: &mut SubStyle, base: &Path, changed: &mut bool
         ui.label(tr("Box:"));
         *changed |= ui.add(egui::DragValue::new(&mut s.bg_opacity).range(0..=100).suffix(" %")).on_hover_text(tr("Opacity of the rectangle behind the text; 0: no box")).changed();
         ui.add_enabled_ui(s.bg_opacity > 0, |ui| {
-            *changed |= ui.color_edit_button_srgb(&mut s.bg_color).changed();
+            *changed |= crate::color_button(ui, &mut s.bg_color).changed();
             ui.label(tr("Margin:"));
             *changed |= ui.add(egui::DragValue::new(&mut s.bg_pad).range(0..=100).suffix(" px")).changed();
             ui.label(tr("Corners:"));

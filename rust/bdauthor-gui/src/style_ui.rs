@@ -34,17 +34,17 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &
     ui.label(egui::RichText::new(tr("Labels of the video thumbnails and text of the navigation buttons. Clickable texts keep their own font.")).small().weak());
     ui.strong(tr("Unselected button"));
     egui::Grid::new(format!("{id}_normal")).num_columns(2).show(ui, |ui| {
-        ui.label(tr("Background")); ui.color_edit_button_srgb(&mut st.normal_bg); ui.end_row();
-        ui.label(tr("Text")); ui.color_edit_button_srgb(&mut st.normal_text); ui.end_row();
-        ui.label(tr("Frame")); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.normal_border); px(ui, &mut st.normal_border_w, 40); }); ui.end_row();
+        ui.label(tr("Background")); crate::color_button(ui, &mut st.normal_bg); ui.end_row();
+        ui.label(tr("Text")); crate::color_button(ui, &mut st.normal_text); ui.end_row();
+        ui.label(tr("Frame")); ui.horizontal(|ui| { crate::color_button(ui, &mut st.normal_border); px(ui, &mut st.normal_border_w, 40); }); ui.end_row();
         ui.label(tr("Darken")); pct(ui, &mut st.dim, 80); ui.end_row();
     });
     ui.strong(tr("Selected button"));
     egui::Grid::new(format!("{id}_sel")).num_columns(2).show(ui, |ui| {
-        ui.label(tr("Background")); ui.color_edit_button_srgb(&mut st.sel_bg); ui.end_row();
-        ui.label(tr("Text")); ui.color_edit_button_srgb(&mut st.sel_text); ui.end_row();
-        ui.label(tr("Frame")); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.sel_border); px(ui, &mut st.sel_border_w, 40); }); ui.end_row();
-        ui.label(tr("Glow")); ui.horizontal(|ui| { ui.color_edit_button_srgb(&mut st.glow_color); px(ui, &mut st.glow, 60); }); ui.end_row();
+        ui.label(tr("Background")); crate::color_button(ui, &mut st.sel_bg); ui.end_row();
+        ui.label(tr("Text")); crate::color_button(ui, &mut st.sel_text); ui.end_row();
+        ui.label(tr("Frame")); ui.horizontal(|ui| { crate::color_button(ui, &mut st.sel_border); px(ui, &mut st.sel_border_w, 40); }); ui.end_row();
+        ui.label(tr("Glow")); ui.horizontal(|ui| { crate::color_button(ui, &mut st.glow_color); px(ui, &mut st.glow, 60); }); ui.end_row();
         ui.label("");
         ui.add_enabled(st.glow > 0, egui::Checkbox::new(&mut st.glow_pulse, tr("Animated glow (pulse)")))
             .on_hover_text(trf!("The glow grows and shrinks in a loop while the button is selected ({} frames, about 8 per second). Increases the page weight. Visible in the simulation.", bdauthor_core::style::PULSE_FRAMES));
@@ -64,9 +64,9 @@ pub fn style_ui(ui: &mut egui::Ui, st: &mut ButtonStyle, id: &str, pick_sound: &
     ui.checkbox(&mut st.activated, tr("Distinct “activated” state (when OK is pressed)"));
     if st.activated {
         egui::Grid::new(format!("{id}_act")).num_columns(2).show(ui, |ui| {
-            ui.label(tr("Background")); ui.color_edit_button_srgb(&mut st.act_bg); ui.end_row();
-            ui.label(tr("Text")); ui.color_edit_button_srgb(&mut st.act_text); ui.end_row();
-            ui.label(tr("Frame")); ui.color_edit_button_srgb(&mut st.act_border); ui.end_row();
+            ui.label(tr("Background")); crate::color_button(ui, &mut st.act_bg); ui.end_row();
+            ui.label(tr("Text")); crate::color_button(ui, &mut st.act_text); ui.end_row();
+            ui.label(tr("Frame")); crate::color_button(ui, &mut st.act_border); ui.end_row();
         });
     }
     ui.strong(tr("Clickable texts and images (selected)"));

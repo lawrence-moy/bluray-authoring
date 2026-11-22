@@ -1635,7 +1635,7 @@ impl App {
                         ui.label(tr("Size:"));
                         changed |= ui.add(egui::DragValue::new(size).range(8..=400).suffix(" px")).changed();
                         ui.label(tr("Color:"));
-                        changed |= ui.color_edit_button_srgb(color).changed();
+                        changed |= crate::color_button(ui, color).changed();
                     });
                     let shown = if font.is_empty() { tr("Default font").to_string() } else {
                         bdauthor_render::font_choices().into_iter().find(|(_, f)| f.as_str() == font.as_str()).map(|(l, _)| l).unwrap_or_else(|| font.clone())
@@ -1668,7 +1668,7 @@ impl App {
                     ui.horizontal(|ui| {
                         ui.label(tr("Background:"));
                         // choisir une couleur rend le fond visible s'il etait transparent
-                        if ui.color_edit_button_srgb(&mut deco.bg_color).changed() { if deco.bg_opacity == 0 { deco.bg_opacity = 60; } changed = true; }
+                        if crate::color_button(ui, &mut deco.bg_color).changed() { if deco.bg_opacity == 0 { deco.bg_opacity = 60; } changed = true; }
                         ui.label(tr("Opacity:"));
                         changed |= ui.add(egui::DragValue::new(&mut deco.bg_opacity).range(0..=100).suffix(" %")).changed();
                         ui.label(tr("Corners:"));
@@ -1678,7 +1678,7 @@ impl App {
                         ui.label(tr("Text outline:"));
                         changed |= ui.add(egui::DragValue::new(&mut deco.outline).range(0..=30).suffix(" px")).changed();
                         ui.label(tr("Color:"));
-                        if ui.color_edit_button_srgb(&mut deco.outline_color).changed() { if deco.outline == 0 { deco.outline = 3; } changed = true; }
+                        if crate::color_button(ui, &mut deco.outline_color).changed() { if deco.outline == 0 { deco.outline = 3; } changed = true; }
                         crate::help(ui, tr("Background: covers the whole frame of the item; opacity 0 % = no background. Outline: thickness of the border drawn around the letters, 0 = none. Sizes given for a 1920 × 1080 menu."));
                     });
                 }
@@ -1717,7 +1717,7 @@ impl App {
                         let mut c = paint.line_color().unwrap_or([255, 255, 255]);
                         ui.horizontal(|ui| {
                             ui.label(tr("Color:"));
-                            if ui.color_edit_button_srgb(&mut c).changed() { paint.stroke = Some(c); paint.fill = None; changed = true; }
+                            if crate::color_button(ui, &mut c).changed() { paint.stroke = Some(c); paint.fill = None; changed = true; }
                             ui.label(tr("Thickness:"));
                             changed |= ui.add(egui::DragValue::new(&mut paint.stroke_px).range(1..=60).suffix(" px")).changed();
                         });
@@ -1736,12 +1736,12 @@ impl App {
                         let mut on = paint.fill.is_some();
                         ui.horizontal(|ui| {
                             if ui.checkbox(&mut on, tr("Fill")).changed() { paint.fill = if on { Some(paint.fill.unwrap_or([255, 255, 255])) } else { None }; changed = true; }
-                            if let Some(c) = &mut paint.fill { changed |= ui.color_edit_button_srgb(c).changed(); }
+                            if let Some(c) = &mut paint.fill { changed |= crate::color_button(ui, c).changed(); }
                         });
                         let mut on = paint.stroke.is_some();
                         ui.horizontal(|ui| {
                             if ui.checkbox(&mut on, tr("Border")).changed() { paint.stroke = if on { Some(paint.stroke.unwrap_or([0, 0, 0])) } else { None }; changed = true; }
-                            if let Some(c) = &mut paint.stroke { changed |= ui.color_edit_button_srgb(c).changed(); }
+                            if let Some(c) = &mut paint.stroke { changed |= crate::color_button(ui, c).changed(); }
                             if paint.stroke.is_some() { changed |= ui.add(egui::DragValue::new(&mut paint.stroke_px).range(1..=60).suffix(" px")).changed(); }
                         });
                         if *shape == ShapeKind::Rect {
