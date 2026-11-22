@@ -1,0 +1,19 @@
+#!/bin/sh
+# Incremente le numero de version (X.Y.Z -> X.Y.Z+1) a chaque commit.
+# Les trois crates et Cargo.lock restent synchronises ; la version
+# affichee dans l'interface vient de rust/bdauthor-gui/Cargo.toml.
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root/rust" || exit 0
+
+cur=$(sed -n 's/^version = "\([0-9]*\.[0-9]*\.[0-9]*\)"$/\1/p' bdauthor-gui/Cargo.toml | head -n1)
+[ -n "$cur" ] || { echo "pre-commit: version introuvable" >&2; exit 1; }
+major=${cur%%.*}; rest=${cur#*.}; minor=${rest%%.*}; patch=${rest#*.}
+new="$major.$minor.$((patch + 1))"
+
+for c in core gui render; do
+  sed -i "0,/^version = \"$cur\"\$/s//version = \"$new\"/" "bdauthor-$c/Cargo.toml"
+  git add "bdauthor-$c/Cargo.toml"
+done
+sed -i "/^name = \"bdauthor-\(core\|gui\|render\)\"\$/{n;s/^version = \"$cur\"\$/version = \"$new\"/}" Cargo.lock
+git add Cargo.lock
+echo "version $cur -> $new"
