@@ -121,7 +121,10 @@ struct SubRow(usize);
 /// Retourne vrai si quelque chose a change. `langs` : langues de sous-titres du projet (le rang d'une langue est son numero de piste).
 pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut Probes, base: &Path, preview: &mut Option<usize>, _auto_fps: Option<f64>) -> bool {
     let mut changed = false;
-    ui.label(tr("Subtitles (displayed by the player, selectable with the remote control):"));
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(tr("Subtitles")).strong().size(17.0));
+        crate::help(ui, tr("The project's language list is set in the menu “Edit > Project…”, tab “Subtitle languages”: each language keeps the same track number in all videos.\n\nFormats read: SRT, ASS/SSA, WebVTT, MicroDVD (23.976 fps unless a {1}{1}rate line says otherwise), SubViewer, SBV, SAMI; TTML, LRC, STL and others via ffmpeg.\n\nThe offset corrects a delay or an advance. Subtitles are drawn as images (Blu-ray PGS format); the remote control turns them on and chooses the track."));
+    });
     let mut del = None;
     let mut rows: Vec<egui::Rect> = Vec::new();
     for (k, t) in v.subs.iter_mut().enumerate() {
@@ -225,7 +228,6 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    crate::help(ui, tr("The project's language list is set in the menu “Edit > Project…”, tab “Subtitle languages”: each language keeps the same track number in all videos.\n\nFormats read: SRT, ASS/SSA, WebVTT, MicroDVD (23.976 fps unless a {1}{1}rate line says otherwise), SubViewer, SBV, SAMI; TTML, LRC, STL and others via ffmpeg.\n\nThe offset corrects a delay or an advance. Subtitles are drawn as images (Blu-ray PGS format); the remote control turns them on and chooses the track."));
     changed
 }
 

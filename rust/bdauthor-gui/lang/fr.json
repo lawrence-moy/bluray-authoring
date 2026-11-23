@@ -1,5 +1,6 @@
 {
   "_name": "Français",
+  "Audio tracks": "Pistes audio",
   "Audio tracks (selectable with the remote control):": "Pistes audio (au choix avec la télécommande) :",
   "No track chosen: the video's first audio track is used, in the default audio language (Edit > Project…).": "Aucune piste choisie : la première piste audio de la vidéo est utilisée, dans la langue audio par défaut (Édition > Projet…).",
   "embedded track no. {}": "piste intégrée n° {}",
@@ -241,10 +242,9 @@
   "Title in the menu:": "Titre dans le menu :",
   "Alternative thumbnail at time:": "Vignette alternative au timing :",
   "Unchecked: image taken automatically. Checked (or by changing the value): image taken at this moment of the video.": "Décochée : image prise automatiquement. Cochée (ou en modifiant la valeur) : image prise à cet instant de la vidéo.",
-  "Chapter marks: next / previous keys of the remote control, chapter thumbnails, start pages.": "Repères de chapitre : touches suivant / précédent de la télécommande, vignettes de chapitre, pages de départ.",
+  "Chapter marks: next / previous keys of the remote control, chapter thumbnails, start pages.\n\nA chapter thumbnail (page) can be linked to one of them, or create one.": "Repères de chapitre : touches suivant / précédent de la télécommande, vignettes de chapitre, pages de départ.\n\nUne vignette de chapitre (page) peut se lier à l'un d'eux, ou en créer un.",
   "This project uses old automatic marks.": "Ce projet utilise d'anciens repères automatiques.",
   "Remove them": "Les retirer",
-  "A chapter thumbnail (page) can be linked to one of them, or create one.": "Une vignette de chapitre (page) peut se lier à l'un d'eux, ou en créer un.",
   "Total duration of the video": "Durée totale de la vidéo",
   "name (optional)": "nom (facultatif)",
   "{} thumbnail{}": "{} vignette{}",

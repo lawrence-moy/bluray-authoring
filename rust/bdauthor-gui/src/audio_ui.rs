@@ -67,7 +67,10 @@ struct AudioRow(usize);
 /// Retourne vrai si quelque chose a change. `langs` : langues du projet (le rang d'une langue audio est son numero de piste).
 pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, probes: &mut AudioProbes, base: &Path, listen: &mut Option<usize>) -> bool {
     let mut changed = false;
-    ui.label(tr("Audio tracks (selectable with the remote control):"));
+    ui.horizontal(|ui| {
+        ui.label(egui::RichText::new(tr("Audio tracks")).strong().size(17.0));
+        crate::help(ui, tr("Each video has its own audio languages, in the order of this list (drag ☰ to change it: track 1 is at the top). A menu button “audio language” remembers the chosen language: each video then starts on its track in that language, or on its own track if it has none (“Play all” follows the tracks of the first video). Tracks are converted to stereo AC-3. The offset corrects an advance or a delay."));
+    });
     if v.audio.is_empty() {
         ui.label(egui::RichText::new(tr("No track chosen: the video's first audio track is used, in the default audio language (Edit > Project…).")).weak());
     }
@@ -297,7 +300,6 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
         }
         None => {}
     }
-    crate::help(ui, tr("Each video has its own audio languages, in the order of this list (drag ☰ to change it: track 1 is at the top). A menu button “audio language” remembers the chosen language: each video then starts on its track in that language, or on its own track if it has none (“Play all” follows the tracks of the first video). Tracks are converted to stereo AC-3. The offset corrects an advance or a delay."));
     changed
 }
 

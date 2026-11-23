@@ -1663,7 +1663,12 @@ impl eframe::App for App {
                             if let Some(t) = v.subs.get(k) { self.sub_preview = Some(subs_ui::SubPreview::new(vi, k, t, &file, &sub_base, auto_fps)); }
                         }
                         ui.separator();
-                        ui.label(tr("Chapters")).on_hover_text(tr("Chapter marks: next / previous keys of the remote control, chapter thumbnails, start pages."));
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new(tr("Chapters")).strong().size(17.0));
+                            crate::help(ui, tr("Chapter marks: next / previous keys of the remote control, chapter thumbnails, start pages.
+
+A chapter thumbnail (page) can be linked to one of them, or create one."));
+                        });
                         if v.auto_s.is_some() {
                             // ancienne option (repères automatiques) : plus proposée, mais un projet existant peut encore l'utiliser
                             ui.horizontal(|ui| {
@@ -1671,7 +1676,6 @@ impl eframe::App for App {
                                 if ui.small_button(tr("Remove them")).clicked() { v.auto_s = None; changed = true; }
                             });
                         }
-                        crate::help(ui, tr("A chapter thumbnail (page) can be linked to one of them, or create one."));
                         let mut del = None;
                         for (k, c) in v.chapters.iter_mut().enumerate() {
                             ui.horizontal(|ui| {
