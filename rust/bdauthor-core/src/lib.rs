@@ -47,5 +47,6 @@ pub mod reader;
 pub mod style;
 pub mod subtitle;
 pub mod timecode;
+pub mod truehd;
 pub mod tsclip;
 pub mod vmux;

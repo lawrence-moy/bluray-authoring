@@ -9,9 +9,13 @@
   et trames de 7,5 ms du LPCM 24 bits non confirmés), copie DTS / DTS-HD (PES 0xFD, extensions 0x71 / 0x72). L'AC-3 est
   écrit comme ffmpeg en mode m2ts : 0xFD + extension 0x71 (avant : flux privé 0xBD ; ffmpeg note que certains lecteurs exigent
   la forme étendue). LPCM et DTS simple restent en 0xBD.
-- **Copie TrueHD** : sur Blu-ray, une piste TrueHD doit embarquer un flux AC-3 dans le même PID (PES 0xFD extension 0x76 pour
-  l'AC-3, 0x72 pour le TrueHD). Les MKV n'ont presque jamais ce cœur : il faudra encoder un AC-3 640 kb/s à partir de la piste
-  et l'entrelacer avec les unités TrueHD recopiées (type 0x83).
+- **Copie TrueHD** : écrite (voir « Pistes TrueHD recopiées »), vérifiée avec ffmpeg (il lit le clip : TrueHD + cœur AC-3 dans
+  le PID 0x1100, décodage sans erreur) mais pas sur un lecteur de salon : découpage des unités en PES (un PES TrueHD par trame
+  AC-3, ≤ 60 000 octets), attributs du clip (ceux du cœur AC-3, fréquence 48 kHz même pour un TrueHD 96 kHz) et descripteur HDMV
+  à confirmer. Pas de test sur un vrai TrueHD de disque (fixture d'encodeur ffmpeg).
+  À faire : graver un BD-RE avec une vraie piste TrueHD (5.1 et 7.1, 48 et 96 kHz) et la jouer sur le lecteur de salon ; ouvrir un
+  clip TrueHD de disque du commerce pour comparer le découpage des PES et les attributs du clip. `cargo build --release` du
+  22/11 n'a pas pu remplacer `bdauthor.exe` (application ouverte) : à refaire application fermée (tests Rust verts).
 - **E-AC-3 (Dolby Digital Plus)** en piste principale : non conforme sans cœur AC-3 indépendant, absent des sources courantes
   (streaming). Rester sur Dolby Digital 5.1 ou LPCM.
 - **Décodage par la carte graphique** (`-hwaccel`) pour la génération : selon le résultat de « Mesurer les performances » sur le
@@ -65,6 +69,23 @@
   (`noise=alls=6:allf=t,gblur=sigma=0.8`, ≈ 19 Mb/s en x264 CRF 18, comme un film), d'abord enregistrée en H.264 CRF 12
   ultrafast dans un dossier temporaire : la mesure la décode comme une vraie vidéo, sans compter le coût des filtres de grain. Conclusions affichées : rapport de vitesse, processeur saturé
   (≥ 85 %) ou non, gain du décodage par la carte graphique (≥ 10 % : à ajouter à la génération).
+
+## Pistes TrueHD recopiées (`truehd.rs`)
+
+- Format `truehd_copy` : ffmpeg recopie la piste (`-c:a copy`, type 0x83) ; avant l'encodage on vérifie codec `truehd`, 48 ou 96 kHz,
+  8 canaux au plus. `film::with_truehd_cores` ajoute à la liste donnée à ffmpeg, après les pistes de la vidéo, un coeur AC-3 par piste
+  TrueHD (même source, même décalage ; 640 kb/s en 5.1 avec mixage à 6 canaux, 448 en stéréo). `film::attach_truehd_cores` les
+  joint après `load_encoded` (les coeurs sont retirés de la liste, `codecs[k] = 0x83`).
+- Relecture du TS de ffmpeg : un PES 0xBD par paquet, unités d'accès TrueHD bout à bout (en-tête 4 octets : longueur en mots de
+  16 bits sur 12 bits, horodatage ; synchro principale 0xF8726FBA toutes les 16 unités, ratebits → 48 / 96 kHz). Une unité = 40
+  échantillons à 48 kHz (80 à 96 kHz) ; elles sont datées d'après le total d'échantillons (`lpcm::pts_after`), resynchronisées sur un
+  vrai trou (> 16 ms). Les unités avant la première synchro principale sont ignorées.
+- Entrelacement (`film::interleave_truehd`) : chaque unité va à la dernière trame AC-3 qui commence au plus une demi-unité (417 ticks)
+  après elle (`truehd::group_of`) ; une trame AudioFrame porte le coeur (`data`) et les unités (`ext`), coupées à 60 000 octets
+  (trame supplémentaire sans coeur au besoin : la longueur d'un PES audio tient sur 16 bits).
+- Multiplexage (`vmux`) : par trame, PES 0xFD extension 0x76 (coeur) puis 0x72 (TrueHD), même PTS ; la relecture d'un clip ainsi écrit
+  recolle les 0x72 à la trame (`load_encoded_m2ts`). Débit compté : source (ou 5 Mb/s) + 640 kb/s de coeur.
+- Test : `tests/truehd.rs` (fixture `tests/data/enc_truehd.ts`, ffmpeg : TrueHD puis AC-3) ; `BDAUTHOR_TEST_OUT=fichier.m2ts` garde le clip.
 
 ## Pistes DTS recopiées (`dts.rs`)
 
@@ -349,7 +370,7 @@ disque et menu, construction dans un thread avec progression, journal, annulatio
   avec `rematrix_maxval=2` : la normalisation par défaut de ffmpeg (sans saturation possible) baisse les dialogues de 4,7 dB
   en 5.1 et de 11 dB en stéréo ; avec 2 : 0 dB en 5.1, -5 dB en stéréo (référence -3 dB, mais saturation possible quand tous
   les canaux sont forts). Mesuré avec volumedetect sur un 7.1 au seul canal central.
-- Non fait : copie TrueHD (voir « À faire »).
+- Copie TrueHD : voir « Pistes TrueHD recopiées ».
 
 ### Audio AC-3 par piste : 5.1, debit manuel, copie
 - Formats de piste : `ac3` (2.0, defaut), `ac3_51` (5.1, 448 kb/s par defaut ; au-dela de 6 canaux, mixage en 5.1 ; une source stereo

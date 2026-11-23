@@ -647,7 +647,7 @@ pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -
         match t.format {
             Ac3 => a.extend([format!("-c:a:{k}"), st("ac3"), format!("-b:a:{k}"), if t.bitrate != 0 { format!("{}k", t.bitrate) } else { bitrate.to_string() }, format!("-ac:a:{k}"), st("2")]),
             Ac3Surround => a.extend([format!("-c:a:{k}"), st("ac3"), format!("-b:a:{k}"), format!("{}k", t.kbps(6, 0, 0)), format!("-ac:a:{k}"), st("6")]),
-            Ac3Copy | DtsCopy => a.extend([format!("-c:a:{k}"), st("copy")]),
+            Ac3Copy | DtsCopy | TruehdCopy => a.extend([format!("-c:a:{k}"), st("copy")]),
             Lpcm16 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s16")]),
             Lpcm24 => a.extend([format!("-c:a:{k}"), st("pcm_bluray"), format!("-sample_fmt:a:{k}"), st("s32")]),
         }

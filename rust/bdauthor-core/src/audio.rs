@@ -25,6 +25,8 @@ pub enum AudioFormat {
     Ac3Copy,
     /// la piste DTS de la source (DTS, DTS-HD High Resolution ou DTS-HD Master Audio), recopiee telle quelle (48 kHz)
     DtsCopy,
+    /// la piste Dolby TrueHD de la source, recopiee telle quelle (48 ou 96 kHz), avec un coeur AC-3 encode a cote (voir `truehd`)
+    TruehdCopy,
     /// LPCM sans perte, 16 bits, nombre de canaux de la source (48 kHz, ou 96 kHz : voir `AudioTrackCfg::sample_rate`)
     Lpcm16,
     /// LPCM sans perte, 24 bits, nombre de canaux de la source (48 ou 96 kHz)
@@ -70,12 +72,12 @@ impl LpcmChannels {
 }
 
 impl AudioFormat {
-    pub const ALL: [AudioFormat; 6] =
-        [AudioFormat::Ac3, AudioFormat::Ac3Surround, AudioFormat::Ac3Copy, AudioFormat::DtsCopy, AudioFormat::Lpcm16, AudioFormat::Lpcm24];
+    pub const ALL: [AudioFormat; 7] =
+        [AudioFormat::Ac3, AudioFormat::Ac3Surround, AudioFormat::Ac3Copy, AudioFormat::DtsCopy, AudioFormat::TruehdCopy, AudioFormat::Lpcm16, AudioFormat::Lpcm24];
     /// Nom dans le fichier de projet.
     pub fn name(self) -> &'static str {
         match self {
-            AudioFormat::Ac3 => "ac3", AudioFormat::Ac3Surround => "ac3_51", AudioFormat::Ac3Copy => "ac3_copy", AudioFormat::DtsCopy => "dts_copy",
+            AudioFormat::Ac3 => "ac3", AudioFormat::Ac3Surround => "ac3_51", AudioFormat::Ac3Copy => "ac3_copy", AudioFormat::DtsCopy => "dts_copy", AudioFormat::TruehdCopy => "truehd_copy",
             AudioFormat::Lpcm16 => "lpcm16", AudioFormat::Lpcm24 => "lpcm24",
         }
     }
@@ -84,16 +86,17 @@ impl AudioFormat {
         match self {
             AudioFormat::Ac3 => "Dolby Digital 2.0", AudioFormat::Ac3Surround => "Dolby Digital 5.1", AudioFormat::Ac3Copy => "Copy of the source AC-3 track",
             AudioFormat::DtsCopy => "Copy of the source DTS / DTS-HD track",
+            AudioFormat::TruehdCopy => "Copy of the source Dolby TrueHD track",
             AudioFormat::Lpcm16 => "LPCM 16 bits", AudioFormat::Lpcm24 => "LPCM 24 bits",
         }
     }
     /// Piste recopiee telle quelle (aucun filtre possible).
-    pub fn is_copy(self) -> bool { matches!(self, AudioFormat::Ac3Copy | AudioFormat::DtsCopy) }
+    pub fn is_copy(self) -> bool { matches!(self, AudioFormat::Ac3Copy | AudioFormat::DtsCopy | AudioFormat::TruehdCopy) }
     pub fn is_lpcm(self) -> bool { matches!(self, AudioFormat::Lpcm16 | AudioFormat::Lpcm24) }
     /// AC-3 encode par le programme (le debit est alors un reglage de la piste).
     pub fn is_encoded_ac3(self) -> bool { matches!(self, AudioFormat::Ac3 | AudioFormat::Ac3Surround) }
     /// Flux lourd (sans perte ou haute definition) : le debit de la video doit lui laisser de la place.
-    pub fn is_heavy(self) -> bool { matches!(self, AudioFormat::Lpcm16 | AudioFormat::Lpcm24 | AudioFormat::DtsCopy) }
+    pub fn is_heavy(self) -> bool { matches!(self, AudioFormat::Lpcm16 | AudioFormat::Lpcm24 | AudioFormat::DtsCopy | AudioFormat::TruehdCopy) }
     /// Profondeur d'un echantillon LPCM (0 pour AC-3).
     pub fn bits(self) -> u32 { match self { AudioFormat::Lpcm16 => 16, AudioFormat::Lpcm24 => 24, _ => 0 } }
     /// Debit du flux audio en kb/s pour `channels` canaux de la source ; `ac3_kbps` : debit AC-3 du projet. Le LPCM de Blu-ray
@@ -102,6 +105,7 @@ impl AudioFormat {
         match self {
             AudioFormat::Ac3 | AudioFormat::Ac3Copy => ac3_kbps,
             AudioFormat::DtsCopy => DTS_HD_KBPS,
+            AudioFormat::TruehdCopy => crate::truehd::TRUEHD_KBPS + AC3_MAX_KBPS,
             AudioFormat::Ac3Surround => AC3_SURROUND_KBPS,
             _ => (channels.max(1) + 1) / 2 * 2 * self.bits() * 48,
         }
@@ -175,6 +179,8 @@ impl AudioTrackCfg {
             AudioFormat::Ac3Surround => if self.bitrate != 0 { self.bitrate } else { AC3_SURROUND_KBPS },
             AudioFormat::Ac3Copy => if source_kbps != 0 { source_kbps } else { AC3_MAX_KBPS },
             AudioFormat::DtsCopy => if source_kbps != 0 { source_kbps } else { DTS_HD_KBPS },
+            // le flux TrueHD de la source, plus le coeur AC-3
+            AudioFormat::TruehdCopy => (if source_kbps != 0 { source_kbps } else { crate::truehd::TRUEHD_KBPS }) + AC3_MAX_KBPS,
             f => f.kbps(self.lpcm_out_channels(channels), project_kbps) * (self.rate() / 48_000),
         }
     }

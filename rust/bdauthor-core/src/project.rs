@@ -621,6 +621,15 @@ fn check_dts_copy(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg) ->
     Ok(())
 }
 
+/// Une piste TrueHD en « copie » doit etre a 48 ou 96 kHz (le coeur AC-3 qui l'accompagne est encode a 48 kHz).
+fn check_truehd_copy(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg) -> std::result::Result<(), String> {
+    let Some(s) = probe_track(tools, src, t) else { return Err(tr("the source audio track cannot be read").to_string()) };
+    if s.codec != "truehd" { return Err(trf!("the source track is “{}”, not Dolby TrueHD", s.codec)); }
+    if s.sample_rate != 0 && s.sample_rate != 48000 && s.sample_rate != 96000 { return Err(trf!("the source track is at {} Hz; 48000 or 96000 Hz is required", s.sample_rate)); }
+    if s.channels > 8 { return Err(trf!("the source track has {} channels; 8 at most", s.channels)); }
+    Ok(())
+}
+
 fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) -> String {
     let mut s = String::new();
     for t in tracks {
@@ -1004,6 +1013,9 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         }
         for t in a_tracks.iter().filter(|t| t.format == crate::audio::AudioFormat::DtsCopy) {
             if let Err(why) = check_dts_copy(env.tools, &src, t) { return bad(trf!("video {}: an audio track cannot be copied: {}", i + 1, why)); }
+        }
+        for t in a_tracks.iter().filter(|t| t.format == crate::audio::AudioFormat::TruehdCopy) {
+            if let Err(why) = check_truehd_copy(env.tools, &src, t) { return bad(trf!("video {}: an audio track cannot be copied: {}", i + 1, why)); }
         }
         // audio sans perte : le debit du clip (video + audio) ne doit pas depasser ce que le multiplexage sait porter
         if a_tracks.iter().any(|t| t.format.is_heavy()) {

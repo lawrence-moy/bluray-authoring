@@ -229,8 +229,13 @@ pub fn mux_film_audios(
         // AC-3 : paquets « etendus » 0xFD + extension 0x71, comme ffmpeg en mode m2ts (certains lecteurs l'exigent) ;
         // LPCM et DTS simple : flux prive 1 (0xBD)
         let ac3 = pmt_streams.iter().any(|s| s.pid == *apid && s.stream_type == 0x81);
+        let truehd = pmt_streams.iter().any(|s| s.pid == *apid && s.stream_type == crate::truehd::STREAM_TYPE);
         for a in audio.iter() {
-            if ac3 && a.ext.is_empty() {
+            if truehd {
+                // TrueHD : coeur AC-3 (extension 0x76) puis unites TrueHD (0x72) ; une trame peut n'avoir que l'un des deux
+                if !a.data.is_empty() { raw.push((a.pts * 300, Kind::Audio, *apid, build_pes_ext(crate::truehd::PES_EXT_CORE, a.pts, &a.data)?, a.data.len())); }
+                if !a.ext.is_empty() { raw.push((a.pts * 300, Kind::Audio, *apid, build_pes_ext(crate::truehd::PES_EXT_TRUEHD, a.pts, &a.ext)?, a.ext.len())); }
+            } else if ac3 && a.ext.is_empty() {
                 raw.push((a.pts * 300, Kind::Audio, *apid, build_pes_ext(AC3_PES_EXT, a.pts, &a.data)?, a.data.len()));
             } else if a.ext.is_empty() {
                 raw.push((a.pts * 300, Kind::Audio, *apid, build_pes(STREAM_ID_AUDIO, a.pts, None, &a.data)?, a.data.len()));

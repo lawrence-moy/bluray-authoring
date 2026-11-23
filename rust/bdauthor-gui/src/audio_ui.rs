@@ -232,6 +232,9 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                     }
                     ui.colored_label(egui::Color32::from_rgb(230, 170, 70), tr("Lossless audio: not every player accepts it; test the disc on yours."));
                 }
+                if t.format == AudioFormat::TruehdCopy {
+                    ui.colored_label(egui::Color32::from_rgb(230, 170, 70), tr("Dolby TrueHD is written with an AC-3 core encoded from the track (as on commercial discs); test the disc on your player."));
+                }
                 if t.format == AudioFormat::DtsCopy {
                     ui.colored_label(egui::Color32::from_rgb(230, 170, 70), tr("DTS-HD is written as on commercial discs (DTS core plus HD extension); test the disc on your player."));
                 }

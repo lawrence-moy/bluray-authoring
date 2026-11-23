@@ -116,8 +116,8 @@ fn load_source_packets(data: &[u8]) -> PResult<Encoded> {
     let (_, _, streams) = parse_psi(&data)?;
     let vpid = streams.iter().find(|s| s.0 == 0x1B).ok_or_else(|| ParseError("aucun flux H.264".into()))?.1;
     // pistes audio dans l'ordre de la PMT : AC-3 (0x81), LPCM (0x80 ; ffmpeg ecrit les trames `pcm_bluray` en type prive 0x06)
-    // ou DTS recopie (0x82, 0x85, 0x86, 0x8A)
-    let atracks: Vec<(u16, u8)> = streams.iter().filter(|s| matches!(s.0, 0x81 | 0x80 | 0x06) || crate::dts::TYPES.contains(&s.0))
+    // DTS recopie (0x82, 0x85, 0x86, 0x8A) ou TrueHD recopie (0x83)
+    let atracks: Vec<(u16, u8)> = streams.iter().filter(|s| matches!(s.0, 0x81 | 0x80 | 0x06 | 0x83) || crate::dts::TYPES.contains(&s.0))
         .map(|s| (s.1, if s.0 == 0x06 { 0x80 } else { s.0 })).collect();
     let mut video = Vec::new();
     let mut sps: Option<Vec<u8>> = None;
@@ -134,7 +134,38 @@ fn load_source_packets(data: &[u8]) -> PResult<Encoded> {
     for &(a, typ) in &atracks {
         let mut audio: Vec<(u64, Vec<u8>, Vec<u8>)> = Vec::new();
         let is_lpcm = typ == 0x80;
+        let mut thd_rate = 0u32;
+        let mut thd_anchor: Option<(u64, u64)> = None;
         for e in reassemble(&data, a)? {
+            if typ == crate::truehd::STREAM_TYPE {
+                let pts = e.pts.ok_or_else(|| ParseError("PES audio sans PTS".into()))?;
+                match crate::dts::pes_extension_id(&e.header) {
+                    // clip Blu-ray : un PES de coeur AC-3 (0x76) par trame, suivi des unites TrueHD (0x72) qui lui sont jointes
+                    Some(crate::truehd::PES_EXT_CORE) => {
+                        for (k, fr) in ac3_frames(&e.data)?.into_iter().enumerate() {
+                            audio.push((pts + k as u64 * AC3_FRAME_TICKS, fr.to_vec(), Vec::new()));
+                        }
+                    }
+                    Some(crate::truehd::PES_EXT_TRUEHD) => match audio.last_mut() {
+                        Some(last) if last.2.len() + e.data.len() <= crate::truehd::MAX_PES_BYTES => last.2.extend_from_slice(&e.data),
+                        _ => audio.push((pts, Vec::new(), e.data.clone())),
+                    },
+                    // flux de ffmpeg : unites TrueHD seules (le coeur AC-3 est encode a part, voir `attach_truehd_cores`) ; chaque
+                    // unite est une trame sans coeur, datee d'apres le total d'echantillons depuis le dernier PTS fiable
+                    _ => {
+                        let units = crate::truehd::units(&e.data, &mut thd_rate)?;
+                        if units.is_empty() { continue; }
+                        let resync = thd_anchor.map_or(true, |(p0, n)| crate::lpcm::pts_after(p0, n, thd_rate).abs_diff(pts) > 1440);
+                        let (p0, mut n) = if resync { (pts, 0) } else { thd_anchor.unwrap() };
+                        for u in units {
+                            audio.push((crate::lpcm::pts_after(p0, n, thd_rate), Vec::new(), u.data.to_vec()));
+                            n += u.samples as u64;
+                        }
+                        thd_anchor = Some((p0, n));
+                    }
+                }
+                continue;
+            }
             if crate::dts::TYPES.contains(&typ) {
                 // DTS : une trame par PES (ffmpeg) ; dans un clip Blu-ray, l'extension HD est un second PES (extension 0x72)
                 if crate::dts::pes_extension_id(&e.header) == Some(crate::dts::PES_EXT_HD) {
@@ -180,6 +211,77 @@ fn load_source_packets(data: &[u8]) -> PResult<Encoded> {
     let mut tracks: Vec<Vec<AudioFrame>> = tracks.into_iter().map(|t| t.into_iter().map(|(p, x, e)| AudioFrame { pts: sh(p), data: x, ext: e }).collect()).collect();
     let audio = if tracks.is_empty() { Vec::new() } else { tracks.remove(0) };
     Ok(Encoded { video, audio, extra_audio: tracks, lpcm, codecs, sps: sps.ok_or_else(|| ParseError("aucun SPS".into()))? })
+}
+
+/// Entrelace une piste TrueHD lue dans le TS de ffmpeg (`thd` : une unite d'acces par trame, sans coeur) avec son coeur AC-3
+/// encode a part (`core`) : les unites sont jointes a la trame AC-3 qui les porte (voir `truehd::group_of`), en paquets de
+/// `truehd::MAX_PES_BYTES` octets au plus.
+pub fn interleave_truehd(core: Vec<AudioFrame>, thd: Vec<AudioFrame>) -> PResult<Vec<AudioFrame>> {
+    if core.is_empty() || thd.is_empty() { return err("piste TrueHD ou coeur AC-3 vide"); }
+    let core_pts: Vec<u64> = core.iter().map(|f| f.pts).collect();
+    let au_pts: Vec<u64> = thd.iter().map(|f| f.pts).collect();
+    // tolerance : une demi-unite (40 echantillons a 48 kHz = 833 ticks)
+    let groups = crate::truehd::group_of(&core_pts, &au_pts, 417);
+    let mut out = Vec::with_capacity(core.len());
+    let mut p = 0;
+    for (j, c) in core.into_iter().enumerate() {
+        let mut f = AudioFrame { pts: c.pts, data: c.data, ext: Vec::new() };
+        while p < thd.len() && groups[p] == j {
+            let au = &thd[p].ext;
+            if !f.ext.is_empty() && f.ext.len() + au.len() > crate::truehd::MAX_PES_BYTES {
+                let next = AudioFrame { pts: thd[p].pts, data: Vec::new(), ext: Vec::new() };
+                out.push(std::mem::replace(&mut f, next));
+            }
+            f.ext.extend_from_slice(au);
+            p += 1;
+        }
+        out.push(f);
+    }
+    Ok(out)
+}
+
+/// Apres `load_encoded` d'un TS dont les pistes sont celles de la video (`is_truehd[k]` : la piste k est du TrueHD recopie) suivies
+/// d'un coeur AC-3 par piste TrueHD, dans l'ordre : joint chaque coeur a sa piste et le retire de la liste.
+pub fn attach_truehd_cores(enc: &mut Encoded, is_truehd: &[bool]) -> PResult<()> {
+    let (n, m) = (is_truehd.len(), is_truehd.iter().filter(|b| **b).count());
+    if m == 0 { return Ok(()); }
+    let mut all: Vec<Vec<AudioFrame>> = std::iter::once(std::mem::take(&mut enc.audio)).chain(std::mem::take(&mut enc.extra_audio)).collect();
+    if all.len() != n + m { return Err(ParseError(format!("{} pistes audio lues, {} attendues (TrueHD et coeurs AC-3)", all.len(), n + m))); }
+    let mut cores = all.split_off(n).into_iter();
+    for (k, is) in is_truehd.iter().enumerate() {
+        if *is {
+            let core = cores.next().unwrap_or_default();
+            all[k] = interleave_truehd(core, std::mem::take(&mut all[k]))?;
+            enc.codecs[k] = crate::truehd::STREAM_TYPE;
+        }
+    }
+    enc.codecs.truncate(n);
+    enc.lpcm.truncate(n);
+    enc.audio = all.remove(0);
+    enc.extra_audio = all;
+    Ok(())
+}
+
+/// Pistes a donner a ffmpeg : celles de la video, puis un coeur AC-3 (640 kb/s en 5.1, 448 en stereo ; meme source, meme decalage) pour
+/// chaque piste TrueHD recopiee. Retourne aussi, par piste de la video, si elle est du TrueHD recopie.
+fn with_truehd_cores(tools: &Tools, src: &Path, tracks: &[crate::audio::AudioTrackCfg]) -> (Vec<crate::audio::AudioTrackCfg>, Vec<bool>) {
+    use crate::audio::{AudioFormat, AudioSource};
+    let flags: Vec<bool> = tracks.iter().map(|t| t.format == AudioFormat::TruehdCopy).collect();
+    let mut all = tracks.to_vec();
+    for t in tracks.iter().filter(|t| t.format == AudioFormat::TruehdCopy) {
+        let (path, index) = match &t.source {
+            AudioSource::Embedded(n) => (src.to_path_buf(), *n),
+            AudioSource::File(f) => (PathBuf::from(f), 0),
+        };
+        let channels = ffmpeg::list_audio_streams(tools, &path).ok().and_then(|l| l.into_iter().find(|s| s.index == index)).map_or(6, |s| s.channels);
+        let mut c = t.clone();
+        c.gain_db = 0.0;
+        c.sample_rate = 0;
+        c.lpcm_channels = crate::audio::LpcmChannels::Source;
+        (c.format, c.bitrate) = if channels > 2 { (AudioFormat::Ac3Surround, crate::audio::AC3_MAX_KBPS) } else { (AudioFormat::Ac3, 448) };
+        all.push(c);
+    }
+    (all, flags)
 }
 
 /// Muxage M2TS d'un flux encode (`lang` : code de langue de la piste audio, 3 lettres).
@@ -252,6 +354,8 @@ pub fn mux_encoded_tracks(enc: &Encoded, audio_langs: &[[u8; 3]], subs: &[PgOut]
         let codec = enc.codecs.get(k).copied().unwrap_or(if lpcm { crate::lpcm::STREAM_TYPE } else { 0x81 });
         let mut d = if crate::dts::TYPES.contains(&codec) {
             crate::dts::registration_descriptor(codec, &a0.data)?
+        } else if codec == crate::truehd::STREAM_TYPE {
+            crate::truehd::registration_descriptor(&a0.data)?
         } else if lpcm {
             crate::lpcm::registration_descriptor(&a0.data)?
         } else {
@@ -302,8 +406,10 @@ pub fn make_film_m2ts_tracks(
     let info = ffmpeg::probe(tools, src)?;
     let tmp = TempDir::new(workdir)?;
     let ts_path = tmp.0.join("enc.ts");
-    let target = ffmpeg::encode_to_ts_tracks(tools, src, &ts_path, &info, opts, tracks, progress, cancel)?;
-    let enc = load_encoded(&std::fs::read(&ts_path)?)?;
+    let (ff_tracks, thd) = with_truehd_cores(tools, src, tracks);
+    let target = ffmpeg::encode_to_ts_tracks(tools, src, &ts_path, &info, opts, &ff_tracks, progress, cancel)?;
+    let mut enc = load_encoded(&std::fs::read(&ts_path)?)?;
+    attach_truehd_cores(&mut enc, &thd)?;
     drop(tmp);
     // encodeur materiel : son flux est verifie (un pilote peut ignorer un reglage sans le dire)
     let hw = opts.uses_hw(target.scan);

@@ -79,6 +79,7 @@ Formats disponibles :
 À savoir :
 
 - **Copie** : la piste source doit être en Dolby Digital, à 48 kHz, avec 6 canaux au plus et 640 kb/s au plus. Sinon la génération s'arrête avec un message explicite.
+- **Copie TrueHD** : la piste source doit être en Dolby TrueHD, à 48 ou 96 kHz. Comme sur les disques du commerce, la piste est écrite avec un cœur AC-3 (lu par les lecteurs sans décodeur TrueHD) : l'appli l'encode à partir de la piste (640 kb/s en 5.1, 448 en stéréo). Le disque est plus lourd : le débit de la vidéo est abaissé en conséquence. Non essayé sur un lecteur de salon : testez le disque sur le vôtre.
 - **Dolby Digital 5.1 depuis une source stéréo** : seuls les canaux avant sont remplis ; ce choix n'apporte rien.
 - **LPCM** : le débit de la vidéo est automatiquement abaissé pour que vidéo et son tiennent ensemble. Tous les lecteurs n'acceptent pas le LPCM : essayez le disque sur le vôtre. Une source 5.0 ou 6.1 est convertie en 7.0 ou 7.1 par ffmpeg. Le réglage **Fréquence** choisit 48 kHz (par défaut) ou 96 kHz. Le 96 kHz ne sert qu'avec une source haute résolution (musique, concert) : il double la taille de la piste, et avec une source à 48 kHz il n'apporte rien (l'appli le signale). Une source à 192 kHz est ramenée à la fréquence choisie.
 
