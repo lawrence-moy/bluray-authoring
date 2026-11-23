@@ -241,7 +241,7 @@
   "Title in the menu:": "Titre dans le menu :",
   "Alternative thumbnail at time:": "Vignette alternative au timing :",
   "Unchecked: image taken automatically. Checked (or by changing the value): image taken at this moment of the video.": "Décochée : image prise automatiquement. Cochée (ou en modifiant la valeur) : image prise à cet instant de la vidéo.",
-  "Chapter marks (next / previous keys of the remote control, chapter thumbnails, start pages):": "Repères de chapitre (touches suivant / précédent de la télécommande, vignettes de chapitre, pages de départ) :",
+  "Chapter marks: next / previous keys of the remote control, chapter thumbnails, start pages.": "Repères de chapitre : touches suivant / précédent de la télécommande, vignettes de chapitre, pages de départ.",
   "This project uses old automatic marks.": "Ce projet utilise d'anciens repères automatiques.",
   "Remove them": "Les retirer",
   "A chapter thumbnail (page) can be linked to one of them, or create one.": "Une vignette de chapitre (page) peut se lier à l'un d'eux, ou en créer un.",

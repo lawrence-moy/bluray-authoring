@@ -1636,7 +1636,34 @@ impl eframe::App for App {
                             if ui.button(tr("Choose the image…")).on_hover_text(tr("Opens a window with the video, playback and a timeline, to choose the moment of the thumbnail")).clicked() { self.thumb_request = self.sel; }
                         });
                         ui.separator();
-                        ui.label(tr("Chapter marks (next / previous keys of the remote control, chapter thumbnails, start pages):"));
+                        let mut want_listen = None;
+                        changed |= audio_ui::panel(ui, v, &mut self.model.languages, &mut self.audio_probes, &sub_base, &mut want_listen);
+                        if let (Some(k), Some(vi)) = (want_listen, self.sel) {
+                            let abs_of = |f: &str| if Path::new(f).is_absolute() { PathBuf::from(f) } else { sub_base.join(f) };
+                            if let Some(t) = v.audio.get(k) {
+                                let (file, stream, what) = match &t.source {
+                                    bdauthor_core::audio::AudioSource::File(f) => (abs_of(f), None, Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone())),
+                                    bdauthor_core::audio::AudioSource::Embedded(n) => (abs_of(&v.file), Some(*n), trf!("embedded track no. {}", n + 1)),
+                                };
+                                self.audio_preview = Some(audio_ui::AudioPreview::new(vi, k, format!("{} — {}", k + 1, what), &file, stream));
+                            }
+                        }
+                        ui.separator();
+                        let mut want_preview = None;
+                        // cadence de la video (sondee) : sert de cadence par defaut aux sous-titres a temps en images
+                        let auto_fps = self.video_sizes.get(&v.file).and_then(|x| bdauthor_core::subtitle::plausible_fps(x.1));
+                        let subs_before: Vec<_> = v.subs.iter().map(|t| t.source.clone()).collect();
+                        changed |= subs_ui::panel(ui, v, &mut self.model.languages, &mut self.sub_probes, &sub_base, &mut want_preview, auto_fps);
+                        // une piste retiree ou deplacee change les rangs : la fenetre d'apercu (ouverte sur un rang) est fermee
+                        if !v.subs.iter().map(|t| &t.source).zip(&subs_before).all(|(a, b)| a == b) || v.subs.len() < subs_before.len() {
+                            if self.sub_preview.as_ref().map_or(false, |p| Some(p.video) == self.sel) { self.sub_preview = None; }
+                        }
+                        if let (Some(k), Some(vi)) = (want_preview, self.sel) {
+                            let file = if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { sub_base.join(&v.file) };
+                            if let Some(t) = v.subs.get(k) { self.sub_preview = Some(subs_ui::SubPreview::new(vi, k, t, &file, &sub_base, auto_fps)); }
+                        }
+                        ui.separator();
+                        ui.label(tr("Chapters")).on_hover_text(tr("Chapter marks: next / previous keys of the remote control, chapter thumbnails, start pages."));
                         if v.auto_s.is_some() {
                             // ancienne option (repères automatiques) : plus proposée, mais un projet existant peut encore l'utiliser
                             ui.horizontal(|ui| {
@@ -1669,33 +1696,6 @@ impl eframe::App for App {
                             changed = true;
                         }
                         if ui.button(tr("Chapter editor…")).on_hover_text(tr("Opens a window with the video image by image, playback and a timeline, to place the chapters and choose the thumbnail images.")).clicked() { self.chapter_request = self.sel; }
-                        ui.separator();
-                        let mut want_listen = None;
-                        changed |= audio_ui::panel(ui, v, &mut self.model.languages, &mut self.audio_probes, &sub_base, &mut want_listen);
-                        if let (Some(k), Some(vi)) = (want_listen, self.sel) {
-                            let abs_of = |f: &str| if Path::new(f).is_absolute() { PathBuf::from(f) } else { sub_base.join(f) };
-                            if let Some(t) = v.audio.get(k) {
-                                let (file, stream, what) = match &t.source {
-                                    bdauthor_core::audio::AudioSource::File(f) => (abs_of(f), None, Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone())),
-                                    bdauthor_core::audio::AudioSource::Embedded(n) => (abs_of(&v.file), Some(*n), trf!("embedded track no. {}", n + 1)),
-                                };
-                                self.audio_preview = Some(audio_ui::AudioPreview::new(vi, k, format!("{} — {}", k + 1, what), &file, stream));
-                            }
-                        }
-                        ui.separator();
-                        let mut want_preview = None;
-                        // cadence de la video (sondee) : sert de cadence par defaut aux sous-titres a temps en images
-                        let auto_fps = self.video_sizes.get(&v.file).and_then(|x| bdauthor_core::subtitle::plausible_fps(x.1));
-                        let subs_before: Vec<_> = v.subs.iter().map(|t| t.source.clone()).collect();
-                        changed |= subs_ui::panel(ui, v, &mut self.model.languages, &mut self.sub_probes, &sub_base, &mut want_preview, auto_fps);
-                        // une piste retiree ou deplacee change les rangs : la fenetre d'apercu (ouverte sur un rang) est fermee
-                        if !v.subs.iter().map(|t| &t.source).zip(&subs_before).all(|(a, b)| a == b) || v.subs.len() < subs_before.len() {
-                            if self.sub_preview.as_ref().map_or(false, |p| Some(p.video) == self.sel) { self.sub_preview = None; }
-                        }
-                        if let (Some(k), Some(vi)) = (want_preview, self.sel) {
-                            let file = if Path::new(&v.file).is_absolute() { PathBuf::from(&v.file) } else { sub_base.join(&v.file) };
-                            if let Some(t) = v.subs.get(k) { self.sub_preview = Some(subs_ui::SubPreview::new(vi, k, t, &file, &sub_base, auto_fps)); }
-                        }
                         ui.separator();
                     } else {
                         ui.label(tr("Add videos then select one to set its title, thumbnail and chapters."));
