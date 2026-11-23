@@ -252,7 +252,38 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
             }
         }
     }
-    if let Some(k) = del { v.audio.remove(k); changed = true; }
+    // retrait d'une piste : confirmation (le rang en attente est garde dans la memoire d'egui)
+    let ask_id = egui::Id::new("confirmer_retrait_piste_audio");
+    if let Some(k) = del { ui.ctx().data_mut(|d| d.insert_temp(ask_id, k)); }
+    if let Some(k) = ui.ctx().data(|d| d.get_temp::<usize>(ask_id)) {
+        match v.audio.get(k) {
+            None => ui.ctx().data_mut(|d| d.remove::<usize>(ask_id)),
+            Some(t) => {
+                let what = match &t.source {
+                    AudioSource::File(f) => Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone()),
+                    AudioSource::Embedded(n) => trf!("embedded track no. {}", n + 1),
+                };
+                let mut answer: Option<bool> = None;
+                egui::Window::new(tr("Remove the audio track?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ui.ctx(), |ui| {
+                    ui.label(trf!("Audio track {} (“{}”) will be removed from the video.", k + 1, what));
+                    ui.label(egui::RichText::new(tr("The audio file is not deleted from disk.")).weak());
+                    ui.add_space(6.0);
+                    ui.horizontal(|ui| {
+                        if ui.button(tr("Remove")).clicked() { answer = Some(true); }
+                        if ui.button(tr("Cancel")).clicked() { answer = Some(false); }
+                    });
+                });
+                if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) { answer = Some(false); }
+                match answer {
+                    Some(yes) => {
+                        if yes { v.audio.remove(k); changed = true; }
+                        ui.ctx().data_mut(|d| d.remove::<usize>(ask_id));
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
 
     let full = v.audio.len() >= MAX_AUDIO_TRACKS;
     ui.add_enabled_ui(!full, |ui| {

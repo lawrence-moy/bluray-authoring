@@ -1691,7 +1691,34 @@ A chapter thumbnail (page) can be linked to one of them, or create one."));
                                 if ui.small_button(tr("Remove")).clicked() { del = Some(k); }
                             });
                         }
-                        if let Some(k) = del { v.chapters.remove(k); changed = true; }
+                        // retrait d'un chapitre : confirmation (le rang en attente est garde dans la memoire d'egui)
+                        let ask_id = egui::Id::new("confirmer_retrait_chapitre");
+                        if let Some(k) = del { ui.ctx().data_mut(|d| d.insert_temp(ask_id, k)); }
+                        if let Some(k) = ui.ctx().data(|d| d.get_temp::<usize>(ask_id)) {
+                            match v.chapters.get(k) {
+                                None => ui.ctx().data_mut(|d| d.remove::<usize>(ask_id)),
+                                Some(c) => {
+                                    let at = bdauthor_core::timecode::format(c.t, fps);
+                                    let what = if c.title.is_empty() { at } else { format!("{} — {}", at, c.title) };
+                                    let linked = chapter_uses.iter().find(|u| u.0 == c.id).map_or(0, |u| u.1);
+                                    let mut answer: Option<bool> = None;
+                                    egui::Window::new(tr("Remove the chapter?")).collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0]).show(ui.ctx(), |ui| {
+                                        ui.label(trf!("Chapter {} (“{}”) will be removed from the video.", k + 1, what));
+                                        if linked > 0 { ui.label(egui::RichText::new(tr("Page thumbnails linked to this chapter: they follow its time. If you remove the chapter, they keep their time.")).weak()); }
+                                        ui.add_space(6.0);
+                                        ui.horizontal(|ui| {
+                                            if ui.button(tr("Remove")).clicked() { answer = Some(true); }
+                                            if ui.button(tr("Cancel")).clicked() { answer = Some(false); }
+                                        });
+                                    });
+                                    if ui.ctx().input(|i| i.key_pressed(egui::Key::Escape)) { answer = Some(false); }
+                                    if let Some(yes) = answer {
+                                        if yes { v.chapters.remove(k); changed = true; }
+                                        ui.ctx().data_mut(|d| d.remove::<usize>(ask_id));
+                                    }
+                                }
+                            }
+                        }
                         if ui.button(tr("Add a chapter")).clicked() {
                             let t = v.chapters.iter().map(|c| c.t).fold(f64::NEG_INFINITY, f64::max);
                             let t = if t.is_finite() { (t + 60.0).min(max_t) } else { 0.0 };
