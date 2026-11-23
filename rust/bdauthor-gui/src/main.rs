@@ -1625,6 +1625,7 @@ impl eframe::App for App {
                             ui.label(tr("Title in the menu:"));
                             changed |= ui.text_edit_singleline(&mut v.title).changed();
                         });
+                        if let Some(d) = detected_video_format(&sub_base, &v.file) { ui.label(egui::RichText::new(d).weak()); }
                         ui.horizontal(|ui| {
                             let mut on = v.thumb_s.is_some();
                             if ui.checkbox(&mut on, tr("Alternative thumbnail")).on_hover_text(tr("Unchecked: image taken automatically. Checked: image taken at the chosen moment of the video.")).changed() {
@@ -1792,4 +1793,39 @@ fn window_capture(ctx: &egui::Context) {
         let ok = std::fs::create_dir_all(&dir).is_ok() && std::fs::write(&path, bdauthor_core::png::write_png(&im)).is_ok();
         eprintln!("capture {} : {}", if ok { "enregistree" } else { "impossible" }, path.display());
     }
+}
+
+thread_local! {
+    static VIDEO_FORMATS: std::cell::RefCell<HashMap<PathBuf, Option<String>>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// Format detecte d'une video, en clair : « H.264 High@4.1 · 1920×1080 · 23.976 i/s · MKV » (sonde ffprobe faite une seule fois par fichier).
+fn detected_video_format(base: &Path, file: &str) -> Option<String> {
+    let q = Path::new(file);
+    let p = if q.is_absolute() { q.to_path_buf() } else { base.join(q) };
+    if let Some(r) = VIDEO_FORMATS.with(|c| c.borrow().get(&p).cloned()) { return r; }
+    let r = if p.is_file() {
+        Tools::locate().ok().and_then(|t| bdauthor_core::ffmpeg::probe(&t, &p).ok()).map(|i| {
+            let codec = match i.codec.as_str() {
+                "h264" => "H.264".to_string(),
+                "hevc" => "H.265 (HEVC)".to_string(),
+                "mpeg2video" => "MPEG-2".to_string(),
+                "vc1" => "VC-1".to_string(),
+                "av1" => "AV1".to_string(),
+                "vp9" => "VP9".to_string(),
+                "mpeg4" => "MPEG-4".to_string(),
+                c => c.to_ascii_uppercase(),
+            };
+            let mut s = codec;
+            if !i.profile.is_empty() { s.push_str(&format!(" {}", i.profile)); }
+            if i.level > 0 { s.push_str(&format!("@{}.{}", i.level / 10, i.level % 10)); }
+            s.push_str(&format!(" · {}×{}", i.width, i.height));
+            if i.fps_den > 0 { s.push_str(&format!(" · {}{}", (i.fps_num as f64 / i.fps_den as f64 * 1000.0).round() / 1000.0, tr(" fps"))); }
+            if !i.pix_fmt.is_empty() { s.push_str(&format!(" · {}", i.pix_fmt)); }
+            if let Some(e) = p.extension().and_then(|e| e.to_str()) { s.push_str(&format!(" · {}", e.to_ascii_uppercase())); }
+            s
+        })
+    } else { None };
+    VIDEO_FORMATS.with(|c| c.borrow_mut().insert(p, r.clone()));
+    r
 }
