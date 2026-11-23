@@ -1,6 +1,6 @@
 [package]
 name = "bdauthor-core"
-version = "0.1.9"
+version = "0.1.10"
 edition = "2021"
 description = "Coeur de l'outil d'authoring Blu-ray HDMV (pilotage de ffmpeg, puis muxage et menus)"
 

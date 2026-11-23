@@ -98,6 +98,22 @@ fn track_settings_ui(ui: &mut egui::Ui, t: &mut SubTrackCfg, base: &Path, auto_f
                 .on_hover_text(tr("Some files place cues at the top, on the left, etc. (for example so as not to hide text burned into the picture). Unchecked: all cues take the position set below. Simultaneous cues are displayed together, at the position of the first one that asks for one.")).changed();
 }
 
+thread_local! {
+    static FORMATS: std::cell::RefCell<HashMap<PathBuf, (Option<std::time::SystemTime>, Option<String>)>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// Format detecte d'un fichier de sous-titres, lu une seule fois (relu si le fichier change).
+fn detected_format(p: &Path) -> Option<String> {
+    let mt = std::fs::metadata(p).and_then(|m| m.modified()).ok();
+    FORMATS.with(|c| {
+        let mut c = c.borrow_mut();
+        if let Some((m, r)) = c.get(p) { if *m == mt { return r.clone(); } }
+        let r = bdauthor_core::subtitle::detect_format(p);
+        c.insert(p.to_path_buf(), (mt, r.clone()));
+        r
+    })
+}
+
 /// Piste de sous-titres deplacee par glisser-deposer (rang dans la liste de la video).
 #[derive(Clone, Copy)]
 struct SubRow(usize);
@@ -119,7 +135,12 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
             let row = ui.horizontal(|ui| {
                 let _ = ui.dnd_drag_source(egui::Id::new(("piste_sous_titres", k)), SubRow(k), |ui| ui.label(egui::RichText::new("☰").strong().size(17.0)))
                     .response.on_hover_text(tr("Drag to change the order of the subtitle tracks (track 1 is the one at the top)"));
-                ui.add(egui::Label::new(format!("{} — {}", k + 1, what)).truncate());
+                let fmt = match &t.source {
+                    SubSource::File(f) => detected_format(&abs(base, f)),
+                    SubSource::Embedded(_) => None,
+                };
+                let title = match fmt { Some(f) => format!("{} — {} ({})", k + 1, what, f), None => format!("{} — {}", k + 1, what) };
+                ui.add(egui::Label::new(title).truncate());
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.button(egui::RichText::new("🗑").size(17.0)).on_hover_text(tr("Remove this track")).clicked() { del = Some(k); }
                     if ui.button(egui::RichText::new("✏").size(17.0)).on_hover_text(tr("Edit this track: opens the preview window with its settings and its text style")).clicked() { *preview = Some(k); }

@@ -680,6 +680,33 @@ fn sniff(text: &str) -> &'static str {
     "srt"
 }
 
+/// Nom du format detecte d'un fichier de sous-titres (« SRT », « ASS », « WebVTT »...), `None` si le fichier est illisible.
+pub fn detect_format(path: &std::path::Path) -> Option<String> {
+    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_ascii_lowercase();
+    let b = std::fs::read(path).ok()?;
+    let text = decode_text(&b);
+    let head = text.trim_start_matches('\u{feff}').trim_start();
+    let low: String = head.chars().take(4000).collect::<String>().to_ascii_lowercase();
+    let name = match ext.as_str() {
+        "ssa" => "SSA",
+        "ass" => "ASS",
+        "vtt" => "WebVTT",
+        "sbv" => "SBV",
+        "lrc" => "LRC",
+        "ttml" | "dfxp" | "xml" => "TTML",
+        "stl" => "STL",
+        _ if head.starts_with("WEBVTT") => "WebVTT",
+        _ => match sniff(&text) {
+            "ass" => if low.contains("[v4 styles]") && !low.contains("[v4+ styles]") { "SSA" } else { "ASS" },
+            "sami" => "SAMI",
+            "microdvd" => "MicroDVD",
+            "subviewer" => if ext == "sbv" { "SBV" } else { "SubViewer" },
+            _ => if low.contains("-->") { "SRT" } else { return Some(ext.to_ascii_uppercase()).filter(|e| !e.is_empty()).or(Some("?".into())); },
+        },
+    };
+    Some(name.to_string())
+}
+
 /// Choisit le format (`.ass` / `.ssa` d'apres l'extension, les autres d'apres le contenu : SRT, WebVTT, MicroDVD, SubViewer, SBV, SAMI), puis ordonne par debut.
 pub fn parse_file_text(ext: &str, text: &str) -> Vec<Cue> {
     parse_file_text_fps(ext, text, None)
