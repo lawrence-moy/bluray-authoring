@@ -25,6 +25,41 @@ fn abs(base: &Path, f: &str) -> PathBuf {
     if q.is_absolute() { q.to_path_buf() } else { base.join(q) }
 }
 
+/// Format detecte d'une piste source, en clair : « Dolby Digital · 5.1 · 48 kHz ».
+fn detected_label(s: &AudioStreamInfo) -> String {
+    let p = s.profile.to_ascii_uppercase();
+    let codec = match s.codec.as_str() {
+        "ac3" => "Dolby Digital".to_string(),
+        "eac3" => "Dolby Digital Plus".to_string(),
+        "truehd" => "Dolby TrueHD".to_string(),
+        "dts" if p.contains("MA") => "DTS-HD Master Audio".to_string(),
+        "dts" if p.contains("HRA") || p.contains("HI RES") => "DTS-HD High Resolution".to_string(),
+        "dts" => "DTS".to_string(),
+        "flac" => "FLAC".to_string(),
+        "mp3" => "MP3".to_string(),
+        "aac" => "AAC".to_string(),
+        "opus" => "Opus".to_string(),
+        "vorbis" => "Vorbis".to_string(),
+        c if c.starts_with("pcm_") => {
+            let bits = c.trim_start_matches("pcm_").trim_start_matches(|ch: char| ch.is_ascii_alphabetic()).trim_end_matches(|ch: char| ch.is_ascii_alphabetic());
+            if bits.is_empty() { "PCM".to_string() } else { format!("PCM {bits} bits") }
+        }
+        "" => "?".to_string(),
+        c => c.to_ascii_uppercase(),
+    };
+    let mut out = codec;
+    match s.channels {
+        0 => {}
+        1 => out.push_str(" · mono"),
+        2 => out.push_str(" · stereo"),
+        6 => out.push_str(" · 5.1"),
+        8 => out.push_str(" · 7.1"),
+        n => out.push_str(&format!(" · {n} ch")),
+    }
+    if s.sample_rate > 0 { out.push_str(&format!(" · {} kHz", (s.sample_rate as f64 / 1000.0 * 10.0).round() / 10.0)); }
+    out
+}
+
 /// Piste audio deplacee par glisser-deposer (rang dans la liste de la video).
 #[derive(Clone, Copy)]
 struct AudioRow(usize);
@@ -40,6 +75,20 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
     let mut rows: Vec<egui::Rect> = Vec::new();
     for (k, t) in v.audio.iter_mut().enumerate() {
         // frequence et canaux de la piste source (piste integree a la video, si la video a deja ete examinee)
+        // format detecte de la piste source (ffprobe, une seule fois par fichier ; cle a part de celle de la liste des pistes de la video)
+        let (probe_path, probe_index) = match &t.source {
+            AudioSource::Embedded(n) => (abs(base, &v.file), *n),
+            AudioSource::File(f) => (abs(base, f), 0),
+        };
+        let probe_key = format!("\u{0}{}", probe_path.display());
+        if !probes.contains_key(&probe_key) && probe_path.is_file() {
+            let r = match Tools::locate() {
+                Ok(tl) => list_audio_streams(&tl, &probe_path).map_err(|e| e.to_string()),
+                Err(e) => Err(e.to_string()),
+            };
+            probes.insert(probe_key.clone(), r);
+        }
+        let detected = probes.get(&probe_key).and_then(|r| r.as_ref().ok()).and_then(|s| s.iter().find(|x| x.index == probe_index)).map(detected_label);
         let src_stream = match &t.source {
             AudioSource::Embedded(n) => probes.get(&v.file).and_then(|r| r.as_ref().ok()).and_then(|s| s.iter().find(|x| x.index == *n)).map(|x| (x.sample_rate, x.channels)),
             AudioSource::File(_) => None,
@@ -108,7 +157,7 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 });
                 ui.horizontal(|ui| {
                     ui.label(tr("Convert to format:"));
-                    egui::ComboBox::from_id_salt("format_piste_audio").selected_text(tr(t.format.label())).show_ui(ui, |ui| {
+                    let combo = egui::ComboBox::from_id_salt("format_piste_audio").selected_text(tr(t.format.label())).show_ui(ui, |ui| {
                         for f in AudioFormat::ALL {
                             if ui.selectable_label(t.format == f, tr(f.label())).clicked() {
                                 t.format = f;
@@ -118,6 +167,8 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                             }
                         }
                     }).response.on_hover_text(tr("Dolby Digital is compact. The copy keeps the source's own Dolby Digital track untouched (it must be 48 kHz, 5.1 at most, 640 kb/s at most). The DTS copy keeps a DTS, DTS-HD High Resolution or DTS-HD Master Audio track untouched (48 kHz): every player plays at least its DTS core. LPCM is lossless but heavy: about 4.6 Mb/s for 5.1 in 16 bits, 6.9 Mb/s in 24 bits; the video bitrate is lowered accordingly."));
+                    let _ = combo;
+                    if let Some(d) = &detected { ui.label(egui::RichText::new(trf!("(source: {})", d)).weak()); }
                 });
                 if t.format.is_encoded_ac3() {
                     ui.horizontal(|ui| {
