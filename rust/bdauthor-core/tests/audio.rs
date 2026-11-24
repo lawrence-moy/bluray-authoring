@@ -7,7 +7,7 @@ use bdauthor_core::subtitle::Language;
 fn langs(codes: &[&str]) -> Vec<Language> {
     codes.iter().enumerate().map(|(i, c)| Language { id: i as u32 + 1, name: c.to_uppercase(), code: c.to_string() }).collect()
 }
-fn tr(id: u32) -> AudioTrackCfg { AudioTrackCfg { source: AudioSource::Embedded(id), lang_id: id, lang: "und".into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: Default::default(), gain_db: 0.0 } }
+fn tr(id: u32) -> AudioTrackCfg { AudioTrackCfg { source: AudioSource::Embedded(id), lang_id: id, lang: "und".into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: Default::default(), gain_db: 0.0, normalize: None, measured: None } }
 
 #[test]
 fn plan_orders_tracks_by_language() {
@@ -107,4 +107,56 @@ fn track_level_is_saved_validated_and_sent_to_ffmpeg() {
     t.format = AudioFormat::Ac3;
     t.gain_db = 40.0;
     assert!(!t.problems().is_empty());
+}
+
+#[test]
+fn track_normalization_is_saved_and_sent_to_ffmpeg() {
+    use bdauthor_core::audio::{AudioFormat, AudioTrackCfg, Loudness};
+    use bdauthor_core::ffmpeg::audio_codec_args;
+    let mut t = AudioTrackCfg::embedded(0, "fra");
+    // « comme le projet » : rien n'est ecrit
+    assert!(t.to_value().get("normalize").is_none());
+    assert_eq!(AudioTrackCfg::from_value(&t.to_value()).unwrap().normalize, None);
+    t.normalize = Some(false);
+    assert_eq!(AudioTrackCfg::from_value(&t.to_value()).unwrap().normalize, Some(false));
+    assert!(t.gain_filter().is_none());
+    t.normalize = Some(true);
+    t.gain_db = 5.0; // la normalisation remplace le niveau manuel
+    assert_eq!(AudioTrackCfg::from_value(&t.to_value()).unwrap().normalize, Some(true));
+    // sans mesure : une passe, apres le mixage stereo de la sortie
+    let args = audio_codec_args("448k", &[t.clone()]);
+    let k = args.iter().position(|a| a == "-filter:a:0").expect("filtre de la piste");
+    assert_eq!(args[k + 1], "aformat=channel_layouts=stereo,loudnorm=I=-23:LRA=7:TP=-1.5");
+    // avec la mesure : seconde passe lineaire
+    t.measured = Loudness::from_json("noise {
+	\"input_i\" : \"-27.61\",
+	\"input_tp\" : \"-4.47\",
+	\"input_lra\" : \"18.06\",
+	\"input_thresh\" : \"-39.20\",
+	\"output_i\" : \"-16.58\",
+	\"target_offset\" : \"0.58\"
+}
+");
+    assert_eq!(t.measured.unwrap().input_i, -27.61);
+    let f = t.gain_filter().unwrap();
+    assert!(f.contains("measured_I=-27.61") && f.contains("measured_thresh=-39.20") && f.contains("offset=0.58") && f.ends_with("linear=true:print_format=none"), "{f}");
+    // piste muette : pas de mesure
+    assert!(Loudness::from_json("{ \"input_i\" : \"-inf\", \"input_tp\" : \"-inf\", \"input_lra\" : \"0.00\", \"input_thresh\" : \"-70.00\", \"target_offset\" : \"0.00\" }").is_none());
+    // piste recopiee : pas de filtre possible, signale
+    t.format = AudioFormat::Ac3Copy;
+    assert!(!t.problems().is_empty());
+    assert!(t.gain_filter().is_none());
+}
+
+#[test]
+fn project_level_normalization_without_audio_tracks_filters_the_first_track() {
+    use bdauthor_core::ffmpeg::{encode_args, EncodeOpts, VideoInfo};
+    let info = VideoInfo { width: 1920, height: 1080, fps_num: 25, fps_den: 1, pix_fmt: "yuv420p".into(), codec: "h264".into(), duration_s: 60.0, has_audio: true, ..Default::default() };
+    let mut o = EncodeOpts::default();
+    let args = |o: &EncodeOpts| encode_args(std::path::Path::new("in.mkv"), std::path::Path::new("out.ts"), &info, o).0;
+    assert!(!args(&o).iter().any(|a| a.contains("loudnorm")));
+    o.normalize_audio = true;
+    let a = args(&o);
+    let k = a.iter().position(|x| x == "-filter:a:0").expect("filtre de la piste");
+    assert!(a[k + 1].ends_with("loudnorm=I=-23:LRA=7:TP=-1.5"), "{}", a[k + 1]);
 }

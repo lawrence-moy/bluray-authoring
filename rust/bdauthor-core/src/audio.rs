@@ -141,7 +141,42 @@ pub struct AudioTrackCfg {
     pub lpcm_channels: LpcmChannels,
     /// Niveau sonore de la piste (dB, 0 : inchange) ; sans effet sur les pistes recopiees telles quelles.
     pub gain_db: f64,
+    /// Normalisation automatique du volume (filtre `loudnorm`, cible `LOUDNORM_LUFS`) : toutes les videos sonnent pareil.
+    /// `None` : suit le reglage du projet ; remplace le niveau manuel ; sans effet sur les pistes recopiees.
+    pub normalize: Option<bool>,
+    /// Mesure du volume de la piste (premiere passe de `loudnorm`), faite au moment de l'encodage ; jamais enregistree.
+    pub measured: Option<Loudness>,
 }
+
+/// Mesure du volume d'une piste par la premiere passe de `loudnorm` (LUFS / dB).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Loudness { pub input_i: f64, pub input_tp: f64, pub input_lra: f64, pub input_thresh: f64, pub target_offset: f64 }
+
+impl Loudness {
+    /// Mesure lue dans le JSON affiche par `loudnorm=print_format=json` (`None` : piste muette ou valeurs hors limites).
+    pub fn from_json(text: &str) -> Option<Loudness> {
+        let (a, b) = (text.rfind('{')?, text.rfind('}')?);
+        let v = crate::json::parse(text.get(a..=b)?).ok()?;
+        let num = |k: &str| v.get(k).and_then(|x| x.as_str().and_then(|s| s.trim().parse::<f64>().ok()).or_else(|| x.as_f64())).filter(|x| x.is_finite());
+        let l = Loudness { input_i: num("input_i")?, input_tp: num("input_tp")?, input_lra: num("input_lra")?, input_thresh: num("input_thresh")?, target_offset: num("target_offset")? };
+        let ok = (-70.0..=0.0).contains(&l.input_i) && (-99.0..=99.0).contains(&l.input_tp) && (0.0..=99.0).contains(&l.input_lra)
+            && (-99.0..=0.0).contains(&l.input_thresh) && (-99.0..=99.0).contains(&l.target_offset);
+        ok.then_some(l)
+    }
+}
+
+/// Filtre `loudnorm` : une seule passe sans mesure, ou deux passes (gain constant, dynamique intacte) avec la mesure.
+pub fn loudnorm_filter(measured: Option<&Loudness>) -> String {
+    let base = format!("loudnorm=I={LOUDNORM_LUFS}:LRA=7:TP=-1.5");
+    match measured {
+        None => base,
+        Some(m) => format!("{base}:measured_I={:.2}:measured_LRA={:.2}:measured_TP={:.2}:measured_thresh={:.2}:offset={:.2}:linear=true:print_format=none",
+            m.input_i, m.input_lra, m.input_tp, m.input_thresh, m.target_offset),
+    }
+}
+
+/// Volume cible de la normalisation (LUFS, EBU R128).
+pub const LOUDNORM_LUFS: f64 = -23.0;
 
 /// Reglage du niveau sonore d'une piste (dB).
 pub const GAIN_RANGE_DB: std::ops::RangeInclusive<f64> = -30.0..=20.0;
@@ -154,15 +189,29 @@ pub const MAX_AUDIO_TRACKS: usize = 8;
 
 impl AudioTrackCfg {
     pub fn embedded(index: u32, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source, gain_db: 0.0 }
+        AudioTrackCfg { source: AudioSource::Embedded(index), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source, gain_db: 0.0, normalize: None, measured: None }
     }
     pub fn from_file(path: &str, lang: &str) -> Self {
-        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source, gain_db: 0.0 }
+        AudioTrackCfg { source: AudioSource::File(path.into()), lang_id: 0, lang: lang.into(), offset_ms: 0, format: AudioFormat::Ac3, bitrate: 0, sample_rate: 0, lpcm_channels: LpcmChannels::Source, gain_db: 0.0, normalize: None, measured: None }
     }
 
     /// Filtre ffmpeg du niveau sonore (`None` : piste inchangee).
     pub fn gain_filter(&self) -> Option<String> {
-        (self.gain_db != 0.0 && !self.format.is_copy()).then(|| format!("volume={:.2}dB", self.gain_db))
+        if self.format.is_copy() { return None; }
+        if self.normalize == Some(true) { return Some(loudnorm_filter(self.measured.as_ref())); }
+        (self.gain_db != 0.0).then(|| format!("volume={:.2}dB", self.gain_db))
+    }
+
+    /// Mixage des canaux fait avant le volume : celui du LPCM ; pour un AC-3 normalise, le mixage de la sortie, pour que
+    /// `loudnorm` mesure ce qu'on entendra (et non le 5.1 de la source).
+    pub fn mix_filters(&self) -> Vec<String> {
+        if self.format.is_lpcm() { return self.lpcm_channels.filter().map(String::from).into_iter().collect(); }
+        if self.normalize != Some(true) { return Vec::new(); }
+        match self.format {
+            AudioFormat::Ac3 => vec!["aformat=channel_layouts=stereo".into()],
+            AudioFormat::Ac3Surround => vec!["aformat=channel_layouts=5.1(side)".into()],
+            _ => Vec::new(),
+        }
     }
 
     /// Canaux sur le disque d'une piste LPCM dont la source a `src` canaux.
@@ -203,6 +252,8 @@ impl AudioTrackCfg {
             bitrate: v.get("bitrate_kbps").and_then(Value::as_f64).map_or(0, |x| x.round().max(0.0) as u32),
             lpcm_channels: v.get("lpcm_channels").and_then(Value::as_str).and_then(LpcmChannels::from_name).unwrap_or_default(),
             gain_db: v.get("gain_db").and_then(Value::as_f64).filter(|x| x.is_finite()).map_or(0.0, |x| (x * 100.0).round() / 100.0),
+            normalize: v.get("normalize").and_then(Value::as_bool),
+            measured: None,
             sample_rate: v.get("sample_rate_hz").and_then(Value::as_f64).map_or(0, |x| if x.round() as u32 == 48_000 { 0 } else { x.round().max(0.0) as u32 }),
         })
     }
@@ -217,6 +268,7 @@ impl AudioTrackCfg {
         if self.offset_ms != 0 { o.push(("offset_ms".into(), Value::Num(self.offset_ms as f64))); }
         if self.format != AudioFormat::Ac3 { o.push(("format".into(), Value::Str(self.format.name().into()))); }
         if self.gain_db != 0.0 { o.push(("gain_db".into(), Value::Num(self.gain_db))); }
+        if let Some(n) = self.normalize { o.push(("normalize".into(), Value::Bool(n))); }
         if self.bitrate != 0 { o.push(("bitrate_kbps".into(), Value::Num(self.bitrate as f64))); }
         if self.sample_rate != 0 { o.push(("sample_rate_hz".into(), Value::Num(self.sample_rate as f64))); }
         if self.lpcm_channels != LpcmChannels::Source { o.push(("lpcm_channels".into(), Value::Str(self.lpcm_channels.name().into()))); }
@@ -244,7 +296,7 @@ impl AudioTrackCfg {
         }
         if !GAIN_RANGE_DB.contains(&self.gain_db) {
             p.push(trf!("audio level: between {} and {} dB expected", GAIN_RANGE_DB.start(), GAIN_RANGE_DB.end()));
-        } else if self.gain_db != 0.0 && self.format.is_copy() {
+        } else if (self.gain_db != 0.0 || self.normalize == Some(true)) && self.format.is_copy() {
             p.push(tr("audio level: not available for a track copied as it is (choose another format)").to_string());
         }
         p

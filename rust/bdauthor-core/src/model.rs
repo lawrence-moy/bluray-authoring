@@ -121,6 +121,8 @@ pub struct ProjectModel {
     pub fill_disc: bool,
     /// Recopier sans reencodage les videos deja conformes au Blu-ray.
     pub copy_conform: bool,
+    /// Normaliser le volume des pistes audio (par defaut ; chaque piste peut faire autrement).
+    pub normalize_audio: bool,
     pub bg: String, // chemin ; vide = fond genere
     /// Sequence d'ouverture : video jouee a l'insertion du disque (vide = aucune).
     pub intro: String,
@@ -152,7 +154,7 @@ pub struct ProjectModel {
 impl Default for ProjectModel {
     fn default() -> Self {
         ProjectModel {
-            title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), fill_disc: false, copy_conform: false, bg: String::new(), intro: String::new(), bg_video: String::new(), bg_video_audio: false, music: String::new(), bg_seconds: 5.0,
+            title: "Mes vidéos".into(), lang: "fra".into(), videos: vec![], crf: 18, preset: "medium".into(), fill_disc: false, copy_conform: false, normalize_audio: false, bg: String::new(), intro: String::new(), bg_video: String::new(), bg_video_audio: false, music: String::new(), bg_seconds: 5.0,
             menu_1080: true, menu_custom: None, loop_menu: false, cache: true, designs: Designs::default(), languages: vec![], iso: Default::default(), cover: Default::default(), label: Default::default(), raw: Value::Obj(vec![]),
         }
     }
@@ -200,6 +202,7 @@ impl ProjectModel {
             if let Some(p) = e.get("preset").and_then(Value::as_str) { m.preset = p.into(); }
             m.fill_disc = e.get("fill_disc").and_then(Value::as_bool).unwrap_or(false);
             m.copy_conform = e.get("copy_if_conforming").and_then(Value::as_bool).unwrap_or(false);
+            m.normalize_audio = e.get("normalize_audio").and_then(Value::as_bool).unwrap_or(false);
         }
         if let Some(menu) = v.get("menu") {
             m.bg = menu.get("background").and_then(Value::as_str).unwrap_or("").into();
@@ -258,6 +261,7 @@ impl ProjectModel {
         set(&mut enc, "preset", Some(s(&self.preset)));
         set(&mut enc, "fill_disc", if self.fill_disc { Some(Value::Bool(true)) } else { None });
         set(&mut enc, "copy_if_conforming", if self.copy_conform { Some(Value::Bool(true)) } else { None });
+        set(&mut enc, "normalize_audio", if self.normalize_audio { Some(Value::Bool(true)) } else { None });
         set(&mut root, "encoding", Some(enc));
         let mut menu = root.get("menu").cloned().unwrap_or(Value::Obj(vec![]));
         set(&mut menu, "background", if self.bg.is_empty() { None } else { Some(s(&self.bg)) });

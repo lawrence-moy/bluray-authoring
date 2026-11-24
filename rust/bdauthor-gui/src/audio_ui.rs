@@ -152,6 +152,16 @@ pub fn panel(ui: &mut egui::Ui, v: &mut VideoEntry, langs: &mut Vec<Language>, p
                 // niveau sonore : sans effet sur une piste recopiee telle quelle
                 ui.add_enabled_ui(!t.format.is_copy(), |ui| {
                     ui.horizontal(|ui| {
+                        ui.label(tr("Normalize volume:"));
+                        let label = |n: Option<bool>| match n { None => tr("As the project"), Some(true) => tr("Yes"), Some(false) => tr("No") };
+                        egui::ComboBox::from_id_salt("normaliser_piste_audio").selected_text(label(t.normalize)).show_ui(ui, |ui| {
+                            for n in [None, Some(true), Some(false)] { changed |= ui.selectable_value(&mut t.normalize, n, label(n)).changed(); }
+                        });
+                        crate::help(ui, tr("Evens out the loudness of this track (ffmpeg loudnorm, -23 LUFS), so every video of the disc sounds the same. “As the project” follows the option of the Encoding section. Replaces the manual level. Not available for a track copied as it is."));
+                    });
+                });
+                ui.add_enabled_ui(!t.format.is_copy() && t.normalize != Some(true), |ui| {
+                    ui.horizontal(|ui| {
                         ui.label(tr("Level (dB):"));
                         changed |= ui.add(egui::DragValue::new(&mut t.gain_db).speed(0.1).range(bdauthor_core::audio::GAIN_RANGE_DB).fixed_decimals(1).suffix(" dB")).changed();
                         if t.gain_db != 0.0 && ui.small_button(tr("Reset")).clicked() { t.gain_db = 0.0; changed = true; }

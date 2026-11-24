@@ -276,6 +276,7 @@ fn with_truehd_cores(tools: &Tools, src: &Path, tracks: &[crate::audio::AudioTra
         let channels = ffmpeg::list_audio_streams(tools, &path).ok().and_then(|l| l.into_iter().find(|s| s.index == index)).map_or(6, |s| s.channels);
         let mut c = t.clone();
         c.gain_db = 0.0;
+        c.normalize = Some(false);
         c.sample_rate = 0;
         c.lpcm_channels = crate::audio::LpcmChannels::Source;
         (c.format, c.bitrate) = if channels > 2 { (AudioFormat::Ac3Surround, crate::audio::AC3_MAX_KBPS) } else { (AudioFormat::Ac3, 448) };

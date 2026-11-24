@@ -602,6 +602,16 @@ fn track_kbps(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg, ac3_kb
     t.kbps(channels, source_kbps, ac3_kbps)
 }
 
+/// Mesure du volume d'une piste ; une mesure impossible n'arrete pas la generation (normalisation en une seule passe).
+fn measure_or_log(env: &mut BuildEnv, path: &Path, index: u32, pre: &[String]) -> Result<Option<crate::audio::Loudness>> {
+    match ffmpeg::measure_loudness(env.tools, path, index, pre, env.cancel) {
+        Ok(None) => { (env.log)(tr("   (silent or unmeasurable audio: single-pass normalization)")); Ok(None) }
+        Ok(m) => Ok(m),
+        Err(Error::Cancelled) => Err(Error::Cancelled),
+        Err(e) => { (env.log)(&trf!("   volume measurement failed ({}): single-pass normalization", e)); Ok(None) }
+    }
+}
+
 /// Une piste en « copie » doit etre de l'AC-3 acceptable sur un disque Blu-ray : renvoie la raison du refus sinon.
 fn check_ac3_copy(tools: &Tools, src: &Path, t: &crate::audio::AudioTrackCfg) -> std::result::Result<(), String> {
     let Some(s) = probe_track(tools, src, t) else { return Err(tr("the source audio track cannot be read").to_string()) };
@@ -648,6 +658,7 @@ fn audio_signature(tracks: &[crate::audio::AudioTrackCfg], langs: &[[u8; 3]]) ->
         if t.lpcm_channels != crate::audio::LpcmChannels::Source { s.push_str(&format!("%{}", t.lpcm_channels.name())); }
         if t.rate() != 48_000 { s.push_str(&format!("^{}", t.rate())); }
         if t.gain_db != 0.0 { s.push_str(&format!("*{:.2}", t.gain_db)); }
+        if t.normalize == Some(true) { s.push_str("=N"); }
     }
     for l in langs { s.push_str(&String::from_utf8_lossy(l)); s.push(','); }
     s
@@ -834,6 +845,8 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
     if let Some(c) = get_usize(enc_cfg.get("keyint"), "encodage.keyint")? { eopts.keyint = c as u32; }
     if let Some(s) = enc_cfg.get("preset").and_then(Value::as_str) { eopts.preset = s.to_string(); }
     if let Some(s) = enc_cfg.get("audio_bitrate").and_then(Value::as_str) { eopts.audio_bitrate = s.to_string(); }
+    let normalize_audio = enc_cfg.get("normalize_audio").and_then(Value::as_bool).unwrap_or(false);
+    eopts.normalize_audio = normalize_audio;
     // encodeur video : reglage de l'application (detection a la demande dans les reglages)
     (eopts.encoder, eopts.encoder_interlaced) = crate::hwenc::video_encoder();
     let menu_cfg = proj.get("menu").unwrap_or(&empty);
@@ -968,7 +981,7 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let info = ffmpeg::probe(env.tools, &src)?;
         durations.push(info.duration_s);
         // pistes audio de cette video (chemins complets) et leurs langues
-        let (a_tracks, a_langs): (Vec<crate::audio::AudioTrackCfg>, Vec<[u8; 3]>) = match &audio_plan {
+        let (mut a_tracks, a_langs): (Vec<crate::audio::AudioTrackCfg>, Vec<[u8; 3]>) = match &audio_plan {
             Some(pl) => {
                 let mut t = pl.videos[i].tracks.clone();
                 for x in &mut t {
@@ -983,11 +996,13 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
                     let src_ch = probe_track(env.tools, &src, x).map_or(0, |s| s.channels);
                     if src_ch != 0 && src_ch <= x.lpcm_channels.max().unwrap_or(u32::MAX) { x.lpcm_channels = crate::audio::LpcmChannels::Source; }
                 }
+                // volume normalise : reglage de la piste, sinon celui du projet (jamais pour une piste recopiee telle quelle)
+                for x in &mut t { x.normalize = Some(x.normalize.unwrap_or(normalize_audio) && !x.format.is_copy()); }
                 (t, pl.videos[i].langs.clone())
             }
             None => (Vec::new(), vec![lang]),
         };
-        let a_sig = if audio_plan.is_some() { audio_signature(&a_tracks, &a_langs) } else { String::new() };
+        let a_sig = if audio_plan.is_some() { audio_signature(&a_tracks, &a_langs) } else if normalize_audio { "N".to_string() } else { String::new() };
         audio_langs.push(a_langs.clone());
         // chapitres exacts : une image cle IDR a chaque chapitre (les reperes tombent alors sur l'image choisie)
         let mut eopts = match v.get("exact_chapters").and_then(Value::as_bool) {
@@ -1043,6 +1058,20 @@ pub fn build_project(project_path: &Path, out_dir: &Path, env: &mut BuildEnv) ->
         let m2ts = match cached {
             Some((b, _)) => { (env.log)(tr("   (already encoded: cache)")); b }
             None => {
+                // volume normalise en deux passes : mesure de chaque piste avant l'encodage (inutile quand le cache sert)
+                for (k, x) in a_tracks.iter_mut().enumerate().filter(|(_, x)| x.normalize == Some(true)) {
+                    (env.log)(&trf!("   measuring the volume of audio track {} ...", k + 1));
+                    let (path, index) = match &x.source {
+                        crate::audio::AudioSource::Embedded(n) => (src.clone(), *n),
+                        crate::audio::AudioSource::File(f) => (PathBuf::from(f), 0),
+                    };
+                    x.measured = measure_or_log(env, &path, index, &x.mix_filters())?;
+                }
+                if a_tracks.is_empty() && normalize_audio && info.has_audio {
+                    (env.log)(tr("   measuring the volume of the audio ..."));
+                    let pre = crate::audio::AudioTrackCfg { normalize: Some(true), ..crate::audio::AudioTrackCfg::embedded(0, "und") }.mix_filters();
+                    eopts.audio_loudness = measure_or_log(env, &src, 0, &pre)?;
+                }
                 let before: f64 = weights[..i].iter().sum();
                 let (lo, hi) = (before / total_w * 0.85, (before + weights[i]) / total_w * 0.85);
                 let progress = &mut *env.progress;

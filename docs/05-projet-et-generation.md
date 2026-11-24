@@ -21,6 +21,7 @@
 - **Préréglage d'encodage** : plus lent = plus compact à qualité égale.
 - **Viser un débit qui remplit le disque** : au lieu d'une qualité fixe, les vidéos à encoder se partagent ce qui reste du disque une fois comptés les menus, l'audio et les vidéos copiées, avec le même débit moyen pour toutes. **Disque** visé et part de la capacité à **remplir jusqu'à** (c'est aussi la marge de sécurité de l'image ISO).
 - **Copier les vidéos déjà conformes au Blu-ray** : une vidéo H.264 déjà admise sur un Blu-ray (profil, niveau, taille, cadence, débit) garde son flux vidéo tel quel ; c'est plus rapide et sans perte.
+- **Normaliser le volume des pistes audio** : toutes les vidéos du disque sont ramenées au même volume (−23 LUFS, filtre `loudnorm` de ffmpeg), pour ne pas toucher à la télécommande entre deux films. Chaque piste est d'abord mesurée (une lecture rapide de l'audio seul, sautée quand l'encodage est déjà en cache), puis corrigée d'un gain constant : la dynamique est conservée. Dans le panneau d'une piste audio, **Normaliser le volume** vaut *Comme le projet*, *Oui* ou *Non* ; la normalisation remplace alors le niveau en dB. Sans effet sur une piste recopiée telle quelle (AC-3, DTS, TrueHD). Si la mesure échoue (piste muette), la normalisation se fait en une seule passe.
 - **Réutiliser les vidéos déjà encodées (cache)** : une vidéo encodée avec les mêmes réglages n'est pas réencodée à la génération suivante.
 
 ### Style des boutons

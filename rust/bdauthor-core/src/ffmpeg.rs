@@ -340,13 +340,16 @@ pub struct EncodeOpts {
     /// l'entrelace de facon conforme.
     pub encoder: crate::hwenc::VideoEncoder,
     pub encoder_interlaced: bool,
+    /// Normaliser le volume de l'audio quand aucune piste n'est configuree (reglage du projet) ; `audio_loudness` : sa mesure.
+    pub normalize_audio: bool,
+    pub audio_loudness: Option<crate::audio::Loudness>,
 }
 
 impl Default for EncodeOpts {
     fn default() -> Self {
         EncodeOpts {
             crf: 18, maxrate: 30000, keyint: 30, audio_bitrate: "192k".into(), preset: "medium".into(), force_keys: Vec::new(), copy_video: false, video_kbps: None,
-            encoder: crate::hwenc::VideoEncoder::X264, encoder_interlaced: false,
+            encoder: crate::hwenc::VideoEncoder::X264, encoder_interlaced: false, normalize_audio: false, audio_loudness: None,
         }
     }
 }
@@ -525,6 +528,39 @@ fn s(p: &Path) -> String {
     p.to_string_lossy().into_owned()
 }
 
+/// Premiere passe de `loudnorm` sur la piste audio `index` de `src` (apres le mixage `pre` des canaux) : mesure du volume pour la
+/// seconde passe. `Ok(None)` : piste muette ou mesure inutilisable (la normalisation se fait alors en une seule passe).
+pub fn measure_loudness(tools: &Tools, src: &Path, index: u32, pre: &[String], cancel: &AtomicBool) -> Result<Option<crate::audio::Loudness>> {
+    let mut chain = pre.to_vec();
+    chain.push(format!("{}:print_format=json", crate::audio::loudnorm_filter(None)));
+    let mut c = Command::new(&tools.ffmpeg);
+    c.args(["-hide_banner", "-nostats", "-v", "info", "-i"]).arg(src).args(["-map".to_string(), format!("0:a:{index}"), "-vn".into(), "-af".into(), chain.join(","), "-f".into(), "null".into()]);
+    c.arg(if cfg!(windows) { "NUL" } else { "/dev/null" });
+    c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+    no_window(&mut c);
+    trace_command(&c);
+    let mut child: Child = c.spawn()?;
+    let mut stderr = child.stderr.take().expect("stderr");
+    let reader = std::thread::spawn(move || { let mut t = String::new(); let _ = stderr.read_to_string(&mut t); t });
+    let status = loop {
+        if cancel.load(Ordering::Relaxed) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = reader.join();
+            return Err(Error::Cancelled);
+        }
+        if let Some(st) = child.try_wait()? { break st; }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    };
+    let text = reader.join().unwrap_or_default();
+    if !status.success() {
+        let tail: Vec<&str> = text.lines().rev().take(8).collect();
+        return Err(Error::Ffmpeg { code: status.code(), stderr: tail.into_iter().rev().collect::<Vec<_>>().join("
+") });
+    }
+    Ok(crate::audio::Loudness::from_json(&text))
+}
+
 /// Construit les arguments ffmpeg (sans les options communes) pour le transcodage d'une video. Public pour les tests.
 /// Une source sans piste audio recoit une piste muette (le disque reste homogene : chaque video a son audio).
 pub fn encode_args(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts) -> (Vec<String>, Target) {
@@ -628,7 +664,13 @@ fn encode_args_full(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tr
         a.extend(force_keys_args(&o.force_keys));
         if let Some((n, log)) = pass { a.extend(["-pass".to_string(), n.to_string(), "-passlogfile".into(), s(log)]); }
     }
-    a.extend(audio_codec_args(&o.audio_bitrate, tracks));
+    // aucune piste configuree mais volume normalise : la premiere piste du fichier, comme une piste AC-3 stereo normalisee
+    let default_track;
+    let codec_tracks = if tracks.is_empty() && o.normalize_audio && info.has_audio {
+        default_track = [crate::audio::AudioTrackCfg { normalize: Some(true), measured: o.audio_loudness, ..crate::audio::AudioTrackCfg::embedded(0, "und") }];
+        &default_track[..]
+    } else { tracks };
+    a.extend(audio_codec_args(&o.audio_bitrate, codec_tracks));
     a.extend(["-f", "mpegts", "-pes_payload_size", "0"].iter().map(|x| x.to_string()));
     a.push(s(dst));
     (a, tg)
@@ -638,7 +680,7 @@ fn encode_args_full(src: &Path, dst: &Path, info: &VideoInfo, o: &EncodeOpts, tr
 /// (`pcm_bluray` : 16 bits ou 24 bits, canaux de la source, 48 ou 96 kHz). Sans piste LPCM, les memes options qu'avant pour toutes.
 pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -> Vec<String> {
     let st = |x: &str| x.to_string();
-    if tracks.iter().all(|t| t.format == crate::audio::AudioFormat::Ac3 && t.bitrate == 0 && t.gain_db == 0.0) {
+    if tracks.iter().all(|t| t.format == crate::audio::AudioFormat::Ac3 && t.bitrate == 0 && t.gain_db == 0.0 && t.normalize != Some(true)) {
         return vec![st("-c:a"), st("ac3"), st("-b:a"), bitrate.to_string(), st("-ar"), st("48000"), st("-ac"), st("2")];
     }
     let mut a = vec![st("-ar"), st("48000")];
@@ -654,7 +696,7 @@ pub fn audio_codec_args(bitrate: &str, tracks: &[crate::audio::AudioTrackCfg]) -
         if t.rate() != 48_000 { a.extend([format!("-ar:a:{k}"), t.rate().to_string()]); }
         // LPCM : mixage vers moins de canaux (seulement si la source en a plus, voir `project`)
         // filtres de la piste : mixage des canaux (LPCM) puis niveau sonore
-        let mut filters: Vec<String> = t.lpcm_channels.filter().filter(|_| t.format.is_lpcm()).map(st).into_iter().collect();
+        let mut filters: Vec<String> = t.mix_filters();
         filters.extend(t.gain_filter());
         if !filters.is_empty() { a.extend([format!("-filter:a:{k}"), filters.join(",")]); }
     }

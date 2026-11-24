@@ -1276,6 +1276,9 @@ impl eframe::App for App {
                         changed |= ui.checkbox(&mut m.copy_conform, tr("Copy videos that already comply with Blu-ray (no re-encoding)"))
                             .on_hover_text(tr("An H.264 video that is already allowed on a Blu-ray (profile, level, size, frame rate, bitrate) keeps its video stream as it is: faster, with no quality loss. The audio is still converted to AC-3. Not possible with exact chapters. If the copy fails, the video is re-encoded. The T-STD buffer cannot be checked: test the disc on a player."))
                             .changed();
+                        changed |= ui.checkbox(&mut m.normalize_audio, tr("Normalize the volume of the audio tracks"))
+                            .on_hover_text(tr("Every video of the disc is brought to the same loudness (-23 LUFS, ffmpeg loudnorm, measured first then corrected), so the remote control stays untouched between two films. Each audio track can override this. Tracks copied as they are are not changed."))
+                            .changed();
                         egui::ComboBox::from_label(tr("Encoding preset (slower = more compact)"))
                             .selected_text(m.preset.clone())
                             .show_ui(ui, |ui| {

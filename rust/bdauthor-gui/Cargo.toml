@@ -1,6 +1,6 @@
 [package]
 name = "bdauthor-gui"
-version = "0.1.15"
+version = "0.1.16"
 edition = "2021"
 description = "Interface graphique native de bdauthor (egui/eframe)"
 
