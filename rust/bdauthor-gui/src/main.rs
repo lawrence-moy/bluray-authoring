@@ -1648,7 +1648,14 @@ impl eframe::App for App {
                                     bdauthor_core::audio::AudioSource::File(f) => (abs_of(f), None, Path::new(f).file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_else(|| f.clone())),
                                     bdauthor_core::audio::AudioSource::Embedded(n) => (abs_of(&v.file), Some(*n), trf!("embedded track no. {}", n + 1)),
                                 };
-                                self.audio_preview = Some(audio_ui::AudioPreview::new(vi, k, format!("{} — {}", k + 1, what), &file, stream));
+                                // reglage du niveau : normalisation (de la piste ou du projet) ou gain manuel, sauf piste recopiee
+                                let mut cfg = t.clone();
+                                cfg.normalize = Some(t.normalize.unwrap_or(self.model.normalize_audio) && !t.format.is_copy());
+                                let level = cfg.gain_filter().map(|_| {
+                                    let d = if cfg.normalize == Some(true) { tr("normalization").to_string() } else { format!("{:+.1} dB", cfg.gain_db) };
+                                    (cfg.clone(), d)
+                                });
+                                self.audio_preview = Some(audio_ui::AudioPreview::new(vi, k, format!("{} — {}", k + 1, what), &file, stream, level));
                             }
                         }
                         ui.separator();

@@ -53,11 +53,16 @@ impl AudioOut {
     /// Joue `file` a partir de `t` secondes ; `track` : numero de la piste audio (0 = la premiere), `None` : celle que ffmpeg
     /// choisit (fichier audio).
     pub(crate) fn start(tools: &Tools, file: &Path, track: Option<u32>, t: f64) -> Result<AudioOut, String> {
+        Self::start_filtered(tools, file, track, t, None)
+    }
+
+    /// Comme `start`, avec un filtre audio ffmpeg applique au son avant la sortie.
+    pub(crate) fn start_filtered(tools: &Tools, file: &Path, track: Option<u32>, t: f64, filter: Option<&str>) -> Result<AudioOut, String> {
         let host = cpal::default_host();
         let dev = host.default_output_device().ok_or_else(|| tr("no audio output found").to_string())?;
         let sup = dev.default_output_config().map_err(|e| e.to_string())?;
         let (rate, ch) = (sup.sample_rate().0, sup.channels());
-        let feed = PcmFeed::start(tools, file, track, t, rate, ch as u32).map_err(|e| e.to_string())?;
+        let feed = PcmFeed::start_filtered(tools, file, track, t, rate, ch as u32, filter).map_err(|e| e.to_string())?;
         let cfg: cpal::StreamConfig = sup.config();
         let src = feed.source();
         let meter = Arc::new(Meter::new(ch as usize));

@@ -62,9 +62,15 @@ const AHEAD_S: f64 = 0.4;
 impl PcmFeed {
     /// `track` : numero parmi les pistes audio (0 = la premiere) ; `None` : celle que ffmpeg choisit.
     pub fn start(tools: &Tools, src: &Path, track: Option<u32>, t: f64, rate: u32, channels: u32) -> Result<PcmFeed> {
+        Self::start_filtered(tools, src, track, t, rate, channels, None)
+    }
+
+    /// Comme `start`, avec un filtre audio ffmpeg (`-af`) applique avant la conversion vers la sortie (niveau, normalisation).
+    pub fn start_filtered(tools: &Tools, src: &Path, track: Option<u32>, t: f64, rate: u32, channels: u32, filter: Option<&str>) -> Result<PcmFeed> {
         let mut c = Command::new(&tools.ffmpeg);
         c.args(["-v", "error", "-nostdin", "-ss", &format!("{:.4}", t.max(0.0)), "-i"]).arg(src);
         if let Some(n) = track { c.args(["-map", &format!("0:a:{n}")]); }
+        if let Some(f) = filter { c.args(["-af", f]); }
         c.args(["-vn", "-sn", "-dn", "-ac", &channels.max(1).to_string(), "-ar", &rate.max(8000).to_string(), "-f", "f32le", "pipe:1"]);
         c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null());
         no_window(&mut c);

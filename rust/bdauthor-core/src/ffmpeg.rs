@@ -531,27 +531,45 @@ fn s(p: &Path) -> String {
 /// Premiere passe de `loudnorm` sur la piste audio `index` de `src` (apres le mixage `pre` des canaux) : mesure du volume pour la
 /// seconde passe. `Ok(None)` : piste muette ou mesure inutilisable (la normalisation se fait alors en une seule passe).
 pub fn measure_loudness(tools: &Tools, src: &Path, index: u32, pre: &[String], cancel: &AtomicBool) -> Result<Option<crate::audio::Loudness>> {
+    measure_loudness_with(tools, src, index, pre, 0.0, cancel, &mut |_| {})
+}
+
+/// Comme `measure_loudness`, avec l'avancement (0 a 1) rapporte a `progress` ; `duration` (s) : duree de la piste (0 : inconnue, pas d'avancement).
+pub fn measure_loudness_with(tools: &Tools, src: &Path, index: u32, pre: &[String], duration: f64, cancel: &AtomicBool, progress: &mut dyn FnMut(f32)) -> Result<Option<crate::audio::Loudness>> {
     let mut chain = pre.to_vec();
     chain.push(format!("{}:print_format=json", crate::audio::loudnorm_filter(None)));
     let mut c = Command::new(&tools.ffmpeg);
-    c.args(["-hide_banner", "-nostats", "-v", "info", "-i"]).arg(src).args(["-map".to_string(), format!("0:a:{index}"), "-vn".into(), "-af".into(), chain.join(","), "-f".into(), "null".into()]);
+    c.args(["-hide_banner", "-nostats", "-progress", "pipe:1", "-v", "info", "-i"]).arg(src).args(["-map".to_string(), format!("0:a:{index}"), "-vn".into(), "-af".into(), chain.join(","), "-f".into(), "null".into()]);
     c.arg(if cfg!(windows) { "NUL" } else { "/dev/null" });
-    c.stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::piped());
+    c.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     no_window(&mut c);
     trace_command(&c);
     let mut child: Child = c.spawn()?;
     let mut stderr = child.stderr.take().expect("stderr");
+    let stdout = child.stdout.take().expect("stdout");
     let reader = std::thread::spawn(move || { let mut t = String::new(); let _ = stderr.read_to_string(&mut t); t });
+    // temps traite (microsecondes), lu dans les lignes `out_time_us=` du suivi `-progress`
+    let done_us = std::sync::Arc::new(std::sync::atomic::AtomicU64::new(0));
+    let d = done_us.clone();
+    let prog_reader = std::thread::spawn(move || {
+        use std::io::BufRead;
+        for line in std::io::BufReader::new(stdout).lines().map_while(|l| l.ok()) {
+            if let Some(v) = line.strip_prefix("out_time_us=").and_then(|v| v.trim().parse::<u64>().ok()) { d.store(v, Ordering::Relaxed); }
+        }
+    });
     let status = loop {
         if cancel.load(Ordering::Relaxed) {
             let _ = child.kill();
             let _ = child.wait();
             let _ = reader.join();
+            let _ = prog_reader.join();
             return Err(Error::Cancelled);
         }
         if let Some(st) = child.try_wait()? { break st; }
+        if duration > 0.0 { progress(((done_us.load(Ordering::Relaxed) as f64 / 1e6 / duration) as f32).clamp(0.0, 1.0)); }
         std::thread::sleep(std::time::Duration::from_millis(50));
     };
+    let _ = prog_reader.join();
     let text = reader.join().unwrap_or_default();
     if !status.success() {
         let tail: Vec<&str> = text.lines().rev().take(8).collect();

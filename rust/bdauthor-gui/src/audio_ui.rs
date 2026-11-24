@@ -10,6 +10,8 @@ use eframe::egui;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::Instant;
 
 /// Pistes audio deja recherchees, par fichier video (ou le message d'erreur de la recherche).
@@ -423,6 +425,20 @@ pub struct AudioPreview {
     last_cur: f64,
     /// niveaux du son joue
     vu: crate::vumeter::VuMeter,
+    /// reglage de la piste (normalisation deja resolue avec celle du projet) ; `None` : piste sans reglage ni recopiee
+    level: Option<AudioTrackCfg>,
+    /// description du reglage (« +3.0 dB », « normalisation »)
+    level_what: String,
+    /// mesure du volume de la piste (premiere passe de `loudnorm`), demandee a la main
+    measured: Option<bdauthor_core::audio::Loudness>,
+    measure_rx: Option<Receiver<Result<Option<bdauthor_core::audio::Loudness>, String>>>,
+    measure_cancel: Arc<AtomicBool>,
+    /// avancement de la mesure (bits d'un f32 entre 0 et 1), ecrit par le fil de mesure
+    measure_progress: Arc<std::sync::atomic::AtomicU32>,
+    /// mesure inutilisable (piste muette) ou en erreur
+    measure_note: Option<String>,
+    /// applique temporairement le reglage de la piste a l'ecoute
+    apply_level: bool,
 }
 
 /// Heure avec les dixiemes si `tenths`.
@@ -447,14 +463,22 @@ fn clock(t: f64) -> String {
     if s >= 3600 { format!("{}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60) } else { format!("{}:{:02}", s / 60, s % 60) }
 }
 
+impl Drop for AudioPreview {
+    /// La fenetre fermee arrete la mesure en cours.
+    fn drop(&mut self) { self.measure_cancel.store(true, Ordering::Relaxed); }
+}
+
 impl AudioPreview {
     /// `file` : fichier audio, ou video dont on ecoute la piste audio numero `stream`.
-    pub fn new(video: usize, track: usize, title: String, file: &Path, stream: Option<u32>) -> AudioPreview {
+    /// `level` : reglage du niveau / de la normalisation de la piste (propose a l'ecoute) et sa description.
+    pub fn new(video: usize, track: usize, title: String, file: &Path, stream: Option<u32>, level: Option<(AudioTrackCfg, String)>) -> AudioPreview {
+        let (level, level_what) = match level { Some((c, w)) => (Some(c), w), None => (None, String::new()) };
         let key = peaks_key(file, stream);
         let mut me = AudioPreview {
             video, track, title, file: file.to_path_buf(), stream, duration: 0.0, peaks: Vec::new(), progress: 0.0, rx: None, error: None,
             tools: None, play: None, pos: 0.0, scrub: None, view: (0.0, 0.0), detail: None, detail_rx: None, detail_want: None, last_cur: 0.0,
-            vu: Default::default(),
+            vu: Default::default(), level, level_what, apply_level: false, measured: None, measure_rx: None,
+            measure_cancel: Arc::new(AtomicBool::new(false)), measure_progress: Arc::new(std::sync::atomic::AtomicU32::new(0)), measure_note: None,
         };
         if let Some((d, p)) = key.as_ref().and_then(|k| peaks_cache().get(k).cloned()) {
             (me.duration, me.peaks, me.progress) = (d, p, 1.0);
@@ -516,13 +540,60 @@ impl AudioPreview {
         if self.play.take().is_some() { self.pos = cur; }
     }
 
+    /// Chaine de filtres ffmpeg du reglage de la piste (avec la mesure du volume quand elle est faite) si on l'applique.
+    fn level_filter(&self) -> Option<String> {
+        if !self.apply_level { return None; }
+        let mut cfg = self.level.clone()?;
+        cfg.measured = self.measured;
+        let mut chain = cfg.mix_filters();
+        chain.push(cfg.gain_filter()?);
+        Some(chain.join(","))
+    }
+
+    /// Lance la mesure du volume de la piste entiere (en arriere-plan).
+    fn start_measure(&mut self) {
+        let Some(cfg) = &self.level else { return };
+        let Ok(tools) = Tools::locate() else { self.measure_note = Some(tr("ffmpeg not found").to_string()); return };
+        let pre = cfg.mix_filters();
+        let (src, index) = (self.file.clone(), self.stream.unwrap_or(0));
+        self.measure_cancel = Arc::new(AtomicBool::new(false));
+        let cancel = self.measure_cancel.clone();
+        self.measure_progress = Arc::new(std::sync::atomic::AtomicU32::new(0));
+        let prog = self.measure_progress.clone();
+        let dur = self.duration;
+        let (tx, rx) = channel();
+        std::thread::spawn(move || {
+            let mut report = |f: f32| prog.store(f.to_bits(), Ordering::Relaxed);
+            let r = bdauthor_core::ffmpeg::measure_loudness_with(&tools, &src, index, &pre, dur, &cancel, &mut report).map_err(|e| e.to_string());
+            let _ = tx.send(r);
+        });
+        self.measure_rx = Some(rx);
+        self.measure_note = None;
+    }
+
+    fn poll_measure(&mut self) {
+        let Some(rx) = &self.measure_rx else { return };
+        let Ok(r) = rx.try_recv() else { return };
+        self.measure_rx = None;
+        match r {
+            Ok(Some(m)) => {
+                self.measured = Some(m);
+                // la lecture en cours repart de la meme position avec le gain mesure
+                if self.apply_level && self.play.is_some() { let t = self.current(); self.start_at(t); }
+            }
+            Ok(None) => self.measure_note = Some(tr("the volume could not be measured (silent track?)").to_string()),
+            Err(e) => self.measure_note = Some(e),
+        }
+    }
+
     fn start_at(&mut self, t: f64) {
         self.stop();
         if self.tools.is_none() {
             match Tools::locate() { Ok(t) => self.tools = Some(t), Err(e) => { self.error = Some(e.to_string()); return; } }
         }
+        let filter = self.level_filter();
         let Some(tools) = &self.tools else { return };
-        match AudioOut::start(tools, &self.file, self.stream, t) {
+        match AudioOut::start_filtered(tools, &self.file, self.stream, t, filter.as_deref()) {
             Ok(out) => { self.play = Some(Playing { out, from: t, t0: Instant::now(), paused: false }); self.pos = t; self.error = None; }
             Err(e) => self.error = Some(e.to_string()),
         }
@@ -634,6 +705,8 @@ impl AudioPreview {
 
     fn ui(&mut self, ui: &mut egui::Ui) {
         self.poll();
+        self.poll_measure();
+        if self.measure_rx.is_some() { ui.ctx().request_repaint_after(std::time::Duration::from_millis(200)); }
         // fin de la piste : retour au debut ; sortie audio muette (peripherique en defaut) : arret avec un message
         if self.play.as_ref().is_some_and(|p| p.out.finished()) {
             self.play = None;
@@ -673,6 +746,37 @@ impl AudioPreview {
                     .on_hover_text(tr("The waveform is read from the whole track; you can already play it."));
             }
         });
+        if self.level.is_some() {
+            let mut on = self.apply_level;
+            let normalize = self.level.as_ref().is_some_and(|l| l.normalize == Some(true));
+            ui.horizontal(|ui| {
+                if ui.checkbox(&mut on, trf!("Apply the track level for this preview ({})", self.level_what))
+                    .on_hover_text(tr("Temporary: only changes what you hear in this window, nothing is saved. Without a measurement, normalization is estimated in a single pass; the encoded track uses the measured volume (two passes)."))
+                    .changed()
+                {
+                    self.apply_level = on;
+                    // le son deja en cours repart de la meme position avec (ou sans) le reglage
+                    if self.play.is_some() { let t = self.current(); self.start_at(t); }
+                }
+                if normalize {
+                    let busy = self.measure_rx.is_some();
+                    let label = if self.measured.is_some() { tr("Measure again") } else { tr("Measure the volume") };
+                    if ui.add_enabled(!busy, egui::Button::new(label))
+                        .on_hover_text(tr("Reads the whole track once to measure its loudness, as the encoding does (first pass). The preview then uses the same constant gain as the encoded track."))
+                        .clicked()
+                    { self.start_measure(); }
+                    if busy {
+                        let f = f32::from_bits(self.measure_progress.load(Ordering::Relaxed)).clamp(0.0, 1.0);
+                        let bar = egui::ProgressBar::new(f).desired_width(220.0).animate(true).text(format!("{} {} %", tr("Measuring the volume…"), (f * 100.0).round() as u32));
+                        ui.add(bar);
+                    }
+                    else if let Some(m) = &self.measured {
+                        ui.label(egui::RichText::new(trf!("Measured: {} LUFS", format!("{:.1}", m.input_i))).weak());
+                    }
+                }
+            });
+            if let Some(n) = &self.measure_note { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), n); }
+        }
         if let Some(e) = &self.error { ui.colored_label(egui::Color32::from_rgb(230, 100, 90), e); }
         // vumetre : cretes du son tel qu'il part vers la sortie audio (pistes multicanal reduites aux canaux de la sortie)
         let peaks = self.play.as_ref().map(|p| p.out.levels()).unwrap_or_default();
